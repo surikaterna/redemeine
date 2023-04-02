@@ -1,38 +1,53 @@
-type ApplyFunction<S = any, A = any> = (state: S, action: A) => void;
+import { Commands } from './createCommand';
 
-type AggregateApplyers<State> = {
-    [K: string]: ApplyFunction<State, any>
-}
+type ProjectorFunction<S = any, E = any> = (state: S, event: E) => void;
 
-interface AggregateDefinition<State = any> {
-    name: string,
-    initialState: State | (() => State),
-    applyers: AggregateApplyers<State>
+export type AggregateProjectors<State, PF extends Commands> = {
+  [K in keyof PF]: ProjectorFunction<State, PF[K]>;
 };
+
+type CommandFunction<AA extends AggregateProjectors<S>, S = any, E = any> = (state: S, event: E, aggregate: Aggregate<S, AA>) => Event | Event[];
+
+export type AggregateCommands<State, AA extends AggregateProjectors<State>> = {
+  [K: string]: CommandFunction<AA, State, any>;
+};
+
+export interface AggregateDefinition<State = any> {
+  name: string;
+  initialState: State | (() => State);
+  // commands?: AggregateCommands<State, AggregateProjectors<State>>;
+  events: AggregateProjectors<State>;
+}
 
 type WrappedApplyFunction<A = any> = (action: A) => void;
 
-
-type Aggregate<State, AP extends AggregateApplyers<State>> = {
-    [K in keyof AP]: () => void
-} & {
-    name: string,
-    initialState: State | (() => State),
-};
-
-const wrapApplyer = <S, A>(applyer: ApplyFunction<S, A>) => {
-    return (a: A) => { applyer(null as S, a) };
+export interface Aggregate<State = any, Projectors extends AggregateProjectors<State> = AggregateProjectors<State>, Name extends string = string> {
+  name: Name;
+  projectors: Projectors;
 }
 
-const createAggregate = <State, AA extends AggregateApplyers<State>>(def: AggregateDefinition<State>): Aggregate<State, AA> => {
-    const res = Object.keys(def.applyers).map(key => { return { [key]: wrapApplyer(def.applyers[key]) } });
-    const initialState = def.initialState;
+const wrapApplyer = <S, A>(applyer: ProjectorFunction<S, A>) => {
+  return (a: A) => {
+    applyer(null as S, a);
+  };
+};
 
-    return {
-        name: def.name,
-        initialState,
-        cancel: <A>(a: A) => { def.applyers.cancel({} as State, a); }
-    } as Aggregate<State, AA>;
+const createAggregate = <State, Projectors extends AggregateProjectors<State, any>>(def: AggregateDefinition<State>): Aggregate<State, Projectors> => {
+  const res = Object.keys(def.events).map((key) => {
+    return { [key]: wrapApplyer(def.events[key]) };
+  });
+  const initialState = def.initialState;
+  const { name } = def;
+  const projectors: Record<string, ProjectorFunction> = {};
+  const projectorNames = Object.keys(def.events);
+  projectorNames.forEach((projectorName) => {
+    projectors[projectorName] = def.events[projectorName];
+  });
+
+  return {
+    name,
+    projectors
+  };
 };
 
 export { createAggregate };
