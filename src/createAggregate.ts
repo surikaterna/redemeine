@@ -1,29 +1,42 @@
 import { Commands } from './createCommand';
 
+// Flow of things
+// func -> command -> (process) -> event -> project(apply) -> state
+
 type ProjectorFunction<S = any, E = any> = (state: S, event: E) => void;
 
-export type AggregateProjectors<State, PF extends Commands> = {
-  [K in keyof PF]: ProjectorFunction<State, PF[K]>;
+type CommandProcessFunction<S = any, C = any, R = any> = (state: S, command: C) => R;
+
+export type CommandProcessors<State, PF extends Commands> = {
+  [K in keyof PF]: CommandProcessFunction<State, PF[K]>;
 };
 
-type CommandFunction<AA extends AggregateProjectors<S>, S = any, E = any> = (state: S, event: E, aggregate: Aggregate<S, AA>) => Event | Event[];
+// type CommandFunction<AA extends AggregateProjectors<S>, S = any, E = any> = (state: S, event: E, aggregate: Aggregate<S, AA>) => Event | Event[];
 
-export type AggregateCommands<State, AA extends AggregateProjectors<State>> = {
-  [K: string]: CommandFunction<AA, State, any>;
-};
+// export type AggregateCommands<State, AA extends AggregateProjectors<State>> = {
+//   [K: string]: CommandFunction<AA, State, any>;
+// };
 
-export interface AggregateDefinition<State = any> {
-  name: string;
+export interface AggregateDefinition<
+  State = any,
+  AggregateProcessors extends CommandProcessors<State, any> = CommandProcessors<State, any>,
+  Name extends string = string
+> {
+  name: Name;
   initialState: State | (() => State);
   // commands?: AggregateCommands<State, AggregateProjectors<State>>;
-  events: AggregateProjectors<State>;
+  commands: AggregateProcessors;
 }
 
 type WrappedApplyFunction<A = any> = (action: A) => void;
 
-export interface Aggregate<State = any, Projectors extends AggregateProjectors<State> = AggregateProjectors<State>, Name extends string = string> {
+export interface Aggregate<
+  State = any,
+  AggregateProcessors extends CommandProcessors<State, any> = CommandProcessors<State, any>,
+  Name extends string = string
+> {
   name: Name;
-  projectors: Projectors;
+  commands: AggregateProcessors;
 }
 
 const wrapApplyer = <S, A>(applyer: ProjectorFunction<S, A>) => {
@@ -32,22 +45,22 @@ const wrapApplyer = <S, A>(applyer: ProjectorFunction<S, A>) => {
   };
 };
 
-const createAggregate = <State, Projectors extends AggregateProjectors<State, any>>(def: AggregateDefinition<State>): Aggregate<State, Projectors> => {
-  const res = Object.keys(def.events).map((key) => {
-    return { [key]: wrapApplyer(def.events[key]) };
-  });
+export function createAggregate<State, AggregateProcessors extends CommandProcessors<State, any> = CommandProcessors<State, any>, Name extends string = string>(
+  def: AggregateDefinition<State, AggregateProcessors, Name>
+): Aggregate<State, AggregateProcessors, Name> {
+  // const res = Object.keys(def.events).map((key) => {
+  //   return { [key]: wrapApplyer(def.events[key]) };
+  // });
   const initialState = def.initialState;
   const { name } = def;
-  const projectors: Record<string, ProjectorFunction> = {};
-  const projectorNames = Object.keys(def.events);
+  const commands: Record<string, CommandProcessFunction> = {};
+  const projectorNames = Object.keys(def.commands);
   projectorNames.forEach((projectorName) => {
-    projectors[projectorName] = def.events[projectorName];
+    commands[projectorName] = def.commands[projectorName];
   });
 
   return {
     name,
-    projectors
+    commands: def.commands
   };
-};
-
-export { createAggregate };
+}
