@@ -1,6 +1,9 @@
 import { describe, expect, test } from '@jest/globals';
 import { AggregateDefinition, CommandProcessors, createAggregate } from '../src/createAggregate';
+import type { FunctionKeys, NonFunctionKeys } from 'utility-types';
+
 import { Command, Commands } from '../src/createCommand';
+import { Draft } from 'immer';
 
 // interface OrderState {
 //   id: number;
@@ -74,52 +77,119 @@ describe('createAggregate', () => {
       [K in keyof TT]: TT[K];
     };
 
-    type TDescriptor<C extends Commands2<any>> = {
-      commands: C;
-      events?: null;
+    // Events
+
+    type EventWithCommand<S, P> = {
+      [K: string]: (state: S, ...any: never[]) => void;
     };
 
-    type TDecorator<TT extends Record<string, (...args: any) => any>> = {
-      [K in keyof TT]: (string) => ReturnType<TT[K]>;
+    type EventOrEventCommand<S, P extends any = any> = EventWithCommand<S, P> | (() => void);
+
+    type Events2<S, T extends keyof any = string, P extends any = any> = Record<T, EventOrEventCommand<S, P>>;
+
+    type TDescriptor<S, C extends Commands2<any> = Commands2<any>, E extends Events2<S, any> = Events2<S, any>, Name extends string = string> = {
+      type: Name;
+      initialState: S;
+      commands?: C;
+      events: E;
     };
 
-    function tt<TT extends Commands2<any>>(cmds: TDescriptor<TT>): TDecorator<TT> {
+    type ReplaceFirstArg<S, F> = F extends (x: any, ...args: infer P) => infer R ? (state: S, ...args: P) => R : never;
+
+    type TDecorator<S, C extends Record<string, (...args: any) => any>, E extends Events2<S, any> = Events2<S, any>> = {
+      // [K in keyof C]: (a: string) => ReturnType<C[K]>;
+    } & {
+      // extract commands from event definitions
+      [K in Exclude<NestedKeysOf<E, Function>, 'project'>]: (state: Readonly<S>) => void;
+    };
+
+    function tt<S, C extends Commands2<any>, E extends Events2<S, any>>(cmds: TDescriptor<S, C, E>): TDecorator<S, C, E> {
       const res = {};
-      Object.keys(cmds.commands).forEach((c) => (res[c] = (a: string) => cmds.commands[c]));
-      return res as TDecorator<TT>;
+      const cmd = cmds.commands || [];
+      Object.keys(cmd).forEach((c) => (res[c] = (a: string) => cmd[c]));
+      res['close'] = () => {
+        return { payload: { remark: 'hello' } };
+      };
+      return res as TDecorator<S, C, E>;
     }
     /*
                   command -> process-> events -> apply -> state
         */
+
+    interface CounterState {
+      value: number;
+      cancelled: boolean;
+    }
+
     let cc = {
       type: 'counter',
-      initialState: { value: 0 },
-      commands: {
-        inc: () => {
-          return;
-        },
-        dec: () => {}
-      },
-      process: {
-        inc: (state: any, a: string, b: number) => {
-          return { a, b };
-        }
-      },
+      initialState: {
+        value: 0,
+        cancelled: false
+      } as CounterState,
+      // commands: {
+      //   cancel: (state, command) => {
+      //     return [];
+      //   }
+      // },
       events: {
-        cancelled: (remark: string) => {},
+        cancelled: {
+          cancel: (state) => {},
+          project: (state) => {}
+        },
+        /** this is closing */
         closed: {
-          close: null,
-          project: ()=>{}
+          /**
+           * closes the state
+           * @param state my state
+           * @param remark my param
+           * @returns an event
+           */
+          close: (state, remark: string, remark2?: string) => {
+            if (state.cancelled) {
+              throw new Error('Already closed');
+            }
+            return { payload: { remark } };
+          },
+          project: (state) => {
+            state.cancelled = true;
+          }
         }
       }
     };
 
+    type NestedKeysOf<T, S> = T extends S
+      ? never
+      : {
+          [K in keyof T]: T[K] extends S ? K : NestedKeysOf<T[K], S>;
+        }[keyof T & string];
+
+    type ttTest = {
+      cancelled: {
+        cancel: (state) => {};
+        project: (state) => {};
+      };
+      closed: {
+        close: (state) => {};
+      };
+    };
+
+    type ExtractedEventCommands<E extends object, S> = {
+      // extract commands from event definitions
+      [K in NestedKeysOf<E, Function>]: void;
+    };
+
+    type tt = ExtractedEventCommands<ttTest, {}>;
+    type t = ttTest;
+    type tt2 = Exclude<NestedKeysOf<t, Function>, 'project'>;
     //commands, processors, events, projectors
+    //entities
+    //middleware
+    //mirage (read + write)
 
-    tt({
-      commands: cmds
-    }).test2('heelo');
-
+    const res = tt(cc);
+    type ttType = typeof res;
+    expect(res.close({ value: 12, cancelled: false }, 'hello').payload.remark).toEqual('hello');
     /*    let cp: CommandProcessors<TestState, { test: (state: TestState, cmd: any) => Record<T, Command<{}>> }> = {
           test: (state: TestState, cmd: any) => {
             return {
