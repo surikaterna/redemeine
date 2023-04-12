@@ -106,7 +106,7 @@ describe('createAggregate', () => {
                         if (state.cancelled) {
                             throw new Error('Already closed');
                         }
-                        return { payload: { remark } };
+                        return { payload: { remark: remark + remark2 } };
                     },
                     project: (state) => {
                         state.cancelled = true;
@@ -132,40 +132,11 @@ describe('createAggregate', () => {
 
         // type tt3 = Merge<tt2>;
 
-        //commands, processors, events, projectors
-        //entities
-        //middleware
-        //mirage (read + write)
+    
 
         // const res = tt(cc);
         // type ttType = typeof res;
         expect(aggr.close({ value: 12, cancelled: false }, 'hello').payload.remark).toEqual('hello');
-        /*    let cp: CommandProcessors<TestState, { test: (state: TestState, cmd: any) => Record<T, Command<{}>> }> = {
-              test: (state: TestState, cmd: any) => {
-                return {
-                  type: 'test',
-                  payload: cmd
-                };
-              }
-            };
-            */
-        //cp.test({ age: 12 }, { type: 'test', payload: {} });
-        // cp.test({ age: 12 }, );
-
-        //createAggregate(o).commands.cancelled2({ age: 12 }, null);
-
-        //createCommand('order.cancel', ()=>{});
-
-        // const aggregate = createAggregate({
-        //   name: "order",
-        //   initialState: initialState,
-        //   events: {
-        //     cancel: (state, cmd: { remark: string }) => {
-        //       done();
-        //     },
-        //   },
-        // });
-        // expect(aggregate.cancel).not.toBeNull();
-        // aggregate.cancel();
+       
     });
 });

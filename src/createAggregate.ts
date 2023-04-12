@@ -30,8 +30,8 @@ type Commands2<T extends keyof any = string, P extends any = any> = Record<T, ()
 
 
 // Events
-
 type EventWithCommand<S, P> = {
+    project: (state: S) => void,
     [K: string]: (state: S, ...any: never[]) => void;
 };
 

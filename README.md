@@ -10,3 +10,9 @@ One or more Events are the result of a Command and represents that ther was a ch
 ## Command Processors
 
 ## Event Projectors / Applyers
+
+# TODO
+//commands, processors, events, projectors
+//entities
+//middleware
+//mirage (read + write)
