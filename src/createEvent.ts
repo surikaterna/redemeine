@@ -1,9 +1,14 @@
-interface Event<P> {
-  type: string;
+type EventType = `${string}.event`;
+
+export interface Event<P = any, T extends EventType = EventType> {
+  type: T;
   payload: P;
 }
-export const createEvent = <T>(type: string, preparePayload?: (T) => Record<string, any>): ((argument: T) => Event<Record<string, any>>) => {
-  return (payload?: T) => {
+export const createEvent = <E, T extends EventType = EventType>(
+  type: T,
+  preparePayload?: (E) => Record<string, any>
+): ((argument: E) => Event<Record<string, any>>) => {
+  return (payload?: E) => {
     const cmd = { type };
     const p = typeof preparePayload == 'function' ? preparePayload(payload) : { payload };
     return { type, payload: p.payload };

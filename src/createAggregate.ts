@@ -1,70 +1,86 @@
-import { Commands } from './createCommand';
-import { Merge } from './utils/Merge';
-import { type NestedPairsOf } from './utils/NestedPairOf';
+import { Command, Commands } from './createCommand';
+import { Event } from './createEvent';
+import { Merge } from './utils/types/Merge';
+import { type NestedPairsOf } from './utils/types/NestedPairOf';
 
 // Flow of things
-// func -> command -> (process) -> event -> project(apply) -> state
-
-type ProjectorFunction<S = any, E = any> = (state: S, event: E) => void;
-
-type CommandProcessFunction<S = any, C = any, R = any> = (state: S, command: C) => R;
-
-export type CommandProcessors<State, PF extends Commands> = {
-    [K in keyof PF]: CommandProcessFunction<State, PF[K]>;
-};
-
-// type CommandFunction<AA extends AggregateProjectors<S>, S = any, E = any> = (state: S, event: E, aggregate: Aggregate<S, AA>) => Event | Event[];
-
-// export type AggregateCommands<State, AA extends AggregateProjectors<State>> = {
-//   [K: string]: CommandFunction<AA, State, any>;
-// };
-
-// Commands
-
-interface Command2<S = any, P extends any = any> {
-    type: string;
-    payload: P;
-}
-
-type Commands2<T extends keyof any = string, P extends any = any> = Record<T, () => Command2<any, P>>;
-
+// (cmd func) -> command -> (process) -> event -> project(apply) -> state
 
 // Events
-type EventWithCommand<S, P> = {
-    project: (state: S) => void,
-    [K: string]: (state: S, ...any: never[]) => void;
+type EventWithCommand<S, P, E extends Event<P> = Event<P>> = {
+  project: (state1: S, event: E) => void;
 };
+// & {
+//   [K in Exclude<keyof ES, 'project'>]: undefined | ((state2: S, ...any: never[]) => E|void);
+// };
 
-type EventOrEventCommand<S, P extends any = any> = EventWithCommand<S, P> | (() => void);
+type EventOrEventCommand<S, P extends any = any, E extends Event<P> = Event<P>> = EventWithCommand<S, P, E> | ((state: S, event: E) => void);
 
-type Events2<S, T extends keyof any = string, P extends any = any> = Record<T, EventOrEventCommand<S, P>>;
-export type AggregateDeclaration<S, C extends Record<string, (...args: any) => any>, E extends Events2<S, any> = Events2<S, any>> = {
-    // [K in keyof C]: (a: string) => ReturnType<C[K]>;
+type Events<S, T extends keyof any = string, P extends any = any> = Record<T, EventOrEventCommand<S, P>>;
+export type AggregateCommandsDeclaration<S, C extends Record<string, (...args: any) => any>, E extends Events<S, any> = Events<S, any>> = {
+  // [K in keyof C]: (a: string) => ReturnType<C[K]>;
 } & Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>;
 
-export type AggregateSpecification<S, C extends Commands2<any> = Commands2<any>, E extends Events2<S, any> = Events2<S, any>, Name extends string = string> = {
-    type: Name;
-    initialState: S;
-    commands?: C;
-    events: E;
+type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
+  [T in keyof ES]: ES[T] extends {
+    project(state3: S, event: infer E extends Event): void;
+  }
+    ? {
+        // [K in Exclude<keyof ES[T], 'project'>]: (state4: S, command: Command) => E;
+      }
+    : {};
 };
 
-type WrappedApplyFunction<A = any> = (action: A) => void;
-
-
-
-const wrapApplyer = <S, A>(applyer: ProjectorFunction<S, A>) => {
-    return (a: A) => {
-        applyer(null as S, a);
-    };
+export type AggregateSpecification<S, C extends Commands<any> = Commands<any>, E extends Events<S> = Events<S>, Name extends string = string> = {
+  type: Name;
+  initialState: S;
+  commands?: C;
+  events: E;
 };
 
-export function createAggregate<S, C extends Commands2<any>, E extends Events2<S, any>>(cmds: AggregateSpecification<S, C, E>): AggregateDeclaration<S, C, E> {
-    const res = {};
-    const cmd = cmds.commands || [];
-    Object.keys(cmd).forEach((c) => (res[c] = (a: string) => cmd[c]));
-    res['close'] = () => {
-        return { payload: { remark: 'hello' } };
-    };
-    return res as AggregateDeclaration<S, C, E>;
+export type AggregateProjectorsDeclaration<S, E extends Events<S, any> = Events<S, any>> = {
+  [K in keyof E]: (
+    state: S,
+    e: E[K] extends (...any: any) => any ? ReturnType<E[K]> : E[K] extends EventWithCommand<S, any> ? ReturnType<E[K]['project']> : never
+  ) => void;
+};
+
+export type AggregateDeclaration<S, C extends Commands<any> = Commands<any>, E extends Events<S, any> = Events<S, any>, Name extends string = string> = {
+  type: Name;
+  initialState: S;
+  commands: AggregateCommandsDeclaration<S, C, E>;
+  projectors: AggregateProjectorsDeclaration<S, E>;
+  events: E;
+};
+export function createAggregate<S, C extends Commands<any>, E extends Events<S, any>>(spec: AggregateSpecification<S, C, E>): AggregateDeclaration<S, C, E> {
+  const res = { commands: {}, projectors: {} };
+  const cmd = spec.commands || [];
+
+  /**
+   * Create commands
+   */
+  Object.keys(cmd).forEach((c) => (res.commands[c] = (a: string) => cmd[c]));
+  Object.keys(spec.events).forEach((e) => {
+    if (typeof e !== 'function') {
+      Object.keys(spec.events[e]).forEach((commandKey) => {
+        if (commandKey !== 'project') {
+          res.commands[commandKey] = spec.events[e][commandKey];
+        }
+      });
+    }
+  });
+
+  /**
+   * Create projectors
+   */
+  Object.keys(spec.events).forEach((e) => {
+    if (typeof e !== 'function') {
+      Object.keys(spec.events[e]).forEach((key) => {
+        if (key === 'project') {
+          res.projectors[e] = spec.events[e][key];
+        }
+      });
+    }
+  });
+  return res as AggregateDeclaration<S, C, E>;
 }
