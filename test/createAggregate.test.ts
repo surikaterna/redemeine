@@ -61,7 +61,7 @@ describe('createAggregate', () => {
     });
     aggr.commands.increaseBy({ value: 12 }, { type: 'counter.increaseBy.command', payload: 12 });
     aggr.projectors.increasedBy({ value: 12 }, { type: 'counter.increasedBy.event', payload: { with: 12 } });
-    aggr.commands.increase({value:1},{ type: 'counter.increase.command', payload:  12 } })
+    aggr.commands.increase({value:1},{ type: 'counter.increase.command', payload:undefined })
     // aggr.projectors.increasedBy(
     //   { value: 0 },
     //   {
