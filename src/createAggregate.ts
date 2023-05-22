@@ -1,5 +1,6 @@
 import { Command, Commands } from './createCommand';
 import { Event } from './createEvent';
+import { AllKeys } from './utils/types/AllKeys';
 import { Merge } from './utils/types/Merge';
 import { type NestedPairsOf } from './utils/types/NestedPairOf';
 
@@ -7,26 +8,32 @@ import { type NestedPairsOf } from './utils/types/NestedPairOf';
 // (cmd func) -> command -> (process) -> event -> project(apply) -> state
 
 // Events
-type EventWithCommand<S, P, E extends Event<P> = Event<P>> = {
+type EventWithCommand<S, P, E extends Event<P> = Event<P>, T extends keyof any = string> = {
   project: (state1: S, event: E) => void;
 };
 // & {
 //   [K in Exclude<keyof ES, 'project'>]: undefined | ((state2: S, ...any: never[]) => E|void);
 // };
 
-type EventOrEventCommand<S, P extends any = any, E extends Event<P> = Event<P>> = EventWithCommand<S, P, E> | ((state: S, event: E) => void);
+type EventOrEventCommand<S, P extends any = any, E extends Event<P> = Event<P>, T extends keyof any = string> =
+  | EventWithCommand<S, P, E, T>
+  | ((state: S, event: E) => void);
 
 type Events<S, T extends keyof any = string, P extends any = any> = Record<T, EventOrEventCommand<S, P>>;
+type WrapState<S, C> = {
+  [K in keyof C]: C[K] extends (s: any, ...args: infer A) => infer R ? (state: S, ...args: A) => R : never;
+};
+
 export type AggregateCommandsDeclaration<S, C extends Record<string, (...args: any) => any>, E extends Events<S, any> = Events<S, any>> = {
   // [K in keyof C]: (a: string) => ReturnType<C[K]>;
-} & Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>;
+} & WrapState<S,Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>>;
 
 type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
   [T in keyof ES]: ES[T] extends {
     project(state3: S, event: infer E extends Event): void;
   }
     ? {
-        // [K in Exclude<keyof ES[T], 'project'>]: (state4: S, command: Command) => E;
+        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: S, command: Parameters<ES[T][K]>[1]) => E : never;
       }
     : {};
 };
@@ -35,13 +42,20 @@ export type AggregateSpecification<S, C extends Commands<any> = Commands<any>, E
   type: Name;
   initialState: S;
   commands?: C;
-  events: E;
+  events: ValidateEventSpecification<S, E>;
 };
 
 export type AggregateProjectorsDeclaration<S, E extends Events<S, any> = Events<S, any>> = {
   [K in keyof E]: (
     state: S,
-    e: E[K] extends (...any: any) => any ? ReturnType<E[K]> : E[K] extends EventWithCommand<S, any> ? ReturnType<E[K]['project']> : never
+    // if E[K] is a function use return type
+    // else E[K] is eventDef with project property, use return type of that project property, otherwise use nothing
+    event: E[K] extends (...any: any) => any
+      ? ReturnType<E[K]>
+      : E[K] extends EventWithCommand<S, any>
+      ? ReturnType<E[K][Exclude<AllKeys<E[K]>, 'project'>]>
+      : never
+    //e: E[K] extends EventWithCommand<S, any> ? ReturnType<E[K][Exclude<AllKeys<E[K]>, 'project'>]> : number
   ) => void;
 };
 

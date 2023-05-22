@@ -1,4 +1,4 @@
-type EventType = `${string}.event`;
+export type EventType = `${string}.event`;
 
 export interface Event<P = any, T extends EventType = EventType> {
   type: T;

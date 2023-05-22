@@ -23,25 +23,45 @@ describe('createAggregate', () => {
   //     });
   //     expect(Object.keys(aggr.projectors)).toHaveLength(2);
   //   });
+  interface CounterState {
+    value: number;
+  }
   test.only('event projectors from event def should update the state', () => {
     const aggr = createAggregate({
       type: 'counter',
       initialState: { value: 0 },
       events: {
         increasedBy: {
-          project: (state, event) => {
-            console.log('project', event.payload.with);
-            state.value++; //= event.payload; //= e.payload ;
+          project: (state, event: Event<{ with: number }>) => {
+            console.log('project', event.type);
+            state.value += 1;
+            return 'test';
           },
-          increase: (state, command: Command) => {
+          increaseBy: (stateXX, command: Command<number>) => {
             return {
-              type: 'a.b.event',
-              payload: { with: 12 }
-            };
+              type: 'counter.increasedBy.event',
+              payload: { with: command.payload }
+            } as Event<{with:number}>;
           }
-        }
+        },
+        increased: {
+          project: (state, event) => {
+            console.log('project', event.type);
+            state.value += 1;
+            return 'test';
+          },
+          increase: (stateXX, command: Command<void>) => {
+            return {
+              type: 'counter.increased.event',
+              payload: undefined
+            } as Event;
+          }
+        }        
       }
     });
+    aggr.commands.increaseBy({ value: 12 }, { type: 'counter.increaseBy.command', payload: 12 });
+    aggr.projectors.increasedBy({ value: 12 }, { type: 'counter.increasedBy.event', payload: { with: 12 } });
+    aggr.commands.increase({value:1},{ type: 'counter.increase.command', payload:  12 } })
     // aggr.projectors.increasedBy(
     //   { value: 0 },
     //   {
