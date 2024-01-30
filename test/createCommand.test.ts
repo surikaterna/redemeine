@@ -23,6 +23,7 @@ describe('createCommand', () => {
   test('returns prepared payload', () => {
     const cmd = createCommand('order.hello.command', (text: string, user: string, age: number) => {
       return {
+        headers: { dummy: true },
         payload: {
           text,
           user,
