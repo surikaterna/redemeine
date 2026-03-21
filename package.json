@@ -20,6 +20,7 @@
     "utility-types": "^3.11.0"
   },
   "dependencies": {
-    "immer": "^11.1.4"
+    "immer": "^11.1.4",
+    "type-fest": "^5.5.0"
   }
 }

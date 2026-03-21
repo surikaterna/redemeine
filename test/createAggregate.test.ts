@@ -36,7 +36,9 @@ describe('createAggregate', () => {
           project: (state, event: Event<{ with: number }>) => {
             state.value += event.payload.with;
           },
-          increaseBy: (stateXX, command: Command<number>) => {
+          increaseBy: (state, command: Command<number>) => {
+            // Un-commenting the following line would cause a TypeScript error because state is ReadonlyDeep:
+            // state.value = 100;
             return {
               type: 'counter.increasedBy.event',
               payload: { with: command.payload }
@@ -47,7 +49,7 @@ describe('createAggregate', () => {
           project: (state, event) => {
             state.value += 1;
           },
-          increase: (stateXX, command: Command<void>) => {
+          increase: (state, command: Command<void>) => {
             return {
               type: 'counter.increased.event',
               payload: undefined

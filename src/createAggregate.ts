@@ -1,4 +1,5 @@
 import { produce, Draft } from 'immer';
+import type { ReadonlyDeep } from 'type-fest';
 import { Command, Commands } from './createCommand';
 import { Event } from './createEvent';
 import { AllKeys } from './utils/types/AllKeys';
@@ -34,7 +35,7 @@ type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
     project(state3: Draft<S>, event: infer E extends Event): void;
   }
     ? {
-        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: S, command: Parameters<ES[T][K]>[1]) => E : never;
+        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: ReadonlyDeep<S>, command: Parameters<ES[T][K]>[1]) => E : never;
       }
     : {};
 };
