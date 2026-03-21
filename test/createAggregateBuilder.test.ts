@@ -155,4 +155,52 @@ describe('Aggregate Builder with Mixins', () => {
     expect(cmd1.type).toBe('legacy.counter.increment.command');
     expect(cmd2.type).toBe('test.changeStatus.command');
   });
+
+  it('should support entities, nested entities, arrays and targeted events', () => {
+    interface SubOrderLine { id: number; metadata: string; }
+    interface OrderLine { id: string; qty: number; subitems: SubOrderLine[]; }
+    interface OrderState { id: string; line: OrderLine[]; }
+    const orderState: OrderState = {
+      id: 'o1',
+      line: [{ id: '123', qty: 1, subitems: [{ id: 456, metadata: 'old' }] }]
+    };
+
+    const aggregate = createAggregateBuilder<OrderState, 'order'>('order', orderState)
+      .entities<{ line: OrderLine; subitems: SubOrderLine }>()
+      .events({
+        updated: (state: any, event: Event<{ qty?: number; metadata?: string }>) => {
+          if (event.payload.qty !== undefined) state.qty = event.payload.qty;
+          if (event.payload.metadata !== undefined) state.metadata = event.payload.metadata;
+        }
+      })
+      .commands((emit: any) => ({
+        // Targeting line
+        updateLine: (state, payload: { id: string; qty: number }) => 
+          emit.lineUpdated(payload.id, { qty: payload.qty }),
+        
+        // Targeting subitems
+        updateSubLine: (state, payload: { lineId: string; subId: number; metadata: string }) => 
+          emit.lineSubitemsUpdated(payload.lineId, payload.subId, { metadata: payload.metadata })
+      }))
+      .build();
+
+    // 1. Check generated event types
+    // Using handle to invoke command
+    const events1 = aggregate.handle(orderState, 'order.updateLine.command', { id: '123', qty: 5 });
+    expect(events1[0].type).toBe('order.line[123].updated.event');
+    expect(events1[0].payload).toEqual({ qty: 5 });
+
+    const events2 = aggregate.handle(orderState, 'order.updateSubLine.command', { lineId: '123', subId: 456, metadata: 'new' });
+    expect(events2[0].type).toBe('order.line[123].subitems[456].updated.event');
+    expect(events2[0].payload).toEqual({ metadata: 'new' });
+
+    // 2. Check apply logic routes correctly to nested entities
+    const newState1 = aggregate.apply(orderState, events1[0]);
+    expect(newState1.line[0].qty).toBe(5);
+    expect(orderState.line[0].qty).toBe(1); // Immutability
+
+    const newState2 = aggregate.apply(newState1, events2[0]);
+    expect(newState2.line[0].subitems[0].metadata).toBe('new');
+    expect(newState1.line[0].subitems[0].metadata).toBe('old');
+  });
 });
