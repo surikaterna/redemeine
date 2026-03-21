@@ -1,17 +1,20 @@
 {
+  "name": "redemeine",
+  "version": "0.1.0",
+  "description": "Sane defaults CQRS/ES aggregates library",
+  "main": "dist/redemeine.js",
+  "types": "dist/redemeine.d.ts",
   "scripts": {
-    "vscode:prepublish": "npm run esbuild-base -- --minify",
-    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/main.js --external:vscode --format=cjs --platform=node",
-    "esbuild": "npm run esbuild-base -- --sourcemap",
-    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
-    "test-compile": "tsc -p ./"
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "devDependencies": {
     "@babel/core": "^7.21.4",
     "@babel/preset-env": "^7.21.4",
     "@babel/preset-typescript": "^7.21.4",
     "babel-jest": "^29.5.0",
-    "esbuild": "^0.17.14",
     "eslint": "^8.37.0",
     "eslint-config-surikat": "^4.0.4",
     "jest": "^29.5.0",
@@ -21,6 +24,6 @@
     "utility-types": "^3.10.0"
   },
   "dependencies": {
-    "immer": "^9.0.21"
+    "immer": "^10.0.0"
   }
 }
