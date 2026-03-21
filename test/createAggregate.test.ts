@@ -117,4 +117,57 @@ describe('createAggregate', () => {
     // We expect the command function we passed to return the mocked event payload structure
     expect((commandResult as any).payload.remark).toEqual('helloworld');
   });
-});
+
+  test('support 1:m root commands and standalone events without mapping', () => {
+    const aggr = createAggregate({
+      type: 'counter',
+      initialState: { value: 0, cancelled: false } as CounterState,
+      commands: {
+        // High-level command that throws multiple events (1:m)
+        processBatch: (state, batch: number[]) => {
+          const events: Event[] = [];
+          for (const item of batch) {
+            events.push({ type: 'counter.increasedBy.event', payload: { with: item } } as Event<{ with: number }>);
+          }
+          if (state.value + batch.reduce((a, b) => a + b, 0) > 100) {
+            events.push({ type: 'counter.maxCapacityReached.event', payload: undefined } as Event);
+          }
+          return events; // 1:M return
+        }
+      },
+      events: {
+        increasedBy: {
+          project: (state, event: Event<{ with: number }>) => {
+            state.value += event.payload.with;
+          },
+          increaseBy: (state, command: Command<number>) => {
+            return {
+              type: 'counter.increasedBy.event',
+              payload: { with: command.payload }
+            } as Event<{ with: number }>;
+          }
+        },
+        maxCapacityReached: {
+          // Event with no 1:1 mapped command! Purely reacting to things.
+          project: (state, event: Event) => {
+            state.cancelled = true;
+          }
+        }
+      }
+    });
+
+    const rootCommandResult = aggr.commands.processBatch({ value: 90, cancelled: false }, [5, 10]);
+
+    // Should return an array with 3 events: two +increases, and one capacity reached
+    expect(Array.isArray(rootCommandResult)).toBe(true);
+    expect((rootCommandResult as Event[]).length).toBe(3);
+    expect((rootCommandResult as Event[])[2].type).toBe('counter.maxCapacityReached.event');
+
+    // Test the event-only projector
+    const newState = aggr.projectors.maxCapacityReached({ value: 105, cancelled: false }, { type: 'counter.maxCapacityReached.event', payload: undefined } as Event);
+    expect(newState.cancelled).toBe(true);
+  });
+} 
+
+) 
+; 

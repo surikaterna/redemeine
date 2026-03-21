@@ -27,7 +27,7 @@ type WrapState<S, C> = {
 };
 
 export type AggregateCommandsDeclaration<S, C extends Record<string, (...args: any) => any>, E extends Events<S, any> = Events<S, any>> = {
-  // [K in keyof C]: (a: string) => ReturnType<C[K]>;
+  [K in keyof C]: C[K] extends (s: any, command: infer Cmd) => infer R ? (state: S, command: Cmd) => R : never;
 } & WrapState<S,Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>>;
 
 type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
@@ -35,12 +35,14 @@ type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
     project(state3: Draft<S>, event: infer E extends Event): void;
   }
     ? {
-        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: ReadonlyDeep<S>, command: Parameters<ES[T][K]>[1]) => E : never;
+        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: ReadonlyDeep<S>, command: Parameters<ES[T][K]>[1]) => E | E[] : never;
       }
     : {};
 };
 
-export type AggregateSpecification<S, C extends Commands<any> = Commands<any>, E extends Events<S> = Events<S>, Name extends string = string> = {
+export type RootCommandProcessors<S> = Record<string, (state: ReadonlyDeep<S>, command: any) => Event | Event[]>;
+
+export type AggregateSpecification<S, C extends RootCommandProcessors<S> = RootCommandProcessors<S>, E extends Events<S> = Events<S>, Name extends string = string> = {
   type: Name;
   initialState: S;
   commands?: C;
@@ -60,21 +62,24 @@ export type AggregateProjectorsDeclaration<S, E extends Events<S, any> = Events<
   ) => S;
 };
 
-export type AggregateDeclaration<S, C extends Commands<any> = Commands<any>, E extends Events<S, any> = Events<S, any>, Name extends string = string> = {
+export type AggregateDeclaration<S, C extends RootCommandProcessors<S> = RootCommandProcessors<S>, E extends Events<S, any> = Events<S, any>, Name extends string = string> = {
   type: Name;
   initialState: S;
   commands: AggregateCommandsDeclaration<S, C, E>;
   projectors: AggregateProjectorsDeclaration<S, E>;
   events: E;
 };
-export function createAggregate<S, C extends Commands<any>, E extends Events<S, any>>(spec: AggregateSpecification<S, C, E>): AggregateDeclaration<S, C, E> {
+export function createAggregate<S, C extends RootCommandProcessors<S>, E extends Events<S, any>>(spec: AggregateSpecification<S, C, E>): AggregateDeclaration<S, C, E> {
   const res = { commands: {}, projectors: {} };
-  const cmd = spec.commands || [];
+  const cmd = spec.commands || {};
 
   /**
    * Create commands
    */
-  Object.keys(cmd).forEach((c) => (res.commands[c] = (a: string) => cmd[c]));
+  Object.keys(cmd).forEach((c) => {
+    // invalidate cache
+    res.commands[c] = cmd[c];
+  });
   Object.keys(spec.events).forEach((e) => {
     if (typeof e !== 'function') {
       Object.keys(spec.events[e]).forEach((commandKey) => {
