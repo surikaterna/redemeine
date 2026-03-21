@@ -19,11 +19,13 @@ export type ResolveEventName<AggregateName extends string, K, EOverrides> =
  * Checks the number of arguments in the event projector function.
  */
 export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
-  [K in keyof E]: E[K] extends (state: any, event: Event<infer P, any>) => void
-    ? [P] extends [void] | [undefined] 
-      ? () => Event<P, ResolveEventName<AggregateName, K, EOverrides>> // No payload arg
-      : (payload: P) => Event<P, ResolveEventName<AggregateName, K, EOverrides>> // Payload arg required
-    : E[K] extends (state: any) => void
+  [K in keyof E]: E[K] extends (...args: any[]) => any
+    ? Parameters<E[K]>['length'] extends 0 | 1
       ? () => Event<void, ResolveEventName<AggregateName, K, EOverrides>> // Only state arg = zero payload
-      : (payload: any) => Event<any, ResolveEventName<AggregateName, K, EOverrides>>; // Fallback
+      : E[K] extends (state: any, event: Event<infer P, any>) => void
+        ? [P] extends [void] | [undefined]
+          ? () => Event<P, ResolveEventName<AggregateName, K, EOverrides>> // No payload arg
+          : (payload: P) => Event<P, ResolveEventName<AggregateName, K, EOverrides>> // Payload arg required
+        : (payload: any) => Event<any, ResolveEventName<AggregateName, K, EOverrides>>
+    : never;
 };

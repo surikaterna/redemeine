@@ -1,5 +1,5 @@
 import { Command } from './createCommand';
-import { Event } from './createEvent';
+import { Event } from './types';
 
 //order.cancel.command -> order.cancelled.event
 

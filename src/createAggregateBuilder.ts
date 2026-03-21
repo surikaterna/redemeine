@@ -12,28 +12,33 @@ type MergeMixins<T extends any[]> = T extends [infer First, ...infer Rest]
     : {};
 
 
-export interface AggregateBuilder<S, Name extends string, M = {}> {
+export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}> {
     mixins: <T extends MixinPackage<S, any, any, any, any>[]>(
         ...mixins: T
-    ) => AggregateBuilder<S, Name, M & MergeMixins<T>>;
+    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides>;
 
-    events: <E extends Record<string, (state: any, event: Event<any, any>) => void>>(
-        events: E
-    ) => AggregateBuilder<S, Name, M>;
+    events: <NewE extends Record<string, (state: any, event: Event<any, any>) => void>>(
+        events: NewE
+    ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides>;
 
-    overrideEventNames: (overrides: Partial<Record<string, EventType>>) => AggregateBuilder<S, Name, M>;
+    overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
+        overrides: NewEOverrides
+    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides>;
 
     commands: <C extends Record<string, (state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]>>(
-        factory: (emit: EventEmitterFactory<Name, any, any>) => C
-    ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }>;
+        factory: (emit: EventEmitterFactory<Name, E, EOverrides>) => C
+    ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides>;
 
-    overrideCommandNames: (overrides: Partial<Record<keyof M, CommandType>>) => AggregateBuilder<S, Name, M>;
+    overrideCommandNames: (overrides: Partial<Record<keyof M, CommandType>>) => 
+        AggregateBuilder<S, Name, M, E, EOverrides>;
 
     build: () => {
         handle: (state: S, commandType: string, payload: any) => Event[];
         apply: (state: S, event: Event) => S;
         commandCreators: {
-            [K in keyof M]: (payload: M[K]) => { type: string; payload: M[K] };
+            [K in keyof M]: [M[K]] extends [void] | [undefined]
+                ? () => { type: string; payload: void }
+                : (payload: M[K]) => { type: string; payload: M[K] };
         };
     };
 }
@@ -42,6 +47,7 @@ export function createAggregateBuilder<S, Name extends string>(
     aggregateName: Name,
     initialState: S
 ): AggregateBuilder<S, Name> {
+
     let _events: Record<string, Function> = {};
     let _eventOverrides: Record<string, string> = {};
     let _commandsFactory: (emit: any) => Record<string, Function> = () => ({});

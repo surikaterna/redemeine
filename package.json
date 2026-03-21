@@ -1,5 +1,14 @@
 {
+  "name": "redemeine",
+  "version": "0.1.0",
+  "description": "Sane defaults CQRS/ES aggregates library",
+  "main": "dist/redemeine.js",
+  "types": "dist/redemeine.d.ts",
   "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "test:watch": "jest --watchAll",
     "test-compile": "tsc -p ./"
   },
   "devDependencies": {
@@ -9,10 +18,11 @@
     "jest": "^29.7.0",
     "prettier-config-surikaterna": "^1.0.1",
     "ts-jest": "^29.1.5",
-    "typescript": "^5.7.2",
+    "typescript": "^5.9.3",
     "utility-types": "^3.11.0"
   },
   "dependencies": {
-    "immer": "^10.1.1"
+    "immer": "^10.1.1",
+    "type-fest": "^5.5.0"
   }
 }

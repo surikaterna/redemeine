@@ -92,12 +92,15 @@ describe('Aggregate Builder with Mixins', () => {
       .commands((emit) => ({
         close: () => emit.closed()
       }))
+      .overrideEventNames({
+        closed: 'explicit.closed.event'
+      })
       .overrideCommandNames({
         close: 'explicit.close.command'
       })
       .build();
 
-    const cmd = aggregate.commandCreators.close(undefined);
+    const cmd = aggregate.commandCreators.close();
     expect(cmd.type).toBe('explicit.close.command');
 
     const events = aggregate.handle(initialState, 'explicit.close.command', undefined);
