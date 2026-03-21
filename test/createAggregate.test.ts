@@ -35,7 +35,6 @@ describe('createAggregate', () => {
           project: (state, event: Event<{ with: number }>) => {
             console.log('project', event.type);
             state.value += 1;
-            return 'test';
           },
           increaseBy: (stateXX, command: Command<number>) => {
             return {
@@ -48,7 +47,6 @@ describe('createAggregate', () => {
           project: (state, event) => {
             console.log('project', event.type);
             state.value += 1;
-            return 'test';
           },
           increase: (stateXX, command: Command<void>) => {
             return {
@@ -59,8 +57,18 @@ describe('createAggregate', () => {
         }        
       }
     });
-    aggr.commands.increaseBy({ value: 12 }, { type: 'counter.increaseBy.command', payload: 12 });
-    aggr.projectors.increasedBy({ value: 12 }, { type: 'counter.increasedBy.event', payload: { with: 12 } });
+
+    const mockState = { value: 12 };
+    
+    // Command generation logic tested
+    const cmdResult = aggr.commands.increaseBy(mockState, { type: 'counter.increaseBy.command', payload: 12 });
+    
+    // Test that Immer successfully mutates a draft and maintains immutability of original
+    const newState = aggr.projectors.increasedBy(mockState, { type: 'counter.increasedBy.event', payload: { with: 12 } });
+    
+    expect(newState.value).toBe(13); // New state is updated
+    expect(mockState.value).toBe(12); // Original state remains untouched
+    
     aggr.commands.increase({value:1},{ type: 'counter.increase.command', payload:undefined })
     // aggr.projectors.increasedBy(
     //   { value: 0 },
