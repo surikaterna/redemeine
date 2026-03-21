@@ -173,7 +173,7 @@ describe('Aggregate Builder with Mixins', () => {
           if (event.payload.metadata !== undefined) state.metadata = event.payload.metadata;
         }
       })
-      .commands((emit: any) => ({
+      .commands((emit) => ({
         // Targeting line
         updateLine: (state, payload: { id: string; qty: number }) => 
           emit.lineUpdated(payload.id, { qty: payload.qty }),

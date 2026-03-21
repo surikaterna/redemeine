@@ -57,4 +57,4 @@ export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
           : (...args: [...ids: (string | number)[], payload: P]) => Event<P, any>
         : (...args: [...ids: (string | number)[], payload: any]) => Event<any, any>
     : never;
-};
+} & Record<string, (...args: any[]) => Event<any, any>>;

@@ -1,5 +1,6 @@
 import { Event, EventEmitterFactory, EventType, CommandType } from './types';
 import { MixinPackage } from './createMixin';
+import { EntityPackage } from './createEntity';
 import { produce, Draft } from 'immer';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 
@@ -11,11 +12,19 @@ type MergeMixins<T extends any[]> = T extends [infer First, ...infer Rest]
     ? ExtractMixinCommands<First> & MergeMixins<Rest>
     : {};
 
+type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName, any, any, infer CPayloads, any>
+    ? { [K in keyof CPayloads as K extends string ? `${EName}${Capitalize<K>}` : never]: CPayloads[K] }
+    : {};
+
+type MergeEntities<T extends any[]> = T extends [infer First, ...infer Rest]
+    ? ExtractEntityCommands<First> & MergeEntities<Rest>
+    : {};
 
 export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}> {
-    entities: <EN extends Record<string, any>>(
-        entities?: EN
-    ) => AggregateBuilder<S, Name, M, E, EOverrides>;
+    entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
+        entities?: EN,
+        ...entityPackages: T
+    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides>;
 
     mixins: <T extends MixinPackage<S, any, any, any, any>[]>(
         ...mixins: T
@@ -57,14 +66,14 @@ export function createAggregateBuilder<S, Name extends string>(
     let _commandsFactory: (emit: any) => Record<string, Function> = () => ({});
     let _commandOverrides: Record<string, string> = {};
     let _entities: string[] = [];
+    let _entityPackages: EntityPackage<any, any>[] = [];
     const _mixins: MixinPackage<S>[] = [];
 
     const builder: any = {
-        entities: () => {
-            // we don't strictly need runtime info if it just marks types, 
-            // but we might need to store entity prefixes if we dynamically extract them in apply/commands
-            // No, the proxy matches the strings. Actually, if we pass nothing, we can't get the keys.
-            // Wait, if it's strictly a type level registration `.entities<T>()` with no args, we don't have runtime info. Let's assume we do string parsing instead.
+        entities: (entitiesObj: any, ...packages: EntityPackage<any, any>[]) => {
+            if (packages.length > 0) {
+                _entityPackages.push(...packages);
+            }
             return builder;
         },
 

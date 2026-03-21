@@ -118,13 +118,14 @@ export type AggregateDeclaration<S, C extends RootCommandProcessors<S, Name, E> 
 };
 
 export function createAggregate<S, C extends RootCommandProcessors<S, Name, E>, E extends Events<S, any>, Name extends string>(spec: AggregateSpecification<S, C, E, Name>): AggregateDeclaration<S, C, E, Name> {
-  const res: { commands: AggregateDeclaration<S, C, E, Name>['commands']; projectors: AggregateDeclaration<S, C, E, Name>['projectors'] } = {
-    commands: {} as AggregateDeclaration<S, C, E, Name>['commands'],
-    projectors: {} as AggregateDeclaration<S, C, E, Name>['projectors']
-  const emitObject = {} as EventCreators<Name, E>;
+  const res = {
+    commands: {} as any,
+    projectors: {} as any
+  };
+  const emitObject = {} as any;
   const cmd = spec.commands || ({} as Record<string, any>);
+  const invokeObject = {} as any;
 
-  const emitObject: any = {};
   Object.keys(spec.events).forEach((e) => {
     emitObject[e] = (payload: any) => ({
       type: `${spec.type}.${e}.event`,
@@ -137,7 +138,6 @@ export function createAggregate<S, C extends RootCommandProcessors<S, Name, E>, 
 
     const stateProxy = new Proxy({}, {
       get(target, prop) { return (currentState as any)[prop]; },
-      set() { throw new Error("Attempted to modify read-only state. State mutations are only allowed in projectors. Use emit() to create events that trigger projectors."); }
       ownKeys(target) { return Reflect.ownKeys(currentState as any); },
       getOwnPropertyDescriptor(target, prop) { return Reflect.getOwnPropertyDescriptor(currentState as any, prop); },
       set() { throw new Error("State is readonly in commands. Mutate state in projectors."); }
