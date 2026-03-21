@@ -1,9 +1,5 @@
-export type EventType = `${string}.event`;
+import { Event, EventType } from "./types";
 
-export interface Event<P = any, T extends EventType = EventType> {
-  type: T;
-  payload: P;
-}
 export const createEvent = <E, T extends EventType = EventType>(
   type: T,
   preparePayload?: (E) => Record<string, any>
