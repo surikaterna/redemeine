@@ -176,25 +176,23 @@ describe('Aggregate Builder with Mixins', () => {
       .commands((emit) => ({
         // Targeting line
         updateLine: (state, payload: { id: string; qty: number }) => 
-          emit.lineUpdated(payload.id, { qty: payload.qty }),
-        
+          emit.lineUpdated({ lineId: payload.id, qty: payload.qty }),
+
         // Targeting subitems
-        updateSubLine: (state, payload: { lineId: string; subId: number; metadata: string }) => 
-          emit.lineSubitemsUpdated(payload.lineId, payload.subId, { metadata: payload.metadata })
+        updateSubLine: (state, payload: { lineId: string; subId: number; metadata: string }) =>
+          emit.lineSubitemsUpdated({ lineId: payload.lineId, subitemsId: payload.subId, metadata: payload.metadata })
       }))
       .build();
 
     // 1. Check generated event types
     // Using handle to invoke command
     const events1 = aggregate.handle(orderState, 'order.updateLine.command', { id: '123', qty: 5 });
-    expect(events1[0].type).toBe('order.line[123].updated.event');
-    expect(events1[0].payload).toEqual({ qty: 5 });
+    expect(events1[0].type).toBe('order.line.updated.event');
+    expect(events1[0].payload).toEqual({ lineId: '123', qty: 5 });
 
     const events2 = aggregate.handle(orderState, 'order.updateSubLine.command', { lineId: '123', subId: 456, metadata: 'new' });
-    expect(events2[0].type).toBe('order.line[123].subitems[456].updated.event');
-    expect(events2[0].payload).toEqual({ metadata: 'new' });
-
-    // 2. Check apply logic routes correctly to nested entities
+    expect(events2[0].type).toBe('order.line.subitems.updated.event');
+    expect(events2[0].payload).toEqual({ lineId: '123', subitemsId: 456, metadata: 'new' });
     const newState1 = aggregate.apply(orderState, events1[0]);
     expect(newState1.line[0].qty).toBe(5);
     expect(orderState.line[0].qty).toBe(1); // Immutability

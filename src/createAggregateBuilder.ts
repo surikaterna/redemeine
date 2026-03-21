@@ -110,41 +110,19 @@ export function createAggregateBuilder<S, Name extends string>(
             const emit = new Proxy({} as any, {
                 get: (_, prop: string) => (...args: any[]) => {
                     let type = allEventOverrides[prop];
+                    const payload = args.length > 0 ? args[0] : undefined;
+                    
                     if (!type) {
-                        type = `${aggregateName}.${prop}.event`;
-                        // Look for camelCase like entityNameEventName and format to entity[id].eventName.event
-                        // But wait! We might have nested like order.line[123].subLine[456].updated.event. 
-                        // How does `prop` look like? "lineUpdated", "subLineUpdated"? 
-                        // The user said: "emit.lineUpdated('123', payload) => order.line[123].updated.event"
-                    }
-                    
-                    // Simple logic: if args length > 1, the payload is last, rest are IDs
-                    // If event name implies entity targeting, we rewrite the `type`.
-                    const payload = args.length > 0 ? args[args.length - 1] : undefined;
-                    const ids = args.length > 1 ? args.slice(0, args.length - 1) : [];
-                    
-                    if (ids.length > 0 && !allEventOverrides[prop]) {
-                        // Very naive camelCase split, but properly supporting multiple IDs
-                        // e.g. "lineSubLineUpdated", ids: ['123', 456] -> 'line[123].subLine[456].updated.event'
-                        // we can chunk the prop string by capital letters if needed, but since we know ids.length,
-                        // let's try to parse the exact number of entities.
-                        // For simplicity, we just look at the prefix matching entities or split by CamelCase
                         const parts = prop.split(/(?=[A-Z])/);
-                        if (parts.length >= ids.length + 1) {
-                            const entities = parts.slice(0, ids.length);
-                            const action = parts.slice(ids.length).join('');
+                        if (parts.length > 1) {
+                            const entities = parts.slice(0, parts.length - 1);
+                            const action = parts[parts.length - 1];
                             const actionName = action.charAt(0).toLowerCase() + action.slice(1);
                             
-                            const path = entities.map((e, i) => `${e.toLowerCase()}[${ids[i]}]`).join('.');
+                            const path = entities.map(e => e.toLowerCase()).join('.');
                             type = `${aggregateName}.${path}.${actionName}.event`;
                         } else {
-                            // default fallback for 1 id
-                            let match = prop.match(/^([a-z0-9A-Z]+?)([A-Z]\w+)$/);
-                            if (match && ids.length === 1) {
-                                const entityName = match[1];
-                                const eventName = match[2].charAt(0).toLowerCase() + match[2].slice(1);
-                                type = `${aggregateName}.${entityName}[${ids[0]}].${eventName}.event`;
-                            }
+                            type = `${aggregateName}.${prop}.event`;
                         }
                     }
 
@@ -179,36 +157,41 @@ export function createAggregateBuilder<S, Name extends string>(
                         const prefix = aggregateName + '.';
                         let eventName = event.type;
                         
-                        if (eventTypeStr.startsWith(prefix) && eventTypeStr.endsWith('.event') && eventTypeStr.includes('[')) {
+if (eventTypeStr.startsWith(prefix) && eventTypeStr.endsWith('.event')) {
                             const withoutSuffix = eventTypeStr.slice(0, -6); // remove .event
                             const parts = withoutSuffix.slice(prefix.length).split('.');
-                            const actionName = parts.pop()!;
                             
-                            // Drill down
-                            for (const part of parts) {
-                                const match = part.match(/^([a-zA-Z0-9_]+)\[(.*)\]$/);
-                                if (match) {
-                                    const arrayName = match[1];
-                                    const id = match[2];
-                                    if (Array.isArray(targetDraft[arrayName])) {
-                                        const found = targetDraft[arrayName].find((item: any) => String(item.id) === id);
-                                        if (found) {
-                                            targetDraft = found;
-                                        }
-                                    } else if (Array.isArray(targetDraft[`${arrayName}s`])) {
-                                        // Sometimes collection is plural
-                                        const found = targetDraft[`${arrayName}s`].find((item: any) => String(item.id) === id);
-                                        if (found) {
-                                            targetDraft = found;
+                            if (parts.length > 1) {
+                                const actionName = parts.pop()!;
+                                
+                                // Drill down
+                                for (const part of parts) {
+                                    const arrayName = part;
+                                    // looking for ID from payload
+                                    const id = event.payload && (
+                                        event.payload[`${part}Id`] || 
+                                        event.payload[`${part.slice(0, -1)}Id`] || 
+                                        event.payload.id
+                                    );
+                                    
+                                    if (id !== undefined) {
+                                        if (Array.isArray(targetDraft[arrayName])) {
+                                            const found = targetDraft[arrayName].find((item: any) => String(item.id) === String(id));
+                                            if (found) {
+                                                targetDraft = found;
+                                            }
+                                        } else if (Array.isArray(targetDraft[`${arrayName}s`])) {
+                                            // Sometimes collection is plural
+                                            const found = targetDraft[`${arrayName}s`].find((item: any) => String(item.id) === String(id));
+                                            if (found) {
+                                                targetDraft = found;
+                                            }
                                         }
                                     }
                                 }
+                                
+                                eventName = `${aggregateName}.${actionName}.event`;
                             }
-                            
-                            eventName = `${aggregateName}.${actionName}.event`;
-                            // We need the key to look up in allEvents.
-                            // If the original registered event was "updated: () => {}", the lookup key is "updated"
-                            // But usually the key is "updated" and the inferred type is "aggregate.updated.event".
                         }
 
                         const eventKey = Object.keys(allEvents).find(key =>
