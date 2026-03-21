@@ -15,10 +15,10 @@ describe('createAggregate', () => {
       initialState: { value: 0 } as CounterState,
       events: {
         closed: {
-          close: (state) => {
+          close: (state: CounterState) => {
             return { type: 'counter.closed.event', payload: 2 } as Event<number>;
           },
-          project: (state, event) => {}
+          project: (state: CounterState) => {}
         }
       }
     });
@@ -33,10 +33,10 @@ describe('createAggregate', () => {
       initialState: { value: 0 } as CounterState,
       events: {
         increasedBy: {
-          project: (state, event: Event<{ with: number }>) => {
+          project: (state: CounterState, event: Event<{ with: number }>) => {
             state.value += event.payload.with;
           },
-          increaseBy: (state, command: Command<number>) => {
+          increaseBy: (state: CounterState, command: Command<number>) => {
             // Un-commenting the following line would cause a TypeScript error because state is ReadonlyDeep:
             // state.value = 100;
             return {
@@ -46,10 +46,10 @@ describe('createAggregate', () => {
           }
         },
         increased: {
-          project: (state, event) => {
+          project: (state: CounterState) => {
             state.value += 1;
           },
-          increase: (state, command: Command<void>) => {
+          increase: (state: CounterState, command: Command<void>) => {
             return {
               type: 'counter.increased.event',
               payload: undefined
@@ -77,12 +77,12 @@ describe('createAggregate', () => {
       initialState: { value: 0 } as CounterState,
       events: {
         closed: {
-          close: (state) => ({ type: 'counter.closed.event', payload: undefined } as Event),
-          project: (state) => {}
+          close: (state: CounterState) => ({ type: 'counter.closed.event', payload: undefined } as Event),
+          project: (state: CounterState) => {}
         },
         cancelled: {
-          cancel: (state) => ({ type: 'counter.cancelled.event', payload: undefined } as Event),
-          project: (state) => {}
+          cancel: (state: CounterState) => ({ type: 'counter.cancelled.event', payload: undefined } as Event),
+          project: (state: CounterState) => {}
         }
       }
     });
@@ -100,13 +100,13 @@ describe('createAggregate', () => {
       } as CounterState,
       events: {
         closed: {
-          close: (state, payload: { remark: string, remark2?: string }) => {
+          close: (state: CounterState, payload: { remark: string, remark2?: string }) => {
             if (state.cancelled) {
               throw new Error('Already closed');
             }
             return { type: 'counter.closed.event', payload: { remark: payload.remark + (payload.remark2 || '') } } as Event<{ remark: string }>;
           },
-          project: (state) => {
+          project: (state: CounterState) => {
             state.cancelled = true;
           }
         }
@@ -124,13 +124,12 @@ describe('createAggregate', () => {
       initialState: { value: 0, cancelled: false } as CounterState,
       commands: {
         // High-level command that throws multiple events (1:m)
-        processBatch: (state, batch: number[], emit, invoke) => {
+        processBatch: (state: CounterState, batch: number[], emit: any, invoke: any) => {
           let events: Event[] = [];
           for (const item of batch) {
-            // we must be aware that `invoke` evaluates against the initial `state` passed into processBatch
-            // so we can't reliably loop and invoke `invoke.increaseBy(...)` expecting updated state inside increaseBy!
-            // But they return events, so we concat them:
+            // we must be aware that `state` evaluates magically with the latest updates!
             const resultEvents = invoke.increaseBy(item);
+            // We concat local returns up to the caller
             events = events.concat(resultEvents);
           }
           return events; // 1:M return
@@ -138,11 +137,12 @@ describe('createAggregate', () => {
       },
       events: {
         increasedBy: {
-          project: (state, event: Event<number>) => {
+          project: (state: CounterState, event: Event<number>) => {
             state.value += event.payload;
           },
-          increaseBy: (state, amount: number, emit) => {
+          increaseBy: (state: CounterState, amount: number, emit: any) => {
             const evs = [emit.increasedBy(amount)];
+            // `state` is a Proxy to the latest evaluated state injected implicitly!
             if (state.value + amount > 100) {
               evs.push(emit.maxCapacityReached());
             }
@@ -151,7 +151,7 @@ describe('createAggregate', () => {
         },
         maxCapacityReached: {
           // Event with no 1:1 mapped command! Purely reacting to things.
-          project: (state, event: Event<void>) => {
+          project: (state: CounterState, event: Event<void>) => {
             state.cancelled = true;
           }
         }
