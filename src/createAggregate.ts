@@ -27,7 +27,7 @@ type WrapState<S, C> = {
 };
 
 export type AggregateCommandsDeclaration<S, C extends Record<string, (...args: any) => any>, E extends Events<S, any> = Events<S, any>> = {
-  [K in keyof C]: C[K] extends (s: any, command: infer Cmd) => infer R ? (state: S, command: Cmd) => R : never;
+  [K in keyof C]: C[K] extends (s: any, command: infer Cmd, ...rest: any[]) => infer R ? (state: S, command: Cmd) => R : never;
 } & WrapState<S,Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>>;
 
 type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
@@ -40,9 +40,29 @@ type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
     : {};
 };
 
-export type RootCommandProcessors<S> = Record<string, (state: ReadonlyDeep<S>, command: any) => Event | Event[]>;
+type ExtractEventPayload<E> = E extends Event<infer P, any> ? P : never;
 
-export type AggregateSpecification<S, C extends RootCommandProcessors<S> = RootCommandProcessors<S>, E extends Events<S> = Events<S>, Name extends string = string> = {
+type ExtractProjectorEvent<E> = 
+  E extends { project: (state: any, event: infer Ev) => any } ? Ev : 
+  E extends (state: any, event: infer Ev) => any ? Ev : 
+  never;
+
+type PayloadOrVoid<P> = [P] extends [void | undefined] ? true : false;
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type ExtractedPayload<E> = ExtractEventPayload<ExtractProjectorEvent<E>>;
+
+type EventCreatorFunc<Name extends string, K extends string, P> = 
+  IsAny<P> extends true ? (payload?: any) => Event<any, `${Name}.${K}.event`> :
+  [P] extends [void | undefined] ? (payload?: P) => Event<P, `${Name}.${K}.event`> :
+  (payload: P) => Event<P, `${Name}.${K}.event`>;
+
+export type EventCreators<Name extends string, E> = {
+  [K in keyof E]: EventCreatorFunc<Name, K & string, ExtractedPayload<E[K]>>
+};
+
+export type RootCommandProcessors<S, Name extends string, E> = Record<string, (state: ReadonlyDeep<S>, command: any, emit: EventCreators<Name, E>) => Event | Event[]>;
+
+export type AggregateSpecification<S, C extends RootCommandProcessors<S, Name, E> = RootCommandProcessors<S, string, Events<S, any>>, E extends Events<S> = Events<S>, Name extends string = string> = {
   type: Name;
   initialState: S;
   commands?: C;
@@ -62,23 +82,32 @@ export type AggregateProjectorsDeclaration<S, E extends Events<S, any> = Events<
   ) => S;
 };
 
-export type AggregateDeclaration<S, C extends RootCommandProcessors<S> = RootCommandProcessors<S>, E extends Events<S, any> = Events<S, any>, Name extends string = string> = {
+export type AggregateDeclaration<S, C extends RootCommandProcessors<S, Name, E> = RootCommandProcessors<S, string, Events<S, any>>, E extends Events<S, any> = Events<S, any>, Name extends string = string> = {
   type: Name;
   initialState: S;
   commands: AggregateCommandsDeclaration<S, C, E>;
   projectors: AggregateProjectorsDeclaration<S, E>;
   events: E;
 };
-export function createAggregate<S, C extends RootCommandProcessors<S>, E extends Events<S, any>>(spec: AggregateSpecification<S, C, E>): AggregateDeclaration<S, C, E> {
-  const res = { commands: {}, projectors: {} };
+
+export function createAggregate<S, C extends RootCommandProcessors<S, Name, E>, E extends Events<S, any>, Name extends string>(spec: AggregateSpecification<S, C, E, Name>): AggregateDeclaration<S, C, E, Name> {
+  const res = { commands: {}, projectors: {} } as any;
   const cmd = spec.commands || {};
+
+  const emitObject: any = {};
+  Object.keys(spec.events).forEach((e) => {
+    emitObject[e] = (payload: any) => ({
+      type: `${spec.type}.${e}.event`,
+      payload: payload === undefined ? undefined : payload
+    });
+  });
 
   /**
    * Create commands
    */
   Object.keys(cmd).forEach((c) => {
-    // invalidate cache
-    res.commands[c] = cmd[c];
+    // Inject emitObject as the 3rd argument for Root commands
+    res.commands[c] = (state: any, payload: any) => cmd[c](state, payload, emitObject);
   });
   Object.keys(spec.events).forEach((e) => {
     if (typeof e !== 'function') {
@@ -105,5 +134,5 @@ export function createAggregate<S, C extends RootCommandProcessors<S>, E extends
       });
     }
   });
-  return res as AggregateDeclaration<S, C, E>;
+  return res as AggregateDeclaration<S, C, E, Name>;
 }

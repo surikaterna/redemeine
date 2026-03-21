@@ -124,13 +124,13 @@ describe('createAggregate', () => {
       initialState: { value: 0, cancelled: false } as CounterState,
       commands: {
         // High-level command that throws multiple events (1:m)
-        processBatch: (state, batch: number[]) => {
+        processBatch: (state, batch: number[], emit) => {
           const events: Event[] = [];
           for (const item of batch) {
-            events.push({ type: 'counter.increasedBy.event', payload: { with: item } } as Event<{ with: number }>);
+            events.push(emit.increasedBy({ with: item }));
           }
           if (state.value + batch.reduce((a, b) => a + b, 0) > 100) {
-            events.push({ type: 'counter.maxCapacityReached.event', payload: undefined } as Event);
+            events.push(emit.maxCapacityReached());
           }
           return events; // 1:M return
         }
@@ -149,7 +149,7 @@ describe('createAggregate', () => {
         },
         maxCapacityReached: {
           // Event with no 1:1 mapped command! Purely reacting to things.
-          project: (state, event: Event) => {
+          project: (state, event: Event<void>) => {
             state.cancelled = true;
           }
         }
