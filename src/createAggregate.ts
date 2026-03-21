@@ -30,12 +30,12 @@ export type AggregateCommandsDeclaration<S, C extends Record<string, (...args: a
   [K in keyof C]: C[K] extends (s: any, command: infer Cmd, ...rest: any[]) => infer R ? (state: S, command: Cmd) => R : never;
 } & WrapState<S,Merge<Exclude<NestedPairsOf<E, Function>, { project: Function }>>>;
 
-type ValidateEventSpecification<S, ES extends Events<S, any>> = ES & {
+type ValidateEventSpecification<S, ES extends Events<S, any>, Name extends string, InvokeObj> = ES & {
   [T in keyof ES]: ES[T] extends {
     project(state3: Draft<S>, event: infer E extends Event): void;
   }
     ? {
-        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: ReadonlyDeep<S>, command: Parameters<ES[T][K]>[1]) => E | E[] : never;
+        [K in Exclude<keyof ES[T], 'project'>]: ES[T][K] extends (...args: any) => any ? (state4: ReadonlyDeep<S>, command: Parameters<ES[T][K]>[1], emit: EventCreators<Name, ES>, invoke: InvokeObj) => E | Event | Event[] : never;
       }
     : {};
 };
@@ -60,13 +60,23 @@ export type EventCreators<Name extends string, E> = {
   [K in keyof E]: EventCreatorFunc<Name, K & string, ExtractedPayload<E[K]>>
 };
 
-export type RootCommandProcessors<S, Name extends string, E> = Record<string, (state: ReadonlyDeep<S>, command: any, emit: EventCreators<Name, E>) => Event | Event[]>;
+type RemoveStateArg<Func> = Func extends (state: any, payload: infer P, ...args: any[]) => infer R 
+  ? IsAny<P> extends true ? (payload?: any) => R
+  : [P] extends [void | undefined] ? (payload?: P) => R
+  : (payload: P) => R
+  : never;
 
-export type AggregateSpecification<S, C extends RootCommandProcessors<S, Name, E> = RootCommandProcessors<S, string, Events<S, any>>, E extends Events<S> = Events<S>, Name extends string = string> = {
+type InvokeCreators<C> = {
+  [K in keyof C]: RemoveStateArg<C[K]>
+};
+
+export type RootCommandProcessors<S, Name extends string, E, InvokeObj = any> = Record<string, (state: ReadonlyDeep<S>, command: any, emit: EventCreators<Name, E>, invoke: InvokeObj) => Event | Event[]>;
+
+export type AggregateSpecification<S, C extends RootCommandProcessors<S, Name, E, InvokeCreators<AggregateCommandsDeclaration<S, {}, E>>> = RootCommandProcessors<S, string, Events<S, any>>, E extends Events<S> = Events<S>, Name extends string = string> = {
   type: Name;
   initialState: S;
   commands?: C;
-  events: ValidateEventSpecification<S, E>;
+  events: ValidateEventSpecification<S, E, Name, InvokeCreators<AggregateCommandsDeclaration<S, {}, E>>>;
 };
 
 export type AggregateProjectorsDeclaration<S, E extends Events<S, any> = Events<S, any>> = {
@@ -102,18 +112,37 @@ export function createAggregate<S, C extends RootCommandProcessors<S, Name, E>, 
     });
   });
 
+  const createInvokeObject = (state: any) => {
+    const invokeObject: any = {};
+    Object.keys(cmd).forEach((c) => {
+      invokeObject[c] = (payload: any) => res.commands[c](state, payload);
+    });
+    Object.keys(spec.events).forEach((e) => {
+      const eventDef = spec.events[e];
+      if (typeof eventDef !== 'function') {
+        Object.keys(eventDef as object).forEach((commandKey) => {
+          if (commandKey !== 'project') {
+            invokeObject[commandKey] = (payload: any) => res.commands[commandKey](state, payload);
+          }
+        });
+      }
+    });
+    return invokeObject;
+  };
+
   /**
    * Create commands
    */
   Object.keys(cmd).forEach((c) => {
-    // Inject emitObject as the 3rd argument for Root commands
-    res.commands[c] = (state: any, payload: any) => cmd[c](state, payload, emitObject);
+    res.commands[c] = (state: any, payload: any) => cmd[c](state, payload, emitObject, createInvokeObject(state));
   });
   Object.keys(spec.events).forEach((e) => {
-    if (typeof e !== 'function') {
-      Object.keys(spec.events[e]).forEach((commandKey) => {
+    const eventDef = spec.events[e];
+    if (typeof eventDef !== 'function') {
+      Object.keys(eventDef as object).forEach((commandKey) => {
         if (commandKey !== 'project') {
-          res.commands[commandKey] = spec.events[e][commandKey];
+          res.commands[commandKey] = (state: any, payload: any) =>
+            (eventDef as any)[commandKey](state, payload, emitObject, createInvokeObject(state));
         }
       });
     }

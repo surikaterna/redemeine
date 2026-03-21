@@ -100,11 +100,11 @@ describe('createAggregate', () => {
       } as CounterState,
       events: {
         closed: {
-          close: (state, remark: string, remark2?: string) => {
+          close: (state, payload: { remark: string, remark2?: string }) => {
             if (state.cancelled) {
               throw new Error('Already closed');
             }
-            return { type: 'counter.closed.event', payload: { remark: remark + (remark2 || '') } } as Event<{ remark: string }>;
+            return { type: 'counter.closed.event', payload: { remark: payload.remark + (payload.remark2 || '') } } as Event<{ remark: string }>;
           },
           project: (state) => {
             state.cancelled = true;
@@ -113,7 +113,7 @@ describe('createAggregate', () => {
       }
     });
 
-    const commandResult = aggr.commands.close({ value: 12, cancelled: false }, 'hello', 'world');
+    const commandResult = aggr.commands.close({ value: 12, cancelled: false }, { remark: 'hello', remark2: 'world' });
     // We expect the command function we passed to return the mocked event payload structure
     expect((commandResult as any).payload.remark).toEqual('helloworld');
   });
@@ -124,27 +124,29 @@ describe('createAggregate', () => {
       initialState: { value: 0, cancelled: false } as CounterState,
       commands: {
         // High-level command that throws multiple events (1:m)
-        processBatch: (state, batch: number[], emit) => {
-          const events: Event[] = [];
+        processBatch: (state, batch: number[], emit, invoke) => {
+          let events: Event[] = [];
           for (const item of batch) {
-            events.push(emit.increasedBy({ with: item }));
-          }
-          if (state.value + batch.reduce((a, b) => a + b, 0) > 100) {
-            events.push(emit.maxCapacityReached());
+            // we must be aware that `invoke` evaluates against the initial `state` passed into processBatch
+            // so we can't reliably loop and invoke `invoke.increaseBy(...)` expecting updated state inside increaseBy!
+            // But they return events, so we concat them:
+            const resultEvents = invoke.increaseBy(item);
+            events = events.concat(resultEvents);
           }
           return events; // 1:M return
         }
       },
       events: {
         increasedBy: {
-          project: (state, event: Event<{ with: number }>) => {
-            state.value += event.payload.with;
+          project: (state, event: Event<number>) => {
+            state.value += event.payload;
           },
-          increaseBy: (state, command: Command<number>) => {
-            return {
-              type: 'counter.increasedBy.event',
-              payload: { with: command.payload }
-            } as Event<{ with: number }>;
+          increaseBy: (state, amount: number, emit) => {
+            const evs = [emit.increasedBy(amount)];
+            if (state.value + amount > 100) {
+              evs.push(emit.maxCapacityReached());
+            }
+            return evs;
           }
         },
         maxCapacityReached: {
@@ -156,7 +158,7 @@ describe('createAggregate', () => {
       }
     });
 
-    const rootCommandResult = aggr.commands.processBatch({ value: 90, cancelled: false }, [5, 10]);
+    const rootCommandResult = aggr.commands.processBatch({ value: 90, cancelled: false }, [5, 20]);
 
     // Should return an array with 3 events: two +increases, and one capacity reached
     expect(Array.isArray(rootCommandResult)).toBe(true);
