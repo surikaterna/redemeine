@@ -1,0 +1,73 @@
+name: 📖 Documentation & LLM Context Audit
+
+on:
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'bin/**'
+      - 'package.json'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  audit:
+    name: AI Documentation Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚚 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Essential for git diffing
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 Extract API Surface
+        id: reflector
+        run: |
+          # Generate a JSON snapshot of the current public API
+          npx ts-node bin/redemeine-reflector.ts --json > api-surface.json
+          # Generate the new llms.txt content
+          npx ts-node bin/redemeine-reflector.ts --generate-llms-ctx > new-llms.txt
+
+      - name: 🧠 AI Audit & Review
+        uses: google-github-actions/run-gemini-audit@v1 # Placeholder for Gemini/AI Auditor
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          input_file: 'api-surface.json'
+          docs_path: 'docs/'
+          prompt: |
+            You are an expert technical writer for Redemeine.
+            1. Compare 'api-surface.json' against the files in '/docs'.
+            2. If a public method or type is missing documentation, leave a Review Comment on the PR with a suggested TSDoc.
+            3. Check if the 'Targeted Naming' patterns have changed and verify the README matches.
+            4. If documentation drift is > 10%, fail the check.
+
+      - name: 🤖 Update llms.txt
+        run: |
+          # Only update if the content has actually changed
+          if ! cmp -s llms.txt new-llms.txt; then
+            mv new-llms.txt llms.txt
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git add llms.txt
+            git commit -m "docs(ai): auto-update llms.txt for API changes"
+            git push
+          fi
+
+      - name: 🚩 Verify TSDoc Coverage
+        run: |
+          # Use the reflector to fail the build if public exports lack TSDocs
+          npx ts-node bin/redemeine-reflector.ts --verify-tsdoc
