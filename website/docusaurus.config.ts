@@ -46,6 +46,7 @@ const config: Config = {
     [
       'docusaurus-plugin-typedoc',
       {
+        id: 'default', // Explicitly set the ID        
         // Look UP one folder to find your TypeScript source code
         entryPoints: ['../src/redemeine.ts'],
         tsconfig: '../tsconfig.json',
