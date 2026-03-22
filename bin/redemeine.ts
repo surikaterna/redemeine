@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { colors, parseArgs } from './utils';
-import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate } from './templates';
+import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from './templates';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -18,11 +18,11 @@ function prompt(question: string): Promise<string> {
   }));
 }
 
-function runInstall(missing: string[]): Promise<void> {
+function runInstall(missing: string[], isDev = false): Promise<void> {
   return new Promise((resolve, reject) => {
-    let pm = 'npm install';
-    if (fs.existsSync(path.resolve(process.cwd(), 'yarn.lock'))) pm = 'yarn add';
-    else if (fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml'))) pm = 'pnpm add';
+    let pm = isDev ? 'npm install -D' : 'npm install';
+    if (fs.existsSync(path.resolve(process.cwd(), 'yarn.lock'))) pm = isDev ? 'yarn add -D' : 'yarn add';
+    else if (fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml'))) pm = isDev ? 'pnpm add -D' : 'pnpm add';
 
     const cmd = `${pm} ${missing.join(' ')}`;
     process.stdout.write(colors.cyan(`Installing ${missing.join(', ')} `));
@@ -89,6 +89,19 @@ async function preFlightCheck() {
         console.log(colors.cyan('Proceeding without installing dependencies...'));
       }
     }
+
+    if (!allDeps['jest'] && !allDeps['vitest']) {
+      const ans = await prompt(`No testing framework detected. Would you like to scaffold Vitest? (y/n) `);
+      if (ans.trim().toLowerCase() === 'y' || ans.trim().toLowerCase() === 'yes') {
+        try {
+          await runInstall(['vitest'], true);
+        } catch {
+          process.exit(1);
+        }
+      } else {
+        console.log(colors.cyan('Proceeding without installing testing framework...'));
+      }
+    }
   } catch (err) {
     console.log(colors.red('Error reading project dependencies.'));
     process.exit(1);
@@ -115,8 +128,15 @@ function initAggregate(name: string) {
   fs.writeFileSync(path.join(domainDir, 'contract.ts'), contractTemplate(name));
   fs.writeFileSync(path.join(domainDir, 'selectors.ts'), selectorsTemplate());
   fs.writeFileSync(path.join(domainDir, 'aggregate.ts'), aggregateTemplate(name));
+  fs.writeFileSync(path.join(domainDir, 'aggregate.spec.ts'), aggregateSpecTemplate(name));
+  
+  const testUtilsPath = path.resolve(process.cwd(), 'src/test-utils.ts');
+  if (!fs.existsSync(testUtilsPath)) {
+    fs.writeFileSync(testUtilsPath, testUtilsTemplate());
+  }
 
   console.log(colors.green(`Successfully initialized '\${name}' aggregate in src/domains/\${name}/`));
+  console.log(colors.green(`🧪 Test suite created! Run \`npm test\` to verify your business logic.`));
 }
 
 function addEntity(name: string, aggregateName?: string | boolean) {

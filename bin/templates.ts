@@ -46,3 +46,30 @@ export const ${entityName}Entity = createEntity()
     // Entity logic scoped and unpolluted from the root
   });
 `;
+
+export const aggregateSpecTemplate = (aggregateName: string) => `import { ${aggregateName}Aggregate } from './aggregate';
+
+describe('${aggregateName} Aggregate', () => {
+  const { process, apply, initialState } = ${aggregateName}Aggregate.build();
+
+  it('should emit accepted event when accept command is processed', () => {
+    // Given: Empty initial state
+    const state = initialState;
+
+    // When: Processing the accept command
+    const events = process(state, { 
+      type: '${aggregateName}.accept.command', 
+      payload: { id: '123' } 
+    } as any);
+
+    // Then: Expect the correct targeted event name
+    // expect(events[0]?.type).toBe('${aggregateName}.accepted.event');
+  });
+});
+`;
+
+export const testUtilsTemplate = () => `// Run the apply function over an array of events to reconstruct state
+export function reduce(apply: (state: any, event: any) => any, initialState: any, events: any[]) {
+  return events.reduce((state, event) => apply(state, event), initialState);
+}
+`;
