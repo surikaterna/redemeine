@@ -1,6 +1,59 @@
 # Redemeine LLM Context
 
-## How to use the Builders
+## 💡 Mental Model
+Redemeine operates on a **"Type-Transparent"** architecture:
+1. **Contract-First:** You define standard TypeScript interfaces for your Commands and Events.
+2. **Invisible Validation:** Redemeine's internal engine uses reflected metadata (via `ts-to-zod` or internal reflectors) to validate incoming payloads before they ever reach your `.commands()` handlers.
+3. **Guaranteed Safety:** By the time a command reaches your logic, it is already guaranteed to match your TypeScript interface at runtime.
+4. **Logic Isolation:** This allows your domain code to remain "POJO" (Plain Old JavaScript Objects) without any dependency on validation libraries like Zod or Joi in the business layer.
+
+## ⚠️ Critical Implementation Rules
+- **No Manual Validation:** Never write `z.parse()` or manual `if (!data.id)` checks inside commands. Assume the data is already valid.
+- **Interface-Driven:** Use TypeScript interfaces as the source of truth for all data structures.
+- **Pure Domain Logic:** Keep the `.commands()` and `.events()` blocks focused strictly on business rules and state transitions.
+- **CamelCase to Dot-Notation:** Trust the internal naming engine to map `registerUser` (method) to `user.registered` (event path) automatically.
+
+## 🚀 Example Composition
+import { AggregateBuilder } from 'redemeine';
+
+/** 1. Pure TypeScript Contracts */
+export interface RegisterUser {
+  id: string;
+  username: string;
+}
+
+export interface UserState {
+  id?: string;
+  username?: string;
+  status: 'guest' | 'registered';
+}
+
+/** 2. Clean Aggregate Composition */
+export const UserAggregate = new AggregateBuilder<UserState>()
+  .events({
+    /** State Projection: Direct mutation via Immer */
+    userRegistered: (state, event: RegisterUser) => {
+      state.id = event.id;
+      state.username = event.username;
+      state.status = 'registered';
+    }
+  })
+  .commands({
+    /** Business Logic: Validation is handled by Redemeine internally */
+    register: (state, cmd: RegisterUser) => {
+      if (state.status === 'registered') {
+        throw new Error("User is already registered");
+      }
+      
+      return { 
+        type: 'userRegistered', 
+        data: cmd 
+      };
+    }
+  })
+  .build();
+
+## 🛠️ API Reference (Builders)
 
 ### `AggregateBuilder`
 _The core builder interface for composing Aggregates in Redemeine.
@@ -16,14 +69,14 @@ The naming engine will automatically map nested calls to targeted dot-notation c
 These will be injectable into your command handlers via the `context` parameter.
 - `.events()` (Returns `this`) - Register state-altering event handlers.
 **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
-The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`).
+The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`). **[IMMER MUTATION ALLOWED]**
 - `.overrideEventNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific events.
 Crucial for legacy migrations where historical event strings do not match the standard `aggregate.entity.action` convention.
 - `.naming()` (Returns `this`) - Replaces the default Targeted Naming engine with a custom strategy.
 Use this if your entire system uses a different naming convention (e.g., camelCase instead of dot-notation).
 - `.commands()` (Returns `this`) - Define command processors that execute business logic and emit events.
 **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
-The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`).
+The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`). **[READONLY LOGIC LAYER]**
 - `.overrideCommandNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific commands.
 Prevents the auto-namer from modifying the key into standard dot-notation routing.
 - `.build()` - Finalizes and compiles the aggregate.
@@ -35,10 +88,10 @@ _Interface controlling the "Targeted Naming" engine used to automatically route 
 - `.command()` - Transforms a given property name (and optionally its path) into a fully qualified command type string.
 - `.event()` - Transforms a given property name (and optionally its path) into a fully qualified event type string.
 
-## Targeted Naming Patterns
-Redemeine uses specific path-aware routing protocols internally. The `NamingStrategy` interface relies on these conventions:
-- `command`
-- `event`
+## 🎯 Targeted Naming Patterns
+Methods map to paths using these conventions:
+- `command` (Auto-formatted path component)
+- `event` (Auto-formatted path component)
 
-## Extracted Types & Interfaces
-Contains 23 Interfaces, 10 Types, and 3 Public Functions.
+--- 
+**Metadata:** 23 Interfaces, 10 Types, 3 Public Functions.

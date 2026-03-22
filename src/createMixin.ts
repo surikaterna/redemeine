@@ -37,6 +37,9 @@ export interface MixinEventsStage<S> {
   ) => MixinEventOverridesStage<S, E>;
 }
 
+/**
+ * Staged builder interface bridging Mixin events to naming overrides.
+ */
 export interface MixinEventOverridesStage<S, E> {
   /**
    * Staged builder interface bridging Mixin events to naming overrides.

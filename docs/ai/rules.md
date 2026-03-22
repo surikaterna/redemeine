@@ -1,0 +1,4 @@
+- **No Manual Validation:** Never write `z.parse()` or manual `if (!data.id)` checks inside commands. Assume the data is already valid.
+- **Interface-Driven:** Use TypeScript interfaces as the source of truth for all data structures.
+- **Pure Domain Logic:** Keep the `.commands()` and `.events()` blocks focused strictly on business rules and state transitions.
+- **CamelCase to Dot-Notation:** Trust the internal naming engine to map `registerUser` (method) to `user.registered` (event path) automatically.

@@ -122,6 +122,14 @@ export const EntityArray = {
  * Resolves the final event name string during type inference.
  * Accounts for whether the targeted naming engine is utilized or if an explicit override was historically provided.
  */
+export type ResolveEventName<AggregateName extends string, K, EOverrides> =     
+  K extends keyof EOverrides
+    ? (EOverrides[K] extends EventType ? EOverrides[K] : `${AggregateName}.${Extract<K, string>}.event`)
+    : `${AggregateName}.${Extract<K, string>}.event`;
+
+/**
+ * SMART EMITTER FACTORY
+ * Checks the number of arguments in the event projector function to statically enforce payload parameters inside Command processors.
  */
 export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
   [K in keyof E]: E[K] extends (...args: any[]) => any
