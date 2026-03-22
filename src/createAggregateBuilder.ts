@@ -24,24 +24,69 @@ type MergeEntities<T extends any[]> = T extends [infer First, ...infer Rest]
     ? ExtractEntityCommands<First> & MergeEntities<Rest>
     : {};
 
+/**
+ * The core builder interface for composing Aggregates in Redemeine.
+ * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
+ */
 export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}> {
+    /**
+     * Inherit all business rules, selectors, and events from a parent aggregate builder.
+     * 
+     * @example
+     * const Shipment = createAggregateBuilder('Shipment', initialShipment)
+     *   .extends(OrderAggregate) // Inherits standard order rules while adding legs
+     */
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel>(
         parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel>
     ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel>;
 
+    /**
+     * Register nested entities into the aggregate's namespace. 
+     * Entities keep their own private selectors and logic.
+     * The naming engine will automatically map nested calls to targeted dot-notation commands (e.g. `order.order_lines.cancel.command`).
+     * 
+     * @example
+     * .entities({ orderLines: OrderLineEntity }) 
+     * // Later used as: order.orderLines('line-1').cancel()
+     */
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
         ...entityPackages: T
     ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel>;
 
+    /**
+     * Compose reusable domain logic chunks (Mixins) into this aggregate.
+     * 
+     * @example
+     * .mixins(TrackingMixin, AuditLoggerMixin)
+     */
     mixins: <T extends MixinPackage<S, any, any, any, any, any>[]>(
         ...mixins: T
     ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel>;
 
+    /**
+     * Define pure functions for reading and deriving state.
+     * These will be injectable into your command handlers via the `context` parameter.
+     * 
+     * @example
+     * .selectors({
+     *   getTotalWeight: (state) => state.items.reduce((sum, item) => sum + item.weight, 0)
+     * })
+     */
     selectors: <NewSel extends SelectorsMap<S>>(
         selectors: NewSel
     ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel>;
 
+    /**
+     * Register state-altering event handlers.
+     * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
+     * The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`).
+     * 
+     * @example
+     * .events({
+     *   itemAdded: (state, event) => { state.items.push(event.payload); }
+     * })
+     */
     events: <NewE extends Record<string, (state: any, event: Event<any, any>) => void>>(
         events: NewE
     ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides, Sel>;
@@ -52,6 +97,19 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
+    /**
+     * Define command processors that execute business logic and emit events.
+     * **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
+     * The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`).
+     * 
+     * @example
+     * .commands((emit, ctx) => ({
+     *   dispatchShipment: (state, payload: { dest: string }) => {
+     *     if (ctx.selectors.isReady(state)) return emit('dispatched', payload);
+     *     throw new Error("Not ready");
+     *   }
+     * }))
+     */
     commands: <C extends Record<string, (state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]>>(
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
     ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides, Sel>;
@@ -59,6 +117,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     overrideCommandNames: (overrides: Partial<Record<keyof M, CommandType>>) => 
         AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
+    /**
+     * Finalizes and compiles the aggregate.
+     */
     build: () => {
         initialState: S;
         process: (state: S, command: Command<any, string>) => Event[];
@@ -82,6 +143,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     };
 }
 
+/**
+ * Bootstraps a new Redemeine Domain Aggregate Composer.
+ */
 export function createAggregateBuilder<S, Name extends string>(
     aggregateName: Name,
     initialState: S

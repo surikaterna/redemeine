@@ -28,7 +28,17 @@ export interface BaseEntity {
 
 export type Collection<T extends BaseEntity> = T[];
 
+/**
+ * Utility toolkit for safely managing collections (arrays) of entities within Immer event handlers.
+ * Ensures references are correctly mutated without mutating the entire array instance, preserving predictability.
+ */
 export const EntityArray = {
+  /**
+   * Updates an entity by ID if it exists; otherwise, appends it strictly.
+   * 
+   * @example
+   * EntityArray.upsert(state.orderLines, { id: 'line-1', sku: 'A1' });
+   */
   upsert<T extends BaseEntity>(array: T[], item: T): void {
     const index = array.findIndex(e => e.id === item.id);
     if (index >= 0) {
@@ -37,12 +47,26 @@ export const EntityArray = {
       array.push(item);
     }
   },
+
+  /**
+   * Applies partial updates to an entity matching the given ID. Fails silently if missing.
+   * 
+   * @example
+   * EntityArray.update(state.orderLines, 'line-1', { isCancelled: true });
+   */
   update<T extends BaseEntity>(array: T[], id: string | number, patch: Partial<T>): void {
     const index = array.findIndex(e => e.id === id);
     if (index >= 0) {
       Object.assign(array[index], patch);
     }
   },
+
+  /**
+   * Slices the entity matching the ID out of the collection entirely.
+   * 
+   * @example
+   * EntityArray.remove(state.orderLines, 'line-1');
+   */
   remove<T extends BaseEntity>(array: T[], id: string | number): void {
     const index = array.findIndex(e => e.id === id);
     if (index >= 0) {
