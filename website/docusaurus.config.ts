@@ -52,6 +52,9 @@ const config: Config = {
         tsconfig: '../tsconfig.json',
         // Output the generated API docs into your root docs folder
         out: '../docs/api',
+        skipErrorChecking: true,      // Don't crash on the 'zod'/'immer' missing errors
+        cleanOutputDir: true,         // Ensure a fresh slate
+        disableSources: true,         // Prevents trying to link back to local source code        
         plugin: ['typedoc-plugin-markdown'],
         sidebar: {
           categoryLabel: 'API Reference',
