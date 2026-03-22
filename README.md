@@ -1,18 +1,79 @@
-# redemeine
-redemeine, is a retake on the domain lib http://github.com/surikaterna/demeine for ES/CRQS. Inspiration taken from https://github.com/reduxjs/redux-toolkit
+# 📦 Redemeine
 
-## Commands
-Commands are a request to change the State of an Aggregate
+> **Sane defaults CQRS/ES aggregates library for TypeScript**
 
-## Events
-One or more Events are the result of a Command and represents that ther was a change in the State.
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)
+![Type Coverage](https://img.shields.io/badge/type_coverage-100%25-blue?style=flat-square)
+![AI-Ready](https://img.shields.io/badge/AI--Ready-llms.txt-blueviolet?style=flat-square)
 
-## Command Processors
+---
 
-## Event Projectors / Applyers
+## ⚡ Visual Hook
 
-# TODO
-//commands, processors, events, projectors
-//entities
-//middleware
-//mirage (read + write)
+```typescript
+import { createAggregateBuilder, createLiveAggregate } from 'redemeine';
+
+// Compose your aggregate builder with typed commands, events, and entities
+const OrderAggregate = createAggregateBuilder('Order', initialOrderState)
+  .entities({ orderLines: OrderLineEntity }) // Encapsulated logic & selectors
+  .events({
+    placed: (state, event) => { state.status = 'placed'; }
+  })
+  .commands(emit => ({
+    place: (state, payload: { customerId: string }) => emit('placed', payload),
+  }))
+  .build();
+
+// Instantiate and interact with a live aggregate
+const order123 = createLiveAggregate(OrderAggregate, 'order-123');
+
+// Type-safe dispatching triggers Immer-powered state transitions natively
+await order123.place({ customerId: 'cust-99' });
+
+// Entities maintain their own namespace and logic
+await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.order_line.cancel.command'
+```
+
+## 🚀 The Elevator Pitch
+
+*   **Path-Aware Convention**: Navigate and organize your commands and events effortlessly. Automatic routing driven by intuitive naming conventions reduces boilerplate.
+*   **Encapsulated Logic**: Stop polluting your root aggregate. Entities (like `OrderLines`) keep their own private selectors and logic, exposed only where they matter.
+*   **Type-Safe Contracts**: End-to-end type safety derived directly from your Command and Event schemas (powered by Zod), catching mismatches at compile time rather than runtime.
+*   **Immutable State Transitions**: Leverage Immer under the hood for clean, predictable, and fully typed event applications to your aggregate state.
+
+## 🧩 Aggregate Composition
+
+Redemeine treats aggregates as composable building blocks:
+*   **Inheritance**: Use `.extends(Parent)` to inherit all business rules, selectors, and events. For example, a `Shipment` can `.extends(Order)` to inherit its foundational logic while adding shipment-specific behaviors (like `Legs`).
+
+## 🧭 Quick Navigation
+
+*   📖 [**`/docs`**](./docs) - Deep dives into Commands, Events, Aggregates, and Mixins.
+*   🧪 [**`/examples`**](./examples) - Executable, real-world CQRS applications.
+*   🤖 [**`/llms.txt`**](./llms.txt) - Contextual overview specifically optimized for AI coding assistants.
+
+## 🛠️ Scaffold Your Project
+
+Get up to speed in seconds by leveraging the CLI to generate your domain skeleton:
+
+```bash
+# Initialize a new Redemeine workspace with standard conventions
+npx redemeine init <name>
+
+# Generate a new aggregate with its standard command and event files
+# (This automatically scaffolds a "Given/When/Then" test suite!)
+npx redemeine generate aggregate Shipment
+```
+
+## 🏗️ Core Concepts
+
+*   **Commands**: Requests indicating an intent to change the State of an Aggregate.
+*   **Events**: The result of a Command, representing that a State change has occurred.
+*   **Selectors**: Pure functions for reading and deriving state, injectable into command handlers.
+*   **Command Processors**: Handlers that execute business logic, validate intent, and emit domain events.
+*   **Event Applyers**: Functions that compute the new aggregate state by consuming the emitted events.
+*   **Path-Aware Naming**: Naming follows the `aggregate.entity.action` convention by default, automatically routing nested commands and events.
+
+---
+*Inspired by [demeine](http://github.com/surikaterna/demeine) and [Redux Toolkit](https://github.com/reduxjs/redux-toolkit).*
+Redemeine is the **Type-Safe, Composition-focused evolution** of `demeine` for modern TypeScript projects.
