@@ -34,9 +34,12 @@
     "test": "jest",
     "test:watch": "jest --watchAll",
     "test-compile": "tsc -p ./",
-    "docs:build": "typedoc",
+    "docs:typedoc": "typedoc",
     "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
-    "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt"
+    "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt",
+    "docs:install": "npm install --prefix website",
+    "docs:dev": "npm run start --prefix website",
+    "docs:build": "npm run build --prefix website"
   },
   "devDependencies": {
     "@jest/globals": "^30.3.0",

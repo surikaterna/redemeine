@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - main
-    # Only run this if files in the docs or website folder change
     paths:
       - 'website/**'
       - 'docs/**'
-      - 'src/**' # Because TypeDoc generates docs from your source!
+      - 'src/**'
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+env:
+  # Resolves the Node 20 deprecation warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: read
   pages: write
@@ -30,21 +32,24 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          # Assuming your docusaurus site is in a 'website' subfolder
-          cache-dependency-path: website/package-lock.json 
+          # Point cache to the website's package-lock
+          cache-dependency-path: './website/package-lock.json' 
           
       - name: Install dependencies
-        run: npm ci
+        # Run inside the website folder
         working-directory: ./website
+        run: npm ci
         
       - name: Build website
-        run: npm run build
+        # Run inside the website folder
         working-directory: ./website
+        run: npm run build 
         
       - name: Upload Build Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: website/build
+          # Docusaurus outputs to a 'build' folder inside 'website'
+          path: './website/build' 
           
       - name: Deploy to GitHub Pages
         id: deployment
