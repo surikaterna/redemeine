@@ -48,7 +48,7 @@ describe('Aggregate Builder with Mixins', () => {
           state.id = event.payload.id;
         }
       })
-      .selectors({}).commands((emit, ctx) => ({
+      .commands((emit, ctx) => ({
         open: (state, id: string) => emit.opened({ id })
       }))
       .build();
@@ -89,7 +89,7 @@ describe('Aggregate Builder with Mixins', () => {
       .events({
         closed: (state) => { state.status = 'closed'; }
       })
-      .selectors({}).commands((emit, ctx) => ({
+      .commands((emit, ctx) => ({
         close: () => emit.closed()
       }))
       .overrideEventNames({

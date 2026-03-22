@@ -1,0 +1,51 @@
+name: Deploy Docusaurus to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    # Only run this if files in the docs or website folder change
+    paths:
+      - 'website/**'
+      - 'docs/**'
+      - 'src/**' # Because TypeDoc generates docs from your source!
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          # Assuming your docusaurus site is in a 'website' subfolder
+          cache-dependency-path: website/package-lock.json 
+          
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./website
+        
+      - name: Build website
+        run: npm run build
+        working-directory: ./website
+        
+      - name: Upload Build Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+          
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

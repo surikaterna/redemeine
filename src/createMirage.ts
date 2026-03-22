@@ -1,5 +1,4 @@
 import { Command, Event, AggregateHooks } from './types';
-import { Depot } from './Depot';
 import { Contract } from './Contract';
 
 /**
@@ -130,14 +129,14 @@ export class MirageCore<S> {
 export function createMirage<S extends {}, Name extends string, M extends Record<string, any>>(
     builder: BuiltAggregate<S, M>,
     id: string,
-    initialState?: S,
-    options?: MirageOptions
+    setup?: MirageOptions & { snapshot?: S; events?: Event[] }
 ): Mirage<S, M> {
 
-    const core = new MirageCore(builder, id, initialState || builder.initialState, options?.contract, options?.strict);
+    const state = setup?.events?.reduce((acc, ev) => builder.apply(acc, ev), setup?.snapshot ?? builder.initialState) ?? (setup?.snapshot ?? builder.initialState);
+    const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict);
 
 const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
-        return new Proxy(typeof stateTarget === 'object' && stateTarget !== null ? stateTarget : () => {}, {
+        return new Proxy(function() { return stateTarget; }, {
             get(target, prop) {
                 if (path.length === 0) {
                     if (prop === 'state') return core.state;

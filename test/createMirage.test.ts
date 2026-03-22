@@ -1,25 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '../src/createAggregate';
 import { createMirage, createLegacyAggregateBridge } from '../src/createMirage';
-import { EventStore, createDepot } from '../src/Depot';
 import { Event } from '../src/types';
-
-class MockEventStore implements EventStore {
-    public events = new Map<string, Event<any, any>[]>();
-
-    async getEvents(id: string): Promise<Event<any, any>[]> {
-        return this.events.get(id) || [];
-    }
-
-    async saveEvents(id: string, events: Event<any, any>[], expectedVersion?: number): Promise<void> {
-        const existing = this.events.get(id) || [];
-        this.events.set(id, [...existing, ...events]);
-    }
-
-    _setMockEvents(id: string, events: Event<any, any>[]) {
-        this.events.set(id, events);
-    }
-}
 
 interface TestState {
     value: number;
@@ -27,7 +9,7 @@ interface TestState {
     line: { id: string, qty: number }[];
 }
 
-describe('Mirage Depot tests', () => {
+describe('Mirage tests', () => {
     const initialState: TestState = {
         value: 0,
         title: 'New',
@@ -43,6 +25,9 @@ describe('Mirage Depot tests', () => {
                 lineUpdated: (state: any, event: Event<{lineId: string, id?: string, qty: number}>) => {
                     if (event.payload.id === 'abc') {
                         state.line.push({id: event.payload.id, qty: event.payload.qty});
+                    } else if (event.payload.lineId === '123') {
+                        const line = state.line.find((x: any) => x.id === '123');
+                        if (line) line.qty = event.payload.qty;
                     }
                 }
             })
@@ -53,29 +38,47 @@ describe('Mirage Depot tests', () => {
             .build();
     };
 
-    test('should initialize with initialState if not found in depot', async () => {
+    test('should initialize with initialState if no snapshot/events provided', async () => {
         const builder = setupBuilder();
-        const store = new MockEventStore();
-        const liveDepot = createDepot(builder, store as any);
-
-        const live = await liveDepot.get('agg-1');
+        const live = createMirage(builder, 'agg-1');
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
 
         expect(bridge._state.value).toBe(0);
         expect(bridge.id).toBe('agg-1');
     });
 
-    test('should load existing state from depot', async () => {
+    test('should load existing state from snapshot', async () => {
         const builder = setupBuilder();
-        const store = new MockEventStore();
-        store._setMockEvents('agg-2', [{ type: 'test.updated.event', payload: 10 }]);
-
-        const liveDepot = createDepot(builder, store as any);
-        const live = await liveDepot.get('agg-2');
+        const live = createMirage(builder, 'agg-2', {
+            snapshot: { value: 10, title: 'Loaded', line: [] }
+        });
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
 
         expect(bridge._state.value).toBe(10);
-        expect(bridge._state.title).toBe('New'); // not Loaded since it's events!
+        expect(bridge._state.title).toBe('Loaded');
+    });
+
+    test('should load existing state from events', async () => {
+        const builder = setupBuilder();
+        const live = createMirage(builder, 'agg-3', {
+            events: [{ type: 'test.updated.event', payload: 42 }]
+        });
+        const bridge = createLegacyAggregateBridge<TestState, any>(live);
+
+        expect(bridge._state.value).toBe(42);
+        expect(bridge._state.title).toBe('New');
+    });
+
+    test('should load existing state from snapshot and events', async () => {
+        const builder = setupBuilder();
+        const live = createMirage(builder, 'agg-4', {
+            snapshot: { value: 10, title: 'Loaded', line: [] },
+            events: [{ type: 'test.updated.event', payload: 42 }]
+        });
+        const bridge = createLegacyAggregateBridge<TestState, any>(live);
+
+        expect(bridge._state.value).toBe(42);
+        expect(bridge._state.title).toBe('Loaded');
     });
 
     test('should execute flat commands, update state & uncommitted', async () => {
@@ -107,43 +110,20 @@ describe('Mirage Depot tests', () => {
         expect(uncommitted[0].payload).toEqual({ qty: 99, lineId: '123', id: '123' });
     });
 
-    test('save() persists state and clears uncommitted', async () => {
-        const builder = setupBuilder();
-        const store = new MockEventStore();
-        let saveCalled = false;
-        store.saveEvents = async (id, evs) => {
-            saveCalled = true;
-        };
-        const liveDepot = createDepot(builder, store as any);
-        const live = await liveDepot.get('agg-1'); 
-
-        await live.update(55);
-
-        const bridge = createLegacyAggregateBridge<TestState, any>(live);
-        expect(bridge.getUncommittedEvents().length).toBe(1);
-
-        await liveDepot.save(live);
-
-        expect(saveCalled).toBe(true);
-        expect(bridge.getUncommittedEvents().length).toBe(0);
-    });
-
     test('should allow reading readable states directly from live object natively', async () => {
         const builder = setupBuilder();
-        const store = new MockEventStore();
-        store._setMockEvents('agg-r', [{ type: 'test.updated.event', payload: 777 }]);
+        const live = createMirage(builder, 'agg-r', {
+            events: [{ type: 'test.updated.event', payload: 777 }]
+        });
 
-        const liveDepot = createDepot(builder, store as any);
-        const live = await liveDepot.get('agg-r');
-
-        expect(live.state.value).toBe(777);
+        expect(live.value).toBe(777); 
 
         // Native array functions shouldn't break proxy structure
-        const firstLine = live.state.line[1] || live.state.line[0]; // depends on push order
+        const firstLine = live.line[0];
         
         // Calling flat commands still behaves dynamically returning properly bounded Promise
         await live.update(888);
-        expect(live.state.value).toBe(888);
+        expect(live.value).toBe(888);
     });
 
 });

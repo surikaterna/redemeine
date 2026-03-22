@@ -79,6 +79,8 @@ Use this if your entire system uses a different naming convention (e.g., camelCa
 The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`). **[READONLY LOGIC LAYER]**
 - `.overrideCommandNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific commands.
 Prevents the auto-namer from modifying the key into standard dot-notation routing.
+- `.hooks()` (Returns `this`) - Registers lifecycle hooks for cross-cutting concerns (e.g., logging, auth, metrics).
+Hooks intercept the execution flow but DO NOT mutate state directly.
 - `.build()` - Finalizes and compiles the aggregate.
 
 ### `NamingStrategy`
@@ -94,4 +96,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 23 Interfaces, 10 Types, 3 Public Functions.
+**Metadata:** 24 Interfaces, 12 Types, 3 Public Functions.

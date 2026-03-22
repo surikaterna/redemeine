@@ -26,11 +26,7 @@ export function createDepot<TState, M extends Record<string, any>>(
   return {
       get: async (id: string) => {
           const events = await store.getEvents(id);
-          let state = builder.initialState;
-          for (const ev of events) {
-              state = builder.apply(state, ev);
-          }
-          return createMirage(builder, id, state, options);
+          return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<TState, M>) => {
           const core = (mirage as any)[MirageCoreSymbol];
