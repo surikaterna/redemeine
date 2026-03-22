@@ -4,8 +4,8 @@ export type EventType = `${string}.event`;
 export type CommandType = `${string}.command`;
 
 export interface NamingStrategy {
-  command: (aggregateName: string, prop: string) => string;
-  event: (aggregateName: string, prop: string) => string;
+  command: (aggregateName: string, prop: string, path?: string) => string;
+  event: (aggregateName: string, prop: string, path?: string) => string;
 }
 
 export type SelectorsMap<S> = Record<string, (state: S, ...args: any[]) => any>;

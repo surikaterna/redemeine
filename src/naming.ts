@@ -1,17 +1,26 @@
 import { EventType, NamingStrategy } from './types';
 
-export const formatCommandType = (aggregateName: string, prop: string) => aggregateName + '.' + prop + '.command';
+export const formatCommandType = (aggregateName: string, prop: string, path?: string) => {
+    if (path) return `${aggregateName}.${path}.${prop}.command`;
+    return aggregateName + '.' + prop + '.command';
+};
 
-export const formatFlatEventType = (aggregateName: string, prop: string) => (aggregateName + '.' + prop + '.event') as EventType;
+export const formatFlatEventType = (aggregateName: string, prop: string, path?: string) => {
+    if (path) return `${aggregateName}.${path}.${prop}.event` as EventType;
+    return (aggregateName + '.' + prop + '.event') as EventType;
+};
 
-export const formatTargetedEventType = (aggregateName: string, prop: string): EventType => {
+export const formatTargetedEventType = (aggregateName: string, prop: string, path?: string): EventType => {
+    if (path) {
+        return formatFlatEventType(aggregateName, prop, path);
+    }
     const parts = prop.split(/(?=[A-Z])/);
     if (parts.length > 1) {
         const entities = parts.slice(0, parts.length - 1);
         const action = parts[parts.length - 1];
         const actionName = action.charAt(0).toLowerCase() + action.slice(1);
-        const path = entities.map(e => e.toLowerCase()).join('.');
-        return (aggregateName + '.' + path + '.' + actionName + '.event') as EventType;
+        const autoPath = entities.map(e => e.toLowerCase()).join('.');
+        return (aggregateName + '.' + autoPath + '.' + actionName + '.event') as EventType;
     }
     return formatFlatEventType(aggregateName, prop);
 }

@@ -29,7 +29,7 @@ const counterMixin = createMixin<{ count: number }>()
   .overrideEventNames({
     incremented: 'legacy.counter.incremented.event'
   })
-  .commands((emit) => ({
+  .selectors({}).commands((emit, ctx) => ({
     increment: (state, amount: number) => emit.incremented({ amount })
   }))
   .overrideCommandNames({
@@ -48,7 +48,7 @@ describe('Aggregate Builder with Mixins', () => {
           state.id = event.payload.id;
         }
       })
-      .commands((emit) => ({
+      .selectors({}).commands((emit, ctx) => ({
         open: (state, id: string) => emit.opened({ id })
       }))
       .build();
@@ -89,7 +89,7 @@ describe('Aggregate Builder with Mixins', () => {
       .events({
         closed: (state) => { state.status = 'closed'; }
       })
-      .commands((emit) => ({
+      .selectors({}).commands((emit, ctx) => ({
         close: () => emit.closed()
       }))
       .overrideEventNames({
@@ -138,7 +138,7 @@ it('should throw an error when processing an unknown command', () => {
         statusChanged: (state, event: Event<string>) => { state.status = event.payload; } 
       })
       .overrideEventNames({}) // Empty overrides test
-      .commands((emit) => ({
+      .selectors({}).commands((emit, ctx) => ({
         changeStatus: (state, status: string) => emit.statusChanged(status)
       }))
       .overrideCommandNames({})
@@ -173,7 +173,7 @@ it('should throw an error when processing an unknown command', () => {
           if (event.payload.metadata !== undefined) state.metadata = event.payload.metadata;
         }
       })
-      .commands((emit) => ({
+      .selectors({}).commands((emit, ctx) => ({
         // Targeting line
         updateLine: (state, payload: { id: string; qty: number }) => 
           emit.lineUpdated({ lineId: payload.id, qty: payload.qty }),

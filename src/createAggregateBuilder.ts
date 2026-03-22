@@ -177,10 +177,38 @@ export function createAggregateBuilder<S, Name extends string>(
             const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
             const coreCommands = _commandsFactory(emit, { selectors: allSelectors });
-            const allCommandsMap = _mixins.reduce((acc, m) => ({
+            let allCommandsMap = _mixins.reduce((acc, m) => ({
                 ...acc,
                 ...m.commandFactory(emit, { selectors: allSelectors })
             }), coreCommands);
+
+            // 1. Assign dot-notation path based on collection name
+            // 2. Prevent selector shadowing
+            _entityPackages.forEach(entity => {
+                const collectionName = entity.name + 's';
+                const entityPath = collectionName.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
+
+                const entitySelectors = entity.selectors || {};
+                
+                // Selector Shadowing Prevention
+                const mergedSelectors = new Proxy({ ...entitySelectors, root: allSelectors }, {
+                    get: (target: any, prop: string) => {
+                        if (prop in entitySelectors && prop in allSelectors && prop !== 'root') {
+                            console.warn(`[Selector Shadowing]: entity "${entity.name}" and root both define "${prop}". Use "selectors.root.${prop}" to access the root selector.`);
+                        }
+                        if (prop in target) return target[prop];
+                        return allSelectors[prop];
+                    }
+                });
+
+                const entityCommands = entity.commandFactory(emit, { selectors: mergedSelectors });
+                
+                // Flatten the commands with the entity name mapping into the global pool for processing
+                Object.keys(entityCommands).forEach(cmdProp => {
+                    const mappedCmd = entity.name + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
+                    allCommandsMap[mappedCmd] = entityCommands[cmdProp];
+                });
+            });
 
             return {
                 initialState,
