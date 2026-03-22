@@ -41,7 +41,7 @@ const counterMixin = createMixin<{ count: number }>()
 
 describe('Aggregate Builder with Mixins', () => {
   
-  it('should handle core commands and default naming strategy', () => {
+  it('should process core commands and default naming strategy', () => {
     const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
       .events({
         opened: (state, event: Event<{ id: string }>) => {
@@ -57,8 +57,8 @@ describe('Aggregate Builder with Mixins', () => {
     const cmd = aggregate.commandCreators.open('123');
     expect(cmd.type).toBe('test.open.command');
 
-    // Test Handle -> Apply lifecycle
-    const events = aggregate.handle(initialState, 'test.open.command', '123');
+    // Test Process -> Apply lifecycle
+    const events = aggregate.process(initialState, { type: 'test.open.command', payload: '123' });
     expect(events[0].type).toBe('test.opened.event');
 
     const newState = aggregate.apply(initialState, events[0]);
@@ -74,8 +74,8 @@ describe('Aggregate Builder with Mixins', () => {
     const cmd = aggregate.commandCreators.increment(5);
     expect(cmd.type).toBe('legacy.counter.increment.command');
 
-    // 2. Check if handle recognizes the overridden mixin command
-    const events = aggregate.handle(initialState, 'legacy.counter.increment.command', 5);
+    // 2. Check if process recognizes the overridden mixin command
+    const events = aggregate.process(initialState, { type: 'legacy.counter.increment.command', payload: 5 });
     expect(events[0].type).toBe('legacy.counter.incremented.event');
     expect(events[0].payload).toEqual({ amount: 5 });
 
@@ -103,15 +103,15 @@ describe('Aggregate Builder with Mixins', () => {
     const cmd = aggregate.commandCreators.close();
     expect(cmd.type).toBe('explicit.close.command');
 
-    const events = aggregate.handle(initialState, 'explicit.close.command', undefined);
+    const events = aggregate.process(initialState, { type: 'explicit.close.command', payload: undefined });
     expect(events[0].type).toBe('explicit.closed.event');
   });
 
-  it('should throw an error when handling an unknown command', () => {
+it('should throw an error when processing an unknown command', () => {
     const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState).build();
-    
+
     expect(() => {
-      aggregate.handle(initialState, 'ghost.command', {});
+      aggregate.process(initialState, { type: 'ghost.command', payload: {} });
     }).toThrow('Unknown command: ghost.command');
   });
 
@@ -185,12 +185,12 @@ describe('Aggregate Builder with Mixins', () => {
       .build();
 
     // 1. Check generated event types
-    // Using handle to invoke command
-    const events1 = aggregate.handle(orderState, 'order.updateLine.command', { id: '123', qty: 5 });
+    // Using process to invoke command
+    const events1 = aggregate.process(orderState, { type: 'order.updateLine.command', payload: { id: '123', qty: 5 } });
     expect(events1[0].type).toBe('order.line.updated.event');
     expect(events1[0].payload).toEqual({ lineId: '123', qty: 5 });
 
-    const events2 = aggregate.handle(orderState, 'order.updateSubLine.command', { lineId: '123', subId: 456, metadata: 'new' });
+    const events2 = aggregate.process(orderState, { type: 'order.updateSubLine.command', payload: { lineId: '123', subId: 456, metadata: 'new' } });
     expect(events2[0].type).toBe('order.line.subitems.updated.event');
     expect(events2[0].payload).toEqual({ lineId: '123', subitemsId: 456, metadata: 'new' });
     const newState1 = aggregate.apply(orderState, events1[0]);

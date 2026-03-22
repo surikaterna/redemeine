@@ -1,4 +1,4 @@
-import { Event, EventEmitterFactory, EventType, CommandType } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { produce, Draft } from 'immer';
@@ -46,7 +46,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         AggregateBuilder<S, Name, M, E, EOverrides>;
 
     build: () => {
-        handle: (state: S, commandType: string, payload: any) => Event[];
+        process: (state: S, command: Command<any, string>) => Event[];
         apply: (state: S, event: Event) => S;
         commandCreators: {
             [K in keyof M]: [M[K]] extends [void] | [undefined]
@@ -137,7 +137,9 @@ export function createAggregateBuilder<S, Name extends string>(
             }), coreCommands);
 
             return {
-                handle: (state: S, commandType: string, payload: any): Event[] => {
+                process: (state: S, command: Command<any, string>): Event[] => {
+                    const commandType = command.type;
+                    const payload = command.payload;
                     const commandKey = Object.keys(allCommandsMap).find(key =>
                         (allCommandOverrides[key] || `${aggregateName}.${key}.command`) === commandType
                     );

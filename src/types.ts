@@ -3,7 +3,13 @@
 export type EventType = `${string}.event`;
 export type CommandType = `${string}.command`;
 
-export interface Event<P = any, T extends EventType = EventType> {
+export interface Event<P = any, T extends EventType | string = EventType> {
+  type: T;
+  payload: P;
+  metadata?: any;
+}
+
+export interface Command<P = any, T extends CommandType | string = CommandType> {
   type: T;
   payload: P;
   metadata?: any;
