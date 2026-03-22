@@ -6,7 +6,7 @@
 
 # Interface: EntityCommandOverridesStage\<S, Name, E, EOverrides, CPayloads, Selectors\>
 
-Defined in: [createEntity.ts:79](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L79)
+Defined in: [createEntity.ts:79](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L79)
 
 ## Type Parameters
 
@@ -40,7 +40,7 @@ Defined in: [createEntity.ts:79](https://github.com/surikaterna/redemeine/blob/6
 
 > **overrideCommandNames**: \<`COverrides`\>(`overrides`) => `object`
 
-Defined in: [createEntity.ts:80](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L80)
+Defined in: [createEntity.ts:80](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L80)
 
 #### Type Parameters
 

@@ -91,10 +91,24 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         events: NewE
     ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides, Sel>;
 
+    /**
+     * Overrides the default Targeted Naming engine for specific events.
+     * Crucial for legacy migrations where historical event strings do not match the standard `aggregate.entity.action` convention.
+     * 
+     * @example
+     * .overrideEventNames({ orderAccepted: 'LEGACY_ORDER_ACCEPTED_V1' })
+     */
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
     ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel>;
 
+    /**
+     * Replaces the default Targeted Naming engine with a custom strategy.
+     * Use this if your entire system uses a different naming convention (e.g., camelCase instead of dot-notation).
+     * 
+     * @example
+     * .naming({ event: (agg, prop) => `${agg}_${prop}` })
+     */
     naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
     /**
@@ -114,6 +128,13 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
     ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides, Sel>;
 
+    /**
+     * Overrides the default Targeted Naming engine for specific commands.
+     * Prevents the auto-namer from modifying the key into standard dot-notation routing.
+     * 
+     * @example
+     * .overrideCommandNames({ cancelOrder: 'cmd.legacy.cancel' })
+     */
     overrideCommandNames: (overrides: Partial<Record<keyof M, CommandType>>) => 
         AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 

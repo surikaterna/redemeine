@@ -6,7 +6,7 @@
 
 # Interface: MixinSelectorsStage\<S, E, EOverrides\>
 
-Defined in: [createMixin.ts:42](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L42)
+Defined in: [createMixin.ts:42](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L42)
 
 ## Type Parameters
 
@@ -28,7 +28,7 @@ Defined in: [createMixin.ts:42](https://github.com/surikaterna/redemeine/blob/69
 
 > **selectors**: \<`Selectors`\>(`selectors`) => [`MixinCommandsStage`](MixinCommandsStage.md)\<`S`, `E`, `EOverrides`, `Selectors`\>
 
-Defined in: [createMixin.ts:49](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L49)
+Defined in: [createMixin.ts:49](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L49)
 
 Define pure functions that slice and read from the state.
 

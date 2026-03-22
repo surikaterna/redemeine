@@ -1,5 +1,9 @@
 import type { ZodType } from 'zod';
 
+/**
+ * Thrown when an invalid payload boundary is breached (e.g. Zod validation failure).
+ * Specifically halts invalid Commands or Events entering/leaving the Aggregate root.
+ */
 export class ContractError extends Error {
   constructor(message: string) {
     super(message);
@@ -8,6 +12,10 @@ export class ContractError extends Error {
   }
 }
 
+/**
+ * Thrown when an applied event attempts to mutate current state into an invalid structure.
+ * Validates integrity logic post-event application.
+ */
 export class StateIntegrityError extends Error {
   constructor(message: string) {
     super(message);
@@ -16,6 +24,10 @@ export class StateIntegrityError extends Error {
   }
 }
 
+/**
+ * foundational binding layer for Zod integration.
+ * Responsible for verifying all Events, Commands, and State schemas dynamically against the definitions.
+ */
 export class Contract {
   public commands: Map<string, ZodType>;
   public events: Map<string, ZodType>;

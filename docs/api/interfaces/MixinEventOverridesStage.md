@@ -6,7 +6,7 @@
 
 # Interface: MixinEventOverridesStage\<S, E\>
 
-Defined in: [createMixin.ts:36](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L36)
+Defined in: [createMixin.ts:36](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L36)
 
 ## Type Parameters
 
@@ -24,7 +24,7 @@ Defined in: [createMixin.ts:36](https://github.com/surikaterna/redemeine/blob/69
 
 > **overrideEventNames**: \<`EOverrides`\>(`overrides`) => [`MixinSelectorsStage`](MixinSelectorsStage.md)\<`S`, `E`, `EOverrides`\>
 
-Defined in: [createMixin.ts:37](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L37)
+Defined in: [createMixin.ts:37](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L37)
 
 #### Type Parameters
 

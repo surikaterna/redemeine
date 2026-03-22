@@ -6,7 +6,7 @@
 
 # Interface: EntityEventOverridesStage\<S, Name, E\>
 
-Defined in: [createEntity.ts:37](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L37)
+Defined in: [createEntity.ts:37](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L37)
 
 ## Type Parameters
 
@@ -28,7 +28,7 @@ Defined in: [createEntity.ts:37](https://github.com/surikaterna/redemeine/blob/6
 
 > **overrideEventNames**: \<`EOverrides`\>(`overrides`) => [`EntitySelectorsStage`](EntitySelectorsStage.md)\<`S`, `Name`, `E`, `EOverrides`\>
 
-Defined in: [createEntity.ts:38](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L38)
+Defined in: [createEntity.ts:38](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L38)
 
 #### Type Parameters
 

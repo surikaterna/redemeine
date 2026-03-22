@@ -6,7 +6,7 @@
 
 # Interface: LiveAggregateOptions
 
-Defined in: [createLiveAggregate.ts:24](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L24)
+Defined in: [createLiveAggregate.ts:24](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L24)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [createLiveAggregate.ts:24](https://github.com/surikaterna/redemeine
 
 > `optional` **contract?**: [`Contract`](../classes/Contract.md)
 
-Defined in: [createLiveAggregate.ts:25](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L25)
+Defined in: [createLiveAggregate.ts:25](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L25)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [createLiveAggregate.ts:25](https://github.com/surikaterna/redemeine
 
 > `optional` **strict?**: `boolean`
 
-Defined in: [createLiveAggregate.ts:26](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L26)
+Defined in: [createLiveAggregate.ts:26](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L26)

@@ -1,12 +1,19 @@
 import { Command, CommandType } from './types';
 
+/**
+ * Foundational type defining a structural preparation callback before a command factory commits the payload.
+ */
 export type PrepareCommand<P> = (...args: any[]) => { payload: P };
 
-export type CommandFactory<P = void, T extends CommandType | string = CommandType> = 
+/**
+ * Foundational type representing a compiled factory that hydrates and dispatches typed commands.
+ */
+export type CommandFactory<P = void, T extends CommandType | string = CommandType> =
     ((payload: P) => Command<P, T>) & { type: T, toString: () => T };
 
-export type PreparedCommandFactory<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType> = 
-    ((...args: Parameters<PC>) => Command<ReturnType<PC>['payload'], T>) & { type: T, toString: () => T };
+/**
+ * Foundational type for a compiled factory extending prepare-command behaviors.
+ */
 
 export function createCommand<P = void, T extends CommandType | string = CommandType>(type: T): CommandFactory<P, T>;
 export function createCommand<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType>(

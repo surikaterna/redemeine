@@ -6,7 +6,7 @@
 
 # Class: LiveAggregateCore\<S\>
 
-Defined in: [createLiveAggregate.ts:29](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L29)
+Defined in: [createLiveAggregate.ts:29](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L29)
 
 ## Type Parameters
 
@@ -20,7 +20,7 @@ Defined in: [createLiveAggregate.ts:29](https://github.com/surikaterna/redemeine
 
 > **new LiveAggregateCore**\<`S`\>(`builder`, `id`, `state`, `contract?`, `strict?`): `LiveAggregateCore`\<`S`\>
 
-Defined in: [createLiveAggregate.ts:33](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L33)
+Defined in: [createLiveAggregate.ts:33](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L33)
 
 #### Parameters
 
@@ -54,7 +54,7 @@ Defined in: [createLiveAggregate.ts:33](https://github.com/surikaterna/redemeine
 
 > **builder**: [`BuiltAggregate`](../interfaces/BuiltAggregate.md)\<`S`, `any`\>
 
-Defined in: [createLiveAggregate.ts:34](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L34)
+Defined in: [createLiveAggregate.ts:34](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L34)
 
 ***
 
@@ -62,7 +62,7 @@ Defined in: [createLiveAggregate.ts:34](https://github.com/surikaterna/redemeine
 
 > `optional` **contract?**: [`Contract`](Contract.md)
 
-Defined in: [createLiveAggregate.ts:37](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L37)
+Defined in: [createLiveAggregate.ts:37](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L37)
 
 ***
 
@@ -70,7 +70,7 @@ Defined in: [createLiveAggregate.ts:37](https://github.com/surikaterna/redemeine
 
 > **id**: `string`
 
-Defined in: [createLiveAggregate.ts:35](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L35)
+Defined in: [createLiveAggregate.ts:35](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L35)
 
 ***
 
@@ -78,7 +78,7 @@ Defined in: [createLiveAggregate.ts:35](https://github.com/surikaterna/redemeine
 
 > **state**: `S`
 
-Defined in: [createLiveAggregate.ts:36](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L36)
+Defined in: [createLiveAggregate.ts:36](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L36)
 
 ***
 
@@ -86,7 +86,7 @@ Defined in: [createLiveAggregate.ts:36](https://github.com/surikaterna/redemeine
 
 > **strict**: `boolean` = `false`
 
-Defined in: [createLiveAggregate.ts:38](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L38)
+Defined in: [createLiveAggregate.ts:38](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L38)
 
 ***
 
@@ -94,7 +94,7 @@ Defined in: [createLiveAggregate.ts:38](https://github.com/surikaterna/redemeine
 
 > **uncommitted**: [`Event`](../interfaces/Event.md)\<`any`, `` `${string}.event` ``\>[] = `[]`
 
-Defined in: [createLiveAggregate.ts:30](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L30)
+Defined in: [createLiveAggregate.ts:30](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L30)
 
 ***
 
@@ -102,4 +102,4 @@ Defined in: [createLiveAggregate.ts:30](https://github.com/surikaterna/redemeine
 
 > **version**: `number` = `0`
 
-Defined in: [createLiveAggregate.ts:31](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createLiveAggregate.ts#L31)
+Defined in: [createLiveAggregate.ts:31](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createLiveAggregate.ts#L31)

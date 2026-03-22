@@ -8,7 +8,7 @@
 
 > **PreparedCommandFactory**\<`PC`, `T`\> = (...`args`) => [`Command`](../interfaces/Command.md)\<[`ReturnType`](https://www.typescriptlang.org/docs/handbook/utility-types.html#returntypetype)\<`PC`\>\[`"payload"`\], `T`\> & `object`
 
-Defined in: [createCommand.ts:8](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createCommand.ts#L8)
+Defined in: [createCommand.ts:8](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createCommand.ts#L8)
 
 ## Type Declaration
 

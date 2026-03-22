@@ -6,7 +6,7 @@
 
 # Interface: EntitySelectorsStage\<S, Name, E, EOverrides\>
 
-Defined in: [createEntity.ts:43](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L43)
+Defined in: [createEntity.ts:43](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L43)
 
 ## Type Parameters
 
@@ -32,7 +32,7 @@ Defined in: [createEntity.ts:43](https://github.com/surikaterna/redemeine/blob/6
 
 > **selectors**: \<`Selectors`\>(`selectors`) => [`EntityCommandsStage`](EntityCommandsStage.md)\<`S`, `Name`, `E`, `EOverrides`, `Selectors`\>
 
-Defined in: [createEntity.ts:53](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createEntity.ts#L53)
+Defined in: [createEntity.ts:53](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createEntity.ts#L53)
 
 Define pure functions scoped only to this entity's structure.
 These will be injectable into your command handlers via the `context` parameter.

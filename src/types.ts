@@ -1,31 +1,74 @@
 // types.ts
 
+/**
+ * The foundational string type for Redemeine events. Used to enforce proper suffixing in type boundaries.
+ */
 export type EventType = `${string}.event`;
+
+/**
+ * The foundational string type for Redemeine commands. Used to enforce proper suffixing in type boundaries.
+ */
 export type CommandType = `${string}.command`;
 
+/**
+ * Interface controlling the "Targeted Naming" engine used to automatically route and identify events and commands.
+ */
 export interface NamingStrategy {
+  /**
+   * Transforms a given property name (and optionally its path) into a fully qualified command type string.
+   * 
+   * @example
+   * // Given aggregate 'order' and prop 'cancelItem', standard output: 'order.cancel_item.command'
+   */
   command: (aggregateName: string, prop: string, path?: string) => string;
+  
+  /**
+   * Transforms a given property name (and optionally its path) into a fully qualified event type string.
+   * 
+   * @example
+   * // Given aggregate 'order' and prop 'itemCancelled', standard output: 'order.item_cancelled.event'
+   */
   event: (aggregateName: string, prop: string, path?: string) => string;
 }
 
+/**
+ * Represents a dictionary mapping string keys to selector functions.
+ * Selectors are pure functions injecting localized state queries directly into command contexts.
+ */
 export type SelectorsMap<S> = Record<string, (state: S, ...args: any[]) => any>;
 
+/**
+ * A foundational building block representing a domain event. 
+ * Records an intent that has successfully altered the aggregate state.
+ */
 export interface Event<P = any, T extends EventType | string = EventType> {
   type: T;
   payload: P;
   metadata?: any;
 }
 
+/**
+ * A foundational building block representing a domain command.
+ * Requests a state change and houses the necessary payload for processing validation.
+ */
 export interface Command<P = any, T extends CommandType | string = CommandType> {
   type: T;
   payload: P;
   metadata?: any;
 }
 
+/**
+ * The foundational base for state objects that are treated as entities.
+ * Enforces a required structural `id`.
+ */
 export interface BaseEntity {
   id: string | number;
 }
 
+/**
+ * Represents the underlying record map managed by the `EntityArray` utility.
+ * Foundational for strong typing arrays of `BaseEntity`.
+ */
 export type Collection<T extends BaseEntity> = T[];
 
 /**
@@ -75,14 +118,10 @@ export const EntityArray = {
   }
 };
 
-export type ResolveEventName<AggregateName extends string, K, EOverrides> = 
-  K extends keyof EOverrides 
-    ? (EOverrides[K] extends EventType ? EOverrides[K] : `${AggregateName}.${Extract<K, string>}.event`)
-    : `${AggregateName}.${Extract<K, string>}.event`;
-
 /**
- * SMART EMITTER FACTORY
- * Checks the number of arguments in the event projector function.
+ * Resolves the final event name string during type inference.
+ * Accounts for whether the targeted naming engine is utilized or if an explicit override was historically provided.
+ */
  */
 export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
   [K in keyof E]: E[K] extends (...args: any[]) => any

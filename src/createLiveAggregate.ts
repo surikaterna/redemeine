@@ -2,6 +2,10 @@ import { Command, Event } from './types';
 import { Depot } from './Depot';
 import { Contract } from './Contract';
 
+/**
+ * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
+ * It contains the initial state and the internal processing/application functions.
+ */
 export interface BuiltAggregate<S, M> {
     initialState: S;
     process: (state: S, command: Command<any, string>) => Event[];
@@ -13,19 +17,34 @@ export interface BuiltAggregate<S, M> {
     };
 }
 
+/**
+ * A mapped record of executable live commands bound directly to the aggregate instance.
+ * These methods dispatch commands and return a promise resolving to the mutated state.
+ */
 export type LiveCommandMap<S, M> = {
     [K in keyof M]: [M[K]] extends [void] | [undefined] | [never]
         ? () => Promise<S>
         : (payload: M[K]) => Promise<S>;
 };
 
+/**
+ * A private symbol used to access internal dispatch mechanisms (LiveAggregateCore) 
+ * without polluting the public aggregate API methods.
+ */
 export const LiveAggregateCoreSymbol = Symbol('LiveAggregateCore');
 
+/**
+ * Configuration options strictly passed during the instantiation of a live aggregate.
+ */
 export interface LiveAggregateOptions {
     contract?: Contract;
     strict?: boolean;
 }
 
+/**
+ * The internal core controller of a Live Aggregate instance.
+ * Tracks the uncommitted events, current version, and executes the core command routing.
+ */
 export class LiveAggregateCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
@@ -179,6 +198,11 @@ export function createLegacyAggregateBridge<S, M>(liveAggregate: LiveCommandMap<
     };
 }
 
+/**
+ * Represents a storage mechanism binding the instantiated aggregate state lifecycle
+ * directly to your underlying database representations (Depot).
+ * Facilitates hydration (`findById`) and persistence (`save`).
+ */
 export class LiveAggregateDepot<S, M extends Record<string, any>> {
     constructor(
         private builder: BuiltAggregate<S, M>,

@@ -6,7 +6,7 @@
 
 # Interface: Event\<P, T\>
 
-Defined in: [types.ts:13](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L13)
+Defined in: [types.ts:13](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L13)
 
 ## Type Parameters
 
@@ -24,7 +24,7 @@ Defined in: [types.ts:13](https://github.com/surikaterna/redemeine/blob/69016111
 
 > `optional` **metadata?**: `any`
 
-Defined in: [types.ts:16](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L16)
+Defined in: [types.ts:16](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L16)
 
 ***
 
@@ -32,7 +32,7 @@ Defined in: [types.ts:16](https://github.com/surikaterna/redemeine/blob/69016111
 
 > **payload**: `P`
 
-Defined in: [types.ts:15](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L15)
+Defined in: [types.ts:15](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L15)
 
 ***
 
@@ -40,4 +40,4 @@ Defined in: [types.ts:15](https://github.com/surikaterna/redemeine/blob/69016111
 
 > **type**: `T`
 
-Defined in: [types.ts:14](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L14)
+Defined in: [types.ts:14](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L14)

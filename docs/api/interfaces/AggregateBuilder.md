@@ -6,7 +6,7 @@
 
 # Interface: AggregateBuilder\<S, Name, M, E, EOverrides, Sel\>
 
-Defined in: [createAggregateBuilder.ts:31](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L31)
+Defined in: [createAggregateBuilder.ts:31](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L31)
 
 The core builder interface for composing Aggregates in Redemeine.
 Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
@@ -43,7 +43,7 @@ Uses a fluent chained API to progressively layer events, commands, mixins, and e
 
 > **\_state**: `object`
 
-Defined in: [createAggregateBuilder.ts:136](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L136)
+Defined in: [createAggregateBuilder.ts:136](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L136)
 
 Internal state for inheritance
 
@@ -93,7 +93,7 @@ Internal state for inheritance
 
 > **build**: () => `object`
 
-Defined in: [createAggregateBuilder.ts:123](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L123)
+Defined in: [createAggregateBuilder.ts:123](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L123)
 
 Finalizes and compiles the aggregate.
 
@@ -155,7 +155,7 @@ Finalizes and compiles the aggregate.
 
 > **commands**: \<`C`\>(`factory`) => `AggregateBuilder`\<`S`, `Name`, `M` & \{ \[K in string \| number \| symbol\]: Parameters\<C\[K\]\>\[1\] \}, `E`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:113](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L113)
+Defined in: [createAggregateBuilder.ts:113](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L113)
 
 Define command processors that execute business logic and emit events.
 **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
@@ -194,7 +194,7 @@ The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.d
 
 > **entities**: \<`EN`, `T`\>(`entities?`, ...`entityPackages`) => `AggregateBuilder`\<`S`, `Name`, `M` & [`MergeEntities`](../-internal-/type-aliases/MergeEntities.md)\<`T`\>, `E`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:52](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L52)
+Defined in: [createAggregateBuilder.ts:52](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L52)
 
 Register nested entities into the aggregate's namespace. 
 Entities keep their own private selectors and logic.
@@ -237,7 +237,7 @@ The naming engine will automatically map nested calls to targeted dot-notation c
 
 > **events**: \<`NewE`\>(`events`) => `AggregateBuilder`\<`S`, `Name`, `M`, `E` & `NewE`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:90](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L90)
+Defined in: [createAggregateBuilder.ts:90](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L90)
 
 Register state-altering event handlers.
 **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
@@ -273,7 +273,7 @@ The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggrega
 
 > **extends**: \<`ParentM`, `ParentE`, `ParentEOverrides`, `ParentSel`\>(`parentBuilder`) => `AggregateBuilder`\<`S`, `Name`, `M` & `ParentM`, `E` & `ParentE`, `EOverrides` & `ParentEOverrides`, `Sel` & `ParentSel`\>
 
-Defined in: [createAggregateBuilder.ts:39](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L39)
+Defined in: [createAggregateBuilder.ts:39](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L39)
 
 Inherit all business rules, selectors, and events from a parent aggregate builder.
 
@@ -318,7 +318,7 @@ const Shipment = createAggregateBuilder('Shipment', initialShipment)
 
 > **mixins**: \<`T`\>(...`mixins`) => `AggregateBuilder`\<`S`, `Name`, `M` & [`MergeMixins`](../-internal-/type-aliases/MergeMixins.md)\<`T`\>, `E`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:63](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L63)
+Defined in: [createAggregateBuilder.ts:63](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L63)
 
 Compose reusable domain logic chunks (Mixins) into this aggregate.
 
@@ -350,7 +350,7 @@ Compose reusable domain logic chunks (Mixins) into this aggregate.
 
 > **naming**: (`strategy`) => `AggregateBuilder`\<`S`, `Name`, `M`, `E`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:98](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L98)
+Defined in: [createAggregateBuilder.ts:98](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L98)
 
 #### Parameters
 
@@ -368,7 +368,7 @@ Defined in: [createAggregateBuilder.ts:98](https://github.com/surikaterna/redeme
 
 > **overrideCommandNames**: (`overrides`) => `AggregateBuilder`\<`S`, `Name`, `M`, `E`, `EOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:117](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L117)
+Defined in: [createAggregateBuilder.ts:117](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L117)
 
 #### Parameters
 
@@ -386,7 +386,7 @@ Defined in: [createAggregateBuilder.ts:117](https://github.com/surikaterna/redem
 
 > **overrideEventNames**: \<`NewEOverrides`\>(`overrides`) => `AggregateBuilder`\<`S`, `Name`, `M`, `E`, `EOverrides` & `NewEOverrides`, `Sel`\>
 
-Defined in: [createAggregateBuilder.ts:94](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L94)
+Defined in: [createAggregateBuilder.ts:94](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L94)
 
 #### Type Parameters
 
@@ -410,7 +410,7 @@ Defined in: [createAggregateBuilder.ts:94](https://github.com/surikaterna/redeme
 
 > **selectors**: \<`NewSel`\>(`selectors`) => `AggregateBuilder`\<`S`, `Name`, `M`, `E`, `EOverrides`, `Sel` & `NewSel`\>
 
-Defined in: [createAggregateBuilder.ts:76](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createAggregateBuilder.ts#L76)
+Defined in: [createAggregateBuilder.ts:76](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createAggregateBuilder.ts#L76)
 
 Define pure functions for reading and deriving state.
 These will be injectable into your command handlers via the `context` parameter.

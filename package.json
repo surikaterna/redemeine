@@ -2,21 +2,30 @@
   "name": "redemeine",
   "version": "0.1.0",
   "description": "Sane defaults CQRS/ES aggregates library",
+  "author": "Your Name/Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/redemeine.git"
+  },
   "main": "dist/redemeine.js",
   "types": "dist/redemeine.d.ts",
+  "files": [
+    "dist"
+  ],  
   "bin": {
     "redemeine": "./dist/bin/redemeine.js"
   },
   "exports": {
     ".": {
+      "types": "./dist/redemeine.d.ts",
       "import": "./dist/redemeine.js",
-      "require": "./dist/redemeine.js",
-      "types": "./dist/redemeine.d.ts"
+      "require": "./dist/redemeine.js"
     },
     "./reflector": {
+      "types": "./dist/reflector.d.ts",
       "import": "./dist/reflector.js",
-      "require": "./dist/reflector.js",
-      "types": "./dist/reflector.d.ts"
+      "require": "./dist/reflector.js"
     }
   },
   "scripts": {
@@ -24,7 +33,10 @@
     "watch": "tsc -w",
     "test": "jest",
     "test:watch": "jest --watchAll",
-    "test-compile": "tsc -p ./"
+    "test-compile": "tsc -p ./",
+    "docs:build": "typedoc",
+    "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
+    "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt"
   },
   "devDependencies": {
     "@jest/globals": "^30.3.0",
@@ -34,6 +46,7 @@
     "jest": "^29.7.0",
     "prettier-config-surikaterna": "^1.0.1",
     "ts-jest": "^29.1.5",
+    "tsx": "^4.21.0",
     "typedoc": "^0.28.17",
     "typedoc-plugin-markdown": "^4.11.0",
     "typedoc-plugin-mdn-links": "^5.1.1",

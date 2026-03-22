@@ -6,7 +6,7 @@
 
 # Interface: Cursor\<T\>
 
-Defined in: [Depot.ts:4](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Depot.ts#L4)
+Defined in: [Depot.ts:4](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Depot.ts#L4)
 
 ## Type Parameters
 

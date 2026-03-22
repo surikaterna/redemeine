@@ -6,7 +6,7 @@
 
 # Interface: MixinCommandsStage\<S, E, EOverrides, Selectors\>
 
-Defined in: [createMixin.ts:54](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L54)
+Defined in: [createMixin.ts:54](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L54)
 
 ## Type Parameters
 
@@ -32,7 +32,7 @@ Defined in: [createMixin.ts:54](https://github.com/surikaterna/redemeine/blob/69
 
 > **commands**: \<`CPayloads`\>(`factory`) => [`MixinCommandOverridesStage`](MixinCommandOverridesStage.md)\<`S`, `E`, `EOverrides`, `CPayloads`, `Selectors`\>
 
-Defined in: [createMixin.ts:64](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L64)
+Defined in: [createMixin.ts:64](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L64)
 
 Define command processors containing business rules.
 **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.

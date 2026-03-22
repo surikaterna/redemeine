@@ -6,7 +6,7 @@
 
 # Interface: Command\<P, T\>
 
-Defined in: [types.ts:19](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L19)
+Defined in: [types.ts:19](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L19)
 
 ## Type Parameters
 
@@ -24,7 +24,7 @@ Defined in: [types.ts:19](https://github.com/surikaterna/redemeine/blob/69016111
 
 > `optional` **metadata?**: `any`
 
-Defined in: [types.ts:22](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L22)
+Defined in: [types.ts:22](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L22)
 
 ***
 
@@ -32,7 +32,7 @@ Defined in: [types.ts:22](https://github.com/surikaterna/redemeine/blob/69016111
 
 > **payload**: `P`
 
-Defined in: [types.ts:21](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L21)
+Defined in: [types.ts:21](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L21)
 
 ***
 
@@ -40,4 +40,4 @@ Defined in: [types.ts:21](https://github.com/surikaterna/redemeine/blob/69016111
 
 > **type**: `T`
 
-Defined in: [types.ts:20](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L20)
+Defined in: [types.ts:20](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L20)

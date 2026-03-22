@@ -10,7 +10,7 @@
 
 > **createCommand**\<`P`, `T`\>(`type`): [`CommandFactory`](../type-aliases/CommandFactory.md)\<`P`, `T`\>
 
-Defined in: [createCommand.ts:11](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createCommand.ts#L11)
+Defined in: [createCommand.ts:11](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createCommand.ts#L11)
 
 ### Type Parameters
 
@@ -36,7 +36,7 @@ Defined in: [createCommand.ts:11](https://github.com/surikaterna/redemeine/blob/
 
 > **createCommand**\<`PC`, `T`\>(`type`, `prepareCommand`): [`PreparedCommandFactory`](../type-aliases/PreparedCommandFactory.md)\<`PC`, `T`\>
 
-Defined in: [createCommand.ts:12](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createCommand.ts#L12)
+Defined in: [createCommand.ts:12](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createCommand.ts#L12)
 
 ### Type Parameters
 

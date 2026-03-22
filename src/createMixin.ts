@@ -17,6 +17,10 @@ export interface MixinPackage<S, E = any, EOverrides = any, CPayloads = any, COv
 }
 
 // 2. The Chaining Interfaces to guide the IDE
+/**
+ * Staged builder interface enabling fluent chaining of Mixin event handlers.
+ * Permits Immer-backed state mutations within handlers.
+ */
 export interface MixinEventsStage<S> {
   /**
    * Register event handlers for this Mixin that apply state mutations.
@@ -34,11 +38,17 @@ export interface MixinEventsStage<S> {
 }
 
 export interface MixinEventOverridesStage<S, E> {
+  /**
+   * Staged builder interface bridging Mixin events to naming overrides.
+   */
   overrideEventNames: <EOverrides extends Partial<Record<keyof E, EventType>>>(
     overrides: EOverrides
   ) => MixinSelectorsStage<S, E, EOverrides>;
 }
 
+/**
+ * Staged builder interface bridging Mixin naming overrides to selector configuration.
+ */
 export interface MixinSelectorsStage<S, E, EOverrides> {
   /**
    * Define pure functions that slice and read from the state.
@@ -51,6 +61,10 @@ export interface MixinSelectorsStage<S, E, EOverrides> {
   ) => MixinCommandsStage<S, E, EOverrides, Selectors>;
 }
 
+/**
+ * Staged builder interface enabling fluent chaining of Mixin command processors.
+ * Enforces Readonly state structures within the processors.
+ */
 export interface MixinCommandsStage<S, E, EOverrides, Selectors> {
   /**
    * Define command processors containing business rules.
@@ -68,6 +82,9 @@ export interface MixinCommandsStage<S, E, EOverrides, Selectors> {
   ) => MixinCommandOverridesStage<S, E, EOverrides, CPayloads, Selectors>;
 }
 
+/**
+ * Staged builder interface bridging Mixin command configuration to finalize the build.
+ */
 export interface MixinCommandOverridesStage<S, E, EOverrides, CPayloads, Selectors> {
   overrideCommandNames: <COverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
     overrides: COverrides

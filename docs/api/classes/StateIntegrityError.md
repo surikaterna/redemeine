@@ -6,7 +6,7 @@
 
 # Class: StateIntegrityError
 
-Defined in: [Contract.ts:11](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Contract.ts#L11)
+Defined in: [Contract.ts:11](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Contract.ts#L11)
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: [Contract.ts:11](https://github.com/surikaterna/redemeine/blob/69016
 
 > **new StateIntegrityError**(`message`): `StateIntegrityError`
 
-Defined in: [Contract.ts:12](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Contract.ts#L12)
+Defined in: [Contract.ts:12](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Contract.ts#L12)
 
 #### Parameters
 

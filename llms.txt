@@ -1,0 +1,44 @@
+# Redemeine LLM Context
+
+## How to use the Builders
+
+### `AggregateBuilder`
+_The core builder interface for composing Aggregates in Redemeine.
+Uses a fluent chained API to progressively layer events, commands, mixins, and entities._
+
+**Methods:**
+- `.extends()` (Returns `this`) - Inherit all business rules, selectors, and events from a parent aggregate builder.
+- `.entities()` (Returns `this`) - Register nested entities into the aggregate's namespace. 
+Entities keep their own private selectors and logic.
+The naming engine will automatically map nested calls to targeted dot-notation commands (e.g. `order.order_lines.cancel.command`).
+- `.mixins()` (Returns `this`) - Compose reusable domain logic chunks (Mixins) into this aggregate.
+- `.selectors()` (Returns `this`) - Define pure functions for reading and deriving state.
+These will be injectable into your command handlers via the `context` parameter.
+- `.events()` (Returns `this`) - Register state-altering event handlers.
+**Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
+The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`).
+- `.overrideEventNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific events.
+Crucial for legacy migrations where historical event strings do not match the standard `aggregate.entity.action` convention.
+- `.naming()` (Returns `this`) - Replaces the default Targeted Naming engine with a custom strategy.
+Use this if your entire system uses a different naming convention (e.g., camelCase instead of dot-notation).
+- `.commands()` (Returns `this`) - Define command processors that execute business logic and emit events.
+**Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
+The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`).
+- `.overrideCommandNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific commands.
+Prevents the auto-namer from modifying the key into standard dot-notation routing.
+- `.build()` - Finalizes and compiles the aggregate.
+
+### `NamingStrategy`
+_Interface controlling the "Targeted Naming" engine used to automatically route and identify events and commands._
+
+**Methods:**
+- `.command()` - Transforms a given property name (and optionally its path) into a fully qualified command type string.
+- `.event()` - Transforms a given property name (and optionally its path) into a fully qualified event type string.
+
+## Targeted Naming Patterns
+Redemeine uses specific path-aware routing protocols internally. The `NamingStrategy` interface relies on these conventions:
+- `command`
+- `event`
+
+## Extracted Types & Interfaces
+Contains 23 Interfaces, 10 Types, and 3 Public Functions.

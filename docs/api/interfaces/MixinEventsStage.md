@@ -6,7 +6,7 @@
 
 # Interface: MixinEventsStage\<S\>
 
-Defined in: [createMixin.ts:20](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L20)
+Defined in: [createMixin.ts:20](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L20)
 
 2. The Chaining Interfaces to guide the IDE
 
@@ -22,7 +22,7 @@ Defined in: [createMixin.ts:20](https://github.com/surikaterna/redemeine/blob/69
 
 > **events**: \<`E`\>(`events`) => [`MixinEventOverridesStage`](MixinEventOverridesStage.md)\<`S`, `E`\>
 
-Defined in: [createMixin.ts:31](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L31)
+Defined in: [createMixin.ts:31](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L31)
 
 Register event handlers for this Mixin that apply state mutations.
 **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!

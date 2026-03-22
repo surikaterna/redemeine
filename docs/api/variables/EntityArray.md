@@ -8,7 +8,7 @@
 
 > `const` **EntityArray**: `object`
 
-Defined in: [types.ts:35](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L35)
+Defined in: [types.ts:35](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L35)
 
 Utility toolkit for safely managing collections (arrays) of entities within Immer event handlers.
 Ensures references are correctly mutated without mutating the entire array instance, preserving predictability.

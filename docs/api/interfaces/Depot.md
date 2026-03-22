@@ -6,7 +6,7 @@
 
 # Interface: Depot\<TID, T\>
 
-Defined in: [Depot.ts:6](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Depot.ts#L6)
+Defined in: [Depot.ts:6](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Depot.ts#L6)
 
 ## Type Parameters
 
@@ -24,7 +24,7 @@ Defined in: [Depot.ts:6](https://github.com/surikaterna/redemeine/blob/690161114
 
 > **find**(`query`): [`Cursor`](../-internal-/interfaces/Cursor.md)\<`T`\>
 
-Defined in: [Depot.ts:8](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Depot.ts#L8)
+Defined in: [Depot.ts:8](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Depot.ts#L8)
 
 #### Parameters
 
@@ -42,7 +42,7 @@ Defined in: [Depot.ts:8](https://github.com/surikaterna/redemeine/blob/690161114
 
 > **findOne**(`id`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`T`\>
 
-Defined in: [Depot.ts:7](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Depot.ts#L7)
+Defined in: [Depot.ts:7](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Depot.ts#L7)
 
 #### Parameters
 
@@ -60,7 +60,7 @@ Defined in: [Depot.ts:7](https://github.com/surikaterna/redemeine/blob/690161114
 
 > **save**(`aggregate`): [`Promise`](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)\<`T`\>
 
-Defined in: [Depot.ts:9](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Depot.ts#L9)
+Defined in: [Depot.ts:9](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Depot.ts#L9)
 
 #### Parameters
 

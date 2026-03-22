@@ -8,7 +8,7 @@
 
 > **createCommandProcessor**\<`S`\>(`aggregateName`, `allCommandsMap`, `allCommandOverrides`): (`state`, `command`) => [`Event`](../interfaces/Event.md)\<`any`, `` `${string}.event` ``\>[]
 
-Defined in: [createCommandProcessor.ts:5](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createCommandProcessor.ts#L5)
+Defined in: [createCommandProcessor.ts:5](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createCommandProcessor.ts#L5)
 
 ## Type Parameters
 

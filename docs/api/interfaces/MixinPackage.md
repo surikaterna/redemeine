@@ -6,7 +6,7 @@
 
 # Interface: MixinPackage\<S, E, EOverrides, CPayloads, COverrides, Selectors\>
 
-Defined in: [createMixin.ts:9](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L9)
+Defined in: [createMixin.ts:9](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L9)
 
 A compiled reusable piece of domain logic (Commands, Events, Selectors)
 ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
@@ -43,7 +43,7 @@ ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
 
 > **commandFactory**: (`emit`, `context`) => \{ \[K in string \| number \| symbol\]: (state: ReadonlyDeep\<S\>, payload: CPayloads\[K\]) =\> Event\<any, any\> \| Event\<any, any\>\[\] \}
 
-Defined in: [createMixin.ts:12](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L12)
+Defined in: [createMixin.ts:12](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L12)
 
 #### Parameters
 
@@ -67,7 +67,7 @@ Defined in: [createMixin.ts:12](https://github.com/surikaterna/redemeine/blob/69
 
 > **commandOverrides**: `COverrides`
 
-Defined in: [createMixin.ts:15](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L15)
+Defined in: [createMixin.ts:15](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L15)
 
 ***
 
@@ -75,7 +75,7 @@ Defined in: [createMixin.ts:15](https://github.com/surikaterna/redemeine/blob/69
 
 > **eventOverrides**: `EOverrides`
 
-Defined in: [createMixin.ts:11](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L11)
+Defined in: [createMixin.ts:11](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L11)
 
 ***
 
@@ -83,7 +83,7 @@ Defined in: [createMixin.ts:11](https://github.com/surikaterna/redemeine/blob/69
 
 > **events**: `E`
 
-Defined in: [createMixin.ts:10](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L10)
+Defined in: [createMixin.ts:10](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L10)
 
 ***
 
@@ -91,4 +91,4 @@ Defined in: [createMixin.ts:10](https://github.com/surikaterna/redemeine/blob/69
 
 > **selectors**: [`SelectorsMap`](../type-aliases/SelectorsMap.md)\<`S`\>
 
-Defined in: [createMixin.ts:16](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/createMixin.ts#L16)
+Defined in: [createMixin.ts:16](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/createMixin.ts#L16)

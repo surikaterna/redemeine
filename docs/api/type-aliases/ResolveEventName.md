@@ -8,7 +8,7 @@
 
 > **ResolveEventName**\<`AggregateName`, `K`, `EOverrides`\> = `K` *extends* keyof `EOverrides` ? `EOverrides`\[`K`\] *extends* [`EventType`](EventType.md) ? `EOverrides`\[`K`\] : `` `${AggregateName}.${Extract<K, string>}.event` `` : `` `${AggregateName}.${Extract<K, string>}.event` ``
 
-Defined in: [types.ts:78](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/types.ts#L78)
+Defined in: [types.ts:78](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/types.ts#L78)
 
 ## Type Parameters
 

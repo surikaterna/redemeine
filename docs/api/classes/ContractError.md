@@ -6,7 +6,7 @@
 
 # Class: ContractError
 
-Defined in: [Contract.ts:3](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Contract.ts#L3)
+Defined in: [Contract.ts:3](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Contract.ts#L3)
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: [Contract.ts:3](https://github.com/surikaterna/redemeine/blob/690161
 
 > **new ContractError**(`message`): `ContractError`
 
-Defined in: [Contract.ts:4](https://github.com/surikaterna/redemeine/blob/690161114c93099b83a558cc98f143d982e18c36/src/Contract.ts#L4)
+Defined in: [Contract.ts:4](https://github.com/surikaterna/redemeine/blob/b5385f50ff070d36ff6e69e936f6843e8b07e4f9/src/Contract.ts#L4)
 
 #### Parameters
 
