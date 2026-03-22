@@ -39,31 +39,59 @@ export function createLiveAggregate<S extends {}, Name extends string, M extends
 
     const core = new LiveAggregateCore(builder, id, initialState || builder.initialState);
 
-    const makeDeepProxy = (path: string[], ids: Record<string, string | number>): any => {
-        return new Proxy(() => {}, {
+const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
+        return new Proxy(typeof stateTarget === 'object' && stateTarget !== null ? stateTarget : () => {}, {
             get(target, prop) {
                 if (path.length === 0 && prop === LiveAggregateCoreSymbol) {
                     return core;
                 }
 
-                console.log("GET PROP:", prop, " PATH:", path); if (typeof prop !== 'string') {
+                if (typeof prop !== 'string') {
                     return Reflect.get(target, prop);
                 }
 
                 if (prop === 'then') return undefined;
 
-                if (["asymmetricMatch", "nodeType", "@@toStringTag", "toJSON", "toString", "valueOf", "inspect", "then"].includes(prop)) return undefined; const nextIds = { ...ids };
+                if (["asymmetricMatch", "nodeType", "@@toStringTag", "toJSON", "toString", "valueOf", "inspect"].includes(prop)) {
+                    return Reflect.get(target, prop);
+                }
+
+                // At root level, always use current core.state to prevent staleness
+                const currentTarget = path.length === 0 ? core.state : target;
+
+                // If the property exists in the state object, we proxy it to allow BOTH reading and path-building.
+                if (currentTarget && typeof currentTarget === 'object' && prop in currentTarget) {
+                    const val = (currentTarget as any)[prop];
+                    if (typeof val === 'function' && Array.isArray(currentTarget)) {
+                        return val.bind(currentTarget);
+                    }
+                    if (typeof val === 'object' && val !== null) {
+                        return makeDeepProxy(val, [...path, prop], { ...ids });
+                    }
+                    return val;
+                }
+
+                const nextIds = { ...ids };
                 const nextPath = [...path];
 
-                if (path.length > 0 && !isNaN(Number(prop))) {
+                if (path.length > 0 && typeof prop === 'string' && !isNaN(Number(prop))) {
                     const parent = path[path.length - 1];
                     nextIds[parent + 'Id'] = prop;
                     nextIds['id'] = prop;
+                } else if (path.length > 0 && typeof prop === 'string') {
+                    // For string-based IDs like 'abc'
+                    if (prop !== 'update' && prop !== 'add' && prop !== 'remove' && prop !== 'delete') {
+                         const parent = path[path.length - 1];
+                         nextIds[parent + 'Id'] = prop;
+                         nextIds['id'] = prop;
+                    } else {
+                         nextPath.push(prop);
+                    }
                 } else {
                     nextPath.push(prop);
                 }
 
-                return makeDeepProxy(nextPath, nextIds);
+                return makeDeepProxy(() => {}, nextPath, nextIds);
             },
 
             apply(target, thisArg, args) {
@@ -98,7 +126,7 @@ export function createLiveAggregate<S extends {}, Name extends string, M extends
         });
     };
 
-    return makeDeepProxy([], {}) as LiveCommandMap<S, M> & Readonly<S> & Record<string, any>;
+    return makeDeepProxy(core.state, [], {}) as LiveCommandMap<S, M> & Readonly<S> & Record<string, any>;
 }
 
 export function createLegacyAggregateBridge<S, M>(liveAggregate: LiveCommandMap<S, M> & Readonly<S> & Record<string, any>) {

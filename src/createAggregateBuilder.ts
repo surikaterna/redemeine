@@ -1,8 +1,11 @@
 import { Event, Command, EventEmitterFactory, EventType, CommandType } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
-import { produce, Draft } from 'immer';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import { applyEvent } from './applyEvent';
+import { createCommandProcessor } from './createCommandProcessor';
+import { createEmitProxy } from './createEmitProxy';
+import { createCommandCreatorsProxy } from './createCommandCreatorsProxy';
 
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any> ? CPayloads : {};
@@ -108,28 +111,7 @@ export function createAggregateBuilder<S, Name extends string>(
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), _eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), _commandOverrides);
 
-            const emit = new Proxy({} as any, {
-                get: (_, prop: string) => (...args: any[]) => {
-                    let type = allEventOverrides[prop];
-                    const payload = args.length > 0 ? args[0] : undefined;
-                    
-                    if (!type) {
-                        const parts = prop.split(/(?=[A-Z])/);
-                        if (parts.length > 1) {
-                            const entities = parts.slice(0, parts.length - 1);
-                            const action = parts[parts.length - 1];
-                            const actionName = action.charAt(0).toLowerCase() + action.slice(1);
-                            
-                            const path = entities.map(e => e.toLowerCase()).join('.');
-                            type = `${aggregateName}.${path}.${actionName}.event`;
-                        } else {
-                            type = `${aggregateName}.${prop}.event`;
-                        }
-                    }
-
-                    return { type, payload };
-                }
-            });
+            const emit = createEmitProxy(aggregateName, allEventOverrides);
 
             const coreCommands = _commandsFactory(emit);
             const allCommandsMap = _mixins.reduce((acc, m) => ({
@@ -139,81 +121,9 @@ export function createAggregateBuilder<S, Name extends string>(
 
             return {
                 initialState,
-                process: (state: S, command: Command<any, string>): Event[] => {
-                    const commandType = command.type;
-                    const payload = command.payload;
-                    const commandKey = Object.keys(allCommandsMap).find(key =>
-                        (allCommandOverrides[key] || `${aggregateName}.${key}.command`) === commandType
-                    );
-
-                    if (!commandKey) throw new Error(`Unknown command: ${commandType}`);
-
-                    const result = allCommandsMap[commandKey](state as ReadonlyDeep<S>, payload);
-                    return Array.isArray(result) ? result : [result];
-                },
-
-                apply: (state: S, event: Event): S => {
-                    return produce(state, (draft: any) => {
-                        let targetDraft = draft;
-                        let eventTypeStr = event.type;
-                        
-                        // Parse targeted event: "aggregate.entity[id].subEntity[id2].eventName.event"
-                        const prefix = aggregateName + '.';
-                        let eventName = event.type;
-                        
-if (eventTypeStr.startsWith(prefix) && eventTypeStr.endsWith('.event')) {
-                            const withoutSuffix = eventTypeStr.slice(0, -6); // remove .event
-                            const parts = withoutSuffix.slice(prefix.length).split('.');
-                            
-                            if (parts.length > 1) {
-                                const actionName = parts.pop()!;
-                                
-                                // Drill down
-                                for (const part of parts) {
-                                    const arrayName = part;
-                                    // looking for ID from payload
-                                    const id = event.payload && (
-                                        event.payload[`${part}Id`] || 
-                                        event.payload[`${part.slice(0, -1)}Id`] || 
-                                        event.payload.id
-                                    );
-                                    
-                                    if (id !== undefined) {
-                                        if (Array.isArray(targetDraft[arrayName])) {
-                                            const found = targetDraft[arrayName].find((item: any) => String(item.id) === String(id));
-                                            if (found) {
-                                                targetDraft = found;
-                                            }
-                                        } else if (Array.isArray(targetDraft[`${arrayName}s`])) {
-                                            // Sometimes collection is plural
-                                            const found = targetDraft[`${arrayName}s`].find((item: any) => String(item.id) === String(id));
-                                            if (found) {
-                                                targetDraft = found;
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                eventName = `${aggregateName}.${actionName}.event`;
-                            }
-                        }
-
-                        const eventKey = Object.keys(allEvents).find(key =>
-                            (allEventOverrides[key] || `${aggregateName}.${key}.event`) === eventName ||
-                            (allEventOverrides[key] || `${aggregateName}.${key}.event`) === event.type // fallback
-                        );
-                        if (eventKey && allEvents[eventKey]) {
-                            allEvents[eventKey](targetDraft, event);
-                        }
-                    }) as S;
-                },
-
-                commandCreators: new Proxy(allCommandsMap, {
-                    get: (_, prop: string) => (payload: any) => ({
-                        type: allCommandOverrides[prop] || `${aggregateName}.${prop}.command`,
-                        payload
-                    })
-                })
+                process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
+                apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
+                commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides) as any
             };
         }
     };

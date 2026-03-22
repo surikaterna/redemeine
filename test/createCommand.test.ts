@@ -2,35 +2,29 @@ import { describe, expect, test } from '@jest/globals';
 import { createCommand } from '../src/createCommand';
 
 describe('createCommand', () => {
-  test('returns function', () => {
-    const cmd = createCommand<string>('order.cancel.command');
-    expect(typeof cmd == 'function').toBeTruthy();
-  });
-  test('returns string payload', () => {
-    const cmd = createCommand<string>('order.cancel.command');
-    expect(cmd('yep').payload).toBe('yep');
-  });
-  test('returns number payload', () => {
-    const cmd = createCommand<number>('order.cancel.command');
-    expect(cmd(12).payload).toBe(12);
-  });
-  test('returns complex payload', () => {
-    const cmd = createCommand<{ remark: string; list: string[] }>('order.comment.command');
-    const payload = { remark: 'hello', list: ['1', 'other'] };
-    expect(cmd(payload).payload).toBe(payload);
-    expect(cmd(payload).type).toBe('order.comment.command');
-  });
-  test('returns prepared payload', () => {
-    const cmd = createCommand('order.hello.command', (text: string, user: string, age: number) => {
-      return {
-        headers: { dummy: true },
-        payload: {
-          text,
-          user,
-          age
-        }
-      };
+    test('should create a command factory without a prepare function', () => {
+        const cmdFactory = createCommand<number>('order.cancel.command');
+        const cmd = cmdFactory(123);
+        
+        expect(cmd).toEqual({ type: 'order.cancel.command', payload: 123 });
+        expect(cmdFactory.type).toBe('order.cancel.command');
+        expect(cmdFactory.toString()).toBe('order.cancel.command');
     });
-    expect(cmd('hello', 'world', 12).payload).toEqual({ text: 'hello', user: 'world', age: 12 });
-  });
+
+    test('should create a command factory with a prepare function taking multiple args', () => {
+        const cmdFactory = createCommand('order.update.command', (id: string, value: number) => ({
+            payload: { id, value }
+        }));
+        
+        const cmd = cmdFactory('a1', 42);
+        expect(cmd).toEqual({ 
+            type: 'order.update.command', 
+            payload: { id: 'a1', value: 42 } 
+        });
+    });
+
+    test('should throw an error if prepare function returns falsy', () => {
+        const cmdFactory = createCommand('bad.command', () => null as any);
+        expect(() => cmdFactory()).toThrow('prepareCommand did not return an object with a payload');
+    });
 });

@@ -1,12 +1,22 @@
 import { Event, EventType } from "./types";
 
-export const createEvent = <E, T extends EventType = EventType>(
+export type EventFactory<P = void, T extends EventType | string = EventType> = 
+    ((...args: any[]) => Event<P, T>) & { type: T, toString: () => T };
+
+export const createEvent = <P = void, T extends EventType | string = EventType>(
   type: T,
-  preparePayload?: (payload: E) => Record<string, any>
-): ((argument?: E) => Event<Record<string, any>>) => {
-  return (payload?: E) => {
-    const cmd = { type };
-    const p = typeof preparePayload == 'function' ? preparePayload(payload) : { payload };
-    return { type, payload: p.payload };
-  };
+  preparePayload?: (...args: any[]) => { payload: P }
+): EventFactory<P, T> => {
+  function eventFactory(...args: any[]) {
+    if (typeof preparePayload === 'function') {
+      const prepared = preparePayload(...args);
+      return { type, payload: prepared.payload };
+    }
+    return { type, payload: args[0] as P };
+  }
+
+  eventFactory.toString = () => type;
+  eventFactory.type = type;
+  
+  return eventFactory as EventFactory<P, T>;
 };

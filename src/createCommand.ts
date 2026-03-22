@@ -1,48 +1,34 @@
-type AggregateType = `${string}`;
-export type CommandType = `${AggregateType}.${string}.command`;
-
-export interface Command<P = void, T extends CommandType = CommandType> {
-  type: T;
-  payload: P;
-}
+import { Command, CommandType } from './types';
 
 export type PrepareCommand<P> = (...args: any[]) => { payload: P };
 
-export type Commands<T extends keyof any = string, P extends any = any> = Record<T, () => Command<P>>;
+export type CommandFactory<P = void, T extends CommandType | string = CommandType> = 
+    ((payload: P) => Command<P, T>) & { type: T, toString: () => T };
 
-type IfPrepareCommandFunctionProvided<PC extends PrepareCommand<any> | void, True, False> = PC extends (...args: any[]) => any ? True : False;
+export type PreparedCommandFactory<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType> = 
+    ((...args: Parameters<PC>) => Command<ReturnType<PC>['payload'], T>) & { type: T, toString: () => T };
 
-export type CommandFactory<P = void, T extends CommandType = CommandType, PC extends PrepareCommand<P> | void = void> = IfPrepareCommandFunctionProvided<
-  PC,
-  PC,
-  (payload: P) => Command<P, T>
->;
+export function createCommand<P = void, T extends CommandType | string = CommandType>(type: T): CommandFactory<P, T>;
+export function createCommand<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType>(
+    type: T,
+    prepareCommand: PC
+): PreparedCommandFactory<PC, T>;
 
-export function createCommand<P = void, T extends CommandType = CommandType>(type: T): CommandFactory<P, T>;
-export function createCommand<PC extends PrepareCommand<any>, T extends CommandType = CommandType>(
-  type: T,
-  prepareCommand: PC
-): CommandFactory<ReturnType<PC>['payload'], T, PC>;
-
-export function createCommand(type: string, prepareCommand?: Function): any {
-  function commandFactory(...args: any[]) {
-    if (prepareCommand) {
-      let prepared = prepareCommand(...args);
-      if (!prepared) {
-        throw new Error('prepareCommand did not return an object');
-      }
-      return {
-        type,
-        payload: prepared.payload
-      };
+export function createCommand(type: string, prepareCommand?: Function): any {   
+    function commandFactory(...args: any[]) {
+        if (prepareCommand) {
+            const prepared = prepareCommand(...args);
+            if (!prepared) {
+                throw new Error('prepareCommand did not return an object with a payload');
+            }
+            return { type, payload: prepared.payload };
+        }
+        return { type, payload: args[0] };
     }
-    return {
-      type,
-      payload: args[0]
-    };
-  }
-  commandFactory.toString = () => `${type}`;
-  commandFactory.type = type;
+    
+    // Allow the factory itself to be introspected for its type
+    commandFactory.toString = () => type;
+    commandFactory.type = type;
 
-  return commandFactory;
+    return commandFactory;
 }

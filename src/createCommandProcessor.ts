@@ -1,11 +1,21 @@
-import { Command } from './createCommand';
-import { Event } from './types';
+import { Event, Command } from './types';
+import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 
-//order.cancel.command -> order.cancelled.event
+export function createCommandProcessor<S>(
+    aggregateName: string,
+    allCommandsMap: Record<string, Function>,
+    allCommandOverrides: Record<string, string>
+) {
+    return (state: S, command: Command<any, string>): Event[] => {
+        const commandType = command.type;
+        const payload = command.payload;
+        const commandKey = Object.keys(allCommandsMap).find(key =>
+            (allCommandOverrides[key] || aggregateName + '.' + key + '.command') === commandType
+        );
 
-export function createCommandProcessor<S, C extends Command>(command: C): Event<C['payload']> {
-  return {
-    type: 'a.b.event',
-    payload: undefined
-  };
+        if (!commandKey) throw new Error('Unknown command: ' + commandType);
+
+        const result = allCommandsMap[commandKey](state as ReadonlyDeep<S>, payload);
+        return Array.isArray(result) ? result : [result];
+    };
 }
