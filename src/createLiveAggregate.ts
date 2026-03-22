@@ -1,5 +1,6 @@
 import { Command, Event } from './types';
 import { Depot } from './Depot';
+import { Contract } from './Contract';
 
 export interface BuiltAggregate<S, M> {
     initialState: S;
@@ -20,6 +21,11 @@ export type LiveCommandMap<S, M> = {
 
 export const LiveAggregateCoreSymbol = Symbol('LiveAggregateCore');
 
+export interface LiveAggregateOptions {
+    contract?: Contract;
+    strict?: boolean;
+}
+
 export class LiveAggregateCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
@@ -27,17 +33,20 @@ export class LiveAggregateCore<S> {
     constructor(
         public builder: BuiltAggregate<S, any>,
         public id: string,
-        public state: S
+        public state: S,
+        public contract?: Contract,
+        public strict: boolean = false
     ) {}
 }
 
 export function createLiveAggregate<S extends {}, Name extends string, M extends Record<string, any>>(
     builder: BuiltAggregate<S, M>,
     id: string,
-    initialState?: S
+    initialState?: S,
+    options?: LiveAggregateOptions
 ): LiveCommandMap<S, M> & Readonly<S> & Record<string, any> {
 
-    const core = new LiveAggregateCore(builder, id, initialState || builder.initialState);
+    const core = new LiveAggregateCore(builder, id, initialState || builder.initialState, options?.contract, options?.strict);
 
 const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
         return new Proxy(typeof stateTarget === 'object' && stateTarget !== null ? stateTarget : () => {}, {
@@ -116,8 +125,34 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                 if (!cmd) {
                     throw new Error('Command ' + funcName + ' not found on commandCreators.');
                 }
+
+                if (core.contract) {
+                    try {
+                        core.contract.validateCommand(cmd.type, cmd.payload);
+                    } catch (err: any) {
+                        if (err.message.includes('schema not found')) {
+                            if (core.strict) throw err;
+                            console.warn(err.message);
+                        } else {
+                            throw err;
+                        }
+                    }
+                }
+
                 const events = builder.process(core.state, cmd);
                 for (const ev of events) {
+                    if (core.contract) {
+                        try {
+                            core.contract.validateEvent(ev.type, ev.payload);
+                        } catch (err: any) {
+                            if (err.message.includes('schema not found')) {
+                                if (core.strict) throw err;
+                                console.warn(err.message);
+                            } else {
+                                throw err;
+                            }
+                        }
+                    }
                     core.state = builder.apply(core.state, ev);
                     core.uncommitted.push(ev);
                 }
@@ -147,16 +182,20 @@ export function createLegacyAggregateBridge<S, M>(liveAggregate: LiveCommandMap<
 export class LiveAggregateDepot<S, M extends Record<string, any>> {
     constructor(
         private builder: BuiltAggregate<S, M>,
-        private depot: Depot<string, S>
+        private depot: Depot<string, S>,
+        private options?: LiveAggregateOptions
     ) {}
 
     async findById(id: string): Promise<LiveCommandMap<S, M> & Readonly<S> & Record<string, any>> {
         const state = await this.depot.findOne(id);
-        return createLiveAggregate(this.builder, id, state || this.builder.initialState);
+        if (state && this.options?.contract) {
+            this.options.contract.validateState(state);
+        }
+        return createLiveAggregate(this.builder, id, state || this.builder.initialState, this.options);
     }
 
     new(id: string = Math.random().toString(36).substring(2)): LiveCommandMap<S, M> & Readonly<S> & Record<string, any> {
-        return createLiveAggregate(this.builder, id, this.builder.initialState);
+        return createLiveAggregate(this.builder, id, this.builder.initialState, this.options);
     }
 
     async save(liveAggregate: LiveCommandMap<S, M> & Readonly<S> & Record<string, any>): Promise<S> {

@@ -4,6 +4,18 @@
   "description": "Sane defaults CQRS/ES aggregates library",
   "main": "dist/redemeine.js",
   "types": "dist/redemeine.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/redemeine.js",
+      "require": "./dist/redemeine.js",
+      "types": "./dist/redemeine.d.ts"
+    },
+    "./reflector": {
+      "import": "./dist/reflector.js",
+      "require": "./dist/reflector.js",
+      "types": "./dist/reflector.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
@@ -12,6 +24,7 @@
     "test-compile": "tsc -p ./"
   },
   "devDependencies": {
+    "@jest/globals": "^30.3.0",
     "@types/jest": "^30.0.0",
     "eslint": "^8.57.1",
     "eslint-config-surikat": "^5.0.0",
@@ -19,10 +32,15 @@
     "prettier-config-surikaterna": "^1.0.1",
     "ts-jest": "^29.1.5",
     "typescript": "^5.9.3",
-    "utility-types": "^3.11.0"
+    "utility-types": "^3.11.0",
+    "zod": "^4.3.6",
+    "zod-to-json-schema": "^3.25.1"
   },
   "dependencies": {
     "immer": "^10.1.1",
     "type-fest": "^5.5.0"
+  },
+  "peerDependencies": {
+    "zod": "^3.0.0"
   }
 }
