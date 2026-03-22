@@ -172,7 +172,7 @@ export function createAggregateBuilder<S, Name extends string>(
             const allEvents = _mixins.reduce((acc, m) => ({ ...acc, ...m.events }), _events);
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), _eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), _commandOverrides);
-            const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), _selectors);
+            const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), _selectors) as SelectorsMap<S>;
 
             const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
