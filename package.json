@@ -4,6 +4,9 @@
   "description": "Sane defaults CQRS/ES aggregates library",
   "main": "dist/redemeine.js",
   "types": "dist/redemeine.d.ts",
+  "bin": {
+    "redemeine": "./dist/bin/redemeine.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/redemeine.js",
