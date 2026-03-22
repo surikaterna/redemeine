@@ -74,18 +74,19 @@ const config: Config = {
       },
       items: [
         {
-          // Explicitly points to your docs/index.md file
           type: 'doc',
           docId: 'index',
           position: 'left',
           label: 'Documentation',
         },
         {
-          // Links to the separate API sidebar we just created
-          type: 'docSidebar',
-          sidebarId: 'apiSidebar',
+          // We change 'type: docSidebar' to a direct 'to' link
+          // This ensures Docusaurus knows exactly which URL to hit
+          to: '/docs/api/',
           label: 'API Reference',
-          position: 'left'
+          position: 'left',
+          // This keeps the apiSidebar active when on this page
+          activeBaseRegex: `/docs/api/`,
         },
         {
           href: 'https://github.com/surikaterna/redemeine',
