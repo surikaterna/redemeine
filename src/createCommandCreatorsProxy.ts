@@ -1,4 +1,5 @@
 import { createCommand } from './createCommand';
+import { formatCommandType } from './naming';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,
@@ -7,7 +8,7 @@ export function createCommandCreatorsProxy(
 ) {
     return new Proxy(allCommandsMap, {
         get: (_, prop: string) => {
-            const explicitType = allCommandOverrides[prop] || aggregateName + '.' + prop + '.command';
+            const explicitType = allCommandOverrides[prop] || formatCommandType(aggregateName, prop);
             return createCommand(explicitType);
         }
     });

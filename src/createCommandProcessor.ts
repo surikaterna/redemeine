@@ -1,5 +1,6 @@
 import { Event, Command } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import { formatCommandType } from './naming';
 
 export function createCommandProcessor<S>(
     aggregateName: string,
@@ -10,10 +11,10 @@ export function createCommandProcessor<S>(
         const commandType = command.type;
         const payload = command.payload;
         const commandKey = Object.keys(allCommandsMap).find(key =>
-            (allCommandOverrides[key] || aggregateName + '.' + key + '.command') === commandType
+            (allCommandOverrides[key] || formatCommandType(aggregateName, key)) === commandType
         );
 
-        if (!commandKey) throw new Error('Unknown command: ' + commandType);
+        if (!commandKey) throw new Error('Unknown command: ' + commandType); 
 
         const result = allCommandsMap[commandKey](state as ReadonlyDeep<S>, payload);
         return Array.isArray(result) ? result : [result];
