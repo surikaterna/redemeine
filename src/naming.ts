@@ -1,4 +1,4 @@
-import { EventType } from './types';
+import { EventType, NamingStrategy } from './types';
 
 export const formatCommandType = (aggregateName: string, prop: string) => aggregateName + '.' + prop + '.command';
 
@@ -15,6 +15,11 @@ export const formatTargetedEventType = (aggregateName: string, prop: string): Ev
     }
     return formatFlatEventType(aggregateName, prop);
 }
+
+export const defaultNamingStrategy: NamingStrategy = {
+    command: formatCommandType,
+    event: formatTargetedEventType
+};
 
 export const parseTargetedEventPath = (eventType: string, aggregateName: string) => {
     const prefix = aggregateName + '.';

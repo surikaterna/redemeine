@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
@@ -6,9 +6,10 @@ import { applyEvent } from './applyEvent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './createEmitProxy';
 import { createCommandCreatorsProxy } from './createCommandCreatorsProxy';
+import { defaultNamingStrategy } from './naming';
 
 // Extracts payloads from a single mixin
-type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any> ? CPayloads : {};
+type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
 
 // Recursively merges an array of mixins into a single Command map
 type MergeMixins<T extends any[]> = T extends [infer First, ...infer Rest]
@@ -23,30 +24,40 @@ type MergeEntities<T extends any[]> = T extends [infer First, ...infer Rest]
     ? ExtractEntityCommands<First> & MergeEntities<Rest>
     : {};
 
-export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}> {
+export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}> {
+    extends: <ParentM, ParentE, ParentEOverrides, ParentSel>(
+        parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel>
+    ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel>;
+
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
         ...entityPackages: T
-    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides>;
+    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel>;
 
-    mixins: <T extends MixinPackage<S, any, any, any, any>[]>(
+    mixins: <T extends MixinPackage<S, any, any, any, any, any>[]>(
         ...mixins: T
-    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides>;
+    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel>;
+
+    selectors: <NewSel extends SelectorsMap<S>>(
+        selectors: NewSel
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel>;
 
     events: <NewE extends Record<string, (state: any, event: Event<any, any>) => void>>(
         events: NewE
-    ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides>;
+    ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides, Sel>;
 
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
-    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel>;
+
+    naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
     commands: <C extends Record<string, (state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]>>(
-        factory: (emit: EventEmitterFactory<Name, E, EOverrides>) => C
-    ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides>;
+        factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
+    ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides, Sel>;
 
     overrideCommandNames: (overrides: Partial<Record<keyof M, CommandType>>) => 
-        AggregateBuilder<S, Name, M, E, EOverrides>;
+        AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
     build: () => {
         initialState: S;
@@ -57,6 +68,17 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
                 ? () => { type: string; payload: void }
                 : (payload: M[K]) => { type: string; payload: M[K] };
         };
+        selectors: Sel;
+    };
+    
+    // Internal state for inheritance
+    _state: {
+        events: Record<string, Function>;
+        eventOverrides: Record<string, string>;
+        commandOverrides: Record<string, string>;
+        commandsFactory: (emit: any, context: { selectors: any }) => Record<string, Function>;
+        mixins: MixinPackage<S>[];
+        selectors: Record<string, Function>;
     };
 }
 
@@ -67,13 +89,32 @@ export function createAggregateBuilder<S, Name extends string>(
 
     let _events: Record<string, Function> = {};
     let _eventOverrides: Record<string, string> = {};
-    let _commandsFactory: (emit: any) => Record<string, Function> = () => ({});
+    let _commandsFactory: (emit: any, context: { selectors: any }) => Record<string, Function> = () => ({});
     let _commandOverrides: Record<string, string> = {};
     let _entities: string[] = [];
     let _entityPackages: EntityPackage<any, any>[] = [];
-    const _mixins: MixinPackage<S>[] = [];
+    let _mixins: MixinPackage<S>[] = [];
+    let _selectors: Record<string, Function> = {};
+    let _namingStrategy: NamingStrategy = defaultNamingStrategy;
 
     const builder: any = {
+        extends: (parentBuilder: any) => {
+            const parentState = parentBuilder._state;
+            _events = { ...parentState.events, ..._events };
+            _eventOverrides = { ...parentState.eventOverrides, ..._eventOverrides };
+            _commandOverrides = { ...parentState.commandOverrides, ..._commandOverrides };
+            _selectors = { ...parentState.selectors, ..._selectors };
+            
+            const existingFactory = _commandsFactory;
+            _commandsFactory = (emit: any, context: { selectors: any }) => ({
+                ...parentState.commandsFactory(emit, context),
+                ...existingFactory(emit, context)
+            });
+            
+            _mixins = [...parentState.mixins, ..._mixins];
+            return builder;
+        },
+
         entities: (entitiesObj: any, ...packages: EntityPackage<any, any>[]) => {
             if (packages.length > 0) {
                 _entityPackages.push(...packages);
@@ -86,44 +127,67 @@ export function createAggregateBuilder<S, Name extends string>(
             return builder;
         },
 
+        selectors: (selectors: Record<string, Function>) => {
+            _selectors = { ..._selectors, ...selectors };
+            return builder;
+        },
+
         events: (events: Record<string, Function>) => {
-            _events = events;
+            _events = { ..._events, ...events };
             return builder;
         },
 
         overrideEventNames: (overrides: Record<string, string>) => {
-            _eventOverrides = overrides;
+            _eventOverrides = { ..._eventOverrides, ...overrides };
             return builder;
         },
 
-        commands: (factory: (emit: any) => Record<string, Function>) => {
+        naming: (strategy: Partial<NamingStrategy>) => {
+            _namingStrategy = { ..._namingStrategy, ...strategy };
+            return builder;
+        },
+
+        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, Function>) => {
             _commandsFactory = factory;
             return builder;
         },
 
         overrideCommandNames: (overrides: Record<string, string>) => {
-            _commandOverrides = overrides;
+            _commandOverrides = { ..._commandOverrides, ...overrides };
             return builder;
+        },
+
+        get _state() {
+            return {
+                events: _events,
+                eventOverrides: _eventOverrides,
+                commandOverrides: _commandOverrides,
+                commandsFactory: _commandsFactory,
+                mixins: _mixins,
+                selectors: _selectors
+            };
         },
 
         build: () => {
             const allEvents = _mixins.reduce((acc, m) => ({ ...acc, ...m.events }), _events);
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), _eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), _commandOverrides);
+            const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), _selectors);
 
-            const emit = createEmitProxy(aggregateName, allEventOverrides);
+            const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
-            const coreCommands = _commandsFactory(emit);
+            const coreCommands = _commandsFactory(emit, { selectors: allSelectors });
             const allCommandsMap = _mixins.reduce((acc, m) => ({
                 ...acc,
-                ...m.commandFactory(emit)
+                ...m.commandFactory(emit, { selectors: allSelectors })
             }), coreCommands);
 
             return {
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
-                commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides) as any
+                commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy) as any,
+                selectors: allSelectors
             };
         }
     };
