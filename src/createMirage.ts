@@ -22,22 +22,22 @@ export interface BuiltAggregate<S, M> {
  * A mapped record of executable live commands bound directly to the aggregate instance.
  * These methods dispatch commands and return a promise resolving to the mutated state.
  */
-export type LiveCommandMap<S, M> = {
+export type MirageCommandMap<S, M> = {
     [K in keyof M]: [M[K]] extends [void] | [undefined] | [never]
         ? () => Promise<S>
         : (payload: M[K]) => Promise<S>;
 };
 
 /**
- * A private symbol used to access internal dispatch mechanisms (LiveAggregateCore) 
+ * A private symbol used to access internal dispatch mechanisms (MirageCore) 
  * without polluting the public aggregate API methods.
  */
-export const LiveAggregateCoreSymbol = Symbol('LiveAggregateCore');
+export const MirageCoreSymbol = Symbol('MirageCore');
 
 /**
- * Configuration options strictly passed during the instantiation of a live aggregate.
+ * Configuration options strictly passed during the instantiation of a Mirage instance.
  */
-export interface LiveAggregateOptions {
+export interface MirageOptions {
     contract?: Contract;
     strict?: boolean;
 }
@@ -46,7 +46,7 @@ export interface LiveAggregateOptions {
  * The internal core controller of a Live Aggregate instance.
  * Tracks the uncommitted events, current version, and executes the core command routing.
  */
-export class LiveAggregateCore<S> {
+export class MirageCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
 
@@ -63,15 +63,15 @@ export function createLiveAggregate<S extends {}, Name extends string, M extends
     builder: BuiltAggregate<S, M>,
     id: string,
     initialState?: S,
-    options?: LiveAggregateOptions
-): LiveCommandMap<S, M> & Readonly<S> & Record<string, any> {
+    options?: MirageOptions
+): MirageCommandMap<S, M> & Readonly<S> & Record<string, any> {
 
-    const core = new LiveAggregateCore(builder, id, initialState || builder.initialState, options?.contract, options?.strict);
+    const core = new MirageCore(builder, id, initialState || builder.initialState, options?.contract, options?.strict);
 
 const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
         return new Proxy(typeof stateTarget === 'object' && stateTarget !== null ? stateTarget : () => {}, {
             get(target, prop) {
-                if (path.length === 0 && prop === LiveAggregateCoreSymbol) {
+                if (path.length === 0 && prop === MirageCoreSymbol) {
                     return core;
                 }
 
@@ -193,13 +193,13 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
         });
     };
 
-    return makeDeepProxy(core.state, [], {}) as LiveCommandMap<S, M> & Readonly<S> & Record<string, any>;
+    return makeDeepProxy(core.state, [], {}) as MirageCommandMap<S, M> & Readonly<S> & Record<string, any>;
 }
 
-export function createLegacyAggregateBridge<S, M>(liveAggregate: LiveCommandMap<S, M> & Readonly<S> & Record<string, any>) {
-    const core = (liveAggregate as any)[LiveAggregateCoreSymbol] as LiveAggregateCore<S>;
+export function createLegacyAggregateBridge<S, M>(mirage: MirageCommandMap<S, M> & Readonly<S> & Record<string, any>) {
+    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
     if (!core) {
-        throw new Error('Target is not a valid LiveAggregate.');
+        throw new Error('Target is not a valid Mirage Instance.');
     }
     return {
         get id() { return core.id; },
@@ -216,14 +216,14 @@ export function createLegacyAggregateBridge<S, M>(liveAggregate: LiveCommandMap<
  * directly to your underlying database representations (Depot).
  * Facilitates hydration (`findById`) and persistence (`save`).
  */
-export class LiveAggregateDepot<S, M extends Record<string, any>> {
+export class MirageDepot<S, M extends Record<string, any>> {
     constructor(
         private builder: BuiltAggregate<S, M>,
         private depot: Depot<string, S>,
-        private options?: LiveAggregateOptions
+        private options?: MirageOptions
     ) {}
 
-    async findById(id: string): Promise<LiveCommandMap<S, M> & Readonly<S> & Record<string, any>> {
+    async findById(id: string): Promise<MirageCommandMap<S, M> & Readonly<S> & Record<string, any>> {
         const state = await this.depot.findOne(id);
         if (state && this.options?.contract) {
             this.options.contract.validateState(state);
@@ -231,13 +231,13 @@ export class LiveAggregateDepot<S, M extends Record<string, any>> {
         return createLiveAggregate(this.builder, id, state || this.builder.initialState, this.options);
     }
 
-    new(id: string = Math.random().toString(36).substring(2)): LiveCommandMap<S, M> & Readonly<S> & Record<string, any> {
+    new(id: string = Math.random().toString(36).substring(2)): MirageCommandMap<S, M> & Readonly<S> & Record<string, any> {
         return createLiveAggregate(this.builder, id, this.builder.initialState, this.options);
     }
 
-    async save(liveAggregate: LiveCommandMap<S, M> & Readonly<S> & Record<string, any>): Promise<S> {
-        const core = (liveAggregate as any)[LiveAggregateCoreSymbol] as LiveAggregateCore<S>;
-        if (!core) throw new Error('Not a valid LiveAggregate');
+    async save(mirage: MirageCommandMap<S, M> & Readonly<S> & Record<string, any>): Promise<S> {
+        const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+        if (!core) throw new Error('Not a valid Mirage Instance');
         
         await this.depot.save(core.state);
         core.uncommitted = [];

@@ -3,7 +3,7 @@ export * from './createCommand';
 export * from './createCommandProcessor';
 export * from './createEntity';
 export * from './createEvent';
-export * from './createLiveAggregate';
+export * from './createMirage';
 export * from './createMixin';
 export * from './Depot';
 export * from './types';

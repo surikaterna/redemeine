@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregateBuilder } from '../src/createAggregateBuilder';
-import { createLiveAggregate, createLegacyAggregateBridge, LiveAggregateDepot } from '../src/createLiveAggregate';
+import { createLiveAggregate, createLegacyAggregateBridge, MirageDepot } from '../src/createMirage';
 import { Depot } from '../src/Depot';
 import { Event } from '../src/types';
 
@@ -57,7 +57,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
     test('should initialize with initialState if not found in depot', async () => {
         const builder = setupBuilder();
         const depot = new MockDepot<TestState>();
-        const liveDepot = new LiveAggregateDepot(builder, depot);
+        const liveDepot = new MirageDepot(builder, depot);
         
         const live = await liveDepot.findById('agg-1');
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
@@ -71,7 +71,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
         const depot = new MockDepot<TestState>();
         depot._setMockState('agg-2', { value: 10, title: 'Loaded', line: [] });
 
-        const liveDepot = new LiveAggregateDepot(builder, depot);
+        const liveDepot = new MirageDepot(builder, depot);
         const live = await liveDepot.findById('agg-2');
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
         
@@ -117,7 +117,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
             return state;
         };
 
-        const liveDepot = new LiveAggregateDepot(builder, depot);
+        const liveDepot = new MirageDepot(builder, depot);
         const live = liveDepot.new('agg-1');
         
         await live.update(55);
@@ -136,7 +136,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
         const depot = new MockDepot<TestState>();
         depot._setMockState('agg-r', { value: 777, title: 'ReadModel', line: [{id: 'abc', qty: 5}] });
 
-        const liveDepot = new LiveAggregateDepot(builder, depot);
+        const liveDepot = new MirageDepot(builder, depot);
         const live = await liveDepot.findById('agg-r');
         
         expect(live.value).toBe(777);
