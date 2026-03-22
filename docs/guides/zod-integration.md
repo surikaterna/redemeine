@@ -53,12 +53,12 @@ export type OrderEventPayloads = {
 ```
 
 ## Enforcing the Contract on the Builder
-Once the schemas are verified with Zod, you pass the inferred types as exactly mapped payloads into your `createAggregateBuilder`. By declaring `<State>` and defining handler types, Redemeine securely infers validations directly into the `.commands()` and `.events()` interfaces.
+Once the schemas are verified with Zod, you pass the inferred types as exactly mapped payloads into your `createAggregate`. By declaring `<State>` and defining handler types, Redemeine securely infers validations directly into the `.commands()` and `.events()` interfaces.
 
 ```typescript
 import { OrderState, OrderCommandPayloads, OrderEventPayloads } from './contract';
 
-export const OrderAggregate = createAggregateBuilder<OrderState, 'Order'>('Order', { 
+export const OrderAggregate = createAggregate<OrderState, 'Order'>('Order', { 
   id: '', status: 'pending', totalAmount: 0 
 })
 // Enforce Event Payloads

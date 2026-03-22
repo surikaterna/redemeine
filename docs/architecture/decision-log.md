@@ -8,7 +8,7 @@ ai_priority: high
 # Architecture Decision Record: Mixins vs. Classes
 
 ## Summary
-This document outlines the architectural decision to transition from prototype-based class mutation (used in the legacy `demeine` framework) to a functional, package-based Mixin architecture in Redemeine. By leveraging `createAggregateBuilder` and composable Mixins, we achieve strict end-to-end TypeScript inference, eliminate prototype pollution, and allow complex aggregates (like `Shipment` extending `Order`) to be composed predictably without creating tightly coupled "God Objects."
+This document outlines the architectural decision to transition from prototype-based class mutation (used in the legacy `demeine` framework) to a functional, package-based Mixin architecture in Redemeine. By leveraging `createAggregate` and composable Mixins, we achieve strict end-to-end TypeScript inference, eliminate prototype pollution, and allow complex aggregates (like `Shipment` extending `Order`) to be composed predictably without creating tightly coupled "God Objects."
 
 ## Context: The Limitations of `demeine`
 The original `demeine` library favored a class-based, object-oriented approach where functionality was shared via prototype mutation (e.g., `Object.assign(Shipment.prototype, ...)` or relying on classic `extends`).
@@ -22,11 +22,11 @@ While familiar, this pattern introduced severe limitations in modern TypeScript 
 To solve these issues, Redemeine was designed around a **functional builder pattern** coupled with isolated **Mixins** and **Entities**.
 
 ### 1. Robust Type-Safety via Fluid Chaining
-Instead of dynamically manipulating classes, Redemeine uses `createAggregateBuilder`. Each chained call (`.mixins()`, `.entities()`, `.commands()`) progressively narrows and extends the statically inferred TypeScript types.
+Instead of dynamically manipulating classes, Redemeine uses `createAggregate`. Each chained call (`.mixins()`, `.entities()`, `.commands()`) progressively narrows and extends the statically inferred TypeScript types.
 
 ```typescript
 // The compiler guarantees `TrackingMixin`'s commands and events are now part of Shipment
-const ShipmentAggregate = createAggregateBuilder('Shipment', initial)
+const ShipmentAggregate = createAggregate('Shipment', initial)
   .mixins(TrackingMixin)
   .build();
 ```
@@ -37,7 +37,7 @@ Mixins encapsulate logic (commands, events, and selectors) into truly reusable, 
 Furthermore, the new `.extends()` API allows for logical inheritance without traditional OOP baggage. You can compose a `Shipment` directly from an `Order` aggregate, gaining its foundational rules while injecting domain-specific extensions.
 
 ```typescript
-const ShipmentBuilder = createAggregateBuilder('Shipment', initial)
+const ShipmentBuilder = createAggregate('Shipment', initial)
   .extends(OrderAggregate) // Safely inherits Order rules without prototype linking
   .entities({ legs: LegEntity })
   .build();

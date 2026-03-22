@@ -11,24 +11,24 @@
 ## ⚡ Visual Hook
 
 ```typescript
-import { createAggregate, createLiveAggregate } from 'redemeine';
+import { createAggregate, createMirage } from 'redemeine';
 
 // Compose your aggregate builder with typed commands, events, and entities
 const OrderAggregate = createAggregate('Order', initialOrderState)
   .entities({ orderLines: OrderLineEntity }) // Encapsulated logic & selectors
   .events({
-    placed: (state, event) => { state.status = 'placed'; }
+    placed: (state, event: { payload: { customerId: string } }) => { state.status = 'placed'; }
   })
   .commands(emit => ({
-    place: (state, payload: { customerId: string }) => emit('placed', payload),
+    place: (state, customerId: string) => emit.placed({ customerId }),
   }))
   .build();
 
 // Instantiate and interact with a live aggregate
-const order123 = createLiveAggregate(OrderAggregate, 'order-123');
+const order123 = createMirage(OrderAggregate, 'order-123');
 
 // Type-safe dispatching triggers Immer-powered state transitions natively
-await order123.place({ customerId: 'cust-99' });
+await order123.place('cust-99');
 
 // Entities maintain their own namespace and logic
 await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.order_line.cancel.command'

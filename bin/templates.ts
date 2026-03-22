@@ -19,15 +19,13 @@ export const Events = z.object({
 });
 `;
 
-export const aggregateTemplate = (aggregateName: string) => `import { createAggregateBuilder, EntityArray } from 'redemeine';
+export const aggregateTemplate = (aggregateName: string) => `import { createAggregate, EntityArray } from 'redemeine';
 import { InitialState, Commands, Events } from './contract';
 import * as selectors from './selectors';
 
-export const ${aggregateName}Aggregate = createAggregateBuilder()
-  .name('${aggregateName}')
+export const ${aggregateName}Aggregate = createAggregate('${aggregateName}', InitialState)
   .naming('targeted') // Uses "Targeted" dot-notation logic
   // .extends(BaseAggregate) // Example of inheriting from another aggregate
-  .state(InitialState)
   .commands(Commands)
   .events(Events)
   .entities({})
@@ -40,8 +38,7 @@ export const getCoreState = (state: any) => state;
 
 export const entityTemplate = (entityName: string) => `import { createEntity } from 'redemeine';
 
-export const ${entityName}Entity = createEntity()
-  .name('${entityName}')
+export const ${entityName}Entity = createEntity('${entityName}')
   .selectors({
     // Entity logic scoped and unpolluted from the root
   });

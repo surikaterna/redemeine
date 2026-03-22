@@ -42,7 +42,7 @@ This invocation will natively generate and route exactly:
 In situations where you must conform to legacy event definitions existing in your event store, relying on auto-generation may be unsafe. Redemeine provides an escape hatch using `.overrideEventNames()` or `.overrideCommandNames()`.
 
 ```typescript
-const LegacyMigrationAggregate = createAggregateBuilder('Customer', initialState)
+const LegacyMigrationAggregate = createAggregate('Customer', initialState)
   .events({
     profileUpdated: (state, event) => { /* ... */ }
   })
