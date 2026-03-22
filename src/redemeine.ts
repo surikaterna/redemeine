@@ -1,4 +1,4 @@
-export * from './createAggregateBuilder';
+export * from './createAggregate';
 export * from './createCommand';
 export * from './createCommandProcessor';
 export * from './createEntity';

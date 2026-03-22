@@ -33,7 +33,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * Inherit all business rules, selectors, and events from a parent aggregate builder.
      * 
      * @example
-     * const Shipment = createAggregateBuilder('Shipment', initialShipment)
+     * const Shipment = createAggregate('Shipment', initialShipment)
      *   .extends(OrderAggregate) // Inherits standard order rules while adding legs
      */
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel>(
@@ -182,7 +182,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 /**
  * Bootstraps a new Redemeine Domain Aggregate Composer.
  */
-export function createAggregateBuilder<S, Name extends string>(
+export function createAggregate<S, Name extends string>(
     aggregateName: Name,
     initialState: S
 ): AggregateBuilder<S, Name> {

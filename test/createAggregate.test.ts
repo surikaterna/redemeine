@@ -1,4 +1,4 @@
-import { createAggregateBuilder } from '../src/createAggregateBuilder';
+import { createAggregate } from '../src/createAggregate';
 import { createMixin } from '../src/createMixin';
 import { Event } from '../src/types';
 
@@ -42,7 +42,7 @@ const counterMixin = createMixin<{ count: number }>()
 describe('Aggregate Builder with Mixins', () => {
   
   it('should process core commands and default naming strategy', () => {
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
       .events({
         opened: (state, event: Event<{ id: string }>) => {
           state.id = event.payload.id;
@@ -66,7 +66,7 @@ describe('Aggregate Builder with Mixins', () => {
   });
 
   it('should correctly merge mixin commands and events', () => {
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
       .mixins(counterMixin)
       .build();
 
@@ -85,7 +85,7 @@ describe('Aggregate Builder with Mixins', () => {
   });
 
   it('should allow core overrides to take precedence or coexist', () => {
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
       .events({
         closed: (state) => { state.status = 'closed'; }
       })
@@ -108,7 +108,7 @@ describe('Aggregate Builder with Mixins', () => {
   });
 
 it('should throw an error when processing an unknown command', () => {
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState).build();
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState).build();
 
     expect(() => {
       aggregate.process(initialState, { type: 'ghost.command', payload: {} });
@@ -116,7 +116,7 @@ it('should throw an error when processing an unknown command', () => {
   });
 
   it('should maintain immutability using Immer', () => {
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
       .events({
         itemAdded: (state, event: Event<string>) => {
           state.items.push(event.payload);
@@ -144,7 +144,7 @@ it('should throw an error when processing an unknown command', () => {
       .overrideCommandNames({})
       .build();
 
-    const aggregate = createAggregateBuilder<TestState, 'test'>('test', initialState)
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
       .mixins(counterMixin, otherMixin)
       .build();
 
@@ -165,7 +165,7 @@ it('should throw an error when processing an unknown command', () => {
       line: [{ id: '123', qty: 1, subitems: [{ id: 456, metadata: 'old' }] }]
     };
 
-    const aggregate = createAggregateBuilder<OrderState, 'order'>('order', orderState)
+    const aggregate = createAggregate<OrderState, 'order'>('order', orderState)
       .entities<{ line: OrderLine; subitems: SubOrderLine }>()
       .events({
         updated: (state: any, event: Event<{ qty?: number; metadata?: string }>) => {

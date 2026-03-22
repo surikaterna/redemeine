@@ -43,7 +43,7 @@ export interface MirageOptions {
 }
 
 /**
- * The internal core controller of a Live Aggregate instance.
+ * The internal core controller of a Mirage instance.
  * Tracks the uncommitted events, current version, and executes the core command routing.
  */
 export class MirageCore<S> {
@@ -59,7 +59,7 @@ export class MirageCore<S> {
     ) {}
 }
 
-export function createLiveAggregate<S extends {}, Name extends string, M extends Record<string, any>>(
+export function createMirage<S extends {}, Name extends string, M extends Record<string, any>>(
     builder: BuiltAggregate<S, M>,
     id: string,
     initialState?: S,
@@ -228,11 +228,11 @@ export class MirageDepot<S, M extends Record<string, any>> {
         if (state && this.options?.contract) {
             this.options.contract.validateState(state);
         }
-        return createLiveAggregate(this.builder, id, state || this.builder.initialState, this.options);
+        return createMirage(this.builder, id, state || this.builder.initialState, this.options);
     }
 
     new(id: string = Math.random().toString(36).substring(2)): MirageCommandMap<S, M> & Readonly<S> & Record<string, any> {
-        return createLiveAggregate(this.builder, id, this.builder.initialState, this.options);
+        return createMirage(this.builder, id, this.builder.initialState, this.options);
     }
 
     async save(mirage: MirageCommandMap<S, M> & Readonly<S> & Record<string, any>): Promise<S> {

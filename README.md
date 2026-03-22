@@ -11,10 +11,10 @@
 ## ⚡ Visual Hook
 
 ```typescript
-import { createAggregateBuilder, createLiveAggregate } from 'redemeine';
+import { createAggregate, createLiveAggregate } from 'redemeine';
 
 // Compose your aggregate builder with typed commands, events, and entities
-const OrderAggregate = createAggregateBuilder('Order', initialOrderState)
+const OrderAggregate = createAggregate('Order', initialOrderState)
   .entities({ orderLines: OrderLineEntity }) // Encapsulated logic & selectors
   .events({
     placed: (state, event) => { state.status = 'placed'; }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregateBuilder } from '../src/createAggregateBuilder';
-import { createLiveAggregate, createLegacyAggregateBridge, MirageDepot } from '../src/createMirage';
+import { createAggregate } from '../src/createAggregate';
+import { createMirage, createLegacyAggregateBridge, MirageDepot } from '../src/createMirage';
 import { Depot } from '../src/Depot';
 import { Event } from '../src/types';
 
@@ -38,7 +38,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
     };
 
     const setupBuilder = () => {
-        return createAggregateBuilder<TestState, 'test'>('test', initialState)
+        return createAggregate<TestState, 'test'>('test', initialState)
             .events({
                 updated: (state: any, event: Event<number>) => {
                     state.value = event.payload;
@@ -81,7 +81,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
 
     test('should execute flat commands, update state & uncommitted', async () => {
         const builder = setupBuilder();
-        const live = createLiveAggregate(builder, 'agg-1');
+        const live = createMirage(builder, 'agg-1');
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
 
         await live.update(42);
@@ -96,7 +96,7 @@ describe('LiveAggregateDepot & createLiveAggregate', () => {
 
     test('should execute targeted commands via deep proxy recursively', async () => {
         const builder = setupBuilder();
-        const live = createLiveAggregate(builder, 'agg-1');
+        const live = createMirage(builder, 'agg-1');
 
         await (live as any).line['123'].update({ qty: 99 });
         
