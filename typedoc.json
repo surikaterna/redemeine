@@ -1,0 +1,24 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src/index.ts"],
+  "out": "docs/api",
+  "plugin": [
+    "typedoc-plugin-markdown",
+    "typedoc-plugin-missing-exports",
+    "typedoc-plugin-mdn-links"
+  ],
+  "readme": "none",
+  "cleanOutputDir": true,
+  "githubPages": true,
+  "name": "Redemeine API Reference",
+  "categorizeByGroup": true,
+  "navigation": {
+    "fullNames": false,
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "excludeInternal": true,
+  "commentStyle": "all",
+  "searchInComments": true,
+  "useFirstParagraphOfCommentAsSummary": true
+}

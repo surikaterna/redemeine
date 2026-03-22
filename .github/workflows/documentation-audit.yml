@@ -67,6 +67,23 @@ jobs:
             git push
           fi
 
+      - name: 📚 Generate TypeDoc API Reference
+        run: |
+          # Generate the markdown files
+          npx typedoc
+          
+          # Check if TypeDoc actually changed anything in the docs/api folder
+          if [[ -n $(git status --porcelain docs/api/) ]]; then
+            echo "API documentation changed. Committing updates..."
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git add docs/api/
+            git commit -m "docs(api): auto-generate updated TypeDoc reference"
+            git push
+          else
+            echo "No changes to API documentation."
+          fi
+
       - name: 🚩 Verify TSDoc Coverage
         run: |
           # Use the reflector to fail the build if public exports lack TSDocs
