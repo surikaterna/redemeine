@@ -1,14 +1,42 @@
-type AggregateId = string;
-interface Aggregate { }
-interface Query { }
-interface Cursor<T> { }
+import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
+import { Event } from './types';
+
+export interface EventStore {
+    getEvents(id: string): Promise<Event[]>;
+    saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
+}
 
 /**
- * Represents the repository layer or instantiated storage connection for an aggregate.
- * Handles the running state persistence across standard store operations.
+ * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
+ * Handles event sourced hydration and persistence of new uncommitted events.
  */
-export interface Depot<TID extends AggregateId, T extends Aggregate> {
-  findOne(id:TID): Promise<T>;
-  find(query: Query): Cursor<T>;
-  save(aggregate: T): Promise<T>;
+export interface Depot<TState, M extends Record<string, any> = any> {
+  get(id: string): Promise<Mirage<TState, M>>;
+  save(mirage: Mirage<TState, M>): Promise<void>;
+}
+
+/**
+ * Creates a standard Depot linking an EventStore to a BuiltAggregate.
+ */
+export function createDepot<TState, M extends Record<string, any>>(
+  builder: BuiltAggregate<TState, M>,
+  store: EventStore,
+  options?: MirageOptions
+): Depot<TState, M> {
+  return {
+      get: async (id: string) => {
+          const events = await store.getEvents(id);
+          let state = builder.initialState;
+          for (const ev of events) {
+              state = builder.apply(state, ev);
+          }
+          return createMirage(builder, id, state, options);
+      },
+      save: async (mirage: Mirage<TState, M>) => {
+          const core = (mirage as any)[MirageCoreSymbol];
+          if (!core) throw new Error('Not a valid Mirage Instance');
+          await store.saveEvents(core.id, core.uncommitted, core.version);
+          core.uncommitted = [];
+      }
+  };
 }

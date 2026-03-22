@@ -16,6 +16,7 @@ export interface BuiltAggregate<S, M> {
             ? () => Command<void, string>
             : (payload: M[K]) => Command<M[K], string>;
     };
+    depot?: any;
 }
 
 /**
@@ -27,6 +28,13 @@ export type MirageCommandMap<S, M> = {
         ? () => Promise<S>
         : (payload: M[K]) => Promise<S>;
 };
+
+export type Mirage<TState, M extends Record<string, any> = any> = 
+    MirageCommandMap<TState, M> & Readonly<TState> & {
+        readonly state: Readonly<TState>;
+        dispatch: (command: any) => Promise<TState>;
+        subscribe: (listener: (state: TState) => void) => () => void;
+    } & Record<string, any>;
 
 /**
  * A private symbol used to access internal dispatch mechanisms (MirageCore) 
@@ -49,6 +57,7 @@ export interface MirageOptions {
 export class MirageCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
+    private listeners: ((state: S) => void)[] = [];
 
     constructor(
         public builder: BuiltAggregate<S, any>,
@@ -57,6 +66,65 @@ export class MirageCore<S> {
         public contract?: Contract,
         public strict: boolean = false
     ) {}
+
+    public subscribe(listener: (state: S) => void) {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
+    }
+
+    public notify() {
+        this.listeners.forEach(l => l(this.state));
+    }
+
+    public async dispatch(cmd: any): Promise<S> {
+        if (this.builder.hooks?.onBeforeCommand) {
+            await this.builder.hooks.onBeforeCommand(cmd, this.state as any);
+        }
+
+        if (this.contract) {
+            try {
+                this.contract.validateCommand(cmd.type, cmd.payload);
+            } catch (err: any) {
+                if (err.message.includes('schema not found')) {
+                    if (this.strict) throw err;
+                    console.warn(err.message);
+                } else {
+                    throw err;
+                }
+            }
+        }
+
+        const events = this.builder.process(this.state, cmd);
+        
+        if (this.builder.hooks?.onAfterCommand) {
+            await this.builder.hooks.onAfterCommand(cmd, events, this.state as any);
+        }
+
+        for (const ev of events) {
+            if (this.contract) {
+                try {
+                    this.contract.validateEvent(ev.type, ev.payload);
+                } catch (err: any) {
+                    if (err.message.includes('schema not found')) {
+                        if (this.strict) throw err;
+                        console.warn(err.message);
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+            this.state = this.builder.apply(this.state, ev);
+            this.uncommitted.push(ev);
+            if (this.builder.hooks?.onEventApplied) {
+                this.builder.hooks.onEventApplied(ev, this.state as any);
+            }
+        }
+        this.version++;
+        this.notify();
+        return this.state;
+    }
 }
 
 export function createMirage<S extends {}, Name extends string, M extends Record<string, any>>(
@@ -64,15 +132,18 @@ export function createMirage<S extends {}, Name extends string, M extends Record
     id: string,
     initialState?: S,
     options?: MirageOptions
-): MirageCommandMap<S, M> & Readonly<S> & Record<string, any> {
+): Mirage<S, M> {
 
     const core = new MirageCore(builder, id, initialState || builder.initialState, options?.contract, options?.strict);
 
 const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
         return new Proxy(typeof stateTarget === 'object' && stateTarget !== null ? stateTarget : () => {}, {
             get(target, prop) {
-                if (path.length === 0 && prop === MirageCoreSymbol) {
-                    return core;
+                if (path.length === 0) {
+                    if (prop === 'state') return core.state;
+                    if (prop === 'dispatch') return core.dispatch.bind(core);
+                    if (prop === 'subscribe') return core.subscribe.bind(core);
+                    if (prop === MirageCoreSymbol) return core;
                 }
 
                 if (typeof prop !== 'string') {
@@ -146,57 +217,16 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                     throw new Error('Command ' + funcName + ' not found on commandCreators.');
                 }
 
-                if (core.builder.hooks?.onBeforeCommand) {
-                    await core.builder.hooks.onBeforeCommand(cmd, core.state as any);
-                }
+                return core.dispatch(cmd);
 
-                if (core.contract) {
-                    try {
-                        core.contract.validateCommand(cmd.type, cmd.payload);
-                    } catch (err: any) {
-                        if (err.message.includes('schema not found')) {
-                            if (core.strict) throw err;
-                            console.warn(err.message);
-                        } else {
-                            throw err;
-                        }
-                    }
-                }
-
-                const events = builder.process(core.state, cmd);
-                
-                if (core.builder.hooks?.onAfterCommand) {
-                    await core.builder.hooks.onAfterCommand(cmd, events, core.state as any);
-                }
-
-                for (const ev of events) {
-                    if (core.contract) {
-                        try {
-                            core.contract.validateEvent(ev.type, ev.payload);
-                        } catch (err: any) {
-                            if (err.message.includes('schema not found')) {
-                                if (core.strict) throw err;
-                                console.warn(err.message);
-                            } else {
-                                throw err;
-                            }
-                        }
-                    }
-                    core.state = builder.apply(core.state, ev);
-                    core.uncommitted.push(ev);
-                    if (core.builder.hooks?.onEventApplied) {
-                        core.builder.hooks.onEventApplied(ev, core.state as any);
-                    }
-                }
-                return Promise.resolve(core.state);
             }
         });
     };
 
-    return makeDeepProxy(core.state, [], {}) as MirageCommandMap<S, M> & Readonly<S> & Record<string, any>;
+    return makeDeepProxy(core.state, [], {}) as Mirage<S, M>;
 }
 
-export function createLegacyAggregateBridge<S, M>(mirage: MirageCommandMap<S, M> & Readonly<S> & Record<string, any>) {
+export function createLegacyAggregateBridge<S, M>(mirage: Mirage<S, M>) {
     const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
@@ -216,31 +246,3 @@ export function createLegacyAggregateBridge<S, M>(mirage: MirageCommandMap<S, M>
  * directly to your underlying database representations (Depot).
  * Facilitates hydration (`findById`) and persistence (`save`).
  */
-export class MirageDepot<S, M extends Record<string, any>> {
-    constructor(
-        private builder: BuiltAggregate<S, M>,
-        private depot: Depot<string, S>,
-        private options?: MirageOptions
-    ) {}
-
-    async findById(id: string): Promise<MirageCommandMap<S, M> & Readonly<S> & Record<string, any>> {
-        const state = await this.depot.findOne(id);
-        if (state && this.options?.contract) {
-            this.options.contract.validateState(state);
-        }
-        return createMirage(this.builder, id, state || this.builder.initialState, this.options);
-    }
-
-    new(id: string = Math.random().toString(36).substring(2)): MirageCommandMap<S, M> & Readonly<S> & Record<string, any> {
-        return createMirage(this.builder, id, this.builder.initialState, this.options);
-    }
-
-    async save(mirage: MirageCommandMap<S, M> & Readonly<S> & Record<string, any>): Promise<S> {
-        const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-        if (!core) throw new Error('Not a valid Mirage Instance');
-        
-        await this.depot.save(core.state);
-        core.uncommitted = [];
-        return core.state;
-    }
-}

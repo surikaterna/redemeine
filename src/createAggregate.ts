@@ -165,6 +165,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         };
         selectors: Sel;
         hooks: AggregateHooks<S>;
+
     };
 
     // Internal state for inheritance
