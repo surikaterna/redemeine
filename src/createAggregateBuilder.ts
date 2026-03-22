@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
@@ -139,6 +139,19 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
 
     /**
+     * Registers lifecycle hooks for cross-cutting concerns (e.g., logging, auth, metrics).
+     * Hooks intercept the execution flow but DO NOT mutate state directly.
+     * @example
+     * .hooks({
+     *   onBeforeCommand: (cmd, state) => {
+     *     if (cmd.metadata?.userId !== state.ownerId) throw new Error("Unauthorized");
+     *   },
+     *   onEventApplied: (event, state) => console.log(`State updated to ${state.status}`)
+     * })
+     */
+    hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel>;
+
+    /**
      * Finalizes and compiles the aggregate.
      */
     build: () => {
@@ -151,8 +164,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
                 : (payload: M[K]) => { type: string; payload: M[K] };
         };
         selectors: Sel;
+        hooks: AggregateHooks<S>;
     };
-    
+
     // Internal state for inheritance
     _state: {
         events: Record<string, Function>;
@@ -161,6 +175,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         commandsFactory: (emit: any, context: { selectors: any }) => Record<string, Function>;
         mixins: MixinPackage<S>[];
         selectors: Record<string, Function>;
+        hooks: AggregateHooks<S>;
     };
 }
 
@@ -181,6 +196,7 @@ export function createAggregateBuilder<S, Name extends string>(
     let _mixins: MixinPackage<S>[] = [];
     let _selectors: Record<string, Function> = {};
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
+    let _hooks: AggregateHooks<S> = {};
 
     const builder: any = {
         extends: (parentBuilder: any) => {
@@ -189,18 +205,13 @@ export function createAggregateBuilder<S, Name extends string>(
             _eventOverrides = { ...parentState.eventOverrides, ..._eventOverrides };
             _commandOverrides = { ...parentState.commandOverrides, ..._commandOverrides };
             _selectors = { ...parentState.selectors, ..._selectors };
-            
+            _hooks = { ...parentState.hooks, ..._hooks };
+
             const existingFactory = _commandsFactory;
-            _commandsFactory = (emit: any, context: { selectors: any }) => ({
+            _commandsFactory = (emit, context) => ({
                 ...parentState.commandsFactory(emit, context),
                 ...existingFactory(emit, context)
             });
-            
-            _mixins = [...parentState.mixins, ..._mixins];
-            return builder;
-        },
-
-        entities: (entitiesObj: any, ...packages: EntityPackage<any, any>[]) => {
             if (packages.length > 0) {
                 _entityPackages.push(...packages);
             }
@@ -242,6 +253,11 @@ export function createAggregateBuilder<S, Name extends string>(
             return builder;
         },
 
+        hooks: (hooks: AggregateHooks<S>) => {
+            _hooks = { ..._hooks, ...hooks };
+            return builder;
+        },
+
         get _state() {
             return {
                 events: _events,
@@ -249,7 +265,8 @@ export function createAggregateBuilder<S, Name extends string>(
                 commandOverrides: _commandOverrides,
                 commandsFactory: _commandsFactory,
                 mixins: _mixins,
-                selectors: _selectors
+                selectors: _selectors,
+                hooks: _hooks
             };
         },
 
@@ -300,7 +317,8 @@ export function createAggregateBuilder<S, Name extends string>(
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy) as any,
-                selectors: allSelectors
+                selectors: allSelectors,
+                hooks: _hooks
             };
         }
     };

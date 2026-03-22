@@ -1,3 +1,5 @@
+import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+
 // types.ts
 
 /**
@@ -29,6 +31,12 @@ export interface NamingStrategy {
    * // Given aggregate 'order' and prop 'itemCancelled', standard output: 'order.item_cancelled.event'
    */
   event: (aggregateName: string, prop: string, path?: string) => string;
+}
+
+export interface AggregateHooks<State> {
+  onBeforeCommand?: (command: CommandType | Command<any, any>, state: ReadonlyDeep<State>) => void | Promise<void>;
+  onAfterCommand?: (command: CommandType | Command<any, any>, events: Event<any, any>[], state: ReadonlyDeep<State>) => void | Promise<void>;
+  onEventApplied?: (event: Event<any, any>, state: ReadonlyDeep<State>) => void;
 }
 
 /**

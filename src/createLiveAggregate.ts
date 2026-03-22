@@ -1,4 +1,4 @@
-import { Command, Event } from './types';
+import { Command, Event, AggregateHooks } from './types';
 import { Depot } from './Depot';
 import { Contract } from './Contract';
 
@@ -10,6 +10,7 @@ export interface BuiltAggregate<S, M> {
     initialState: S;
     process: (state: S, command: Command<any, string>) => Event[];
     apply: (state: S, event: Event) => S;
+    hooks?: AggregateHooks<S>;
     commandCreators: {
         [K in keyof M]: [M[K]] extends [void] | [undefined] | [never]
             ? () => Command<void, string>
@@ -122,9 +123,9 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                 return makeDeepProxy(() => {}, nextPath, nextIds);
             },
 
-            apply(target, thisArg, args) {
+            async apply(target, thisArg, args) {
                 const funcName = path.reduce(
-                    (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)),
+                    (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase()) + p.slice(1),
                     ''
                 );
 
@@ -145,6 +146,10 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                     throw new Error('Command ' + funcName + ' not found on commandCreators.');
                 }
 
+                if (core.builder.hooks?.onBeforeCommand) {
+                    await core.builder.hooks.onBeforeCommand(cmd, core.state as any);
+                }
+
                 if (core.contract) {
                     try {
                         core.contract.validateCommand(cmd.type, cmd.payload);
@@ -159,6 +164,11 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                 }
 
                 const events = builder.process(core.state, cmd);
+                
+                if (core.builder.hooks?.onAfterCommand) {
+                    await core.builder.hooks.onAfterCommand(cmd, events, core.state as any);
+                }
+
                 for (const ev of events) {
                     if (core.contract) {
                         try {
@@ -174,6 +184,9 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                     }
                     core.state = builder.apply(core.state, ev);
                     core.uncommitted.push(ev);
+                    if (core.builder.hooks?.onEventApplied) {
+                        core.builder.hooks.onEventApplied(ev, core.state as any);
+                    }
                 }
                 return Promise.resolve(core.state);
             }
