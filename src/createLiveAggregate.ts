@@ -125,7 +125,7 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
 
             async apply(target, thisArg, args) {
                 const funcName = path.reduce(
-                    (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase()) + p.slice(1),
+                    (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)),
                     ''
                 );
 

@@ -212,6 +212,11 @@ export function createAggregateBuilder<S, Name extends string>(
                 ...parentState.commandsFactory(emit, context),
                 ...existingFactory(emit, context)
             });
+            _mixins = [...parentState.mixins, ..._mixins];
+            return builder;
+        },
+
+        entities: (entitiesObj: any, ...packages: EntityPackage<any, any>[]) => {
             if (packages.length > 0) {
                 _entityPackages.push(...packages);
             }

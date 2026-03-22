@@ -3,18 +3,18 @@ import { Depot } from '../src/Depot';
 
 describe('Depot', () => {
   test('return object', () => {
-    class DD implements Depot<{}> {
-      findOne(): {} {
-        return {};
+    class DD implements Depot<string, {}> {
+      findOne(id: string): Promise<{}> {
+        return Promise.resolve({});
       }
-      find(query: any): {} {
+      find(query: any): any {
         throw new Error('Method not implemented.');
       }
       save(aggregate: {}): Promise<{}> {
-        throw new Error('Method not implemented.');
+        return Promise.resolve({});
       }
     }
     const dd = new DD();
-    expect(dd.findOne()).toBeTruthy();
+    expect(dd.findOne('1')).resolves.toBeTruthy();
   });
 });
