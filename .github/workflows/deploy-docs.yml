@@ -33,8 +33,14 @@ jobs:
           node-version: 22
           cache: npm
           # Point cache to the website's package-lock
-          cache-dependency-path: './website/package-lock.json' 
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
           
+      - name: Install Root dependencies
+        # TypeDoc needs these to resolve imports like 'zod' and 'immer'
+        run: npm ci
+        
       - name: Install dependencies
         # Run inside the website folder
         working-directory: ./website

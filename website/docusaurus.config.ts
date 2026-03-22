@@ -46,20 +46,19 @@ const config: Config = {
     [
       'docusaurus-plugin-typedoc',
       {
-        id: 'default', // Explicitly set the ID        
-        // Look UP one folder to find your TypeScript source code
+        id: 'default',
         entryPoints: ['../src/redemeine.ts'],
         tsconfig: '../tsconfig.json',
-        // Output the generated API docs into your root docs folder
         out: '../docs/api',
-        skipErrorChecking: true,      // Don't crash on the 'zod'/'immer' missing errors
-        cleanOutputDir: true,         // Ensure a fresh slate
-        disableSources: true,         // Prevents trying to link back to local source code        
-        plugin: ['typedoc-plugin-markdown'],
+        // Critical for CI success:
+        cleanOutputDir: true,
+        disableSources: true,
+        validation: {
+          invalidLink: false,
+        },
         sidebar: {
-          categoryLabel: 'API Reference',
-          position: 6,
-          fullNames: false,
+          autoConfiguration: true,
+          // REMOVE categoryLabel if it was still there!
         },
         readme: 'none',
       },
