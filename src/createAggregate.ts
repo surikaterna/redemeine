@@ -163,6 +163,12 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
                 ? () => { type: string; payload: void }
                 : (payload: M[K]) => { type: string; payload: M[K] };
         };
+        eventCreators: EventEmitterFactory<Name, E, EOverrides>;
+        /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
+        pure: {
+            commandProcessors: Record<string, Function>;
+            eventProjectors: Record<string, Function>;
+        };
         selectors: Sel;
         hooks: AggregateHooks<S>;
 
@@ -323,6 +329,11 @@ export function createAggregate<S, Name extends string>(
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy) as any,
+                eventCreators: emit,
+                pure: {
+                    commandProcessors: allCommandsMap,
+                    eventProjectors: allEvents
+                },
                 selectors: allSelectors,
                 hooks: _hooks
             };

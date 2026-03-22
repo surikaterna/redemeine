@@ -5,7 +5,7 @@ import { Contract } from './Contract';
  * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
  * It contains the initial state and the internal processing/application functions.
  */
-export interface BuiltAggregate<S, M> {
+export interface BuiltAggregate<S, M, E = any> {
     initialState: S;
     process: (state: S, command: Command<any, string>) => Event[];
     apply: (state: S, event: Event) => S;
@@ -15,7 +15,12 @@ export interface BuiltAggregate<S, M> {
             ? () => Command<void, string>
             : (payload: M[K]) => Command<M[K], string>;
     };
-    depot?: any;
+    eventCreators: E;
+    /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
+    pure: {
+        commandProcessors: Record<string, Function>;
+        eventProjectors: Record<string, Function>;
+    };
 }
 
 /**
