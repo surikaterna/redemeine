@@ -1,4 +1,3 @@
-import type {ReactNode} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
@@ -7,6 +6,7 @@ import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import Heading from '@theme/Heading';
 
 import styles from './index.module.css';
+import { ReactNode } from 'react';
 
 function HomepageHeader() {
   const {siteConfig} = useDocusaurusContext();
@@ -20,8 +20,14 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs/intro">
-            Docusaurus Tutorial - 5min ⏱️
+            to="/tutorials/essentials">
+            Redemeine Essentials Tutorial - 10min ⏱️
+          </Link>
+          <Link
+            className="button button--outline button--secondary button--lg margin-left--md"
+            style={{ color: '#fff', borderColor: '#fff' }}
+            to="/api">
+            API Reference
           </Link>
         </div>
       </div>
@@ -34,7 +40,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title={`Hello from ${siteConfig.title}`}
-      description="Description will go into a meta tag in <head />">
+      description="Sane defaults CQRS/ES aggregates library for TypeScript">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

@@ -1,5 +1,5 @@
-import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import { themes as prismThemes } from 'prism-react-renderer';
+import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
@@ -9,25 +9,32 @@ const config: Config = {
 
   // GitHub Pages configuration
   url: 'https://surikaterna.github.io',
-  baseUrl: '/redemeine/', 
+  baseUrl: '/redemeine/',
   organizationName: 'surikaterna',
-  projectName: 'redemeine', 
+  projectName: 'redemeine',
   trailingSlash: false,
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
 
   presets: [
     [
       'classic',
       {
         docs: {
-          // Look UP one folder to find your actual markdown files
           path: '../docs',
           sidebarPath: './sidebars.ts',
+
+          // ADD THIS EXCLUDE ARRAY:
+          exclude: ['ai/**'], // <-- Tells Docusaurus to ignore the AI context folder entirely
+
           editUrl: 'https://github.com/surikaterna/redemeine/tree/main/',
-          routeBasePath: '/', // Serves the docs at the root of the site
+          routeBasePath: 'docs', // <-- This puts your markdown pages safely at /docs/...
         },
-        blog: false, // Disable the blog feature
+        blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -40,10 +47,10 @@ const config: Config = {
       'docusaurus-plugin-typedoc',
       {
         // Look UP one folder to find your TypeScript source code
-        entryPoints: ['../src/index.ts'],
+        entryPoints: ['../src/redemeine.ts'],
         tsconfig: '../tsconfig.json',
         // Output the generated API docs into your root docs folder
-        out: '../docs/api', 
+        out: '../docs/api',
         plugin: ['typedoc-plugin-markdown'],
         sidebar: {
           categoryLabel: 'API Reference',
@@ -64,14 +71,17 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'docsSidebar',
+          // Explicitly points to your docs/index.md file
+          type: 'doc',
+          docId: 'index',
           position: 'left',
           label: 'Documentation',
         },
         {
-          to: '/api', 
-          label: 'API Reference', 
+          // Links to the separate API sidebar we just created
+          type: 'docSidebar',
+          sidebarId: 'apiSidebar',
+          label: 'API Reference',
           position: 'left'
         },
         {
