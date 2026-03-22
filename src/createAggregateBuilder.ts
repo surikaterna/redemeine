@@ -46,6 +46,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         AggregateBuilder<S, Name, M, E, EOverrides>;
 
     build: () => {
+        initialState: S;
         process: (state: S, command: Command<any, string>) => Event[];
         apply: (state: S, event: Event) => S;
         commandCreators: {
@@ -137,6 +138,7 @@ export function createAggregateBuilder<S, Name extends string>(
             }), coreCommands);
 
             return {
+                initialState,
                 process: (state: S, command: Command<any, string>): Event[] => {
                     const commandType = command.type;
                     const payload = command.payload;
@@ -206,7 +208,7 @@ if (eventTypeStr.startsWith(prefix) && eventTypeStr.endsWith('.event')) {
                     }) as S;
                 },
 
-                commandCreators: new Proxy({} as any, {
+                commandCreators: new Proxy(allCommandsMap, {
                     get: (_, prop: string) => (payload: any) => ({
                         type: allCommandOverrides[prop] || `${aggregateName}.${prop}.command`,
                         payload
