@@ -1,4 +1,4 @@
-import type { ZodTypeAny } from 'zod';
+import type { ZodType } from 'zod';
 
 export class ContractError extends Error {
   constructor(message: string) {
@@ -17,35 +17,35 @@ export class StateIntegrityError extends Error {
 }
 
 export class Contract {
-  public commands: Map<string, ZodTypeAny>;
-  public events: Map<string, ZodTypeAny>;
-  public stateSchema?: ZodTypeAny;
+  public commands: Map<string, ZodType>;
+  public events: Map<string, ZodType>;
+  public stateSchema?: ZodType;
 
   constructor() {
     this.commands = new Map();
     this.events = new Map();
   }
 
-  addCommand(type: string, schema: ZodTypeAny): this {
+  addCommand(type: string, schema: ZodType): this {
     this.commands.set(type, schema);
     return this;
   }
 
-  addEvent(type: string, schema: ZodTypeAny): this {
+  addEvent(type: string, schema: ZodType): this {
     this.events.set(type, schema);
     return this;
   }
 
-  setStateSchema(schema: ZodTypeAny): this {
+  setStateSchema(schema: ZodType): this {
     this.stateSchema = schema;
     return this;
   }
 
-  getCommand(type: string): ZodTypeAny | undefined {
+  getCommand(type: string): ZodType | undefined {
     return this.commands.get(type);
   }
 
-  getEvent(type: string): ZodTypeAny | undefined {
+  getEvent(type: string): ZodType | undefined {
     return this.events.get(type);
   }
 
@@ -99,7 +99,7 @@ export class Contract {
     if (exportsObj.Commands) {
       for (const [key, schema] of Object.entries(exportsObj.Commands)) {
         if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addCommand(normalizeName(key), schema as ZodTypeAny);
+          contract.addCommand(normalizeName(key), schema as ZodType);
         }
       }
     }
@@ -107,13 +107,13 @@ export class Contract {
     if (exportsObj.Events) {
       for (const [key, schema] of Object.entries(exportsObj.Events)) {
         if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addEvent(normalizeName(key), schema as ZodTypeAny);
+          contract.addEvent(normalizeName(key), schema as ZodType);
         }
       }
     }
 
     if (exportsObj.State && typeof (exportsObj.State as any).safeParse === 'function') {
-      contract.setStateSchema(exportsObj.State as ZodTypeAny);
+      contract.setStateSchema(exportsObj.State as ZodType);
     }
 
     return contract;
