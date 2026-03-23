@@ -1,4 +1,4 @@
-import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap } from './types';
+import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads, PackedCommand } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 
 // 1. The final "Baked" object that goes into the Aggregate
@@ -9,119 +9,82 @@ import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 export interface MixinPackage<S, E = any, EOverrides = any, CPayloads = any, COverrides = any, Selectors = any> {
   events: E;
   eventOverrides: EOverrides;
-  commandFactory: (emit: any, context: { selectors: SelectorsMap<S> }) => {
-    [K in keyof CPayloads]: (state: ReadonlyDeep<S>, payload: CPayloads[K]) => Event<any, any> | Event<any, any>[];
-  };
+  commandFactory: (emit: any, context: { selectors: SelectorsMap<S> }) => any;
   commandOverrides: COverrides;
   selectors: SelectorsMap<S>;
 }
 
-// 2. The Chaining Interfaces to guide the IDE
-/**
- * Staged builder interface enabling fluent chaining of Mixin event handlers.
- * Permits Immer-backed state mutations within handlers.
- */
-export interface MixinEventsStage<S> {
+export interface MixinBuilder<S, E = {}, EOverrides = {}, CPayloads = {}, COverrides = {}, Selectors = {}> {
   /**
    * Register event handlers for this Mixin that apply state mutations.
-   * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
-   * The auto-namer maps camelCase keys to dot notation automatically.
-   * 
-   * @example
-   * .events({
-   *   auditLogged: (state, event) => { state.auditTrail.push(event.payload); }
-   * })
    */
-  events: <E extends Record<string, (state: any, event: Event<any, any>) => void>>(
-    events: E
-  ) => MixinEventOverridesStage<S, E>;
+  events: <NewE extends Record<string, (state: S, event: Event<any, any>) => void>>(
+    events: NewE
+  ) => MixinBuilder<S, E & NewE, EOverrides, CPayloads, COverrides, Selectors>;
+
+  overrideEventNames: <NewEOverrides extends Partial<Record<keyof E, EventType>>>(
+    overrides: NewEOverrides
+  ) => MixinBuilder<S, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors>;
+
+  selectors: <NewSelectors extends SelectorsMap<S>>(
+    selectors: NewSelectors
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors>;
+
+  commands: <NewC extends Record<string, ((state: ReadonlyDeep<S>, ...args: any[]) => Event<any, any> | Event<any, any>[]) | PackedCommand<S, any, any>>>(
+    factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => NewC
+  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors>;
+
+  overrideCommandNames: <NewCOverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
+    overrides: NewCOverrides
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors>;
+
+  build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors>;
 }
 
-/**
- * Staged builder interface bridging Mixin events to naming overrides.
- */
-export interface MixinEventOverridesStage<S, E> {
-  /**
-   * Staged builder interface bridging Mixin events to naming overrides.
-   */
-  overrideEventNames: <EOverrides extends Partial<Record<keyof E, EventType>>>(
-    overrides: EOverrides
-  ) => MixinSelectorsStage<S, E, EOverrides>;
-}
+export function createMixin<S>(): MixinBuilder<S> {
+  let _events: Record<string, Function> = {};
+  let _eventOverrides: Record<string, string> = {};
+  let _selectors: SelectorsMap<any> = {};
+  let _commandFactories: Function[] = [];
+  let _commandOverrides: Record<string, string> = {};
 
-/**
- * Staged builder interface bridging Mixin naming overrides to selector configuration.
- */
-export interface MixinSelectorsStage<S, E, EOverrides> {
-  /**
-   * Define pure functions that slice and read from the state.
-   * 
-   * @example
-   * .selectors({ getAuditCount: (state) => state.auditTrail.length })
-   */
-  selectors: <Selectors extends SelectorsMap<S>>(
-    selectors: Selectors
-  ) => MixinCommandsStage<S, E, EOverrides, Selectors>;
-}
-
-/**
- * Staged builder interface enabling fluent chaining of Mixin command processors.
- * Enforces Readonly state structures within the processors.
- */
-export interface MixinCommandsStage<S, E, EOverrides, Selectors> {
-  /**
-   * Define command processors containing business rules.
-   * **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
-   * 
-   * @example
-   * .commands((emit, ctx) => ({
-   *   logAudit: (state, payload: { msg: string }) => emit('auditLogged', payload)
-   * }))
-   */
-  commands: <CPayloads extends Record<string, any>>(
-    factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => {
-      [K in keyof CPayloads]: (state: ReadonlyDeep<S>, payload: CPayloads[K]) => Event<any, any> | Event<any, any>[];
+  const builder: any = {
+    events: (events: any) => {
+      Object.assign(_events, events);
+      return builder;
+    },
+    overrideEventNames: (overrides: any) => {
+      Object.assign(_eventOverrides, overrides);
+      return builder;
+    },
+    selectors: (selectors: any) => {
+      Object.assign(_selectors, selectors);
+      return builder;
+    },
+    commands: (factory: any) => {
+      _commandFactories.push(factory);
+      return builder;
+    },
+    overrideCommandNames: (overrides: any) => {
+      Object.assign(_commandOverrides, overrides);
+      return builder;
+    },
+    build: () => {
+      const mergedCommandFactory = (emit: any, context: any) => {
+        const result: any = {};
+        for (const factory of _commandFactories) {
+          Object.assign(result, factory(emit, context));
+        }
+        return result;
+      };
+      return {
+        events: _events,
+        eventOverrides: _eventOverrides,
+        selectors: _selectors,
+        commandFactory: mergedCommandFactory,
+        commandOverrides: _commandOverrides
+      };
     }
-  ) => MixinCommandOverridesStage<S, E, EOverrides, CPayloads, Selectors>;
-}
-
-/**
- * Staged builder interface bridging Mixin command configuration to finalize the build.
- */
-export interface MixinCommandOverridesStage<S, E, EOverrides, CPayloads, Selectors> {
-  overrideCommandNames: <COverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
-    overrides: COverrides
-  ) => {
-    /**
-     * Finalizes and compiles the Mixin.
-     */
-    build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors>;
   };
-}
-
-// 3. The Implementation
-/**
- * Bootstraps a new cohesive Domain Mixin. 
- * Allows creating horizontally resuable chunks or policies to layer onto different aggregates (e.g. AuditLog, Assignable).
- */
-export function createMixin<S>(): MixinEventsStage<S> {
-  return {
-    events: (events) => ({
-      overrideEventNames: (eventOverrides) => ({
-        selectors: (selectors) => ({
-          commands: (commandFactory) => ({
-            overrideCommandNames: (commandOverrides) => ({
-              build: () => ({
-                events,
-                eventOverrides,
-                commandFactory: commandFactory as any,
-                commandOverrides,
-                selectors
-              })
-            })
-          })
-        })
-      })
-    })
-  };
+  return builder;
 }

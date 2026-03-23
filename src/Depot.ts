@@ -10,7 +10,7 @@ export interface EventStore {
  * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
  * Handles event sourced hydration and persistence of new uncommitted events.
  */
-export interface Depot<TState, M extends Record<string, any> = any> {
+export interface Depot<TState extends {}, M extends Record<string, any> = any> {
   get(id: string): Promise<Mirage<TState, M>>;
   save(mirage: Mirage<TState, M>): Promise<void>;
 }
@@ -18,7 +18,7 @@ export interface Depot<TState, M extends Record<string, any> = any> {
 /**
  * Creates a standard Depot linking an EventStore to a BuiltAggregate.
  */
-export function createDepot<TState, M extends Record<string, any>>(
+export function createDepot<TState extends {}, M extends Record<string, any>>(
   builder: BuiltAggregate<TState, M>,
   store: EventStore,
   options?: MirageOptions

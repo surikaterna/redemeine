@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, PackedCommand, MapCommandsToPayloads } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
@@ -23,16 +23,6 @@ type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName, any, a
 type MergeEntities<T extends any[]> = T extends [infer First, ...infer Rest]
     ? ExtractEntityCommands<First> & MergeEntities<Rest>
     : {};
-
-export type PackedCommand<S, Args extends any[], P> = {
-    /**
-     * Defines the public API signature for this command and how those arguments
-     * are packed into the formal Command payload for serialization.
-     * @example pack: (id: string, street: string) => ({ addressId: id, street })
-     */
-    pack: (...args: Args) => P;
-    handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[];
-};
 
 /**
  * The core builder interface for composing Aggregates in Redemeine.
@@ -147,17 +137,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   }
      * }))
      */
-    commands: <C extends Record<string, ((state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]) | PackedCommand<S, any, any>>>(
+commands: <C extends Record<string, ((state: ReadonlyDeep<S>, ...args: any[]) => Event<any, any> | Event<any, any>[]) | PackedCommand<S, any, any>>>(
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
-    ) => AggregateBuilder<S, Name, M & { 
-        [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P> 
-            ? { args: Args, payload: P } 
-            : C[K] extends (...args: any[]) => any 
-                ? Parameters<C[K]>[1] extends void | undefined 
-                    ? void 
-                    : { args: [Parameters<C[K]>[1]], payload: Parameters<C[K]>[1] } 
-                : never 
-    }, E, EOverrides, Sel>;
+    ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel>;
 
     /**
      * Overrides the default Targeted Naming engine for specific commands.

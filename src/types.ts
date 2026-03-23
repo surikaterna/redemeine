@@ -149,4 +149,4 @@ export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
           : (...args: [...ids: (string | number)[], payload: P]) => Event<P, any>
         : (...args: [...ids: (string | number)[], payload: any]) => Event<any, any>
     : never;
-} & Record<string, (...args: any[]) => Event<any, any>>;
+} & Record<string, (...args: any[]) => Event<any, any>>;export type PackedCommand<S, Args extends any[], P> = { pack: (...args: Args) => P; handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[]; }; export type MapCommandsToPayloads<C> = { [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P> ? { args: Args, payload: P } : C[K] extends (state: any, ...args: infer Args) => any ? { args: Args, payload: Args extends [infer Single] ? Single : Args extends [] ? void : Args } : never; };

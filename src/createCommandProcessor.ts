@@ -1,4 +1,4 @@
-import { Event, Command } from './types';
+﻿import { Event, Command } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 

@@ -330,7 +330,7 @@ export function createMirage<S extends {}, Name extends string, M extends Record
     return makeDeepProxy([], {}) as Mirage<S, M>;
 }
 
-export function createLegacyAggregateBridge<S, M>(mirage: Mirage<S, M>) {
+export function createLegacyAggregateBridge<S, M extends Record<string, any>>(mirage: Mirage<S, M>) {
     const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
