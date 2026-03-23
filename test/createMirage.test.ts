@@ -100,7 +100,7 @@ describe('Mirage tests', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
 
-        await (live as any).line['123'].update({ qty: 99 });
+        await (live as any).line('123').update({ qty: 99 });
 
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
         const uncommitted = bridge.getUncommittedEvents();

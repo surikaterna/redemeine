@@ -1,5 +1,6 @@
 import { Command, Event, AggregateHooks } from './types';
 import { Contract } from './Contract';
+import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 
 /**
  * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
@@ -34,8 +35,8 @@ export type MirageCommandMap<S, M> = {
 };
 
 export type Mirage<TState, M extends Record<string, any> = any> = 
-    MirageCommandMap<TState, M> & Readonly<TState> & {
-        readonly state: Readonly<TState>;
+    MirageCommandMap<TState, M> & ReadonlyDeep<TState> & {
+        readonly state: ReadonlyDeep<TState>;
         dispatch: (command: any) => Promise<TState>;
         subscribe: (listener: (state: TState) => void) => () => void;
     } & Record<string, any>;
@@ -140,8 +141,98 @@ export function createMirage<S extends {}, Name extends string, M extends Record
     const state = setup?.events?.reduce((acc, ev) => builder.apply(acc, ev), setup?.snapshot ?? builder.initialState) ?? (setup?.snapshot ?? builder.initialState);
     const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict);
 
-const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, string | number>): any => {
-        return new Proxy(function() { return stateTarget; }, {
+    const resolvePath = (path: string[]) => {
+        let current: any = core.state;
+        for (const p of path) {
+            if (current && typeof current === 'object') {
+                current = current[p];
+            } else {
+                return undefined;
+            }
+        }
+        return current;
+    };
+
+    const makeReadonlyProxy = (obj: any): any => {
+        if (typeof obj !== 'object' || obj === null) return obj;
+        return new Proxy(obj, {
+            get(target, prop) {
+                return makeReadonlyProxy(Reflect.get(target, prop));
+            },
+            set() {
+                throw new Error('Cannot mutate properties directly');
+            },
+            deleteProperty() {
+                throw new Error('Cannot mutate properties directly');
+            }
+        });
+    };
+
+    const makeEntityMirageProxy = (collectionPath: string[], entityId: string, ids: Record<string, string | number>): any => {
+        return new Proxy({}, {
+            get(target, prop) {
+                if (typeof prop !== 'string') return Reflect.get(target, prop);
+                if (prop === 'then') return undefined;
+
+                const collection = resolvePath(collectionPath);
+                const entity = collection?.find((e: any) => e.id === entityId || e.id === Number(entityId));
+
+                // Merge state properties
+                if (entity && prop in entity) {
+                    return makeReadonlyProxy(entity[prop]);
+                }
+
+                // If not in state, assume it's a command creator builder
+                return makeDeepProxy([...collectionPath, prop], ids);
+            },
+            set() {
+                throw new Error('Cannot mutate properties directly');
+            }
+        });
+    };
+
+    const makeCollectionProxy = (collectionPath: string[], ids: Record<string, string | number>): any => {
+        const fn = function(id: string) {
+            const nextIds = { ...ids };
+            const parent = collectionPath[collectionPath.length - 1];
+            nextIds[parent + 'Id'] = id;
+            nextIds['id'] = id;
+            return makeEntityMirageProxy(collectionPath, id, nextIds);
+        };
+
+        return new Proxy(fn, {
+            get(target, prop) {
+                if (prop === 'then') return undefined;
+                
+                const collection = resolvePath(collectionPath) || [];
+
+                if (typeof prop !== 'string') {
+                    if (prop === Symbol.iterator) return collection[Symbol.iterator].bind(collection);
+                    return Reflect.get(target, prop);
+                }
+
+                if (['set', 'push', 'pop', 'splice'].includes(prop)) {
+                    return () => { throw new Error('Cannot mutate collection directly'); };
+                }
+
+                if (prop === 'length') return collection.length;
+
+                if (!isNaN(Number(prop))) return makeReadonlyProxy(collection[Number(prop)]);
+
+                if (typeof (collection as any)[prop] === 'function') {
+                    return (collection as any)[prop].bind(collection);
+                }
+
+                return Reflect.get(target, prop);
+            },
+            set() {
+                throw new Error('Cannot mutate collection directly');
+            }
+        });
+    };
+
+    const makeDeepProxy = (path: string[], ids: Record<string, string | number>): any => {
+        return new Proxy(function() {}, {
             get(target, prop) {
                 if (path.length === 0) {
                     if (prop === 'state') return core.state;
@@ -160,42 +251,38 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                     return Reflect.get(target, prop);
                 }
 
-                // At root level, always use current core.state to prevent staleness
-                const currentTarget = path.length === 0 ? core.state : target;
+                const currentTarget = resolvePath(path);
 
-                // If the property exists in the state object, we proxy it to allow BOTH reading and path-building.
                 if (currentTarget && typeof currentTarget === 'object' && prop in currentTarget) {
                     const val = (currentTarget as any)[prop];
+                    
+                    if (Array.isArray(val)) {
+                        return makeCollectionProxy([...path, prop], ids);
+                    }
+                    
                     if (typeof val === 'function' && Array.isArray(currentTarget)) {
                         return val.bind(currentTarget);
                     }
                     if (typeof val === 'object' && val !== null) {
-                        return makeDeepProxy(val, [...path, prop], { ...ids });
+                        return makeDeepProxy([...path, prop], { ...ids });
                     }
                     return val;
                 }
 
                 const nextIds = { ...ids };
-                const nextPath = [...path];
+                const nextPath = [...path, prop];
 
-                if (path.length > 0 && typeof prop === 'string' && !isNaN(Number(prop))) {
-                    const parent = path[path.length - 1];
-                    nextIds[parent + 'Id'] = prop;
-                    nextIds['id'] = prop;
-                } else if (path.length > 0 && typeof prop === 'string') {
-                    // For string-based IDs like 'abc'
-                    if (prop !== 'update' && prop !== 'add' && prop !== 'remove' && prop !== 'delete') {
-                         const parent = path[path.length - 1];
-                         nextIds[parent + 'Id'] = prop;
-                         nextIds['id'] = prop;
-                    } else {
-                         nextPath.push(prop);
+                if (typeof prop === 'string' && !isNaN(Number(prop))) {
+                    if (path.length > 0) {
+                        const parent = path[path.length - 1];
+                        nextIds[parent + 'Id'] = prop;
                     }
-                } else {
-                    nextPath.push(prop);
+                    nextIds['id'] = prop;
+                } else if (typeof prop === 'string') {
+                    // Handled by nextPath array above
                 }
 
-                return makeDeepProxy(() => {}, nextPath, nextIds);
+                return makeDeepProxy(nextPath, nextIds);
             },
 
             async apply(target, thisArg, args) {
@@ -222,12 +309,11 @@ const makeDeepProxy = (stateTarget: any, path: string[], ids: Record<string, str
                 }
 
                 return core.dispatch(cmd);
-
             }
         });
     };
 
-    return makeDeepProxy(core.state, [], {}) as Mirage<S, M>;
+    return makeDeepProxy([], {}) as Mirage<S, M>;
 }
 
 export function createLegacyAggregateBridge<S, M>(mirage: Mirage<S, M>) {
