@@ -3,7 +3,7 @@ import { NamingStrategy } from './types';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,
-    allCommandsMap: Record<string, Function>,
+    allCommandsMap: Record<string, any>,
     allCommandOverrides: Record<string, string>,
     namingStrategy: NamingStrategy
 ) {
@@ -14,12 +14,21 @@ export function createCommandCreatorsProxy(
                     get: (__, cmdProp: string) => {
                         const entityPath = prop.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
                         const explicitType = namingStrategy.command(aggregateName, cmdProp, entityPath);
-                        return (payload: any) => createCommand(explicitType)({ ...payload, id });
+                        return (...args: any[]) => {
+                            const cmdDef = allCommandsMap[aggregateName + prop.charAt(0).toUpperCase() + prop.slice(1)];
+                            const payload = (cmdDef && typeof cmdDef !== 'function' && cmdDef.pack) 
+                                ? cmdDef.pack(...args) 
+                                : { ...args[0], id };
+                            return createCommand(explicitType)(payload);
+                        };
                     }
                 });
             }
             const explicitType = allCommandOverrides[prop] || namingStrategy.command(aggregateName, prop);
-            return createCommand(explicitType);
+            const cmdDef = allCommandsMap[prop];
+            return typeof cmdDef !== 'function' && cmdDef.pack
+                ? (...args: any[]) => createCommand(explicitType)(cmdDef.pack(...args))
+                : createCommand(explicitType);
         }
     });
 }

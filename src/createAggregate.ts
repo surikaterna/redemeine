@@ -24,6 +24,16 @@ type MergeEntities<T extends any[]> = T extends [infer First, ...infer Rest]
     ? ExtractEntityCommands<First> & MergeEntities<Rest>
     : {};
 
+export type PackedCommand<S, Args extends any[], P> = {
+    /**
+     * Defines the public API signature for this command and how those arguments
+     * are packed into the formal Command payload for serialization.
+     * @example pack: (id: string, street: string) => ({ addressId: id, street })
+     */
+    pack: (...args: Args) => P;
+    handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[];
+};
+
 /**
  * The core builder interface for composing Aggregates in Redemeine.
  * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
@@ -130,12 +140,24 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   dispatchShipment: (state, payload: { dest: string }) => {
      *     if (ctx.selectors.isReady(state)) return emit('dispatched', payload);
      *     throw new Error("Not ready");
+     *   },
+     *   legacyUpdate: {
+     *     pack: (id: string, street: string) => ({ addressId: id, street }),
+     *     handler: (state, payload) => emit('updated', payload)
      *   }
      * }))
      */
-    commands: <C extends Record<string, (state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]>>(
+    commands: <C extends Record<string, ((state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[]) | PackedCommand<S, any, any>>>(
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
-    ) => AggregateBuilder<S, Name, M & { [K in keyof C]: Parameters<C[K]>[1] }, E, EOverrides, Sel>;
+    ) => AggregateBuilder<S, Name, M & { 
+        [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P> 
+            ? { args: Args, payload: P } 
+            : C[K] extends (...args: any[]) => any 
+                ? Parameters<C[K]>[1] extends void | undefined 
+                    ? void 
+                    : { args: [Parameters<C[K]>[1]], payload: Parameters<C[K]>[1] } 
+                : never 
+    }, E, EOverrides, Sel>;
 
     /**
      * Overrides the default Targeted Naming engine for specific commands.
@@ -168,14 +190,16 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         process: (state: S, command: Command<any, string>) => Event[];
         apply: (state: S, event: Event) => S;
         commandCreators: {
-            [K in keyof M]: [M[K]] extends [void] | [undefined]
-                ? () => { type: string; payload: void }
-                : (payload: M[K]) => { type: string; payload: M[K] };
+            [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+                ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
+                : [M[K]] extends [void] | [undefined] | [never]
+                    ? () => { type: string; payload: void }
+                    : (payload: M[K]) => { type: string; payload: M[K] };
         };
         eventCreators: EventEmitterFactory<Name, E, EOverrides>;
         /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
         pure: {
-            commandProcessors: Record<string, Function>;
+            commandProcessors: Record<string, any>;
             eventProjectors: Record<string, Function>;
         };
         selectors: Sel;
@@ -188,7 +212,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         events: Record<string, Function>;
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
-        commandsFactory: (emit: any, context: { selectors: any }) => Record<string, Function>;
+        commandsFactory: (emit: any, context: { selectors: any }) => Record<string, any>;
         mixins: MixinPackage<S>[];
         selectors: Record<string, Function>;
         hooks: AggregateHooks<S>;
@@ -205,7 +229,7 @@ export function createAggregate<S, Name extends string>(
 
     let _events: Record<string, Function> = {};
     let _eventOverrides: Record<string, string> = {};
-    let _commandsFactory: (emit: any, context: { selectors: any }) => Record<string, Function> = () => ({});
+    let _commandsFactory: (emit: any, context: { selectors: any }) => Record<string, any> = () => ({});
     let _commandOverrides: Record<string, string> = {};
     let _entities: string[] = [];
     let _entityPackages: EntityPackage<any, any>[] = [];
@@ -264,7 +288,7 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, Function>) => {
+        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, any>) => {
             _commandsFactory = factory;
             return builder;
         },

@@ -12,9 +12,11 @@ export interface BuiltAggregate<S, M, E = any> {
     apply: (state: S, event: Event) => S;
     hooks?: AggregateHooks<S>;
     commandCreators: {
-        [K in keyof M]: [M[K]] extends [void] | [undefined] | [never]
-            ? () => Command<void, string>
-            : (payload: M[K]) => Command<M[K], string>;
+        [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+            ? (...args: Args extends any[] ? Args : never) => Command<P, string>
+            : [M[K]] extends [void] | [undefined] | [never]
+                ? () => Command<void, string>
+                : (payload: M[K]) => Command<M[K], string>;
     };
     eventCreators: E;
     /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
@@ -29,9 +31,11 @@ export interface BuiltAggregate<S, M, E = any> {
  * These methods dispatch commands and return a promise resolving to the mutated state.
  */
 export type MirageCommandMap<S, M> = {
-    [K in keyof M]: [M[K]] extends [void] | [undefined] | [never]
-        ? () => Promise<S>
-        : (payload: M[K]) => Promise<S>;
+    [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+        ? (...args: Args extends any[] ? Args : never) => Promise<S>
+        : [M[K]] extends [void] | [undefined] | [never]
+            ? () => Promise<S>
+            : (payload: M[K]) => Promise<S>;
 };
 
 /**

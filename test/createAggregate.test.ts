@@ -201,4 +201,28 @@ it('should throw an error when processing an unknown command', () => {
     expect(newState2.line[0].subitems[0].metadata).toBe('new');
     expect(newState1.line[0].subitems[0].metadata).toBe('old');
   });
+
+  it('should support PackedCommand pattern', () => {
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
+      .events({
+        packed: (state, event: Event<any>) => {
+          state.status = event.payload.status;
+        }
+      })
+      .commands((emit) => ({
+        packStatus: {
+          pack: (s: string, code: number) => ({ status: s, code }),
+          handler: (state, payload) => emit.packed(payload)
+        }
+      }))
+      .build();
+
+    const cmd = aggregate.commandCreators.packStatus('active', 200);
+    expect(cmd.type).toBe('test.packStatus.command');
+    expect(cmd.payload).toEqual({ status: 'active', code: 200 });
+
+    const events = aggregate.process(initialState, cmd);
+    expect(events[0].type).toBe('test.packed.event');
+    expect(events[0].payload).toEqual({ status: 'active', code: 200 });
+  });
 });
