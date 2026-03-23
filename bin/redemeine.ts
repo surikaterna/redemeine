@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { colors, parseArgs } from './utils';
-import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from './templates';
+import { colors, parseArgs } from '../src/cli/utils';
+import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from '../src/cli/templates';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';

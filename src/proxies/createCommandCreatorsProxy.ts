@@ -1,5 +1,5 @@
-import { createCommand } from './createCommand';
-import { NamingStrategy } from './types';
+import { createCommand } from '../createCommand';
+import { NamingStrategy } from '../types';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,

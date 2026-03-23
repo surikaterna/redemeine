@@ -2,11 +2,11 @@ import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStra
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import { applyEvent } from './applyEvent';
+import { applyEvent } from './utils/applyEvent';
 import { createCommandProcessor } from './createCommandProcessor';
-import { createEmitProxy } from './createEmitProxy';
-import { createCommandCreatorsProxy } from './createCommandCreatorsProxy';
-import { defaultNamingStrategy } from './naming';
+import { createEmitProxy } from './proxies/createEmitProxy';
+import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
+import { defaultNamingStrategy } from './utils/naming';
 
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};

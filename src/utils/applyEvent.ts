@@ -1,5 +1,5 @@
 import { produce } from 'immer';
-import { Event } from './types';
+import { Event } from '../types';
 import { parseTargetedEventPath, formatFlatEventType } from './naming';
 
 export function applyEvent<S>(

@@ -1,4 +1,4 @@
-import { EventType, NamingStrategy } from './types';
+import { EventType, NamingStrategy } from '../types';
 
 export const formatCommandType = (aggregateName: string, prop: string, path?: string) => {
     if (path) return `${aggregateName}.${path}.${prop}.command`;

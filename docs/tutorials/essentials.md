@@ -65,7 +65,7 @@ Notice how we aren't validating the `payload` structure here? Because of Redemei
 
 ```ts
   .commands((emit) => ({
-    addItem: { pack: (productId: string, quantity: number = 1) => ({ item: { productId, quantity } }), handler: (state, payload: { item: CartItem }) => {
+    addItem: (state, payload: { item: CartItem }) => {
       // 1. Business Logic / Invariants
       if (state.status === 'checkout') {
         throw new Error("Cannot add items during checkout.");
@@ -73,7 +73,6 @@ Notice how we aren't validating the `payload` structure here? Because of Redemei
 
       // 2. Purely return the events that occurred
       return emit.itemAdded({ item: payload.item });
-      }
     }
   }))
   .build();
@@ -93,7 +92,9 @@ async function runCartFlow() {
 
   // 2. Dispatch a command!
   // Type inference and runtime validation are fully active.
-  await cart.addItem('prod-99', 1);
+  await cart.addItem({
+    item: { productId: 'prod-99', quantity: 1 }
+  });
 
   // 3. Inspect the updated, readonly state
   console.log(cart.items); 

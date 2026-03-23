@@ -1,6 +1,6 @@
 import { Event, Command } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import { formatCommandType } from './naming';
+import { formatCommandType } from './utils/naming';
 
 export function createCommandProcessor<S>(
     aggregateName: string,

@@ -1,5 +1,5 @@
-import { createEvent } from './createEvent';
-import { NamingStrategy } from './types';
+import { createEvent } from '../createEvent';
+import { NamingStrategy } from '../types';
 
 export function createEmitProxy(
     aggregateName: string,

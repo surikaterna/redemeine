@@ -1,5 +1,5 @@
 import zodToJsonSchema from 'zod-to-json-schema';
-import { Contract } from './Contract';
+import { Contract } from '../Contract';
 
 export function describeContract(contract: Contract, aggregateName: string = 'aggregate') {
     const commands: Record<string, any> = {};
