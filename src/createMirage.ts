@@ -1,6 +1,7 @@
 import { Command, Event, AggregateHooks } from './types';
 import { Contract } from './Contract';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import type { PublicCommandMethodsFromInternal } from './redemeineComponent';
 
 /**
  * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
@@ -36,7 +37,7 @@ export type MirageCommandMap<S, M> = {
         : [M[K]] extends [void] | [undefined] | [never]
             ? () => Promise<S>
             : (payload: M[K]) => Promise<S>;
-};
+} | (M extends Record<string, any> ? PublicCommandMethodsFromInternal<S, M, Promise<S>> : never);
 
 /**
  * The standard active instantiated aggregate wrapper holding bounded paths.

@@ -1,5 +1,6 @@
 import { createCommand } from '../createCommand';
 import { NamingStrategy } from '../types';
+import { createCommandPayload } from '../redemeineComponent';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,
@@ -16,8 +17,10 @@ export function createCommandCreatorsProxy(
                         const explicitType = namingStrategy.command(aggregateName, cmdProp, entityPath);
                         return (...args: any[]) => {
                             const cmdDef = allCommandsMap[aggregateName + prop.charAt(0).toUpperCase() + prop.slice(1)];
-                            const payload = (cmdDef && typeof cmdDef !== 'function' && cmdDef.pack) 
-                                ? cmdDef.pack(...args) 
+                            const payload = cmdDef
+                                ? (typeof cmdDef !== 'function' && cmdDef.pack
+                                    ? createCommandPayload(cmdDef, args)
+                                    : { ...args[0], id })
                                 : { ...args[0], id };
                             return createCommand(explicitType)(payload);
                         };
@@ -26,8 +29,8 @@ export function createCommandCreatorsProxy(
             }
             const explicitType = allCommandOverrides[prop] || namingStrategy.command(aggregateName, prop);
             const cmdDef = allCommandsMap[prop];
-            return typeof cmdDef !== 'function' && cmdDef.pack
-                ? (...args: any[]) => createCommand(explicitType)(cmdDef.pack(...args))
+            return typeof cmdDef !== 'undefined'
+                ? (...args: any[]) => createCommand(explicitType)(createCommandPayload(cmdDef, args))
                 : createCommand(explicitType);
         }
     });

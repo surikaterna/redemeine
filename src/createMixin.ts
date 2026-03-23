@@ -1,20 +1,23 @@
-import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads, PackedCommand } from './types';
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
+import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState } from './redemeineComponent';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
  * A compiled reusable piece of domain logic (Commands, Events, Selectors)
  * ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
  */
-export interface MixinPackage<S, E = any, EOverrides = any, CPayloads = any, COverrides = any, Selectors = any> {
+export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>>
+  extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
   events: E;
+  projectors: E;
+  commands: CPayloads;
   eventOverrides: EOverrides;
   commandFactory: (emit: any, context: { selectors: SelectorsMap<S> }) => any;
   commandOverrides: COverrides;
-  selectors: SelectorsMap<S>;
+  selectors: Selectors;
 }
 
-export interface MixinBuilder<S, E = {}, EOverrides = {}, CPayloads = {}, COverrides = {}, Selectors = {}> {
+export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>> {
   /**
    * Register event handlers for this Mixin that apply state mutations.
    */
@@ -30,7 +33,7 @@ export interface MixinBuilder<S, E = {}, EOverrides = {}, CPayloads = {}, COverr
     selectors: NewSelectors
   ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors>;
 
-  commands: <NewC extends Record<string, ((state: ReadonlyDeep<S>, ...args: any[]) => Event<any, any> | Event<any, any>[]) | PackedCommand<S, any, any>>>(
+  commands: <NewC extends Record<string, RedemeineCommandDefinition<S>>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => NewC
   ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors>;
 
@@ -42,47 +45,39 @@ export interface MixinBuilder<S, E = {}, EOverrides = {}, CPayloads = {}, COverr
 }
 
 export function createMixin<S>(): MixinBuilder<S> {
-  let _events: Record<string, Function> = {};
-  let _eventOverrides: Record<string, string> = {};
-  let _selectors: SelectorsMap<any> = {};
-  let _commandFactories: Function[] = [];
-  let _commandOverrides: Record<string, string> = {};
+  const component = createComponentBehaviorState<S>();
 
   const builder: any = {
     events: (events: any) => {
-      Object.assign(_events, events);
+      component.addEvents(events);
       return builder;
     },
     overrideEventNames: (overrides: any) => {
-      Object.assign(_eventOverrides, overrides);
+      component.addEventOverrides(overrides);
       return builder;
     },
     selectors: (selectors: any) => {
-      Object.assign(_selectors, selectors);
+      component.addSelectors(selectors);
       return builder;
     },
     commands: (factory: any) => {
-      _commandFactories.push(factory);
+      component.addCommandsFactory(factory);
       return builder;
     },
     overrideCommandNames: (overrides: any) => {
-      Object.assign(_commandOverrides, overrides);
+      component.addCommandOverrides(overrides);
       return builder;
     },
     build: () => {
-      const mergedCommandFactory = (emit: any, context: any) => {
-        const result: any = {};
-        for (const factory of _commandFactories) {
-          Object.assign(result, factory(emit, context));
-        }
-        return result;
-      };
+      const snapshot = component.getSnapshot();
       return {
-        events: _events,
-        eventOverrides: _eventOverrides,
-        selectors: _selectors,
-        commandFactory: mergedCommandFactory,
-        commandOverrides: _commandOverrides
+        events: snapshot.events,
+        projectors: snapshot.events,
+        commands: {} as any,
+        eventOverrides: snapshot.eventOverrides,
+        selectors: snapshot.selectors,
+        commandFactory: component.getCommandsFactory(),
+        commandOverrides: snapshot.commandOverrides
       };
     }
   };

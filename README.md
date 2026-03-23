@@ -80,6 +80,7 @@ await mirage.dispatchShipment('123 Main St', 'express');
 
 Redemeine treats aggregates as composable building blocks:
 *   **Inheritance**: Use `.extends(Parent)` to inherit all business rules, selectors, and events. For example, a `Shipment` can `.extends(Order)` to inherit its foundational logic while adding shipment-specific behaviors (like `Legs`).
+*   **Mixins**: Use `.mixins(Contactable, Identifiable)` to stack reusable behavior across unrelated aggregates. Internally, Redemeine flattens mixin command and projector maps using the shared `Merge` utility from `src/utils/types/Merge.ts`, so command signatures stay cohesive while avoiding duplicate wiring.
 
 ## 🧭 Quick Navigation
 

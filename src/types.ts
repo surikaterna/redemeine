@@ -1,4 +1,5 @@
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
 
 // types.ts
 
@@ -149,4 +150,33 @@ export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
           : (...args: [...ids: (string | number)[], payload: P]) => Event<P, any>
         : (...args: [...ids: (string | number)[], payload: any]) => Event<any, any>
     : never;
-} & Record<string, (...args: any[]) => Event<any, any>>;export type PackedCommand<S, Args extends any[], P> = { pack: (...args: Args) => P; handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[]; }; export type MapCommandsToPayloads<C> = { [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P> ? { args: Args, payload: P } : C[K] extends (state: any, ...args: infer Args) => any ? { args: Args, payload: Args extends [infer Single] ? Single : Args extends [] ? void : Args } : never; };
+} & Record<string, (...args: any[]) => Event<any, any>>;
+
+export type PackedCommand<S, Args extends any[], P> = {
+  /**
+   * Defines the public API signature and serializable Command payload structure.
+   */
+  pack: (...args: Args) => P;
+  handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[];
+};
+
+type PublicArgsFromShorthand<T> = ReplaceFirstArg<never, T> extends (state: never, ...args: infer Args) => any
+  ? Args
+  : never;
+
+export type MapCommandsToPayloads<C> = {
+  [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P>
+    ? { args: Args, payload: P }
+    : C[K] extends (state: any, ...args: any[]) => any
+      ? PublicArgsFromShorthand<C[K]> extends infer Args
+        ? {
+            args: Args;
+            payload: Args extends [infer Single]
+              ? Single
+              : Args extends []
+                ? void
+                : Args;
+          }
+        : never
+      : never;
+};

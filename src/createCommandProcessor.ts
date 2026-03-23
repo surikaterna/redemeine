@@ -1,6 +1,7 @@
 ﻿import { Event, Command } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
+import { resolveCommandHandler } from './redemeineComponent';
 
 export function createCommandProcessor<S>(
     aggregateName: string,
@@ -17,7 +18,7 @@ export function createCommandProcessor<S>(
         if (!commandKey) throw new Error('Unknown command: ' + commandType); 
 
         const cmdDef = allCommandsMap[commandKey];
-        const handler = typeof cmdDef === 'function' ? cmdDef : cmdDef.handler;
+        const handler = resolveCommandHandler<S>(cmdDef);
         
         const result = handler(state as ReadonlyDeep<S>, payload);
         return Array.isArray(result) ? result : [result];
