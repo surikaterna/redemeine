@@ -1,0 +1,73 @@
+import { describe, expect, test } from '@jest/globals';
+import { createAggregate } from '../src/createAggregate';
+import { createEntity } from '../src/createEntity';
+import { createMirage } from '../src/createMirage';
+import { Event } from '../src/types';
+
+type ParentState = { id: string; count: number; line: { id: string; qty: number }[] };
+
+const initial: ParentState = { id: 'o1', count: 0, line: [{ id: 'l1', qty: 1 }] };
+
+describe('createAggregate API coverage', () => {
+  test('extends inherits parent commands/events', () => {
+    const parent = createAggregate<ParentState, 'order'>('order', initial)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit) => ({ increment: (state, amount: number) => emit.incremented({ amount }) }));
+
+    const child = createAggregate<ParentState, 'order'>('order', initial)
+      .extends(parent)
+      .build();
+
+    const evs = child.process(initial, { type: 'order.increment.command', payload: 2 });
+    expect(evs[0].type).toBe('order.incremented.event');
+    expect(child.commandCreators.increment(2).type).toBe('order.increment.command');
+  });
+
+  test('hooks run during mirage dispatch lifecycle', async () => {
+    let beforeCalls = 0;
+    let afterCalls = 0;
+    let appliedCalls = 0;
+
+    const onBeforeCommand = () => { beforeCalls += 1; };
+    const onAfterCommand = () => { afterCalls += 1; };
+    const onEventApplied = () => { appliedCalls += 1; };
+
+    const builder = createAggregate<ParentState, 'order'>('order', initial)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit) => ({ increment: (state, amount: number) => emit.incremented({ amount }) }))
+      .hooks({ onBeforeCommand, onAfterCommand, onEventApplied })
+      .build();
+
+    const mirage = createMirage(builder, 'o1');
+    await mirage.increment(3);
+
+    expect(beforeCalls).toBe(1);
+    expect(afterCalls).toBe(1);
+    expect(appliedCalls).toBe(1);
+  });
+
+  test('entity(name, package) registers singular entity component commands', () => {
+    const lineEntity = createEntity<{ id: string; qty: number }, 'line'>('line')
+      .events({ lineUpdated: (state, event: any) => { state.qty = event.payload.qty; } })
+      .overrideEventNames({})
+      .selectors({})
+      .commands((emit) => ({ update: (state, payload: { id: string; qty: number }) => emit.lineUpdated(payload) }))
+      .overrideCommandNames({})
+      .build();
+
+    const aggregate = createAggregate<ParentState, 'order'>('order', initial)
+      .entity('line', lineEntity)
+      .events({
+        updated: (state: any, event: any) => { state.qty = event.payload.qty; }
+      })
+      .commands((emit) => ({}))
+      .build();
+
+    const command = aggregate.commandCreators.lineUpdate({ id: 'l1', qty: 9 });
+    expect(command.type).toBe('order.lineUpdate.command');
+
+    const events = aggregate.process(initial, command as any);
+    const next = aggregate.apply(initial, events[0]);
+    expect(next.line[0].qty).toBe(9);
+  });
+});
