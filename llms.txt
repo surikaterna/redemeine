@@ -61,9 +61,13 @@ Uses a fluent chained API to progressively layer events, commands, mixins, and e
 
 **Methods:**
 - `.extends()` (Returns `this`) - Inherit all business rules, selectors, and events from a parent aggregate builder.
-- `.entities()` (Returns `this`) - Register nested entities into the aggregate's namespace. 
+- `.entities()` (Returns `this`) - Register nested entities into the aggregate's namespace.
 Entities keep their own private selectors and logic.
 The naming engine will automatically map nested calls to targeted dot-notation commands (e.g. `order.order_lines.cancel.command`).
+
+In the Mirage, mapped entities represent Immutable Hybrid Entity Collections: 
+They act as a safe read-only array (e.g., iterating or calculating length) 
+and as a command factory function (passing the entity ID).
 - `.mixins()` (Returns `this`) - Compose reusable domain logic chunks (Mixins) into this aggregate.
 - `.selectors()` (Returns `this`) - Define pure functions for reading and deriving state.
 These will be injectable into your command handlers via the `context` parameter.
@@ -96,4 +100,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 24 Interfaces, 12 Types, 3 Public Functions.
+**Metadata:** 24 Interfaces, 13 Types, 3 Public Functions.

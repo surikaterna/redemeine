@@ -62,6 +62,27 @@ export interface ProfileUpdatedPayload {
 }
 ```
 
+### The "Unified Pack" Pattern
+
+While raw payload objects match standard Event Store serialization, sometimes you want your *UI and API callers* to pass in explicit arguments securely rather than bundling a large anonymous object. Enter the "Unified Pack" pattern:
+
+```ts
+  .commands((emit) => ({
+    updateProfile: {
+      // Create a specific, explicit TypeScript API signature using standard arguments
+      pack: (name: string, email: string) => ({ name, email }),
+      
+      // The payload here is strictly inferred as `UpdateProfilePayload`
+      handler: (state, payload: UpdateProfilePayload) => {
+        if (state.status !== 'active') throw new Error('Cannot update');
+        return emit.profileUpdated({ ...payload, timestamp: Date.now() });
+      }
+    }
+  }))
+```
+
+Redemeine uses `Parameters<typeof pack>` underneath the hood, ensuring your Mirage instance flawlessly types `mirage.updateProfile("John", "john@example.com")` rather than `mirage.updateProfile({ name: "John", email: "john@example.com" })`.
+
 ### The "Type-Transparent" Magic
 
 Here is where Redemeine shines. When you define your command handler, you type the `payload` argument. 

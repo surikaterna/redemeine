@@ -46,6 +46,36 @@ await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.or
 *   **Type-Safe Contracts**: End-to-end type safety derived directly from your Command and Event schemas (powered by Zod), catching mismatches at compile time rather than runtime.
 *   **Immutable State Transitions**: Leverage Immer under the hood for clean, predictable, and fully typed event applications to your aggregate state.
 
+## 🎒 Cohesive Command Packing
+
+Stop passing ugly generic objects around just to satisfy standard payload requirements!
+The "Unified Pack" pattern allows you to define a beautifully tailored public API for your command, while bridging those arguments strictly into your internal, serializable Event Store payload object—all within a single cohesive definition.
+
+```typescript
+.commands((emit, ctx) => ({
+  dispatchShipment: {
+    // 1. You define the public API signature of your command here
+    pack: (destination: string, priority: 'standard' | 'express' = 'standard') => ({
+      dest: destination,
+      speed: priority,
+      timestamp: Date.now()
+    }),
+    // 2. The handler cleanly receives the formatted result of `pack`
+    handler: (state, payload) => {
+      if (!ctx.selectors.isReady(state)) throw new Error("Not ready");
+      return emit('dispatched', payload);
+    }
+  }
+}))
+```
+
+When invoking this aggregate dynamically via our Mirage Proxy, TypeScript correctly maps your UI execution directly to the `Parameters<typeof pack>`:
+
+```typescript
+// Natively accepts (destination: string, priority?: 'standard' | 'express')
+await mirage.dispatchShipment('123 Main St', 'express');
+```
+
 ## 🧩 Aggregate Composition
 
 Redemeine treats aggregates as composable building blocks:
