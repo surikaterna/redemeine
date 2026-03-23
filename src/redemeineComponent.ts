@@ -149,3 +149,22 @@ export function createComponentBehaviorState<S>() {
     }
   };
 }
+
+type FluentUpdaterMap = Record<string, (...args: any[]) => void>;
+
+export function bindFluentMethods<TBuilder extends Record<string, any>, TUpdaters extends FluentUpdaterMap>(
+  builder: TBuilder,
+  updaters: TUpdaters
+): TBuilder & { [K in keyof TUpdaters]: (...args: Parameters<TUpdaters[K]>) => TBuilder } {
+  const mutableBuilder = builder as Record<string, any>;
+
+  Object.keys(updaters).forEach((key) => {
+    const methodName = key as keyof TUpdaters;
+    mutableBuilder[methodName as string] = (...args: any[]) => {
+      updaters[methodName](...args);
+      return builder;
+    };
+  });
+
+  return builder as TBuilder & { [K in keyof TUpdaters]: (...args: Parameters<TUpdaters[K]>) => TBuilder };
+}

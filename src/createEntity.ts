@@ -1,5 +1,5 @@
 ﻿import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
@@ -19,58 +19,30 @@ export interface EntityPackage<S, Name extends string, E = any, EOverrides exten
 }
 
 // 2. The Chaining Interfaces to guide the IDE
-/**
- * Staged builder interface for defining Entity events.
- * Permits Immer-backed mutations within handlers.
- */
-export interface EntityEventsStage<S, Name extends string> {
+export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>> {
   /**
    * Register state-altering event handlers for this Entity.
    * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
    * The targeted auto-namer maps camelCase keys to dot notation combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`).
-   *
-   * @example
-   * .events({
-   *   lineAdded: (state, event) => { state.lines.push(event.payload); }
-   * })
    */
-  events: <E extends Record<string, (state: S, event: Event<any, any>) => void>>(
-    events: E
-  ) => EntityEventOverridesStage<S, Name, E>;
-}
+  events: <NewE extends Record<string, (state: S, event: Event<any, any>) => void>>(
+    events: NewE
+  ) => EntityBuilder<S, Name, E & NewE, EOverrides, CPayloads, COverrides, Selectors>;
 
-/**
- * Staged builder interface bridging Entity events to targeted naming overrides.
- */
-export interface EntityEventOverridesStage<S, Name extends string, E> {
-  overrideEventNames: <EOverrides extends Partial<Record<keyof E, EventType>>>(
-    overrides: EOverrides
-  ) => EntitySelectorsStage<S, Name, E, EOverrides>;
-}
+  /**
+   * Overrides generated event names for this entity.
+   */
+  overrideEventNames: <NewEOverrides extends Partial<Record<keyof E, EventType>>>(
+    overrides: NewEOverrides
+  ) => EntityBuilder<S, Name, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors>;
 
-/**
- * Staged builder interface for attaching local selectors to an Entity.
- */
-export interface EntitySelectorsStage<S, Name extends string, E, EOverrides extends object> {
   /**
    * Define pure functions scoped only to this entity's structure.
-   * These will be injectable into your command handlers via the `context` parameter.
-   * 
-   * @example
-   * .selectors({
-   *   isLineValid: (state) => state.quantity > 0
-   * })
    */
-  selectors: <Selectors extends SelectorsMap<S>>(
-    selectors: Selectors
-  ) => EntityCommandsStage<S, Name, E, EOverrides, Selectors>;
-}
+  selectors: <NewSelectors extends SelectorsMap<S>>(
+    selectors: NewSelectors
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors>;
 
-/**
- * Staged builder interface for defining Entity commands.
- * Enforces Readonly state structures within processors.
- */
-export interface EntityCommandsStage<S, Name extends string, E, EOverrides extends object, Selectors extends SelectorsMap<S>> {
   /**
    * Define scoped command processors that execute business logic.
    * **Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands.
@@ -86,22 +58,26 @@ export interface EntityCommandsStage<S, Name extends string, E, EOverrides exten
    */
   commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => C
-  ) => EntityCommandOverridesStage<S, Name, E, EOverrides, MapCommandsToPayloads<C>, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapCommandsToPayloads<C>, COverrides, Selectors>;
+
+  /**
+   * Overrides generated command names for this entity.
+   */
+  overrideCommandNames: <NewCOverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
+    overrides: NewCOverrides
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors>;
+
+  /**
+   * Finalizes and compiles the Entity into a pluggable package.
+   */
+  build: () => EntityPackage<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
 }
 
-/**
- * Staged builder interface completing the Entity generation chain.
- */
-export interface EntityCommandOverridesStage<S, Name extends string, E, EOverrides extends object, CPayloads, Selectors extends SelectorsMap<S>> {
-  overrideCommandNames: <COverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
-    overrides: COverrides
-  ) => {
-    /**
-     * Finalizes and compiles the Entity into a pluggable package.
-     */
-    build: () => EntityPackage<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
-  };
-}
+export type EntityEventsStage<S, Name extends string> = EntityBuilder<S, Name>;
+export type EntityEventOverridesStage<S, Name extends string, E> = EntityBuilder<S, Name, E>;
+export type EntitySelectorsStage<S, Name extends string, E, EOverrides extends object> = EntityBuilder<S, Name, E, EOverrides>;
+export type EntityCommandsStage<S, Name extends string, E, EOverrides extends object, Selectors extends SelectorsMap<S>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, Selectors>;
+export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides extends object, CPayloads, Selectors extends SelectorsMap<S>> = EntityBuilder<S, Name, E, EOverrides, CPayloads, {}, Selectors>;
 
 // 3. The Implementation
 /**
@@ -111,52 +87,30 @@ export interface EntityCommandOverridesStage<S, Name extends string, E, EOverrid
 export function createEntity<S, Name extends string>(name: Name): EntityEventsStage<S, Name> {
   const component = createComponentBehaviorState<S>();
 
-  const api: any = {
-    events: (events) => {
-      component.addEvents(events as any);
+  const builder: any = bindFluentMethods({}, {
+    events: (events: any) => component.addEvents(events),
+    overrideEventNames: (overrides: any) => component.addEventOverrides(overrides),
+    selectors: (selectors: any) => component.addSelectors(selectors),
+    commands: (factory: any) => component.addCommandsFactory(factory),
+    overrideCommandNames: (overrides: any) => component.addCommandOverrides(overrides)
+  });
 
+  Object.assign(builder, {
+    build: () => {
+      const snapshot = component.getSnapshot();
       return {
-        overrideEventNames: (eventOverrides) => {
-          component.addEventOverrides(eventOverrides as any);
-
-          return {
-            selectors: (selectors) => {
-              component.addSelectors(selectors as any);
-
-              return {
-                commands: (commandFactory) => {
-                  component.addCommandsFactory(commandFactory as any);
-
-                  return {
-                    overrideCommandNames: (commandOverrides) => {
-                      component.addCommandOverrides(commandOverrides as any);
-
-                      return {
-                        build: () => {
-                          const snapshot = component.getSnapshot();
-                          return {
-                            name,
-                            events: snapshot.events,
-                            projectors: snapshot.events,
-                            commands: {} as any,
-                            eventOverrides: snapshot.eventOverrides,
-                            selectors: snapshot.selectors,
-                            commandFactory: component.getCommandsFactory(),
-                            commandOverrides: snapshot.commandOverrides,
-                          };
-                        }
-                      };
-                    }
-                  };
-                }
-              };
-            }
-          };
-        }
+        name,
+        events: snapshot.events,
+        projectors: snapshot.events,
+        commands: {} as any,
+        eventOverrides: snapshot.eventOverrides,
+        selectors: snapshot.selectors,
+        commandFactory: component.getCommandsFactory(),
+        commandOverrides: snapshot.commandOverrides,
       };
     }
-  };
+  });
 
-  return api as EntityEventsStage<S, Name>;
+  return builder as EntityBuilder<S, Name>;
 }
 

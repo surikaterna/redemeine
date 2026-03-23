@@ -1,5 +1,5 @@
 import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
@@ -47,27 +47,15 @@ export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloa
 export function createMixin<S>(): MixinBuilder<S> {
   const component = createComponentBehaviorState<S>();
 
-  const builder: any = {
-    events: (events: any) => {
-      component.addEvents(events);
-      return builder;
-    },
-    overrideEventNames: (overrides: any) => {
-      component.addEventOverrides(overrides);
-      return builder;
-    },
-    selectors: (selectors: any) => {
-      component.addSelectors(selectors);
-      return builder;
-    },
-    commands: (factory: any) => {
-      component.addCommandsFactory(factory);
-      return builder;
-    },
-    overrideCommandNames: (overrides: any) => {
-      component.addCommandOverrides(overrides);
-      return builder;
-    },
+  const builder: any = bindFluentMethods({}, {
+    events: (events: any) => component.addEvents(events),
+    overrideEventNames: (overrides: any) => component.addEventOverrides(overrides),
+    selectors: (selectors: any) => component.addSelectors(selectors),
+    commands: (factory: any) => component.addCommandsFactory(factory),
+    overrideCommandNames: (overrides: any) => component.addCommandOverrides(overrides)
+  });
+
+  Object.assign(builder, {
     build: () => {
       const snapshot = component.getSnapshot();
       return {
@@ -80,6 +68,6 @@ export function createMixin<S>(): MixinBuilder<S> {
         commandOverrides: snapshot.commandOverrides
       };
     }
-  };
+  });
   return builder;
 }

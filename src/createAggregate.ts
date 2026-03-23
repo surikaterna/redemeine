@@ -9,7 +9,7 @@ import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { defaultNamingStrategy } from './utils/naming';
-import { RedemeineCommandDefinition, createComponentBehaviorState } from './redemeineComponent';
+import { RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
@@ -238,7 +238,15 @@ export function createAggregate<S, Name extends string>(
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
 
-    const builder: any = {
+    const builder: any = bindFluentMethods({}, {
+        selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
+        events: (events: Record<string, Function>) => component.addEvents(events),
+        overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
+        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, any>) => component.addCommandsFactory(factory),
+        overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
+    });
+
+    Object.assign(builder, {
         extends: (parentBuilder: any) => {
             const parentState = parentBuilder._state;
             component.inherit(parentState);
@@ -271,33 +279,8 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        selectors: (selectors: Record<string, Function>) => {
-            component.addSelectors(selectors);
-            return builder;
-        },
-
-        events: (events: Record<string, Function>) => {
-            component.addEvents(events);
-            return builder;
-        },
-
-        overrideEventNames: (overrides: Record<string, string>) => {
-            component.addEventOverrides(overrides);
-            return builder;
-        },
-
         naming: (strategy: Partial<NamingStrategy>) => {
             _namingStrategy = { ..._namingStrategy, ...strategy };
-            return builder;
-        },
-
-        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, any>) => {
-            component.addCommandsFactory(factory);
-            return builder;
-        },
-
-        overrideCommandNames: (overrides: Record<string, string>) => {
-            component.addCommandOverrides(overrides);
             return builder;
         },
 
@@ -382,7 +365,7 @@ export function createAggregate<S, Name extends string>(
                 hooks: _hooks
             };
         }
-    };
+    });
 
     return builder;
 }
