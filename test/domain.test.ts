@@ -1,7 +1,7 @@
-import { id } from 'zod/locales';
 import { createAggregate } from '../src/createAggregate';
 import { Event } from '../src/types';
 import { createMixin } from '../src/createMixin';
+import { createEntity } from '../src/createEntity';
 
 interface OrderLine {
   id: string;
@@ -39,16 +39,46 @@ describe('Domain Exmaple', () => {
         registerIdentifier: (state, domain: string, authority: string, identifier: string) => emit.identifierRegisterd({ domain, authority, identifier })
       })).build();
 
-    const orderAggregateDef = createAggregate<OrderState&IdentifiersMixinState, 'order'>('order', { id: 'o1', orderLines: [], identifiers: [] })
-      // .mixins(identifiers)
+    const orderLineEntity = createEntity<OrderLine, 'orderLine'>('orderLine')
+      .events({
+        qtyChanged: (state, event: Event<{ qty: number }>) => {
+          state.qty = event.payload.qty;
+        }
+      })
+      .overrideEventNames({})
+      .selectors({})
+      .commands((emit) => ({
+        changeQty: {
+          pack: (orderLineId: string, qty: number) => ({ orderLineId, qty }),
+          handler: (state, payload) => emit.qtyChanged(payload)
+        }
+      }))
+      .overrideCommandNames({})
+      .build();
+
+    const orderAggregateDef = createAggregate<OrderState & IdentifiersMixinState, 'order'>('order', {
+      id: 'o1',
+      orderLines: [{ id: 'l1', qty: 1, subOrderLine: [] }],
+      identifiers: []
+    })
+      .mixins(identifiers)
+      .entity('orderLines', orderLineEntity)
       .events({
         registered: (state, event: Event<OrderState>) => {
           Object.assign(state, event.payload);
         },
-        cancelled: (state, event: Event<string>) => { state.isCancelled = true; state.cancelRemark = event.payload; }
-      }).commands((emit) => ({
+        cancelled: (state, event: Event<string>) => { state.isCancelled = true; state.cancelRemark = event.payload; },
+      })
+      .commands((emit) => ({
         register: (state, order: OrderState) => emit.registered(order),
         cancel: (state, remark: string) => emit.cancelled(remark)
       })).build();
+
+    const cmd = orderAggregateDef.commandCreators.orderLinesChangeQty('l1', 5);
+    const events = orderAggregateDef.process(orderAggregateDef.initialState, cmd as any);
+    const nextState = orderAggregateDef.apply(orderAggregateDef.initialState, events[0]);
+
+    expect(events[0].type).toBe('order.order_lines.qty_changed.event');
+    expect(nextState.orderLines[0].qty).toBe(5);
   });
 });

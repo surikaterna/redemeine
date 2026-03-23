@@ -30,6 +30,21 @@ type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName, any, a
 type MergeEntities<T extends any[]> = Merge<ExtractEntityCommands<T[number]> & {}>;
 type AggregateCommandKeys<T> = AllKeys<T & {}>;
 
+type EntityMountOverrides = {
+    eventNameOverrides?: Record<string, string>;
+    commandNameOverrides?: Record<string, string>;
+    /** @deprecated Use eventNameOverrides */
+    eventOverrides?: Record<string, string>;
+    /** @deprecated Use commandNameOverrides */
+    commandOverrides?: Record<string, string>;
+};
+
+type MountedEntityPackage = {
+    name: string;
+    component: EntityPackage<unknown, string>;
+    mountOverrides?: EntityMountOverrides;
+};
+
 /**
  * The core builder interface for composing Aggregates in Redemeine.
  * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
@@ -77,7 +92,8 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      */
     entity: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>>(
         name: EN,
-        entityComponent: T
+        entityComponent: T,
+        mountOverrides?: EntityMountOverrides
     ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel>;
 
     /**
@@ -237,7 +253,7 @@ export function createAggregate<S, Name extends string>(
 ): AggregateBuilder<S, Name> {
 
     const component = createComponentBehaviorState<S>();
-    let _entityPackages: EntityPackage<unknown, string>[] = [];
+    let _entityPackages: MountedEntityPackage[] = [];
     let _mixins: MixinPackage<any>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
@@ -263,18 +279,24 @@ export function createAggregate<S, Name extends string>(
             if (entitiesObj && typeof entitiesObj === 'object') {
                 Object.entries(entitiesObj).forEach(([name, entityComponent]) => {
                     if (entityComponent && typeof entityComponent === 'object') {
-                        _entityPackages.push({ ...(entityComponent as EntityPackage<unknown, string>), name });
+                        _entityPackages.push({
+                            name,
+                            component: entityComponent as EntityPackage<unknown, string>
+                        });
                     }
                 });
             }
             if (packages.length > 0) {
-                _entityPackages.push(...packages);
+                _entityPackages.push(...packages.map((pkg) => ({
+                    name: pkg.name,
+                    component: pkg
+                })));
             }
             return builder;
         },
 
-        entity: (name: string, entityComponent: EntityPackage<unknown, string>) => {
-            _entityPackages.push({ ...entityComponent, name });
+        entity: (name: string, entityComponent: EntityPackage<unknown, string>, mountOverrides?: EntityMountOverrides) => {
+            _entityPackages.push({ name, component: entityComponent, mountOverrides });
             return builder;
         },
 
@@ -313,6 +335,14 @@ export function createAggregate<S, Name extends string>(
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), snapshot.commandOverrides);
             const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), snapshot.selectors) as SelectorsMap<S>;
 
+            const composeMountedType = (path: string, relativeName: string, suffix: 'event' | 'command') => {
+                const expectedSuffix = `.${suffix}`;
+                const normalized = relativeName.endsWith(expectedSuffix)
+                    ? relativeName
+                    : `${relativeName}${expectedSuffix}`;
+                return `${aggregateName}.${path}.${normalized}`;
+            };
+
             const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
             const allCommandsMap = {
@@ -325,9 +355,26 @@ export function createAggregate<S, Name extends string>(
 
             // 1. Assign dot-notation path based on collection name
             // 2. Prevent selector shadowing
-            _entityPackages.forEach(entity => {
-                const collectionName = entity.name + 's';
+            _entityPackages.forEach(({ name: mountName, component: entity, mountOverrides }) => {
+                const collectionName = mountName + 's';
                 const entityPath = collectionName.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
+                const entityEvents = entity.projectors || entity.events || {};
+                const entityEventNameOverrides = entity.eventOverrides || {};
+                const mountEventNameOverrides = {
+                    ...((mountOverrides && mountOverrides.eventOverrides) || {}),
+                    ...((mountOverrides && mountOverrides.eventNameOverrides) || {})
+                };
+
+                Object.assign(allEvents, entityEvents);
+
+                Object.keys(entityEvents).forEach((eventKey) => {
+                    const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
+                    const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
+                    allEventOverrides[`${entityPath}:${eventKey}`] = mountEventOverride
+                        || (entityEventOverride
+                            ? composeMountedType(entityPath, entityEventOverride, 'event')
+                            : _namingStrategy.event(aggregateName, eventKey, entityPath));
+                });
 
                 const entitySelectors = entity.selectors || {};
                 
@@ -335,22 +382,31 @@ export function createAggregate<S, Name extends string>(
                 const mergedSelectors = new Proxy({ ...entitySelectors, root: allSelectors }, {
                     get: (target: Record<string, unknown>, prop: string) => {
                         if (prop in entitySelectors && prop in allSelectors && prop !== 'root') {
-                            console.warn(`[Selector Shadowing]: entity "${entity.name}" and root both define "${prop}". Use "selectors.root.${prop}" to access the root selector.`);
+                            console.warn(`[Selector Shadowing]: entity "${mountName}" and root both define "${prop}". Use "selectors.root.${prop}" to access the root selector.`);
                         }
                         if (prop in target) return target[prop as keyof typeof target];
                         return allSelectors[prop as keyof typeof allSelectors];
                     }
                 });
 
-                const entityCommands = entity.commandFactory(emit, { selectors: mergedSelectors });
-                const entityCommandOverrides = entity.commandOverrides || {};
+                const entityEmit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy, entityPath);
+                const entityCommands = entity.commandFactory(entityEmit, { selectors: mergedSelectors });
+                const entityCommandNameOverrides = entity.commandOverrides || {};
+                const mountCommandNameOverrides = {
+                    ...((mountOverrides && mountOverrides.commandOverrides) || {}),
+                    ...((mountOverrides && mountOverrides.commandNameOverrides) || {})
+                };
                 
                 // Flatten the commands with the entity name mapping into the global pool for processing
                 Object.keys(entityCommands).forEach(cmdProp => {
-                    const mappedCmd = entity.name + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
+                    const mappedCmd = mountName + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
                     allCommandsMap[mappedCmd] = entityCommands[cmdProp];
-                    if (entityCommandOverrides[cmdProp]) {
-                        allCommandOverrides[mappedCmd] = entityCommandOverrides[cmdProp];
+                    const mountCommandOverride = (mountCommandNameOverrides as Record<string, string>)[cmdProp];
+                    const entityCommandOverride = (entityCommandNameOverrides as Record<string, string>)[cmdProp];
+                    if (mountCommandOverride) {
+                        allCommandOverrides[mappedCmd] = mountCommandOverride;
+                    } else if (entityCommandOverride) {
+                        allCommandOverrides[mappedCmd] = composeMountedType(entityPath, entityCommandOverride, 'command');
                     }
                 });
             });

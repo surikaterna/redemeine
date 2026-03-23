@@ -1,5 +1,7 @@
 import { EventType, NamingStrategy } from '../types';
 
+const toSnakeCase = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+
 export const formatCommandType = (aggregateName: string, prop: string, path?: string) => {
     if (path) return `${aggregateName}.${path}.${prop}.command`;
     return aggregateName + '.' + prop + '.command';
@@ -12,7 +14,7 @@ export const formatFlatEventType = (aggregateName: string, prop: string, path?: 
 
 export const formatTargetedEventType = (aggregateName: string, prop: string, path?: string): EventType => {
     if (path) {
-        return formatFlatEventType(aggregateName, prop, path);
+        return formatFlatEventType(aggregateName, toSnakeCase(prop), path);
     }
     const parts = prop.split(/(?=[A-Z])/);
     if (parts.length > 1) {
