@@ -34,6 +34,16 @@ export type MirageCommandMap<S, M> = {
         : (payload: M[K]) => Promise<S>;
 };
 
+/**
+ * The standard active instantiated aggregate wrapper holding bounded paths.
+ * 
+ * Features Immutable Hybrid Entity Collections:
+ * Nested entities mapped by `.entities()` return a wrapper which is both a Read-Only Array
+ * and a Path function constructor.
+ * 
+ * Example: `mirage.orderLines('123')` retrieves the targeted Entity Mirage.
+ * Example: `mirage.orderLines.length` behaves as a safe read-only array reference.
+ */
 export type Mirage<TState, M extends Record<string, any> = any> = 
     MirageCommandMap<TState, M> & ReadonlyDeep<TState> & {
         readonly state: ReadonlyDeep<TState>;

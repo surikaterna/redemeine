@@ -30,12 +30,17 @@ const order123 = createMirage(OrderAggregate, 'order-123');
 // Type-safe dispatching triggers Immer-powered state transitions natively
 await order123.place('cust-99');
 
-// Entities maintain their own namespace and logic
+// Entities act as Immutable Hybrid Collections! 
+// 1. You can iterate over them natively as a safe, read-only array:
+const totalLines = order123.orderLines.length;
+
+// 2. You can invoke them as command factories mapped perfectly by ID:
 await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.order_line.cancel.command'
 ```
 
 ## 🚀 The Elevator Pitch
 
+*   **Immutable Hybrid Entity Collections**: Entities wrapped securely via proxies. Treat them seamlessly as safe Read-Only Arrays for UI iteration, and invoke them as targeted Command dispatcher functions bridging ID-mapped execution instantly.
 *   **Path-Aware Convention**: Navigate and organize your commands and events effortlessly. Automatic routing driven by intuitive naming conventions reduces boilerplate.
 *   **Encapsulated Logic**: Stop polluting your root aggregate. Entities (like `OrderLines`) keep their own private selectors and logic, exposed only where they matter.
 *   **Type-Safe Contracts**: End-to-end type safety derived directly from your Command and Event schemas (powered by Zod), catching mismatches at compile time rather than runtime.

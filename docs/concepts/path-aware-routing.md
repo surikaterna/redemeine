@@ -27,21 +27,22 @@ dispatch({
 ### The Magic: Path-Aware Routing
 
 With Redemeine, your entities maintain their own private namespaces, and your invocation path becomes the literal routing key.
+Furthermore, mapped nested entities act as **Immutable Hybrid Entity Collections**.
 
 Let's look at an `Order` aggregate that encapsulates an `OrderLines` entity:
 
 ```ts
 // Let's assume we have built an Order aggregate with nested entities
 const OrderAggregate = createAggregate('Order', initialOrderState)
-  .entities({ orderLines: OrderLineEntity }) 
+  .entities({ orderLines: OrderLineEntity })
   .build();
 
 const order = createMirage(OrderAggregate, 'order-123');
 
-// ✅ The Redemeine Way: Path-Aware Execution
-await order.orderLines('line-abc').cancel();
-```
+// 1. Iterate over them like a normal, read-only array!
+const totalItems = order.orderLines.length;
 
+// 2. The Redemeine Way: Path-Aware Execution mapping the ID!
 When you execute `await order.orderLines('line-abc').cancel();`, Redemeine's internal engines step in:
 
 1. **Path Traversal:** It detects you accessed the `orderLines` entity.

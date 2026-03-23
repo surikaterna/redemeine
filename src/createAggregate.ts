@@ -41,13 +41,22 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel>;
 
     /**
-     * Register nested entities into the aggregate's namespace. 
+     * Register nested entities into the aggregate's namespace.
      * Entities keep their own private selectors and logic.
      * The naming engine will automatically map nested calls to targeted dot-notation commands (e.g. `order.order_lines.cancel.command`).
      * 
+     * In the Mirage, mapped entities represent Immutable Hybrid Entity Collections: 
+     * They act as a safe read-only array (e.g., iterating or calculating length) 
+     * and as a command factory function (passing the entity ID).
+     *
      * @example
-     * .entities({ orderLines: OrderLineEntity }) 
-     * // Later used as: order.orderLines('line-1').cancel()
+     * .entities({ orderLines: OrderLineEntity })
+     * 
+     * // Iterator access
+     * const total = mirage.orderLines.length;
+     * 
+     * // Command mapping by Entity ID
+     * await mirage.orderLines('line-1').cancel()
      */
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,

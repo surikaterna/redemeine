@@ -22,6 +22,7 @@ Deep-dive into the architectural decisions and core concepts that make Redemeine
 
 * [**Writing Logic with Immer**](/docs/concepts/immer-and-mutations) — Learn how to write safe, mutable-looking state projections that result in perfectly immutable data snapshots.
 * [**Path-Aware Naming Conventions**](/docs/concepts/path-aware-routing) — Understand how Redemeine automatically maps your aggregate method calls into routed, typed event streams, reducing manual string-mapping by 90%.
+* [**Immutable Hybrid Entity Collections**](/docs/concepts/path-aware-routing#the-magic-path-aware-routing--hybrid-collections) — Safely iterate nested entities as native read-only arrays and immediately map isolated commands securely behind proxy boundaries.
 
 ---
 
