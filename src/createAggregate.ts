@@ -14,6 +14,10 @@ import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, c
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
 type MergeMixins<T extends any[]> = Merge<ExtractMixinCommands<T[number]> & {}>;
+type ExtractMixinState<T> = T extends MixinPackage<infer MS, any, any, any, any, any> ? MS : never;
+type CompatibleMixins<S, T extends MixinPackage<any, any, any, any, any, any>[]> = {
+    [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
+};
 
 type MapEntityCommands<Name extends string, CPayloads> = {
     [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
@@ -82,8 +86,8 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * @example
      * .mixins(TrackingMixin, AuditLoggerMixin)
      */
-    mixins: <T extends MixinPackage<S, any, any, any, any, any>[]>(
-        ...mixins: T
+    mixins: <T extends MixinPackage<any, any, any, any, any, any>[]>(
+        ...mixins: CompatibleMixins<S, T>
     ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel>;
 
     /**
@@ -234,7 +238,7 @@ export function createAggregate<S, Name extends string>(
 
     const component = createComponentBehaviorState<S>();
     let _entityPackages: EntityPackage<unknown, string>[] = [];
-    let _mixins: MixinPackage<S>[] = [];
+    let _mixins: MixinPackage<any>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
 
@@ -274,7 +278,7 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        mixins: (...mixins: MixinPackage<S>[]) => {
+        mixins: (...mixins: MixinPackage<any>[]) => {
             _mixins.push(...mixins);
             return builder;
         },

@@ -28,6 +28,10 @@ export interface RedemeineComponent<
   EventOverrides extends object = Record<string, string>,
   CommandOverrides extends object = Record<string, string>
 > {
+  /**
+   * Phantom generic brand to enforce component state compatibility in structural typing.
+   */
+  readonly __stateType?: S;
   readonly state?: ReadonlyDeep<unknown>;
   readonly commands: Commands;
   readonly events: Events;
