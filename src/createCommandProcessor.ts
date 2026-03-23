@@ -1,14 +1,14 @@
 ﻿import { Event, Command } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
-import { resolveCommandHandler } from './redemeineComponent';
+import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
 
 export function createCommandProcessor<S>(
     aggregateName: string,
-    allCommandsMap: Record<string, any>,
+    allCommandsMap: GenericCommandMap,
     allCommandOverrides: Record<string, string>
 ) {
-    return (state: S, command: Command<any, string>): Event[] => {
+    return (state: S, command: Command<unknown, string>): Event[] => {
         const commandType = command.type;
         const payload = command.payload;
         const commandKey = Object.keys(allCommandsMap).find(key =>

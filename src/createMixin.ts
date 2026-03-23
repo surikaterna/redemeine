@@ -1,5 +1,5 @@
 import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
@@ -12,7 +12,7 @@ export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPaylo
   projectors: E;
   commands: CPayloads;
   eventOverrides: EOverrides;
-  commandFactory: (emit: any, context: { selectors: SelectorsMap<S> }) => any;
+  commandFactory: GenericCommandFactory;
   commandOverrides: COverrides;
   selectors: Selectors;
 }
@@ -47,12 +47,12 @@ export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloa
 export function createMixin<S>(): MixinBuilder<S> {
   const component = createComponentBehaviorState<S>();
 
-  const builder: any = bindFluentMethods({}, {
-    events: (events: any) => component.addEvents(events),
-    overrideEventNames: (overrides: any) => component.addEventOverrides(overrides),
-    selectors: (selectors: any) => component.addSelectors(selectors),
-    commands: (factory: any) => component.addCommandsFactory(factory),
-    overrideCommandNames: (overrides: any) => component.addCommandOverrides(overrides)
+  const builder = bindFluentMethods({}, {
+    events: (events: Record<string, Function>) => component.addEvents(events),
+    overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
+    selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
+    commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
+    overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
   });
 
   Object.assign(builder, {
@@ -61,7 +61,7 @@ export function createMixin<S>(): MixinBuilder<S> {
       return {
         events: snapshot.events,
         projectors: snapshot.events,
-        commands: {} as any,
+        commands: {} as unknown as GenericCommandMap,
         eventOverrides: snapshot.eventOverrides,
         selectors: snapshot.selectors,
         commandFactory: component.getCommandsFactory(),
@@ -69,5 +69,5 @@ export function createMixin<S>(): MixinBuilder<S> {
       };
     }
   });
-  return builder;
+  return builder as unknown as MixinBuilder<S>;
 }

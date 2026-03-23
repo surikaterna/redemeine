@@ -1,5 +1,5 @@
 ﻿import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
@@ -14,7 +14,7 @@ export interface EntityPackage<S, Name extends string, E = any, EOverrides exten
   commands: CPayloads;
   eventOverrides: EOverrides;
   selectors: Selectors;
-  commandFactory: (emit: any, context: { selectors: SelectorsMap<S> }) => any;
+  commandFactory: GenericCommandFactory;
   commandOverrides: COverrides;
 }
 
@@ -87,12 +87,12 @@ export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides ex
 export function createEntity<S, Name extends string>(name: Name): EntityEventsStage<S, Name> {
   const component = createComponentBehaviorState<S>();
 
-  const builder: any = bindFluentMethods({}, {
-    events: (events: any) => component.addEvents(events),
-    overrideEventNames: (overrides: any) => component.addEventOverrides(overrides),
-    selectors: (selectors: any) => component.addSelectors(selectors),
-    commands: (factory: any) => component.addCommandsFactory(factory),
-    overrideCommandNames: (overrides: any) => component.addCommandOverrides(overrides)
+  const builder = bindFluentMethods({}, {
+    events: (events: Record<string, Function>) => component.addEvents(events),
+    overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
+    selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
+    commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
+    overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
   });
 
   Object.assign(builder, {
@@ -102,7 +102,7 @@ export function createEntity<S, Name extends string>(name: Name): EntityEventsSt
         name,
         events: snapshot.events,
         projectors: snapshot.events,
-        commands: {} as any,
+        commands: {} as unknown as GenericCommandMap,
         eventOverrides: snapshot.eventOverrides,
         selectors: snapshot.selectors,
         commandFactory: component.getCommandsFactory(),
@@ -111,6 +111,6 @@ export function createEntity<S, Name extends string>(name: Name): EntityEventsSt
     }
   });
 
-  return builder as EntityBuilder<S, Name>;
+  return builder as unknown as EntityBuilder<S, Name>;
 }
 

@@ -9,7 +9,7 @@ import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { defaultNamingStrategy } from './utils/naming';
-import { RedemeineCommandDefinition, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
@@ -182,7 +182,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
      */
     build: () => {
         initialState: S;
-        process: (state: S, command: Command<any, string>) => Event[];
+        process: (state: S, command: Command<unknown, string>) => Event[];
         apply: (state: S, event: Event) => S;
         commandCreators: {
             [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
@@ -194,7 +194,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
         eventCreators: EventEmitterFactory<Name, E, EOverrides>;
         /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
         pure: {
-            commandProcessors: Record<string, any>;
+            commandProcessors: Record<string, Function>;
             eventProjectors: Record<string, Function>;
         };
         selectors: Sel;
@@ -207,7 +207,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
         events: Record<string, Function>;
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
-        commandsFactory: (emit: any, context: { selectors: any }) => Record<string, any>;
+        commandsFactory: GenericCommandFactory;
         mixins: MixinPackage<S>[];
         selectors: Record<string, Function>;
         hooks: AggregateHooks<S>;
@@ -233,21 +233,21 @@ export function createAggregate<S, Name extends string>(
 ): AggregateBuilder<S, Name> {
 
     const component = createComponentBehaviorState<S>();
-    let _entityPackages: EntityPackage<any, any>[] = [];
+    let _entityPackages: EntityPackage<unknown, string>[] = [];
     let _mixins: MixinPackage<S>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
 
-    const builder: any = bindFluentMethods({}, {
+    const builder = bindFluentMethods({}, {
         selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
         events: (events: Record<string, Function>) => component.addEvents(events),
         overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
-        commands: (factory: (emit: any, context: { selectors: any }) => Record<string, any>) => component.addCommandsFactory(factory),
+        commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
         overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
     });
 
     Object.assign(builder, {
-        extends: (parentBuilder: any) => {
+        extends: (parentBuilder: AggregateBuilder<S, string, unknown, unknown, unknown, unknown>) => {
             const parentState = parentBuilder._state;
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
@@ -255,11 +255,11 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        entities: (entitiesObj: any, ...packages: EntityPackage<any, any>[]) => {
+        entities: (entitiesObj: Record<string, unknown> | undefined, ...packages: EntityPackage<unknown, string>[]) => {
             if (entitiesObj && typeof entitiesObj === 'object') {
                 Object.entries(entitiesObj).forEach(([name, entityComponent]) => {
                     if (entityComponent && typeof entityComponent === 'object') {
-                        _entityPackages.push({ ...(entityComponent as EntityPackage<any, any>), name } as EntityPackage<any, any>);
+                        _entityPackages.push({ ...(entityComponent as EntityPackage<unknown, string>), name });
                     }
                 });
             }
@@ -269,8 +269,8 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        entity: (name: string, entityComponent: EntityPackage<any, any>) => {
-            _entityPackages.push({ ...entityComponent, name } as EntityPackage<any, any>);
+        entity: (name: string, entityComponent: EntityPackage<unknown, string>) => {
+            _entityPackages.push({ ...entityComponent, name });
             return builder;
         },
 
@@ -329,12 +329,12 @@ export function createAggregate<S, Name extends string>(
                 
                 // Selector Shadowing Prevention
                 const mergedSelectors = new Proxy({ ...entitySelectors, root: allSelectors }, {
-                    get: (target: any, prop: string) => {
+                    get: (target: Record<string, unknown>, prop: string) => {
                         if (prop in entitySelectors && prop in allSelectors && prop !== 'root') {
                             console.warn(`[Selector Shadowing]: entity "${entity.name}" and root both define "${prop}". Use "selectors.root.${prop}" to access the root selector.`);
                         }
-                        if (prop in target) return target[prop];
-                        return allSelectors[prop];
+                        if (prop in target) return target[prop as keyof typeof target];
+                        return allSelectors[prop as keyof typeof allSelectors];
                     }
                 });
 
@@ -355,10 +355,10 @@ export function createAggregate<S, Name extends string>(
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
-                commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy) as any,
+                commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy),
                 eventCreators: emit,
                 pure: {
-                    commandProcessors: allCommandsMap,
+                    commandProcessors: allCommandsMap as unknown as Record<string, Function>,
                     eventProjectors: allEvents
                 },
                 selectors: allSelectors,
@@ -367,5 +367,5 @@ export function createAggregate<S, Name extends string>(
         }
     });
 
-    return builder;
+    return builder as unknown as AggregateBuilder<S, Name>;
 }

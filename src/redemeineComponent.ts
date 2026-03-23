@@ -4,7 +4,11 @@ import type { Merge } from './utils/types/Merge';
 import type { AllKeys } from './utils/types/AllKeys';
 import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
 
-export type RedemeineShorthandCommand<S, Args extends any[] = any[]> = (
+export type GenericSelectors = Record<string, unknown>;
+export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any>>;
+export type GenericCommandFactory = (emit: unknown, context: { selectors: GenericSelectors }) => GenericCommandMap;
+
+export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[]> = (
   state: ReadonlyDeep<S>,
   ...args: Args
 ) => Event<any, any> | Event<any, any>[];
@@ -24,7 +28,7 @@ export interface RedemeineComponent<
   EventOverrides extends object = Record<string, string>,
   CommandOverrides extends object = Record<string, string>
 > {
-  readonly state?: ReadonlyDeep<any>;
+  readonly state?: ReadonlyDeep<unknown>;
   readonly commands: Commands;
   readonly events: Events;
   readonly projectors: Projectors;
@@ -43,24 +47,24 @@ export type MergeComponentCommandKeys<T extends readonly RedemeineComponent<any,
   AllKeys<ComponentCommandUnion<T>>;
 
 export type PublicCommandArgsFromDefinition<S, TDef> =
-  TDef extends { pack: (...args: infer A) => any }
+  TDef extends { pack: (...args: infer A) => unknown }
     ? A
-    : ReplaceFirstArg<never, Extract<TDef, (state: ReadonlyDeep<S>, ...args: any[]) => any>> extends (
+    : ReplaceFirstArg<never, Extract<TDef, (state: ReadonlyDeep<S>, ...args: unknown[]) => unknown>> extends (
         state: never,
         ...args: infer A
-      ) => any
+      ) => unknown
       ? A
       : never;
 
-export type PublicCommandMethodsFromInternal<S, TCommands extends Record<string, any>, TResult> = {
+export type PublicCommandMethodsFromInternal<S, TCommands extends Record<string, unknown>, TResult> = {
   [K in keyof TCommands]: (...args: PublicCommandArgsFromDefinition<S, TCommands[K]>) => TResult;
 };
 
 export function composeCommandFactories(
-  factories: Array<(emit: any, context: any) => Record<string, any>>
-): (emit: any, context: any) => Record<string, any> {
-  return (emit: any, context: any) => {
-    const merged: Record<string, any> = {};
+  factories: GenericCommandFactory[]
+): GenericCommandFactory {
+  return (emit: unknown, context: { selectors: GenericSelectors }) => {
+    const merged: GenericCommandMap = {};
     for (const factory of factories) {
       Object.assign(merged, factory(emit, context));
     }
@@ -70,14 +74,14 @@ export function composeCommandFactories(
 
 export function resolveCommandHandler<S>(
   commandDef: RedemeineCommandDefinition<S>
-): (state: ReadonlyDeep<S>, payload: any) => Event<any, any> | Event<any, any>[] {
+): (state: ReadonlyDeep<S>, payload: unknown) => Event<any, any> | Event<any, any>[] {
   return (typeof commandDef === 'function' ? commandDef : commandDef.handler) as (
     state: ReadonlyDeep<S>,
-    payload: any
+    payload: unknown
   ) => Event<any, any> | Event<any, any>[];
 }
 
-export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: any[]): any {
+export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: unknown[]): unknown {
   if (typeof commandDef !== 'function' && commandDef.pack) {
     return commandDef.pack(...args);
   }
@@ -96,7 +100,7 @@ export interface InheritableComponentBehavior {
   eventOverrides: Record<string, string>;
   selectors: Record<string, Function>;
   commandOverrides: Record<string, string>;
-  commandsFactory: (emit: any, context: { selectors: any }) => Record<string, any>;
+  commandsFactory: GenericCommandFactory;
 }
 
 export function createComponentBehaviorState<S>() {
@@ -104,7 +108,7 @@ export function createComponentBehaviorState<S>() {
   let eventOverrides: Record<string, string> = {};
   let selectors: SelectorsMap<S> = {};
   let commandOverrides: Record<string, string> = {};
-  let commandFactories: Array<(emit: any, context: { selectors: any }) => Record<string, any>> = [];
+  let commandFactories: GenericCommandFactory[] = [];
 
   return {
     addEvents(next: Record<string, Function>) {
@@ -123,7 +127,7 @@ export function createComponentBehaviorState<S>() {
       commandOverrides = { ...commandOverrides, ...next };
     },
 
-    addCommandsFactory(factory: (emit: any, context: { selectors: any }) => Record<string, any>) {
+    addCommandsFactory(factory: GenericCommandFactory) {
       commandFactories.push(factory);
     },
 
@@ -150,17 +154,17 @@ export function createComponentBehaviorState<S>() {
   };
 }
 
-type FluentUpdaterMap = Record<string, (...args: any[]) => void>;
+type FluentUpdaterMap = Record<string, (...args: unknown[]) => void>;
 
-export function bindFluentMethods<TBuilder extends Record<string, any>, TUpdaters extends FluentUpdaterMap>(
+export function bindFluentMethods<TBuilder extends Record<string, unknown>, TUpdaters extends FluentUpdaterMap>(
   builder: TBuilder,
   updaters: TUpdaters
 ): TBuilder & { [K in keyof TUpdaters]: (...args: Parameters<TUpdaters[K]>) => TBuilder } {
-  const mutableBuilder = builder as Record<string, any>;
+  const mutableBuilder = builder as Record<string, unknown>;
 
   Object.keys(updaters).forEach((key) => {
     const methodName = key as keyof TUpdaters;
-    mutableBuilder[methodName as string] = (...args: any[]) => {
+    mutableBuilder[methodName as string] = (...args: unknown[]) => {
       updaters[methodName](...args);
       return builder;
     };

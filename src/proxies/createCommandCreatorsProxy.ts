@@ -1,10 +1,10 @@
 import { createCommand } from '../createCommand';
 import { NamingStrategy } from '../types';
-import { createCommandPayload } from '../redemeineComponent';
+import { GenericCommandMap, createCommandPayload } from '../redemeineComponent';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,
-    allCommandsMap: Record<string, any>,
+    allCommandsMap: GenericCommandMap,
     allCommandOverrides: Record<string, string>,
     namingStrategy: NamingStrategy
 ) {
@@ -15,14 +15,19 @@ export function createCommandCreatorsProxy(
                     get: (__, cmdProp: string) => {
                         const entityPath = prop.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
                         const explicitType = namingStrategy.command(aggregateName, cmdProp, entityPath);
-                        return (...args: any[]) => {
+                        return (...args: unknown[]) => {
                             const cmdDef = allCommandsMap[aggregateName + prop.charAt(0).toUpperCase() + prop.slice(1)];
+                            const firstArg = args[0];
                             const payload = cmdDef
                                 ? (typeof cmdDef !== 'function' && cmdDef.pack
                                     ? createCommandPayload(cmdDef, args)
-                                    : { ...args[0], id })
-                                : { ...args[0], id };
-                            return createCommand(explicitType)(payload);
+                                    : (typeof firstArg === 'object' && firstArg !== null
+                                        ? { ...(firstArg as Record<string, unknown>), id }
+                                        : { id }))
+                                : (typeof firstArg === 'object' && firstArg !== null
+                                    ? { ...(firstArg as Record<string, unknown>), id }
+                                    : { id });
+                            return createCommand(explicitType)(payload as never);
                         };
                     }
                 });
@@ -30,7 +35,7 @@ export function createCommandCreatorsProxy(
             const explicitType = allCommandOverrides[prop] || namingStrategy.command(aggregateName, prop);
             const cmdDef = allCommandsMap[prop];
             return typeof cmdDef !== 'undefined'
-                ? (...args: any[]) => createCommand(explicitType)(createCommandPayload(cmdDef, args))
+                ? (...args: unknown[]) => createCommand(explicitType)(createCommandPayload(cmdDef, args) as never)
                 : createCommand(explicitType);
         }
     });
