@@ -8,28 +8,33 @@
     "type": "git",
     "url": "https://github.com/your-org/redemeine.git"
   },
-  "main": "dist/redemeine.js",
-  "types": "dist/redemeine.d.ts",
+  "main": "dist/cjs/redemeine.js",
+  "module": "dist/esm/redemeine.js",
+  "types": "dist/types/redemeine.d.ts",
   "files": [
     "dist"
   ],
   "bin": {
-    "redemeine": "./dist/bin/redemeine.js"
+    "redemeine": "./dist/cjs/bin/redemeine.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/redemeine.d.ts",
-      "import": "./dist/redemeine.js",
-      "require": "./dist/redemeine.js"
+      "types": "./dist/types/redemeine.d.ts",
+      "import": "./dist/esm/redemeine.js",
+      "require": "./dist/cjs/redemeine.js",
+      "default": "./dist/cjs/redemeine.js"
     },
     "./reflector": {
-      "types": "./dist/reflector.d.ts",
-      "import": "./dist/reflector.js",
-      "require": "./dist/reflector.js"
+      "types": "./dist/types/reflector.d.ts",
+      "import": "./dist/esm/reflector.js",
+      "require": "./dist/cjs/reflector.js",
+      "default": "./dist/cjs/reflector.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node ./bin/build-dual.js",
+    "build:cjs": "tsc -p tsconfig.build.cjs.json",
+    "build:esm": "tsc -p tsconfig.build.esm.json",
     "watch": "tsc -w",
     "test": "jest",
     "test:watch": "jest --watchAll",
