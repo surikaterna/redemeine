@@ -34,21 +34,50 @@ export function applyEvent<S>(
                     event.payload.id
                 );
 
-                if (id !== undefined) {
-                    const arrayCandidates = Array.from(new Set([
-                        arrayName,
-                        arrayName + 's',
-                        camelArrayName,
-                        camelArrayName + 's'
-                    ]));
+                const mapKey = event.payload && (
+                    event.payload[part + 'Key'] ||
+                    event.payload[singularPart + 'Key'] ||
+                    event.payload[camelArrayName + 'Key'] ||
+                    event.payload[singularCamelPart + 'Key'] ||
+                    event.payload.key
+                );
 
-                    for (const candidate of arrayCandidates) {
-                        if (Array.isArray(targetDraft[candidate])) {
-                            const found = targetDraft[candidate].find((item: any) => String(item.id) === String(id));
-                            if (found) {
-                                targetDraft = found;
-                                break;
+                const compositePk = event.payload && event.payload.__entityPk && typeof event.payload.__entityPk === 'object'
+                    ? event.payload.__entityPk
+                    : undefined;
+
+                const arrayCandidates = Array.from(new Set([
+                    arrayName,
+                    arrayName + 's',
+                    camelArrayName,
+                    camelArrayName + 's'
+                ]));
+
+                for (const candidate of arrayCandidates) {
+                    const container = targetDraft[candidate];
+
+                    if (Array.isArray(container)) {
+                        const found = container.find((item: any) => {
+                            if (id !== undefined) {
+                                return String(item.id) === String(id);
                             }
+                            if (compositePk) {
+                                return Object.keys(compositePk).every((k) => String(item?.[k]) === String(compositePk[k]));
+                            }
+                            return false;
+                        });
+
+                        if (found) {
+                            targetDraft = found;
+                            break;
+                        }
+                    }
+
+                    if (container && typeof container === 'object' && !Array.isArray(container) && mapKey !== undefined) {
+                        const found = container[mapKey];
+                        if (found) {
+                            targetDraft = found;
+                            break;
                         }
                     }
                 }

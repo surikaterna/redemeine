@@ -113,3 +113,32 @@ npx redemeine generate aggregate Shipment
 ---
 *Inspired by [demeine](http://github.com/surikaterna/demeine) and [Redux Toolkit](https://github.com/reduxjs/redux-toolkit).*
 Redemeine is the **Type-Safe, Composition-focused evolution** of `demeine` for modern TypeScript projects.
+
+# Future Work
+1. Domain Services (The "Logic that fits nowhere")
+Sometimes logic requires multiple Aggregates or external state (like a Currency Converter or an Inventory Checker).
+
+The Gap: Currently, redemeine handlers are "Pure" (State + Payload).
+
+The Solution: We don't necessarily need a builder for this, but we need a pattern for Command Middleware or Service Injection so a handler can "ask" for a Domain Service without losing its purity or testability.
+
+2. Invariants (Cross-Entity Validation)
+You have Zod for "Shape" validation, but what about "Business" validation? (e.g., "The sum of all Allocation percentages in the Party must equal 100%").
+
+The Gap: If you have 5 different commands that can affect allocation, you don't want to copy-paste the "Sum to 100" logic in every handler.
+
+The Solution: Support a .invariants() or .ensure() block in the builder. These are rules that run after any command handler but before the events are committed. If an invariant fails, the whole transaction rolls back.
+
+3. Sagas / Process Managers (Long-running flows)
+DDD often deals with "Eventually Consistent" flows across aggregates (e.g., "When a Party is created, go create a Default Billing Account in the Account Aggregate").
+
+The Gap: The Mirage is great for a single aggregate, but it doesn't "react" to events by triggering other commands yet.
+
+The Solution: A redemeine-manager or Saga builder that listens to an Event Stream and dispatches commands to other Mirages.
+
+4. Specification Pattern (Complex Query Logic)
+In party_domain.txt, you might want to ask: party.isEligibleForDiscount().
+
+The Gap: If this logic is complex, you don't want it sitting in a UI component or a Service. You want it on the Aggregate.
+
+The Solution: Support .queries() (or .computed()) in the builder. These are pure functions that take the State and return a value. The Mirage would expose these as read-only properties or methods.
