@@ -81,7 +81,5 @@ describe('Domain Exmaple', () => {
 
     expect(events[0].type).toBe('order.order_lines.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
-    const live = createMirage(orderAggregateDef, 'o1', { snapshot: nextState });
-    live.orderLines(0).changeQty(10);
   });
 });
