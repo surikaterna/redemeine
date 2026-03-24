@@ -18,7 +18,7 @@ Here is a complete, copy-pasteable test suite demonstrating how effortless testi
 
 ```ts
 import { describe, it, expect } from 'vitest'; // or from '@jest/globals'
-import { createMirage, extractUncommittedEvents } from 'redemeine';
+import { createMirage, extractUncommittedEvents, clearUncommittedEvents } from 'redemeine';
 
 // 1. Import your built aggregate blueprint from your domain folder
 import { ShipmentAggregate } from './ShipmentAggregate';
@@ -62,7 +62,7 @@ describe('Shipment Aggregate', () => {
     await shipment.dispatchToCarrier({ carrierName: 'FedEx' });
 
     // Clear the event queue so we only test what happens NEXT
-    shipment._clearUncommittedEvents(); 
+    clearUncommittedEvents(shipment);
 
     // WHEN / THEN: We attempt to dispatch again and assert it fails
     await expect(

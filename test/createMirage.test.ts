@@ -245,4 +245,68 @@ describe('Mirage tests', () => {
         expect((live as any).preferences.setTheme).toBeUndefined();
     });
 
+    test('valueObjectList and valueObjectMap are read-only and non-callable', () => {
+        type PartyState = {
+            aliases: { label: string }[];
+            preferencesByRegion: Record<string, { theme: string }>;
+        };
+
+        const aggregate = createAggregate<PartyState, 'party'>('party', {
+            aliases: [{ label: 'home' }],
+            preferencesByRegion: { US: { theme: 'light' } }
+        })
+            .valueObjectList('aliases', {})
+            .valueObjectMap('preferencesByRegion', {})
+            .events({})
+            .commands(() => ({}))
+            .build();
+
+        const live = createMirage(aggregate, 'p1');
+
+        expect(live.aliases[0].label).toBe('home');
+        expect(live.preferencesByRegion.US.theme).toBe('light');
+        expect(typeof (live as any).aliases).toBe('object');
+        expect(typeof (live as any).preferencesByRegion).toBe('object');
+
+        expect(() => {
+            (live as any).aliases.push({ label: 'work' });
+        }).toThrow('Cannot mutate properties directly');
+
+        expect(() => {
+            (live as any).preferencesByRegion.US.theme = 'dark';
+        }).toThrow('Cannot mutate properties directly');
+
+        expect((live as any).aliases.add).toBeUndefined();
+        expect((live as any).preferencesByRegion.setTheme).toBeUndefined();
+    });
+
+    test('valueObject collection types are not callable', () => {
+        type PartyState = {
+            aliases: { label: string }[];
+            preferencesByRegion: Record<string, { theme: string }>;
+        };
+
+        const aggregate = createAggregate<PartyState, 'party'>('party', {
+            aliases: [{ label: 'home' }],
+            preferencesByRegion: { US: { theme: 'light' } }
+        })
+            .valueObjectList('aliases', {})
+            .valueObjectMap('preferencesByRegion', {})
+            .events({})
+            .commands(() => ({}))
+            .build();
+
+        const live = createMirage(aggregate, 'p1');
+
+        if (false) {
+            // @ts-expect-error valueObjectList should not expose callable accessor
+            live.aliases('home');
+            // @ts-expect-error valueObjectMap should not expose callable accessor
+            live.preferencesByRegion('US');
+        }
+
+        expect(live.aliases[0].label).toBe('home');
+        expect(live.preferencesByRegion.US.theme).toBe('light');
+    });
+
 });

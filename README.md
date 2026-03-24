@@ -43,7 +43,7 @@ await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.or
 *   **Immutable Hybrid Entity Collections**: Entities wrapped securely via proxies. Treat them seamlessly as safe Read-Only Arrays for UI iteration, and invoke them as targeted Command dispatcher functions bridging ID-mapped execution instantly.
 *   **Path-Aware Convention**: Navigate and organize your commands and events effortlessly. Automatic routing driven by intuitive naming conventions reduces boilerplate.
 *   **Encapsulated Logic**: Stop polluting your root aggregate. Entities (like `OrderLines`) keep their own private selectors and logic, exposed only where they matter.
-*   **Type-Safe Contracts**: End-to-end type safety derived directly from your Command and Event schemas (powered by Zod), catching mismatches at compile time rather than runtime.
+*   **Type-Safe Contracts**: Strong compile-time safety from TypeScript, with optional runtime command/event validation when a Contract is provided (for example with Zod-backed schemas).
 *   **Immutable State Transitions**: Leverage Immer under the hood for clean, predictable, and fully typed event applications to your aggregate state.
 
 ## 🎒 Cohesive Command Packing

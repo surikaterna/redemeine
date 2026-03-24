@@ -5,7 +5,7 @@ import type { PublicCommandMethodsFromInternal } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import type { AggregateEntityRegistry } from './createAggregate';
 
-type MountKind = 'list' | 'map' | 'valueObject';
+type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
 type MountMetadata = {
     kind: MountKind;
@@ -109,7 +109,7 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
                 EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
                 MapKnownKeys<Registry[K]>
             >
-            : Registry[K] extends { kind: 'valueObject' }
+            : Registry[K] extends { kind: 'valueObject' | 'valueObjectList' | 'valueObjectMap' }
                 ? ReadonlyDeep<TState[K]>
                 : never;
 };
@@ -399,6 +399,9 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
 
                     if (Array.isArray(value)) {
                         const mount = statePath.length === 0 ? getMountForRoot(prop) : undefined;
+                        if (mount?.kind === 'valueObjectList') {
+                            return makeReadonlyProxy(value);
+                        }
                         if (mount?.kind === 'list') {
                             return makeCollectionProxy([...statePath, prop], [mount.commandPrefix], mount, context);
                         }
@@ -414,7 +417,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
 
                     if (typeof value === 'object' && value !== null) {
                         const mount = statePath.length === 0 ? getMountForRoot(prop) : undefined;
-                        if (mount?.kind === 'valueObject') {
+                        if (mount?.kind === 'valueObject' || mount?.kind === 'valueObjectMap') {
                             return makeReadonlyProxy(value);
                         }
                         if (mount?.kind === 'map') {
@@ -636,6 +639,24 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
         getUncommittedEvents: () => [...core.uncommitted],
         getUncommittedEventsAsync: async () => [...core.uncommitted],
     };
+}
+
+/**
+ * Returns a copy of all uncommitted events currently buffered by a Mirage instance.
+ */
+export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}>(
+    mirage: Mirage<S, M, Registry>
+): Event[] {
+    return createLegacyAggregateBridge(mirage).getUncommittedEvents();
+}
+
+/**
+ * Clears the uncommitted event buffer for a Mirage instance.
+ */
+export function clearUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}>(
+    mirage: Mirage<S, M, Registry>
+): void {
+    createLegacyAggregateBridge(mirage).clearUncommittedEvents();
 }
 
 /**

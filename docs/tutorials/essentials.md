@@ -2,7 +2,7 @@
 
 Welcome to Redemeine! Let's skip the boilerplate and dive straight into building a fully-functional Event Sourced and CQRS-powered Shopping Cart. 
 
-Redemeine is built on a **Type-Transparent architecture**. What does that mean? You define your domain using plain TypeScript interfaces, and Redemeine automatically handles the runtime validation for you. No manual `z.parse()`, no verbose `if (!payload.id) throw new Error(...)` checks inside your business logic. You just write TypeScript, and it just works.
+Redemeine is built on a **Type-Transparent architecture**. You define your domain with plain TypeScript interfaces for compile-time safety, and you can add runtime validation by passing a `Contract` when creating a Mirage instance. This keeps business handlers focused while still allowing strict runtime boundaries when needed.
 
 Let's build.
 
@@ -50,9 +50,9 @@ Because Redemeine is wrapped with Immer under the hood, you can write standard, 
 ```ts
   // ... continuing from above
   .events({
-    itemAdded: (state, payload: { item: CartItem }) => {
+    itemAdded: (state, event: { payload: { item: CartItem } }) => {
       // Look ma, direct mutation! (Safely powered by Immer)
-      state.items.push(payload.item);
+      state.items.push(event.payload.item);
     }
   })
 ```
@@ -61,7 +61,7 @@ Because Redemeine is wrapped with Immer under the hood, you can write standard, 
 
 Your commands represent *intent*. They don't change the state directly. Instead, they run pure business logic and return the events that should be applied.
 
-Notice how we aren't validating the `payload` structure here? Because of Redemeine's Type-Transparent validation, if someone passes a payload missing the `item` property, it gets rejected before this function is even executed.
+Notice how we aren't validating the `payload` structure here? Your handler stays focused on business rules. Compile-time typing guards development, and runtime validation is available by attaching a `Contract` to the Mirage when you need strict runtime checks.
 
 ```ts
   .commands((emit) => ({
@@ -91,7 +91,7 @@ async function runCartFlow() {
   const cart = createMirage(CartAggregate, cartId);
 
   // 2. Dispatch a command!
-  // Type inference and runtime validation are fully active.
+  // Type inference is fully active. Runtime validation is available when a Contract is provided.
   await cart.addItem({
     item: { productId: 'prod-99', quantity: 1 }
   });

@@ -53,7 +53,7 @@ type EntityMapOptions<K extends string = string> = {
     knownKeys?: readonly K[];
 };
 
-type MountedStructureKind = 'list' | 'map' | 'valueObject';
+type MountedStructureKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
 export type MountedStructureMetadata = {
     kind: MountedStructureKind;
@@ -88,7 +88,15 @@ type EntityRegistryValueObjectEntry = {
     kind: 'valueObject';
 };
 
-export type AggregateEntityRegistry = Record<string, EntityRegistryListEntry<EntityPackage<any, any, any, any, any, any>, string | readonly string[]> | EntityRegistryMapEntry<EntityPackage<any, any, any, any, any, any>, string> | EntityRegistryValueObjectEntry>;
+type EntityRegistryValueObjectListEntry = {
+    kind: 'valueObjectList';
+};
+
+type EntityRegistryValueObjectMapEntry = {
+    kind: 'valueObjectMap';
+};
+
+export type AggregateEntityRegistry = Record<string, EntityRegistryListEntry<EntityPackage<any, any, any, any, any, any>, string | readonly string[]> | EntityRegistryMapEntry<EntityPackage<any, any, any, any, any, any>, string> | EntityRegistryValueObjectEntry | EntityRegistryValueObjectListEntry | EntityRegistryValueObjectMapEntry>;
 
 type RegistryFromNamedEntities<EN extends Record<string, any>> = {
     [K in keyof EN as EN[K] extends EntityPackage<any, any, any, any, any, any> ? K : never]: EntityRegistryListEntry<Extract<EN[K], EntityPackage<any, any, any, any, any, any>>, 'id'>;
@@ -180,6 +188,24 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         name: VOName,
         schema?: unknown
     ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectEntry }>;
+
+    /**
+     * Register a read-only value object list branch.
+     * Unlike entities, this branch does not route nested commands.
+     */
+    valueObjectList: <VOName extends string>(
+        name: VOName,
+        schema?: unknown
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectListEntry }>;
+
+    /**
+     * Register a read-only value object map branch.
+     * Unlike entities, this branch does not route nested commands.
+     */
+    valueObjectMap: <VOName extends string>(
+        name: VOName,
+        schema?: unknown
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectMapEntry }>;
 
     /**
      * Compose reusable domain logic chunks (Mixins) into this aggregate.
@@ -403,6 +429,16 @@ export function createAggregate<S, Name extends string>(
 
         valueObject: (name: string) => {
             _entityPackages.push({ name, kind: 'valueObject' });
+            return builder;
+        },
+
+        valueObjectList: (name: string) => {
+            _entityPackages.push({ name, kind: 'valueObjectList' });
+            return builder;
+        },
+
+        valueObjectMap: (name: string) => {
+            _entityPackages.push({ name, kind: 'valueObjectMap' });
             return builder;
         },
 

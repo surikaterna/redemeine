@@ -1,6 +1,6 @@
 # Usage with TypeScript: Patterns and Best Practices
 
-Redemeine was built from the ground up to provide a world-class, uncompromising TypeScript experience. We believe that your type definitions should be the single source of truth for your domain model—both at compile time *and* at runtime.
+Redemeine was built from the ground up to provide a world-class, uncompromising TypeScript experience. We believe your type definitions should be the single source of truth for your domain model at compile time, with optional runtime enforcement through Contracts.
 
 This guide covers the core patterns for typing your Aggregates, enforcing constraints, and exporting your compiled domain models for use across your application.
 
@@ -43,7 +43,7 @@ export const AccountAggregate = createAggregate<AccountState, 'Account'>('Accoun
 
 In a traditional CQRS architecture, you often end up writing dual validations: a TypeScript interface for your compiler, and a separate Zod or Joi schema to ensure runtime safety.
 
-> **The Redemeine Way:** Write your TypeScript interfaces once. Redemeine's internal engine guarantees that any payload reaching your command handlers strictly adheres to those types at runtime.
+> **The Redemeine Way:** Write your TypeScript interfaces once for compile-time safety. When you need runtime enforcement, pass a Contract into Mirage creation so command and event payloads are validated at runtime too.
 
 ### Defining Payloads
 
@@ -87,7 +87,7 @@ Redemeine uses `Parameters<typeof pack>` underneath the hood, ensuring your Mira
 
 Here is where Redemeine shines. When you define your command handler, you type the `payload` argument. 
 
-Because of Redemeine's Type-Transparent architecture, **you do not need manual type guards or parsing logic inside your handler.** If a bad payload is sent over the network, Redemeine intercepts it and rejects it *before* it ever touches your business logic.
+Because of Redemeine's Type-Transparent architecture, **you do not need manual type guards or parsing logic inside your handler.** Compile-time checks keep handlers strongly typed, and if you attach a Contract to Mirage, invalid runtime payloads are rejected before they touch your business logic.
 
 ```ts
   .commands((emit) => ({

@@ -82,7 +82,7 @@ describe('Domain Exmaple', () => {
     expect(events[0].type).toBe('order.order_lines.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
     const order = createMirage(orderAggregateDef, 'order-1', { events });
-    order.orderLines.register('new-id', 10);
+    order.orderLines('l1').changeQty(10);
 
   });
 });
