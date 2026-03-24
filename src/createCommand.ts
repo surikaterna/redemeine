@@ -1,10 +1,10 @@
-import { Command, CommandType } from './types';
+import { Command, CommandType, EnvelopeHeaders } from './types';
 import { createIdentity } from './identity';
 
 /**
  * Foundational type defining a structural preparation callback before a command factory commits the payload.
  */
-export type PrepareCommand<P> = (...args: any[]) => { payload: P };
+export type PrepareCommand<P> = (...args: any[]) => { payload: P; headers?: EnvelopeHeaders };
 
 /**
  * Foundational type representing a compiled factory that hydrates and dispatches typed commands.
@@ -32,7 +32,12 @@ export function createCommand(type: string, prepareCommand?: Function): any {
             if (!prepared) {
                 throw new Error('prepareCommand did not return an object with a payload');
             }
-            return { id, type, payload: prepared.payload };
+            return {
+                id,
+                type,
+                payload: prepared.payload,
+                ...(prepared.headers !== undefined ? { headers: prepared.headers } : {})
+            };
         }
         return { id, type, payload: args[0] };
     }

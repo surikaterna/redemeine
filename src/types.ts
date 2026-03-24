@@ -13,6 +13,8 @@ export type EventType = `${string}.event`;
  */
 export type CommandType = `${string}.command`;
 
+export type EnvelopeHeaders = Record<string, unknown>;
+
 /**
  * Interface controlling the "Targeted Naming" engine used to automatically route and identify events and commands.
  */
@@ -54,6 +56,7 @@ export interface Event<P = any, T extends EventType | string = EventType> {
   id?: string;
   type: T;
   payload: P;
+  headers?: EnvelopeHeaders;
   metadata?: any;
 }
 
@@ -65,6 +68,7 @@ export interface Command<P = any, T extends CommandType | string = CommandType> 
   id?: string;
   type: T;
   payload: P;
+  headers?: EnvelopeHeaders;
   metadata?: any;
 }
 
@@ -75,8 +79,8 @@ export interface Command<P = any, T extends CommandType | string = CommandType> 
 export interface EventCommandLink<P = any, T extends CommandType | string = CommandType> {
   id?: string;
   type: T;
-  payload: P;
-  metadata?: any;
+  summary?: P;
+  storeRef?: string;
 }
 
 /**

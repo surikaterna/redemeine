@@ -1,4 +1,4 @@
-﻿import { Event, Command, EventCommandLink } from './types';
+﻿import { Event, Command, EventCommandLink, EnvelopeHeaders } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
@@ -21,12 +21,19 @@ function ensureCommandId(command: Command<unknown, string>): Command<unknown, st
 function withCommandLink(event: Event, command: Command<unknown, string>): Event {
     const commandLink: EventCommandLink<unknown, string> = {
         id: command.id,
-        type: command.type,
-        payload: command.payload
+        type: command.type
     };
 
-    if (command.metadata !== undefined) {
-        commandLink.metadata = command.metadata;
+    const commandHeaders = command.headers && typeof command.headers === 'object'
+        ? command.headers as EnvelopeHeaders
+        : undefined;
+
+    if (commandHeaders && commandHeaders.commandSummary !== undefined) {
+        commandLink.summary = commandHeaders.commandSummary;
+    }
+
+    if (commandHeaders && typeof commandHeaders.commandStoreRef === 'string') {
+        commandLink.storeRef = commandHeaders.commandStoreRef;
     }
 
     const existingMetadata =

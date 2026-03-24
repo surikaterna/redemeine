@@ -28,8 +28,8 @@ describe('createCommandProcessor', () => {
         expect(result[0].type).toBe('something.done.event');
         expect(result[0].payload).toBe(15);
         expect(result[0].metadata.command.type).toBe('myAggregate.doSomething.command');
-        expect(result[0].metadata.command.payload).toBe(5);
         expect(result[0].metadata.command.id).toEqual(expect.any(String));
+        expect(result[0].metadata.command.summary).toBeUndefined();
     });
 
     test('should link one command to many emitted events', () => {
@@ -61,9 +61,7 @@ describe('createCommandProcessor', () => {
         expect(result[0].metadata).toEqual({
             command: {
                 id: expect.any(String),
-                type: 'myAggregate.doMany.command',
-                payload: 5,
-                metadata: { requestId: 'req-1' }
+                type: 'myAggregate.doMany.command'
             }
         });
         expect(result[1].id).toEqual(expect.any(String));
@@ -71,10 +69,35 @@ describe('createCommandProcessor', () => {
             source: 'handler',
             command: {
                 id: expect.any(String),
-                type: 'myAggregate.doMany.command',
-                payload: 5,
-                metadata: { requestId: 'req-1' }
+                type: 'myAggregate.doMany.command'
             }
+        });
+    });
+
+    test('should include command summary and storeRef from command headers when provided', () => {
+        const mockMap = {
+            doSomething: (state: any, payload: number) => ({ type: 'something.done.event', payload: state.val + payload })
+        };
+        const processor = createCommandProcessor<{ val: number }>('myAggregate', mockMap, {});
+
+        const result = processor(
+            { val: 10 },
+            {
+                id: 'cmd-1',
+                type: 'myAggregate.doSomething.command',
+                payload: 5,
+                headers: {
+                    commandSummary: { important: true, operation: 'doSomething' },
+                    commandStoreRef: 'commands://master/cmd-1'
+                }
+            } as Command
+        );
+
+        expect(result[0].metadata.command).toEqual({
+            id: 'cmd-1',
+            type: 'myAggregate.doSomething.command',
+            summary: { important: true, operation: 'doSomething' },
+            storeRef: 'commands://master/cmd-1'
         });
     });
 

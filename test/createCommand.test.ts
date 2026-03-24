@@ -38,6 +38,17 @@ describe('createCommand', () => {
         });
     });
 
+    test('should allow prepare function to set command headers', () => {
+        const cmdFactory = createCommand('order.update.command', (id: string, value: number) => ({
+            payload: { id, value },
+            headers: { signature: 'sig-123', plugin: 'signer' }
+        }));
+
+        const cmd = cmdFactory('a1', 42);
+
+        expect(cmd.headers).toEqual({ signature: 'sig-123', plugin: 'signer' });
+    });
+
     test('should use custom IdentityFactory when provided', () => {
         setIdentityFactory(() => 'cmd-fixed-id');
         const cmdFactory = createCommand<number>('order.cancel.command');

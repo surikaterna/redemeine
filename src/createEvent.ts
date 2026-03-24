@@ -1,4 +1,4 @@
-import { Event, EventType } from "./types";
+import { Event, EventType, EnvelopeHeaders } from './types';
 import { createIdentity } from './identity';
 
 /**
@@ -12,13 +12,18 @@ export type EventFactory<P = void, T extends EventType | string = EventType> =
  */
 export const createEvent = <P = void, T extends EventType | string = EventType>(
   type: T,
-  preparePayload?: (...args: any[]) => { payload: P }
+  preparePayload?: (...args: any[]) => { payload: P; headers?: EnvelopeHeaders }
 ): EventFactory<P, T> => {
   function eventFactory(...args: any[]) {
     const id = createIdentity();
     if (typeof preparePayload === 'function') {
       const prepared = preparePayload(...args);
-      return { id, type, payload: prepared.payload };
+      return {
+        id,
+        type,
+        payload: prepared.payload,
+        ...(prepared.headers !== undefined ? { headers: prepared.headers } : {})
+      };
     }
     return { id, type, payload: args[0] as P };
   }

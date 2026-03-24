@@ -38,6 +38,17 @@ describe('createEvent', () => {
         });
     });
 
+    test('should allow prepare function to set event headers', () => {
+        const eventFactory = createEvent('order.updated.event', (id: string, details: any) => ({
+            payload: { id, details },
+            headers: { signature: 'sig-evt-123', plugin: 'signer' }
+        }));
+
+        const event = eventFactory('o1', { status: 'closed' });
+
+        expect(event.headers).toEqual({ signature: 'sig-evt-123', plugin: 'signer' });
+    });
+
     test('should use custom IdentityFactory when provided', () => {
         setIdentityFactory(() => 'event-fixed-id');
         const eventFactory = createEvent<string>('order.cancelled.event');
