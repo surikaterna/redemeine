@@ -44,7 +44,7 @@ export interface AggregateHooks<State> {
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.
  */
-export type SelectorsMap<S> = Record<string, (state: S, ...args: any[]) => any>;
+export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: any[]) => any>;
 
 /**
  * A foundational building block representing a domain event. 

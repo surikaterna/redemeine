@@ -1,6 +1,7 @@
 import { Command, Event, AggregateHooks } from './types';
 import { Contract } from './Contract';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import { createReadonlyDeepProxy } from './utils/readonlyProxy';
 import type { EntityPackage } from './createEntity';
 import type { AggregateEntityRegistry } from './createAggregate';
 
@@ -145,7 +146,7 @@ type SelectorResultMirage<R, Registry extends AggregateEntityRegistry> = R exten
     : R;
 
 type MirageSelectorMap<TState, Sel extends Record<string, any>, Registry extends AggregateEntityRegistry> = {
-    [K in keyof Sel]: Sel[K] extends (state: TState, ...args: infer Args) => infer R
+    [K in keyof Sel]: Sel[K] extends (state: ReadonlyDeep<TState>, ...args: infer Args) => infer R
     ? (...args: Args) => SelectorResultMirage<R, Registry>
         : never;
 };
@@ -229,7 +230,7 @@ export class MirageCore<S> {
 
     public async dispatch(cmd: any): Promise<S> {
         if (this.builder.hooks?.onBeforeCommand) {
-            await this.builder.hooks.onBeforeCommand(cmd, this.state as any);
+            await this.builder.hooks.onBeforeCommand(cmd, createReadonlyDeepProxy(this.state) as any);
         }
 
         if (this.contract) {
@@ -248,7 +249,7 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, cmd);
         
         if (this.builder.hooks?.onAfterCommand) {
-            await this.builder.hooks.onAfterCommand(cmd, events, this.state as any);
+            await this.builder.hooks.onAfterCommand(cmd, events, createReadonlyDeepProxy(this.state) as any);
         }
 
         for (const ev of events) {
@@ -267,7 +268,7 @@ export class MirageCore<S> {
             this.state = this.builder.apply(this.state, ev);
             this.uncommitted.push(ev);
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, this.state as any);
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
         this.version++;
@@ -290,7 +291,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     const state = setup?.events?.reduce((acc, ev) => builder.apply(acc, ev), setup?.snapshot ?? builder.initialState) ?? (setup?.snapshot ?? builder.initialState);
     const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict);
     const mounts = builder.mounts || {};
-    const selectors = (builder.selectors || {}) as Record<string, (state: BuiltAggregateState<BA>, ...args: any[]) => any>;
+    const selectors = (builder.selectors || {}) as Record<string, (state: ReadonlyDeep<BuiltAggregateState<BA>>, ...args: any[]) => any>;
 
     const singularize = (value: string) => value.endsWith('s') ? value.slice(0, -1) : value;
 
@@ -373,24 +374,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         return current;
     };
 
-    const makeReadonlyProxy = (obj: any): any => {
-        if (typeof obj !== 'object' || obj === null) return obj;
-        return new Proxy(obj, {
-            get(target, prop) {
-                const value = Reflect.get(target, prop);
-                if (Object.isFrozen(target)) {
-                    return value;
-                }
-                return makeReadonlyProxy(value);
-            },
-            set() {
-                throw new Error('Cannot mutate properties directly');
-            },
-            deleteProperty() {
-                throw new Error('Cannot mutate properties directly');
-            }
-        });
-    };
+    // Removed local proxy implementation
 
     const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): Promise<BuiltAggregateState<BA>> => {
         const commandName = toCommandName(commandPath);
@@ -502,7 +486,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 }
 
                 if (!isNaN(Number(prop))) {
-                    return makeReadonlyProxy(target[Number(prop)]);
+                    return createReadonlyDeepProxy(target[Number(prop)]);
                 }
 
                 const value = (target as any)[prop];
@@ -525,7 +509,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         if (Array.isArray(result)) {
             return makeSelectedCollectionProxy(result, context);
         }
-        return result;
+        return createReadonlyDeepProxy(result);
     };
 
     const invokeSelector = (selectorName: string, args: unknown[], context: InvocationContext) => {
@@ -533,7 +517,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         if (typeof selector !== 'function') {
             throw new Error('Selector ' + selectorName + ' not found on selectors.');
         }
-        return wrapSelectorResult(selector(core.state, ...args), context);
+        return wrapSelectorResult(selector(createReadonlyDeepProxy(core.state), ...args), context);
     };
 
     const makeSelectorsProxy = (context: InvocationContext): any => {
@@ -559,7 +543,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         return new Proxy(function() {}, {
             get(target, prop) {
                 if (commandPath.length === 0) {
-                    if (prop === 'state') return makeReadonlyProxy(core.state);
+                    if (prop === 'state') return createReadonlyDeepProxy(core.state);
                     if (prop === 'selectors') return makeSelectorsProxy(context);
                     if (prop === 'dispatch') return core.dispatch.bind(core);
                     if (prop === 'subscribe') return core.subscribe.bind(core);
@@ -587,7 +571,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     if (Array.isArray(value)) {
                         const mount = statePath.length === 0 ? getMountForRoot(prop) : undefined;
                         if (mount?.kind === 'valueObjectList') {
-                            return makeReadonlyProxy(value);
+                            return createReadonlyDeepProxy(value);
                         }
                         if (mount?.kind === 'list') {
                             return makeCollectionProxy([...statePath, prop], [mount.commandPrefix], mount, context);
@@ -605,7 +589,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     if (typeof value === 'object' && value !== null) {
                         const mount = statePath.length === 0 ? getMountForRoot(prop) : undefined;
                         if (mount?.kind === 'valueObject' || mount?.kind === 'valueObjectMap') {
-                            return makeReadonlyProxy(value);
+                            return createReadonlyDeepProxy(value);
                         }
                         if (mount?.kind === 'map') {
                             return makeMapProxy([...statePath, prop], [mount.commandPrefix], mount, context);
@@ -660,7 +644,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
                 // Merge state properties
                 if (entity && prop in entity) {
-                    return makeReadonlyProxy(entity[prop]);
+                    return createReadonlyDeepProxy(entity[prop]);
                 }
 
                 // If not in state, assume it's a command creator builder
@@ -712,7 +696,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     const entity = collection[Number(prop)];
                     const selection = selectFromListEntity(collectionPath[collectionPath.length - 1], mount, entity);
                     if (!selection) {
-                        return makeReadonlyProxy(entity);
+                        return createReadonlyDeepProxy(entity);
                     }
                     return makeEntityMirageProxy(
                         collectionPath,
@@ -758,7 +742,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 const entity = mapObject && typeof mapObject === 'object' ? mapObject[mapKey] : undefined;
 
                 if (entity && typeof entity === 'object' && prop in entity) {
-                    return makeReadonlyProxy(entity[prop]);
+                    return createReadonlyDeepProxy(entity[prop]);
                 }
 
                 return makeDeepProxy([...mapPath, mapKey, prop], [...commandPrefixPath, prop], scopedContext);

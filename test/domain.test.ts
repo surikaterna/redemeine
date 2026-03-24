@@ -2,7 +2,8 @@ import { createAggregate } from '../src/createAggregate';
 import { Event } from '../src/types';
 import { createMixin } from '../src/createMixin';
 import { createEntity } from '../src/createEntity';
-import { createMirage } from '../src/createMirage';
+import { createMirage, extractUncommittedEvents } from '../src/createMirage';
+import { ReadonlyDeep } from '../src/utils/types/ReadonlyDeep';
 
 interface OrderLine {
   id: string;
@@ -67,7 +68,24 @@ describe('Domain Exmaple', () => {
       .entityList('orderLines', orderLineEntity)
       .selectors({
         getIdentifier: (state, domain: string) => state.identifiers.find((id) => id.domain === domain),
-        findOrderLinesDeep: (state, predicate: (line: OrderLine) => boolean) => state.orderLines.filter(predicate)
+        findOrderLinesDeep: (state, predicate: (line: ReadonlyDeep<OrderLine>) => boolean) => {
+          const matches: ReadonlyDeep<OrderLine>[] = [];
+
+          const visit = (lines: readonly ReadonlyDeep<OrderLine>[]) => {
+            lines.forEach((line) => {
+              if (predicate(line)) {
+                matches.push(line);
+              }
+
+              if (line.subOrderLine.length > 0) {
+                visit(line.subOrderLine);
+              }
+            });
+          };
+
+          visit(state.orderLines);
+          return matches;
+        }
       })
       .events({
         registered: (state, event: Event<OrderState>) => {
@@ -96,7 +114,7 @@ describe('Domain Exmaple', () => {
     const deepLines = order.findOrderLinesDeep((line) => line.id === 'l1');
     expect(deepLines.length).toBe(1);
     const firstLine = deepLines.first();
-    expect(firstLine).toBeDefined();
+    expect(firstLine).toBeDefined
     await firstLine!.changeQty(11);
     expect(order.orderLines[0].qty).toBe(11);
 

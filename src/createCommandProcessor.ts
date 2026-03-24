@@ -2,6 +2,7 @@
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
+import { createReadonlyDeepProxy } from './utils/readonlyProxy';
 
 type CommandHandler<S> = (state: ReadonlyDeep<S>, payload: unknown) => Event | Event[];
 
@@ -23,7 +24,8 @@ export function createCommandProcessor<S>(
         const handler = handlerByType[commandType];
         if (!handler) throw new Error('Unknown command: ' + commandType);
         
-        const result = handler(state as ReadonlyDeep<S>, payload);
+        const readonlyState = createReadonlyDeepProxy(state);
+        const result = handler(readonlyState as ReadonlyDeep<S>, payload);
         return Array.isArray(result) ? result : [result];
     };
 }
