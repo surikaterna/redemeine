@@ -20,8 +20,10 @@ type UnionToIntersection<U> = (
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
 type MergeMixins<T extends any[]> = Merge<ExtractMixinCommands<T[number]> & {}>;
-type ExtractMixinState<T> = T extends MixinPackage<infer MS, any, any, any, any, any> ? MS : never;
-type CompatibleMixins<S, T extends MixinPackage<any, any, any, any, any, any>[]> = {
+type ExtractMixinRegistry<T> = T extends MixinPackage<any, any, any, any, any, any, infer Registry> ? Registry : {};
+type MergeMixinRegistries<T extends any[]> = Merge<ExtractMixinRegistry<T[number]> & {}>;
+type ExtractMixinState<T> = T extends MixinPackage<infer MS, any, any, any, any, any, any> ? MS : never;
+type CompatibleMixins<S, T extends MixinPackage<any, any, any, any, any, any, any>[]> = {
     [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
 };
 
@@ -150,18 +152,6 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>>;
 
     /**
-     * Register a single entity component under a specific collection key.
-     *
-     * @example
-     * .entity('orderLine', OrderLineEntity)
-     */
-    entity: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>>(
-        name: EN,
-        entityComponent: T,
-        mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, 'id'> }>;
-
-    /**
      * Register a list-backed entity collection with optional simple or composite primary key definition.
      */
     entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
@@ -213,9 +203,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * @example
      * .mixins(TrackingMixin, AuditLoggerMixin)
      */
-    mixins: <T extends MixinPackage<any, any, any, any, any, any>[]>(
+    mixins: <T extends MixinPackage<any, any, any, any, any, any, any>[]>(
         ...mixins: CompatibleMixins<S, T>
-    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry>;
+    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>>;
 
     /**
      * Define pure functions for reading and deriving state.
@@ -385,6 +375,11 @@ export function createAggregate<S, Name extends string>(
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
             _mixins = [...parentState.mixins, ..._mixins];
+            const inheritedMounted = (parentState.mixins as any[])
+                .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
+            if (inheritedMounted.length > 0) {
+                _entityPackages.push(...inheritedMounted as MountedEntityPackage[]);
+            }
             return builder;
         },
 
@@ -409,11 +404,6 @@ export function createAggregate<S, Name extends string>(
                     pk: 'id'
                 })));
             }
-            return builder;
-        },
-
-        entity: (name: string, entityComponent: EntityPackage<unknown, string>, mountOverrides?: EntityMountOverrides) => {
-            _entityPackages.push({ name, kind: 'list', component: entityComponent, mountOverrides, pk: 'id' });
             return builder;
         },
 
@@ -444,6 +434,11 @@ export function createAggregate<S, Name extends string>(
 
         mixins: (...mixins: MixinPackage<any>[]) => {
             _mixins.push(...mixins);
+            const mountedFromMixins = (mixins as any[])
+                .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
+            if (mountedFromMixins.length > 0) {
+                _entityPackages.push(...mountedFromMixins as MountedEntityPackage[]);
+            }
             return builder;
         },
 

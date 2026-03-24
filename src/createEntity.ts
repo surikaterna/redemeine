@@ -1,5 +1,14 @@
 ﻿import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
 import { RedemeineComponent, RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import {
+  MapEntityCommands,
+  EntityListOptions,
+  EntityMapOptions,
+  EntityMountOverrides,
+  MountedStructureMetadata as EntityMountedStructureMetadata,
+  MountedEntityPackage,
+  composeMountedComponentBehavior
+} from './componentMounts';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
@@ -16,6 +25,8 @@ export interface EntityPackage<S, Name extends string, E = any, EOverrides exten
   selectors: Selectors;
   commandFactory: GenericCommandFactory;
   commandOverrides: COverrides;
+  mounts: Record<string, EntityMountedStructureMetadata>;
+  mountedEntities: MountedEntityPackage[];
 }
 
 // 2. The Chaining Interfaces to guide the IDE
@@ -61,6 +72,42 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
   ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapCommandsToPayloads<C>, COverrides, Selectors>;
 
   /**
+   * Register a list-backed nested entity collection.
+   */
+  entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
+    name: EN,
+    entityComponent: T,
+    options?: EntityListOptions<PK>,
+    mountOverrides?: EntityMountOverrides
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors>;
+
+  /**
+   * Register a record-backed nested entity map.
+   */
+  entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
+    name: EN,
+    entityComponent: T,
+    options?: EntityMapOptions<Keys>,
+    mountOverrides?: EntityMountOverrides
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors>;
+
+  /**
+   * Register a read-only nested value object list branch.
+   */
+  valueObjectList: <VOName extends string>(
+    name: VOName,
+    schema?: unknown
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
+
+  /**
+   * Register a read-only nested value object map branch.
+   */
+  valueObjectMap: <VOName extends string>(
+    name: VOName,
+    schema?: unknown
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
+
+  /**
    * Overrides generated command names for this entity.
    */
   overrideCommandNames: <NewCOverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
@@ -86,6 +133,7 @@ export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides ex
  */
 export function createEntity<S, Name extends string>(name: Name): EntityEventsStage<S, Name> {
   const component = createComponentBehaviorState<S>();
+  const mountedEntities: MountedEntityPackage[] = [];
 
   const builder = bindFluentMethods({}, {
     events: (events: Record<string, Function>) => component.addEvents(events),
@@ -96,17 +144,47 @@ export function createEntity<S, Name extends string>(name: Name): EntityEventsSt
   });
 
   Object.assign(builder, {
+    entityList: <const PK extends string | readonly string[]>(entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityListOptions<PK>, mountOverrides?: EntityMountOverrides) => {
+      mountedEntities.push({ name: entityName, kind: 'list', component: entityComponent, mountOverrides, pk: options?.pk || 'id' });
+      return builder;
+    },
+
+    entityMap: (entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityMapOptions, mountOverrides?: EntityMountOverrides) => {
+      mountedEntities.push({ name: entityName, kind: 'map', component: entityComponent, mountOverrides, knownKeys: options?.knownKeys });
+      return builder;
+    },
+
+    valueObjectList: (entityName: string) => {
+      mountedEntities.push({ name: entityName, kind: 'valueObjectList' });
+      return builder;
+    },
+
+    valueObjectMap: (entityName: string) => {
+      mountedEntities.push({ name: entityName, kind: 'valueObjectMap' });
+      return builder;
+    },
+
     build: () => {
       const snapshot = component.getSnapshot();
+      const {
+        mergedEvents,
+        mergedEventOverrides,
+        mergedCommandOverrides,
+        mounts,
+        commandFactory
+      } = composeMountedComponentBehavior(mountedEntities, snapshot, component.getCommandsFactory());
+
       return {
         name,
-        events: snapshot.events,
-        projectors: snapshot.events,
+        events: mergedEvents,
+        projectors: mergedEvents,
         commands: {} as unknown as GenericCommandMap,
-        eventOverrides: snapshot.eventOverrides,
+        eventOverrides: mergedEventOverrides,
         selectors: snapshot.selectors,
-        commandFactory: component.getCommandsFactory(),
-        commandOverrides: snapshot.commandOverrides,
+        commandFactory,
+        commandOverrides: mergedCommandOverrides,
+        mounts,
+        mountedEntities: [...mountedEntities],
       };
     }
   });

@@ -118,9 +118,35 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
                 : never;
 };
 
-type MirageSelectorMap<TState, Sel extends Record<string, any>> = {
+type AnyMountedEntityMirage<Registry extends AggregateEntityRegistry> = {
+    [K in keyof Registry]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
+        ? EntityScopedMirage<
+            EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
+            EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
+            InjectedArgCount<PK>
+        >
+        : Registry[K] extends { kind: 'map'; entity: infer EP }
+            ? EntityScopedMirage<
+                EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
+                EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
+                1
+            >
+            : never;
+}[keyof Registry];
+
+type SelectorCollectionMirage<TEntity, Registry extends AggregateEntityRegistry> =
+    ReadonlyArray<ReadonlyDeep<TEntity>> & {
+        first: () => AnyMountedEntityMirage<Registry> | undefined;
+        at: (index: number) => AnyMountedEntityMirage<Registry> | undefined;
+    };
+
+type SelectorResultMirage<R, Registry extends AggregateEntityRegistry> = R extends ReadonlyArray<infer E>
+    ? SelectorCollectionMirage<E, Registry>
+    : R;
+
+type MirageSelectorMap<TState, Sel extends Record<string, any>, Registry extends AggregateEntityRegistry> = {
     [K in keyof Sel]: Sel[K] extends (state: TState, ...args: infer Args) => infer R
-        ? (...args: Args) => R
+    ? (...args: Args) => SelectorResultMirage<R, Registry>
         : never;
 };
 
@@ -133,11 +159,11 @@ type RootMirageSelectorMap<
     Sel extends Record<string, any>
 > = IsBroadRecord<M> extends true
     ? Omit<
-        MirageSelectorMap<TState, Sel>,
+                MirageSelectorMap<TState, Sel, Registry>,
         keyof ReadonlyDeep<TState> | keyof MountedMirageProps<TState, Registry> | MirageReservedKeys
       >
     : Omit<
-        MirageSelectorMap<TState, Sel>,
+                MirageSelectorMap<TState, Sel, Registry>,
         keyof ReadonlyDeep<TState> | keyof MountedMirageProps<TState, Registry> | keyof M | MirageReservedKeys
       >;
 
@@ -154,7 +180,7 @@ type RootMirageSelectorMap<
 export type Mirage<TState, M extends Record<string, any> = any, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}> = 
     MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel> & {
         readonly state: ReadonlyDeep<TState>;
-        readonly selectors: MirageSelectorMap<TState, Sel>;
+        readonly selectors: MirageSelectorMap<TState, Sel, Registry>;
         dispatch: (command: any) => Promise<TState>;
         subscribe: (listener: (state: TState) => void) => () => void;
     };
@@ -403,15 +429,114 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         return core.dispatch(cmd);
     };
 
-    const invokeSelector = (selectorName: string, args: unknown[]) => {
+    const isListMount = (mount: MountMetadata | undefined): mount is MountMetadata & { kind: 'list' } => !!mount && mount.kind === 'list';
+
+    const findListMountForEntity = (entity: any): [string, MountMetadata & { kind: 'list' }] | undefined => {
+        if (!entity || typeof entity !== 'object') {
+            return undefined;
+        }
+
+        for (const [mountName, mount] of Object.entries(mounts)) {
+            if (!isListMount(mount)) continue;
+
+            if (Array.isArray(mount.pk)) {
+                if (mount.pk.every((k) => k in entity)) {
+                    return [mountName, mount];
+                }
+                continue;
+            }
+
+            const scalarPk = typeof mount.pk === 'string' ? mount.pk : 'id';
+            if (scalarPk in entity) {
+                return [mountName, mount];
+            }
+        }
+
+        return undefined;
+    };
+
+    const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext): any => {
+        const getEntityMirageAt = (index: number) => {
+            const entity = entities[index];
+            if (!entity || typeof entity !== 'object') {
+                return undefined;
+            }
+
+            const resolved = findListMountForEntity(entity);
+            if (!resolved) {
+                return undefined;
+            }
+
+            const [mountName, mount] = resolved;
+            const selection = selectFromListEntity(mountName, mount, entity);
+            if (!selection) {
+                return undefined;
+            }
+
+            return makeEntityMirageProxy(
+                [...mount.statePath],
+                [mount.commandPrefix],
+                {
+                    idsPayload: { ...context.idsPayload, ...selection.idsPayload },
+                    packPrefix: [...context.packPrefix, ...selection.packPrefix],
+                    entityPk: selection.entityPk
+                }
+            );
+        };
+
+        return new Proxy(entities, {
+            get(target, prop) {
+                if (prop === 'first') {
+                    return () => getEntityMirageAt(0);
+                }
+
+                if (prop === 'at') {
+                    return (index: number) => getEntityMirageAt(index);
+                }
+
+                if (typeof prop !== 'string') {
+                    if (prop === Symbol.iterator) {
+                        return target[Symbol.iterator].bind(target);
+                    }
+                    return Reflect.get(target, prop);
+                }
+
+                if (!isNaN(Number(prop))) {
+                    return makeReadonlyProxy(target[Number(prop)]);
+                }
+
+                const value = (target as any)[prop];
+                if (typeof value === 'function') {
+                    return value.bind(target);
+                }
+
+                return value;
+            },
+            set() {
+                throw new Error('Cannot mutate selector collection directly');
+            },
+            deleteProperty() {
+                throw new Error('Cannot mutate selector collection directly');
+            }
+        });
+    };
+
+    const wrapSelectorResult = (result: unknown, context: InvocationContext) => {
+        if (Array.isArray(result)) {
+            return makeSelectedCollectionProxy(result, context);
+        }
+        return result;
+    };
+
+    const invokeSelector = (selectorName: string, args: unknown[], context: InvocationContext) => {
         const selector = selectors[selectorName];
         if (typeof selector !== 'function') {
             throw new Error('Selector ' + selectorName + ' not found on selectors.');
         }
-        return selector(core.state, ...args);
+        return wrapSelectorResult(selector(core.state, ...args), context);
     };
 
-    const makeSelectorsProxy = (): any => {
+    const makeSelectorsProxy = (context: InvocationContext): any => {
         return new Proxy({}, {
             get(target, prop) {
                 if (typeof prop !== 'string') {
@@ -419,7 +544,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 }
                 if (prop === 'then') return undefined;
                 if (!(prop in selectors)) return undefined;
-                return (...args: unknown[]) => invokeSelector(prop, args);
+                return (...args: unknown[]) => invokeSelector(prop, args, context);
             },
             set() {
                 throw new Error('Cannot mutate selectors directly');
@@ -435,7 +560,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
             get(target, prop) {
                 if (commandPath.length === 0) {
                     if (prop === 'state') return makeReadonlyProxy(core.state);
-                    if (prop === 'selectors') return makeSelectorsProxy();
+                    if (prop === 'selectors') return makeSelectorsProxy(context);
                     if (prop === 'dispatch') return core.dispatch.bind(core);
                     if (prop === 'subscribe') return core.subscribe.bind(core);
                     if (prop === MirageCoreSymbol) return core;
@@ -452,7 +577,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 }
 
                 if (statePath.length === 0 && prop in selectors && !(prop in (builder.commandCreators as Record<string, unknown>))) {
-                    return (...args: unknown[]) => invokeSelector(prop, args);
+                    return (...args: unknown[]) => invokeSelector(prop, args, context);
                 }
 
                 const currentTarget = resolvePath(statePath);

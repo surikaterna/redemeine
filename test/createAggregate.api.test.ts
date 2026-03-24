@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '../src/createAggregate';
 import { createEntity } from '../src/createEntity';
+import { createMixin } from '../src/createMixin';
 import { createMirage } from '../src/createMirage';
 import { Event } from '../src/types';
 
@@ -46,14 +47,14 @@ describe('createAggregate API coverage', () => {
     expect(appliedCalls).toBe(1);
   });
 
-  test('entity(name, package) registers singular entity component commands', () => {
+  test('entityList(name, package) registers list entity component commands', () => {
     const lineEntity = createEntity<{ id: string; qty: number }, 'line'>('line')
       .events({ lineUpdated: (state, event: Event<{ qty: number }>) => { state.qty = event.payload.qty; } })
       .commands((emit) => ({ update: (state, payload: { id: string; qty: number }) => emit.lineUpdated(payload) }))
       .build();
 
     const aggregate = createAggregate<ParentState, 'order'>('order', initial)
-      .entity('line', lineEntity)
+        .entityList('line', lineEntity)
       .events({
         updated: (state: any, event: any) => { state.qty = event.payload.qty; }
       })
@@ -69,7 +70,7 @@ describe('createAggregate API coverage', () => {
     expect(next.line[0].qty).toBe(9);
   });
 
-  test('entity mount overrides allow reusing one entity package across paths', () => {
+  test('entityList mount overrides allow reusing one entity package across paths', () => {
     type State = {
       id: string;
       orderLines: { id: string; qty: number }[];
@@ -91,11 +92,11 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const aggregate = createAggregate<State, 'order'>('order', state)
-      .entity('orderLines', lineEntity, {
+        .entityList('orderLines', lineEntity, undefined, {
         eventNameOverrides: { qtyUpdated: 'order.order_lines.qty_updated.event' },
         commandNameOverrides: { update: 'order.order_lines.update_qty.command' }
       })
-      .entity('returnLines', lineEntity, {
+        .entityList('returnLines', lineEntity, undefined, {
         eventNameOverrides: { qtyUpdated: 'order.return_lines.qty_updated.event' },
         commandNameOverrides: { update: 'order.return_lines.update_qty.command' }
       })
@@ -155,8 +156,8 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const aggregate = createAggregate<State, 'order'>('order', state)
-      .entity('orderLines', orderLineEntity)
-      .entity('returnLines', returnLineEntity)
+        .entityList('orderLines', orderLineEntity)
+        .entityList('returnLines', returnLineEntity)
       .events({})
       .commands(() => ({}))
       .build();
@@ -169,5 +170,55 @@ describe('createAggregate API coverage', () => {
 
     expect(afterReturn.orderLines[0].qty).toBe(5);
     expect(afterReturn.returnLines[0].status).toBe('APPROVED');
+  });
+
+  test('mixins support entityList/entityMap/valueObjectList/valueObjectMap mounts', async () => {
+    type State = {
+      id: string;
+      orderLines: { id: string; qty: number }[];
+      byCode: Record<string, { id: string; qty: number }>;
+      aliases: { label: string }[];
+      tagsByScope: Record<string, { label: string }>;
+    };
+
+    const state: State = {
+      id: 'o1',
+      orderLines: [{ id: 'ol1', qty: 1 }],
+      byCode: { A: { id: 'a1', qty: 2 } },
+      aliases: [{ label: 'home' }],
+      tagsByScope: { US: { label: 'primary' } }
+    };
+
+    const lineEntity = createEntity<{ id: string; qty: number }, 'line'>('line')
+      .events({ qtyChanged: (line, event: Event<{ id: string; qty: number }>) => { line.qty = event.payload.qty; } })
+      .commands((emit) => ({
+        changeQty: {
+          pack: (id: string, qty: number) => ({ id, qty }),
+          handler: (line, payload) => emit.qtyChanged(payload)
+        }
+      }))
+      .build();
+
+    const mixin = createMixin<State>()
+      .entityList('orderLines', lineEntity)
+      .entityMap('byCode', lineEntity, { knownKeys: ['A'] as const })
+      .valueObjectList('aliases', {})
+      .valueObjectMap('tagsByScope', {})
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const aggregate = createAggregate<State, 'order'>('order', state)
+      .mixins(mixin)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const live = createMirage(aggregate, 'o1');
+    await live.orderLines('ol1').changeQty(9);
+
+    expect(live.orderLines[0].qty).toBe(9);
+    expect(live.aliases[0].label).toBe('home');
+    expect(live.tagsByScope.US.label).toBe('primary');
   });
 });
