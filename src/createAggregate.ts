@@ -9,7 +9,7 @@ import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { defaultNamingStrategy } from './utils/naming';
-import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 
 // Extracts payloads from a single mixin
 type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
@@ -331,6 +331,8 @@ export function createAggregate<S, Name extends string>(
         build: () => {
             const snapshot = component.getSnapshot();
             const allEvents = _mixins.reduce((acc, m) => ({ ...acc, ...(m.projectors || m.events) }), snapshot.events);
+            const projectorByEventType: Record<string, Function> = {};
+            const scopedProjectorByEventType: Record<string, Function> = {};
             const scopedEventProjectors: Record<string, Function> = {};
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), snapshot.eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), snapshot.commandOverrides);
@@ -372,10 +374,13 @@ export function createAggregate<S, Name extends string>(
                     scopedEventProjectors[`${entityPath}:${eventKey}`] = entityEvents[eventKey];
                     const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
                     const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
-                    allEventOverrides[`${entityPath}:${eventKey}`] = mountEventOverride
+                    const scopedEventType = mountEventOverride
                         || (entityEventOverride
                             ? composeMountedType(entityPath, entityEventOverride, 'event')
                             : _namingStrategy.event(aggregateName, eventKey, entityPath));
+                    allEventOverrides[`${entityPath}:${eventKey}`] = scopedEventType;
+                    projectorByEventType[scopedEventType] = entityEvents[eventKey];
+                    scopedProjectorByEventType[scopedEventType] = entityEvents[eventKey];
                 });
 
                 const entitySelectors = entity.selectors || {};
@@ -413,10 +418,23 @@ export function createAggregate<S, Name extends string>(
                 });
             });
 
+            Object.keys(allEvents).forEach((eventKey) => {
+                const resolvedEventType = allEventOverrides[eventKey] || _namingStrategy.event(aggregateName, eventKey);
+                if (!(resolvedEventType in projectorByEventType)) {
+                    projectorByEventType[resolvedEventType] = allEvents[eventKey];
+                }
+            });
+
+            const commandHandlerByType = Object.keys(allCommandsMap).reduce((acc, key) => {
+                const resolvedCommandType = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
+                acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]);
+                return acc;
+            }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | Event[]>);
+
             return {
                 initialState,
-                process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
-                apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, scopedEventProjectors),
+                process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides, commandHandlerByType),
+                apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors),
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy),
                 eventCreators: emit,
                 pure: {

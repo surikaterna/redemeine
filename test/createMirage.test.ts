@@ -52,6 +52,7 @@ describe('Mirage tests', () => {
         const live = createMirage(builder, 'agg-2', {
             snapshot: { value: 10, title: 'Loaded', line: [] }
         });
+        
         const bridge = createLegacyAggregateBridge<TestState, any>(live);
 
         expect(bridge._state.value).toBe(10);

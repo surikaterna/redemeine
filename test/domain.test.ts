@@ -2,6 +2,7 @@ import { createAggregate } from '../src/createAggregate';
 import { Event } from '../src/types';
 import { createMixin } from '../src/createMixin';
 import { createEntity } from '../src/createEntity';
+import { createMirage } from '../src/createMirage';
 
 interface OrderLine {
   id: string;
@@ -80,5 +81,7 @@ describe('Domain Exmaple', () => {
 
     expect(events[0].type).toBe('order.order_lines.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
+    const live = createMirage(orderAggregateDef, 'o1', { snapshot: nextState });
+    live.orderLines(0).changeQty(10);
   });
 });

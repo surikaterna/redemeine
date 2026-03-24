@@ -8,6 +8,8 @@ export function applyEvent<S>(
     event: Event,
     allEvents: Record<string, Function>,
     allEventOverrides: Record<string, string>,
+    projectorByEventType: Record<string, Function> = {},
+    scopedProjectorByEventType: Record<string, Function> = {},
     scopedEventProjectors: Record<string, Function> = {}
 ): S {
     return produce(state, (draft: any) => {
@@ -52,6 +54,18 @@ export function applyEvent<S>(
                 }
             }
             eventName = parsedPath.coreEventName;
+        }
+
+        const directScopedProjector = scopedProjectorByEventType[event.type];
+        if (directScopedProjector) {
+            directScopedProjector(targetDraft, event);
+            return;
+        }
+
+        const directProjector = projectorByEventType[eventName] || projectorByEventType[event.type];
+        if (directProjector) {
+            directProjector(targetDraft, event);
+            return;
         }
 
         const scopedPath = parsedPath ? parsedPath.parts.join('.') : undefined;
