@@ -331,6 +331,7 @@ export function createAggregate<S, Name extends string>(
         build: () => {
             const snapshot = component.getSnapshot();
             const allEvents = _mixins.reduce((acc, m) => ({ ...acc, ...(m.projectors || m.events) }), snapshot.events);
+            const scopedEventProjectors: Record<string, Function> = {};
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), snapshot.eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), snapshot.commandOverrides);
             const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), snapshot.selectors) as SelectorsMap<S>;
@@ -368,6 +369,7 @@ export function createAggregate<S, Name extends string>(
                 Object.assign(allEvents, entityEvents);
 
                 Object.keys(entityEvents).forEach((eventKey) => {
+                    scopedEventProjectors[`${entityPath}:${eventKey}`] = entityEvents[eventKey];
                     const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
                     const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
                     allEventOverrides[`${entityPath}:${eventKey}`] = mountEventOverride
@@ -414,7 +416,7 @@ export function createAggregate<S, Name extends string>(
             return {
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides),
-                apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides),
+                apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, scopedEventProjectors),
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy),
                 eventCreators: emit,
                 pure: {

@@ -7,7 +7,8 @@ export function applyEvent<S>(
     state: S,
     event: Event,
     allEvents: Record<string, Function>,
-    allEventOverrides: Record<string, string>
+    allEventOverrides: Record<string, string>,
+    scopedEventProjectors: Record<string, Function> = {}
 ): S {
     return produce(state, (draft: any) => {
         const toCamelCase = (value: string) => value.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -62,8 +63,12 @@ export function applyEvent<S>(
             return resolvedType === eventName || resolvedType === event.type;
         });
 
-        if (eventKey && allEvents[eventKey]) {
-            allEvents[eventKey](targetDraft, event);
+        if (eventKey) {
+            const scopedProjector = scopedPath ? scopedEventProjectors[`${scopedPath}:${eventKey}`] : undefined;
+            const projector = scopedProjector || allEvents[eventKey];
+            if (projector) {
+                projector(targetDraft, event);
+            }
         }
     }) as S;
 }

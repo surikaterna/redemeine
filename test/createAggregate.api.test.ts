@@ -120,4 +120,54 @@ describe('createAggregate API coverage', () => {
     expect(afterReturn.orderLines[0].qty).toBe(5);
     expect(afterReturn.returnLines[0].qty).toBe(7);
   });
+
+  test('projectors are scoped by mount path when event keys are shared', () => {
+    type OrderLine = { id: string; qty: number };
+    type ReturnLine = { id: string; status: string };
+    type State = { id: string; orderLines: OrderLine[]; returnLines: ReturnLine[] };
+
+    const state: State = {
+      id: 'o1',
+      orderLines: [{ id: 'ol1', qty: 1 }],
+      returnLines: [{ id: 'rl1', status: 'OPEN' }]
+    };
+
+    const orderLineEntity = createEntity<OrderLine, 'line'>('line')
+      .events({
+        updated: (line, event: Event<{ qty: number }>) => {
+          line.qty = event.payload.qty;
+        }
+      })
+      .commands((emit) => ({
+        update: (line, payload: { id: string; qty: number }) => emit.updated(payload)
+      }))
+      .build();
+
+    const returnLineEntity = createEntity<ReturnLine, 'line'>('line')
+      .events({
+        updated: (line, event: Event<{ status: string }>) => {
+          line.status = event.payload.status;
+        }
+      })
+      .commands((emit) => ({
+        update: (line, payload: { id: string; status: string }) => emit.updated(payload)
+      }))
+      .build();
+
+    const aggregate = createAggregate<State, 'order'>('order', state)
+      .entity('orderLines', orderLineEntity)
+      .entity('returnLines', returnLineEntity)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const orderEvents = aggregate.process(state, aggregate.commandCreators.orderLinesUpdate({ id: 'ol1', qty: 5 }) as any);
+    const returnEvents = aggregate.process(state, aggregate.commandCreators.returnLinesUpdate({ id: 'rl1', status: 'APPROVED' }) as any);
+
+    const afterOrder = aggregate.apply(state, orderEvents[0]);
+    const afterReturn = aggregate.apply(afterOrder, returnEvents[0]);
+
+    expect(afterReturn.orderLines[0].qty).toBe(5);
+    expect(afterReturn.returnLines[0].status).toBe('APPROVED');
+  });
 });
