@@ -42,12 +42,6 @@ describe('Domain Exmaple', () => {
       }))
       .build();
 
-    interface OrderLine {
-      id: string;
-      qty: number;
-      orderLines: OrderLine[];
-    }
-
     const orderLineEntity = createEntity<OrderLine, 'orderLine'>('orderLine')
       .events({
         qtyChanged: (state, event: Event<{ qty: number }>) => {
