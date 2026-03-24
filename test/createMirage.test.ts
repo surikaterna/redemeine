@@ -128,6 +128,29 @@ describe('Mirage tests', () => {
         expect(live.value).toBe(888);
     });
 
+    test('exposes selectors as typed callable functions on mirage.selectors', () => {
+        const aggregate = createAggregate<TestState, 'test'>('test', initialState)
+            .selectors({
+                hasLine: (state, id: string) => state.line.some((x) => x.id === id),
+                lineQty: (state, id: string) => state.line.find((x) => x.id === id)?.qty ?? 0
+            })
+            .events({})
+            .commands(() => ({}))
+            .build();
+
+        const live = createMirage(aggregate, 'agg-sel');
+
+        expect(live.selectors.hasLine('123')).toBe(true);
+        expect(live.selectors.lineQty('123')).toBe(1);
+
+        if (false) {
+            const exists: boolean = live.selectors.hasLine('123');
+            const qty: number = live.selectors.lineQty('123');
+            void exists;
+            void qty;
+        }
+    });
+
     test('injects selected list id into packed child command arguments', async () => {
         type PartyState = {
             addresses: { id: string; street: string }[];

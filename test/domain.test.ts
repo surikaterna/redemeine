@@ -64,6 +64,9 @@ describe('Domain Exmaple', () => {
     })
       .mixins(identifiers)
       .entity('orderLines', orderLineEntity)
+      .selectors({
+        getIdentifier: (state, domain: string) => state.identifiers.find(id => id.domain === domain)
+      })
       .events({
         registered: (state, event: Event<OrderState>) => {
           Object.assign(state, event.payload);
@@ -83,6 +86,15 @@ describe('Domain Exmaple', () => {
     expect(nextState.orderLines[0].qty).toBe(5);
     const order = createMirage(orderAggregateDef, 'order-1', { events });
     order.orderLines('l1').changeQty(10);
+
+    const orderWithIdentifier = createMirage(orderAggregateDef, 'order-2', {
+      snapshot: {
+        ...orderAggregateDef.initialState,
+        identifiers: [{ domain: 'tax', authority: 'irs', identifier: 'A-1' }]
+      }
+    });
+    expect(orderWithIdentifier.getIdentifier('tax')?.identifier).toBe('A-1');
+
 
   });
 });

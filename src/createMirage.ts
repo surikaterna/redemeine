@@ -1,7 +1,6 @@
 import { Command, Event, AggregateHooks } from './types';
 import { Contract } from './Contract';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import type { PublicCommandMethodsFromInternal } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import type { AggregateEntityRegistry } from './createAggregate';
 
@@ -25,7 +24,7 @@ type InvocationContext = {
  * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
  * It contains the initial state and the internal processing/application functions.
  */
-export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityRegistry = {}> {
+export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}> {
     initialState: S;
     process: (state: S, command: Command<any, string>) => Event[];
     apply: (state: S, event: Event) => S;
@@ -43,6 +42,7 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
         commandProcessors: Record<string, Function>;
         eventProjectors: Record<string, Function>;
     };
+    selectors: Sel;
     mounts?: Record<string, MountMetadata>;
     __registryType?: Registry;
 }
@@ -51,13 +51,17 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
  * A mapped record of executable live commands bound directly to the aggregate instance.
  * These methods dispatch commands and return a promise resolving to the mutated state.
  */
-export type MirageCommandMap<S, M> = {
-    [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-        ? (...args: Args extends any[] ? Args : never) => Promise<S>
-        : [M[K]] extends [void] | [undefined] | [never]
-            ? () => Promise<S>
-            : (payload: M[K]) => Promise<S>;
-} | (M extends Record<string, any> ? PublicCommandMethodsFromInternal<S, M, Promise<S>> : never);
+type IsBroadRecord<T> = string extends keyof T ? true : false;
+
+export type MirageCommandMap<S, M> = IsBroadRecord<M> extends true
+    ? {}
+    : {
+        [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+            ? (...args: Args extends any[] ? Args : never) => Promise<S>
+            : [M[K]] extends [void] | [undefined] | [never]
+                ? () => Promise<S>
+                : (payload: M[K]) => Promise<S>;
+    };
 
 type EntityStateOf<T> = T extends EntityPackage<infer ES, any, any, any, any, any, any> ? ES : never;
 type EntityCommandsOf<T> = T extends EntityPackage<any, any, any, any, infer C, any, any> ? C : never;
@@ -114,6 +118,29 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
                 : never;
 };
 
+type MirageSelectorMap<TState, Sel extends Record<string, any>> = {
+    [K in keyof Sel]: Sel[K] extends (state: TState, ...args: infer Args) => infer R
+        ? (...args: Args) => R
+        : never;
+};
+
+type MirageReservedKeys = 'state' | 'selectors' | 'dispatch' | 'subscribe';
+
+type RootMirageSelectorMap<
+    TState,
+    M extends Record<string, any>,
+    Registry extends AggregateEntityRegistry,
+    Sel extends Record<string, any>
+> = IsBroadRecord<M> extends true
+    ? Omit<
+        MirageSelectorMap<TState, Sel>,
+        keyof ReadonlyDeep<TState> | keyof MountedMirageProps<TState, Registry> | MirageReservedKeys
+      >
+    : Omit<
+        MirageSelectorMap<TState, Sel>,
+        keyof ReadonlyDeep<TState> | keyof MountedMirageProps<TState, Registry> | keyof M | MirageReservedKeys
+      >;
+
 /**
  * The standard active instantiated aggregate wrapper holding bounded paths.
  * 
@@ -124,9 +151,10 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
  * Example: `mirage.orderLines('123')` retrieves the targeted Entity Mirage.
  * Example: `mirage.orderLines.length` behaves as a safe read-only array reference.
  */
-export type Mirage<TState, M extends Record<string, any> = any, Registry extends AggregateEntityRegistry = {}> = 
-    MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & {
+export type Mirage<TState, M extends Record<string, any> = any, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}> = 
+    MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel> & {
         readonly state: ReadonlyDeep<TState>;
+        readonly selectors: MirageSelectorMap<TState, Sel>;
         dispatch: (command: any) => Promise<TState>;
         subscribe: (listener: (state: TState) => void) => () => void;
     };
@@ -224,17 +252,19 @@ export class MirageCore<S> {
 
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
 type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
-type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R> ? R : {};
+type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R, any> ? R : {};
+type BuiltAggregateSelectors<T> = T extends BuiltAggregate<any, any, any, any, infer Sel> ? Sel : {};
 
-export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
     setup?: MirageOptions & { snapshot?: BuiltAggregateState<BA>; events?: Event[] }
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> {
 
     const state = setup?.events?.reduce((acc, ev) => builder.apply(acc, ev), setup?.snapshot ?? builder.initialState) ?? (setup?.snapshot ?? builder.initialState);
     const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict);
     const mounts = builder.mounts || {};
+    const selectors = (builder.selectors || {}) as Record<string, (state: BuiltAggregateState<BA>, ...args: any[]) => any>;
 
     const singularize = (value: string) => value.endsWith('s') ? value.slice(0, -1) : value;
 
@@ -373,11 +403,39 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
         return core.dispatch(cmd);
     };
 
+    const invokeSelector = (selectorName: string, args: unknown[]) => {
+        const selector = selectors[selectorName];
+        if (typeof selector !== 'function') {
+            throw new Error('Selector ' + selectorName + ' not found on selectors.');
+        }
+        return selector(core.state, ...args);
+    };
+
+    const makeSelectorsProxy = (): any => {
+        return new Proxy({}, {
+            get(target, prop) {
+                if (typeof prop !== 'string') {
+                    return Reflect.get(target, prop);
+                }
+                if (prop === 'then') return undefined;
+                if (!(prop in selectors)) return undefined;
+                return (...args: unknown[]) => invokeSelector(prop, args);
+            },
+            set() {
+                throw new Error('Cannot mutate selectors directly');
+            },
+            deleteProperty() {
+                throw new Error('Cannot mutate selectors directly');
+            }
+        });
+    };
+
     const makeDeepProxy = (statePath: string[], commandPath: string[], context: InvocationContext): any => {
         return new Proxy(function() {}, {
             get(target, prop) {
                 if (commandPath.length === 0) {
                     if (prop === 'state') return makeReadonlyProxy(core.state);
+                    if (prop === 'selectors') return makeSelectorsProxy();
                     if (prop === 'dispatch') return core.dispatch.bind(core);
                     if (prop === 'subscribe') return core.subscribe.bind(core);
                     if (prop === MirageCoreSymbol) return core;
@@ -391,6 +449,10 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
 
                 if (["asymmetricMatch", "nodeType", "@@toStringTag", "toJSON", "toString", "valueOf", "inspect"].includes(prop)) {
                     return Reflect.get(target, prop);
+                }
+
+                if (statePath.length === 0 && prop in selectors && !(prop in (builder.commandCreators as Record<string, unknown>))) {
+                    return (...args: unknown[]) => invokeSelector(prop, args);
                 }
 
                 const currentTarget = resolvePath(statePath);
@@ -623,10 +685,10 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any>>(
         });
     };
 
-    return makeDeepProxy([], [], { idsPayload: {}, packPrefix: [] }) as Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>;
+    return makeDeepProxy([], [], { idsPayload: {}, packPrefix: [] }) as Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
 }
 
-export function createLegacyAggregateBridge<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}>(mirage: Mirage<S, M, Registry>) {
+export function createLegacyAggregateBridge<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(mirage: Mirage<S, M, Registry, Sel>) {
     const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
@@ -644,8 +706,8 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
 /**
  * Returns a copy of all uncommitted events currently buffered by a Mirage instance.
  */
-export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}>(
-    mirage: Mirage<S, M, Registry>
+export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
+    mirage: Mirage<S, M, Registry, Sel>
 ): Event[] {
     return createLegacyAggregateBridge(mirage).getUncommittedEvents();
 }
@@ -653,8 +715,8 @@ export function extractUncommittedEvents<S, M extends Record<string, any>, Regis
 /**
  * Clears the uncommitted event buffer for a Mirage instance.
  */
-export function clearUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}>(
-    mirage: Mirage<S, M, Registry>
+export function clearUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
+    mirage: Mirage<S, M, Registry, Sel>
 ): void {
     createLegacyAggregateBridge(mirage).clearUncommittedEvents();
 }
