@@ -18,12 +18,26 @@ type UnionToIntersection<U> = (
     : never;
 
 // Extracts payloads from a single mixin
-type ExtractMixinCommands<T> = T extends MixinPackage<any, any, any, infer CPayloads, any, any> ? CPayloads : {};
+type AggregateMixinLike<S = any, Commands = {}, Registry extends AggregateEntityRegistry = {}> = {
+    readonly __stateType?: S;
+    commands?: Commands;
+    events?: Record<string, Function>;
+    projectors?: Record<string, Function>;
+    eventOverrides?: Record<string, string>;
+    commandOverrides?: Record<string, string>;
+    selectors?: Record<string, Function>;
+    commandFactory?: GenericCommandFactory;
+    mounts?: Record<string, MountedStructureMetadata>;
+    mountedEntities?: MountedEntityPackage[];
+    __registryType?: Registry;
+};
+
+type ExtractMixinCommands<T> = T extends { commands?: infer CPayloads } ? CPayloads : {};
 type MergeMixins<T extends any[]> = Merge<ExtractMixinCommands<T[number]> & {}>;
-type ExtractMixinRegistry<T> = T extends MixinPackage<any, any, any, any, any, any, infer Registry> ? Registry : {};
+type ExtractMixinRegistry<T> = T extends { __registryType?: infer Registry } ? Registry : {};
 type MergeMixinRegistries<T extends any[]> = Merge<ExtractMixinRegistry<T[number]> & {}>;
-type ExtractMixinState<T> = T extends MixinPackage<infer MS, any, any, any, any, any, any> ? MS : never;
-type CompatibleMixins<S, T extends MixinPackage<any, any, any, any, any, any, any>[]> = {
+type ExtractMixinState<T> = T extends { __stateType?: infer MS } ? MS : never;
+type CompatibleMixins<S, T extends AggregateMixinLike<any, any, any>[]> = {
     [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
 };
 
@@ -203,7 +217,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * @example
      * .mixins(TrackingMixin, AuditLoggerMixin)
      */
-    mixins: <T extends MixinPackage<any, any, any, any, any, any, any>[]>(
+    mixins: <T extends AggregateMixinLike<any, any, any>[]>(
         ...mixins: CompatibleMixins<S, T>
     ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>>;
 
@@ -331,7 +345,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
         commandsFactory: GenericCommandFactory;
-        mixins: MixinPackage<S>[];
+        mixins: AggregateMixinLike<S>[];
         selectors: Record<string, Function>;
         hooks: AggregateHooks<S>;
     };
@@ -357,7 +371,7 @@ export function createAggregate<S, Name extends string>(
 
     const component = createComponentBehaviorState<S>();
     let _entityPackages: MountedEntityPackage[] = [];
-    let _mixins: MixinPackage<any>[] = [];
+    let _mixins: AggregateMixinLike<any>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
 
@@ -432,7 +446,7 @@ export function createAggregate<S, Name extends string>(
             return builder;
         },
 
-        mixins: (...mixins: MixinPackage<any>[]) => {
+        mixins: (...mixins: AggregateMixinLike<any>[]) => {
             _mixins.push(...mixins);
             const mountedFromMixins = (mixins as any[])
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
@@ -471,8 +485,8 @@ export function createAggregate<S, Name extends string>(
             const projectorByEventType: Record<string, Function> = {};
             const scopedProjectorByEventType: Record<string, Function> = {};
             const scopedEventProjectors: Record<string, Function> = {};
-            const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.eventOverrides }), snapshot.eventOverrides);
-            const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...m.commandOverrides }), snapshot.commandOverrides);
+            const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...(m.eventOverrides || {}) }), snapshot.eventOverrides);
+            const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...(m.commandOverrides || {}) }), snapshot.commandOverrides);
             const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), snapshot.selectors) as SelectorsMap<S>;
             const mounts: Record<string, MountedStructureMetadata> = {};
 
@@ -486,12 +500,12 @@ export function createAggregate<S, Name extends string>(
 
             const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
-            const allCommandsMap = {
+            const allCommandsMap: GenericCommandMap = {
                 ...component.getCommandsFactory()(emit, { selectors: allSelectors }),
                 ..._mixins.reduce((acc, m) => ({
                     ...acc,
-                    ...m.commandFactory(emit, { selectors: allSelectors })
-                }), {})
+                    ...(m.commandFactory ? m.commandFactory(emit, { selectors: allSelectors }) : {})
+                }), {} as GenericCommandMap)
             };
 
             // 1. Assign dot-notation path based on collection name
