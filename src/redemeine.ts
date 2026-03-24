@@ -3,6 +3,7 @@ export * from './createCommand';
 export * from './createCommandProcessor';
 export * from './createEntity';
 export * from './createEvent';
+export * from './identity';
 export * from './createMirage';
 export * from './createMixin';
 export * from './Depot';

@@ -1,8 +1,13 @@
-import { describe, expect, test } from '@jest/globals';
+import { afterEach, describe, expect, test } from '@jest/globals';
 import { createCommandProcessor } from '../src/createCommandProcessor';
 import { Command } from '../src/types';
+import { resetIdentityFactory, setIdentityFactory } from '../src/identity';
 
 describe('createCommandProcessor', () => {
+    afterEach(() => {
+        resetIdentityFactory();
+    });
+
     test('should match and routing string commands to map implementations', () => {
         const mockMap = {
             doSomething: (state: any, payload: number) => {
@@ -19,7 +24,88 @@ describe('createCommandProcessor', () => {
         const result = processor({ val: 10 }, { type: 'myAggregate.doSomething.command', payload: 5 } as Command);
         
         expect(Array.isArray(result)).toBe(true);
-        expect(result[0]).toEqual({ type: 'something.done.event', payload: 15 });
+        expect(result[0].id).toEqual(expect.any(String));
+        expect(result[0].type).toBe('something.done.event');
+        expect(result[0].payload).toBe(15);
+        expect(result[0].metadata.command.type).toBe('myAggregate.doSomething.command');
+        expect(result[0].metadata.command.payload).toBe(5);
+        expect(result[0].metadata.command.id).toEqual(expect.any(String));
+    });
+
+    test('should link one command to many emitted events', () => {
+        const mockMap = {
+            doMany: (state: any, payload: number) => {
+                return [
+                    { type: 'something.one.event', payload: state.val + payload },
+                    { type: 'something.two.event', payload: state.val - payload, metadata: { source: 'handler' } }
+                ];
+            }
+        };
+
+        const processor = createCommandProcessor<{ val: number }>(
+            'myAggregate',
+            mockMap,
+            {}
+        );
+
+        const command = {
+            type: 'myAggregate.doMany.command',
+            payload: 5,
+            metadata: { requestId: 'req-1' }
+        } as Command;
+
+        const result = processor({ val: 10 }, command);
+
+        expect(result).toHaveLength(2);
+        expect(result[0].id).toEqual(expect.any(String));
+        expect(result[0].metadata).toEqual({
+            command: {
+                id: expect.any(String),
+                type: 'myAggregate.doMany.command',
+                payload: 5,
+                metadata: { requestId: 'req-1' }
+            }
+        });
+        expect(result[1].id).toEqual(expect.any(String));
+        expect(result[1].metadata).toEqual({
+            source: 'handler',
+            command: {
+                id: expect.any(String),
+                type: 'myAggregate.doMany.command',
+                payload: 5,
+                metadata: { requestId: 'req-1' }
+            }
+        });
+    });
+
+    test('should preserve provided command and event ids', () => {
+        const mockMap = {
+            doSomething: (state: any, payload: number) => {
+                return { id: 'existing-event-id', type: 'something.done.event', payload: state.val + payload };
+            }
+        };
+
+        const processor = createCommandProcessor<{ val: number }>('myAggregate', mockMap, {});
+        const result = processor(
+            { val: 10 },
+            { id: 'existing-command-id', type: 'myAggregate.doSomething.command', payload: 5 } as Command
+        );
+
+        expect(result[0].id).toBe('existing-event-id');
+        expect(result[0].metadata.command.id).toBe('existing-command-id');
+    });
+
+    test('should use custom IdentityFactory for generated ids in processor', () => {
+        setIdentityFactory(() => 'processor-fixed-id');
+        const mockMap = {
+            doSomething: (state: any, payload: number) => ({ type: 'something.done.event', payload: state.val + payload })
+        };
+        const processor = createCommandProcessor<{ val: number }>('myAggregate', mockMap, {});
+
+        const result = processor({ val: 10 }, { type: 'myAggregate.doSomething.command', payload: 5 } as Command);
+
+        expect(result[0].id).toBe('processor-fixed-id');
+        expect(result[0].metadata.command.id).toBe('processor-fixed-id');
     });
 
     test('should throw error on unknown commands', () => {

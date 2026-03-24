@@ -1,10 +1,46 @@
-﻿import { Event, Command } from './types';
+﻿import { Event, Command, EventCommandLink } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
 import { createReadonlyDeepProxy } from './utils/readonlyProxy';
+import { createIdentity } from './identity';
 
 type CommandHandler<S> = (state: ReadonlyDeep<S>, payload: unknown) => Event | Event[];
+
+function ensureCommandId(command: Command<unknown, string>): Command<unknown, string> {
+    if (command.id) {
+        return command;
+    }
+
+    return {
+        ...command,
+        id: createIdentity()
+    };
+}
+
+function withCommandLink(event: Event, command: Command<unknown, string>): Event {
+    const commandLink: EventCommandLink<unknown, string> = {
+        id: command.id,
+        type: command.type,
+        payload: command.payload
+    };
+
+    if (command.metadata !== undefined) {
+        commandLink.metadata = command.metadata;
+    }
+
+    const existingMetadata =
+        event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+
+    return {
+        ...event,
+        id: event.id || createIdentity(),
+        metadata: {
+            ...existingMetadata,
+            command: commandLink
+        }
+    };
+}
 
 export function createCommandProcessor<S>(
     aggregateName: string,
@@ -19,13 +55,15 @@ export function createCommandProcessor<S>(
     }, {} as Record<string, CommandHandler<S>>);
 
     return (state: S, command: Command<unknown, string>): Event[] => {
-        const commandType = command.type;
-        const payload = command.payload;
+        const commandWithId = ensureCommandId(command);
+        const commandType = commandWithId.type;
+        const payload = commandWithId.payload;
         const handler = handlerByType[commandType];
         if (!handler) throw new Error('Unknown command: ' + commandType);
         
         const readonlyState = createReadonlyDeepProxy(state);
         const result = handler(readonlyState as ReadonlyDeep<S>, payload);
-        return Array.isArray(result) ? result : [result];
+        const events = Array.isArray(result) ? result : [result];
+        return events.map(event => withCommandLink(event, commandWithId));
     };
 }

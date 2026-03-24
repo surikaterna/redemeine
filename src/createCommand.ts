@@ -1,4 +1,5 @@
 import { Command, CommandType } from './types';
+import { createIdentity } from './identity';
 
 /**
  * Foundational type defining a structural preparation callback before a command factory commits the payload.
@@ -25,14 +26,15 @@ export function createCommand<PC extends PrepareCommand<any>, T extends CommandT
 
 export function createCommand(type: string, prepareCommand?: Function): any {   
     function commandFactory(...args: any[]) {
+        const id = createIdentity();
         if (prepareCommand) {
             const prepared = prepareCommand(...args);
             if (!prepared) {
                 throw new Error('prepareCommand did not return an object with a payload');
             }
-            return { type, payload: prepared.payload };
+            return { id, type, payload: prepared.payload };
         }
-        return { type, payload: args[0] };
+        return { id, type, payload: args[0] };
     }
     
     // Allow the factory itself to be introspected for its type

@@ -1,4 +1,5 @@
 import { Event, EventType } from "./types";
+import { createIdentity } from './identity';
 
 /**
  * Foundational type representing a compiled factory that hydrates and constructs explicit domain events.
@@ -14,11 +15,12 @@ export const createEvent = <P = void, T extends EventType | string = EventType>(
   preparePayload?: (...args: any[]) => { payload: P }
 ): EventFactory<P, T> => {
   function eventFactory(...args: any[]) {
+    const id = createIdentity();
     if (typeof preparePayload === 'function') {
       const prepared = preparePayload(...args);
-      return { type, payload: prepared.payload };
+      return { id, type, payload: prepared.payload };
     }
-    return { type, payload: args[0] as P };
+    return { id, type, payload: args[0] as P };
   }
 
   eventFactory.toString = () => type;

@@ -51,6 +51,7 @@ export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: a
  * Records an intent that has successfully altered the aggregate state.
  */
 export interface Event<P = any, T extends EventType | string = EventType> {
+  id?: string;
   type: T;
   payload: P;
   metadata?: any;
@@ -61,6 +62,18 @@ export interface Event<P = any, T extends EventType | string = EventType> {
  * Requests a state change and houses the necessary payload for processing validation.
  */
 export interface Command<P = any, T extends CommandType | string = CommandType> {
+  id?: string;
+  type: T;
+  payload: P;
+  metadata?: any;
+}
+
+/**
+ * Describes the originating command attached to emitted event metadata.
+ * This supports command-to-event traceability, including one-command-many-events flows.
+ */
+export interface EventCommandLink<P = any, T extends CommandType | string = CommandType> {
+  id?: string;
   type: T;
   payload: P;
   metadata?: any;
