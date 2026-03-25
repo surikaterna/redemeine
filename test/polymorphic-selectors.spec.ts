@@ -66,8 +66,6 @@ describe('polymorphic selector bindContext', () => {
             STOP: stopRole
           } as const)
       }))
-      .events({})
-      .commands(() => ({}))
       .build();
 
     const mirage = createMirage(aggregate, 'shipment-1');
@@ -75,7 +73,12 @@ describe('polymorphic selector bindContext', () => {
     await (mirage.getActivities()[0] as any).depart();
 
     expect(mirage.lines[0].status).toBe('DEPARTED');
-
+    const firstActivity = mirage.getActivities()[0];
+    
+    //automatically narrowed to legRole
+    if(firstActivity.type === 'LEG') {
+      firstActivity.depart();
+    }
     if (false) {
       const activities = mirage.getActivities();
       type Activity = (typeof activities)[number];
