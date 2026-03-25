@@ -43,7 +43,7 @@ const order = createMirage(OrderAggregate, 'order-123');
 const totalItems = order.orderLines.length;
 
 // 2. The Redemeine Way: Path-Aware Execution mapping the ID!
-When you execute `await order.orderLines('line-abc').cancel();`, Redemeine's internal engines step in:
+When you execute `order.orderLines('line-abc').cancel();`, Redemeine's internal engines step in:
 
 1. **Path Traversal:** It detects you accessed the `orderLines` entity.
 2. **Method Detection:** It detects you called the `cancel()` command.

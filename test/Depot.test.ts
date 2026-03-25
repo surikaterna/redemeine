@@ -57,7 +57,7 @@ describe('Depot', () => {
     const mirage = await depot.get('o1');
     const bridge = createLegacyAggregateBridge(mirage);
 
-    await mirage.increment(3);
+    mirage.increment(3);
     expect(bridge.getUncommittedEvents().length).toBe(1);
 
     await depot.save(mirage);

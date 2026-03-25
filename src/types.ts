@@ -37,8 +37,8 @@ export interface NamingStrategy {
 }
 
 export interface AggregateHooks<State> {
-  onBeforeCommand?: (command: CommandType | Command<any, any>, state: ReadonlyDeep<State>) => void | Promise<void>;
-  onAfterCommand?: (command: CommandType | Command<any, any>, events: Event<any, any>[], state: ReadonlyDeep<State>) => void | Promise<void>;
+  onBeforeCommand?: (command: CommandType | Command<any, any>, state: ReadonlyDeep<State>) => void;
+  onAfterCommand?: (command: CommandType | Command<any, any>, events: Event<any, any>[], state: ReadonlyDeep<State>) => void;
   onEventApplied?: (event: Event<any, any>, state: ReadonlyDeep<State>) => void;
 }
 

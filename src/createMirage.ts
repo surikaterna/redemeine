@@ -50,7 +50,7 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
 
 /**
  * A mapped record of executable live commands bound directly to the aggregate instance.
- * These methods dispatch commands and return a promise resolving to the mutated state.
+ * These methods dispatch commands and return the mutated state.
  */
 type IsBroadRecord<T> = string extends keyof T ? true : false;
 
@@ -58,10 +58,10 @@ export type MirageCommandMap<S, M> = IsBroadRecord<M> extends true
     ? {}
     : {
         [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-            ? (...args: Args extends any[] ? Args : never) => Promise<S>
+            ? (...args: Args extends any[] ? Args : never) => S
             : [M[K]] extends [void] | [undefined] | [never]
-                ? () => Promise<S>
-                : (payload: M[K]) => Promise<S>;
+                ? () => S
+                : (payload: M[K]) => S;
     };
 
 type EntityStateOf<T> = T extends EntityPackage<infer ES, any, any, any, any, any, any> ? ES : never;
@@ -78,10 +78,10 @@ type InjectedArgCount<PK> = PK extends readonly any[] ? PK['length'] : 1;
 
 type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number> = {
     [K in keyof TCommands]: TCommands[K] extends { args: infer Args }
-        ? (...args: DropFirstN<Args extends any[] ? Args : [], InjectedCount>) => Promise<TEntityState>
+        ? (...args: DropFirstN<Args extends any[] ? Args : [], InjectedCount>) => TEntityState
         : [TCommands[K]] extends [void] | [undefined] | [never]
-            ? () => Promise<TEntityState>
-            : (payload: TCommands[K]) => Promise<TEntityState>;
+            ? () => TEntityState
+            : (payload: TCommands[K]) => TEntityState;
 };
 
 type CompositePkArg<TEntityState, PK> = PK extends readonly (infer K)[]
@@ -182,7 +182,7 @@ export type Mirage<TState, M extends Record<string, any> = any, Registry extends
     MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel> & {
         readonly state: ReadonlyDeep<TState>;
         readonly selectors: MirageSelectorMap<TState, Sel, Registry>;
-        dispatch: (command: any) => Promise<TState>;
+        dispatch: (command: any) => TState;
         subscribe: (listener: (state: TState) => void) => () => void;
     };
 
@@ -228,9 +228,9 @@ export class MirageCore<S> {
         this.listeners.forEach(l => l(this.state));
     }
 
-    public async dispatch(cmd: any): Promise<S> {
+    public dispatch(cmd: any): S {
         if (this.builder.hooks?.onBeforeCommand) {
-            await this.builder.hooks.onBeforeCommand(cmd, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onBeforeCommand(cmd, createReadonlyDeepProxy(this.state) as any);
         }
 
         if (this.contract) {
@@ -249,7 +249,7 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, cmd);
         
         if (this.builder.hooks?.onAfterCommand) {
-            await this.builder.hooks.onAfterCommand(cmd, events, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onAfterCommand(cmd, events, createReadonlyDeepProxy(this.state) as any);
         }
 
         for (const ev of events) {
@@ -376,7 +376,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
     // Removed local proxy implementation
 
-    const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): Promise<BuiltAggregateState<BA>> => {
+    const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): BuiltAggregateState<BA> => {
         const commandName = toCommandName(commandPath);
         const creator = (builder.commandCreators as any)[commandName];
         if (typeof creator !== 'function') {
@@ -808,7 +808,6 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
         getVersion: () => core.version,
         clearUncommittedEvents: () => { core.uncommitted = []; },
         getUncommittedEvents: () => [...core.uncommitted],
-        getUncommittedEventsAsync: async () => [...core.uncommitted],
     };
 }
 

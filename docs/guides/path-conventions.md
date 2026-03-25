@@ -26,7 +26,7 @@ If you define an `OrderLine` entity and inject it into an `Order` aggregate, Red
 
 ```typescript
 // Invoked by the client
-await order.orderLines('123').amendProductType({ sku: 'NEW-SKU' });
+order.orderLines('123').amendProductType({ sku: 'NEW-SKU' });
 ```
 
 Behind the scenes, Redemeine resolves the execution path:

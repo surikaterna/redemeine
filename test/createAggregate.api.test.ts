@@ -24,7 +24,7 @@ describe('createAggregate API coverage', () => {
     expect(child.commandCreators.increment(2).type).toBe('order.increment.command');
   });
 
-  test('hooks run during mirage dispatch lifecycle', async () => {
+  test('hooks run during mirage dispatch lifecycle', () => {
     let beforeCalls = 0;
     let afterCalls = 0;
     let appliedCalls = 0;
@@ -40,7 +40,7 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const mirage = createMirage(builder, 'o1');
-    await mirage.increment(3);
+    mirage.increment(3);
 
     expect(beforeCalls).toBe(1);
     expect(afterCalls).toBe(1);
@@ -172,7 +172,7 @@ describe('createAggregate API coverage', () => {
     expect(afterReturn.returnLines[0].status).toBe('APPROVED');
   });
 
-  test('mixins support entityList/entityMap/valueObjectList/valueObjectMap mounts', async () => {
+  test('mixins support entityList/entityMap/valueObjectList/valueObjectMap mounts', () => {
     type State = {
       id: string;
       orderLines: { id: string; qty: number }[];
@@ -215,7 +215,7 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const live = createMirage(aggregate, 'o1');
-    await live.orderLines('ol1').changeQty(9);
+    live.orderLines('ol1').changeQty(9);
 
     expect(live.orderLines[0].qty).toBe(9);
     expect(live.aliases[0].label).toBe('home');

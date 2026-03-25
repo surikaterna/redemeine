@@ -8,6 +8,8 @@
 
 ---
 
+> Mirage command dispatch is synchronous. Use async only for persistence layers like Depot/EventStore.
+
 ## ⚡ Visual Hook
 
 ```typescript
@@ -28,14 +30,14 @@ const OrderAggregate = createAggregate('Order', initialOrderState)
 const order123 = createMirage(OrderAggregate, 'order-123');
 
 // Type-safe dispatching triggers Immer-powered state transitions natively
-await order123.place('cust-99');
+order123.place('cust-99');
 
 // Entities act as Immutable Hybrid Collections! 
 // 1. You can iterate over them natively as a safe, read-only array:
 const totalLines = order123.orderLines.length;
 
 // 2. You can invoke them as command factories mapped perfectly by ID:
-await order123.orderLines('line-1').cancel(); // Automatically maps to 'order.order_line.cancel.command'
+order123.orderLines('line-1').cancel(); // Automatically maps to 'order.order_line.cancel.command'
 ```
 
 ## 🚀 The Elevator Pitch
@@ -73,7 +75,7 @@ When invoking this aggregate dynamically via our Mirage Proxy, TypeScript correc
 
 ```typescript
 // Natively accepts (destination: string, priority?: 'standard' | 'express')
-await mirage.dispatchShipment('123 Main St', 'express');
+mirage.dispatchShipment('123 Main St', 'express');
 ```
 
 ## 🧩 Aggregate Composition

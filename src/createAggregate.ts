@@ -158,7 +158,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * const total = mirage.orderLines.length;
      * 
      * // Command mapping by Entity ID
-     * await mirage.orderLines('line-1').cancel()
+    * mirage.orderLines('line-1').cancel()
      */
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,

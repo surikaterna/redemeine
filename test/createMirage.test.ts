@@ -39,7 +39,7 @@ describe('Mirage tests', () => {
             .build();
     };
 
-    test('should initialize with initialState if no snapshot/events provided', async () => {
+    test('should initialize with initialState if no snapshot/events provided', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
         const bridge = createLegacyAggregateBridge(live);
@@ -48,7 +48,7 @@ describe('Mirage tests', () => {
         expect(bridge.id).toBe('agg-1');
     });
 
-    test('should load existing state from snapshot', async () => {
+    test('should load existing state from snapshot', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-2', {
             snapshot: { value: 10, title: 'Loaded', line: [] }
@@ -60,7 +60,7 @@ describe('Mirage tests', () => {
         expect(bridge._state.title).toBe('Loaded');
     });
 
-    test('should load existing state from events', async () => {
+    test('should load existing state from events', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-3', {
             events: [{ type: 'test.updated.event', payload: 42 }]
@@ -71,7 +71,7 @@ describe('Mirage tests', () => {
         expect(bridge._state.title).toBe('New');
     });
 
-    test('should load existing state from snapshot and events', async () => {
+    test('should load existing state from snapshot and events', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-4', {
             snapshot: { value: 10, title: 'Loaded', line: [] },
@@ -83,12 +83,12 @@ describe('Mirage tests', () => {
         expect(bridge._state.title).toBe('Loaded');
     });
 
-    test('should execute flat commands, update state & uncommitted', async () => {
+    test('should execute flat commands, update state & uncommitted', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
         const bridge = createLegacyAggregateBridge(live);
 
-        await live.update(42);
+        live.update(42);
 
         expect(bridge._state.value).toBe(42);
 
@@ -98,11 +98,11 @@ describe('Mirage tests', () => {
         expect(uncommitted[0].payload).toBe(42);
     });
 
-    test('should execute targeted commands via deep proxy recursively', async () => {
+    test('should execute targeted commands via deep proxy recursively', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
 
-        await (live as any).line('123').update({ qty: 99 });
+        (live as any).line('123').update({ qty: 99 });
 
         const bridge = createLegacyAggregateBridge(live);
         const uncommitted = bridge.getUncommittedEvents();
@@ -112,7 +112,7 @@ describe('Mirage tests', () => {
         expect(uncommitted[0].payload).toEqual({ qty: 99, lineId: '123', id: '123' });
     });
 
-    test('should allow reading readable states directly from live object natively', async () => {
+    test('should allow reading readable states directly from live object natively', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-r', {
             events: [{ type: 'test.updated.event', payload: 777 }]
@@ -123,8 +123,8 @@ describe('Mirage tests', () => {
         // Native array functions shouldn't break proxy structure
         const firstLine = live.line[0];
         
-        // Calling flat commands still behaves dynamically returning properly bounded Promise
-        await live.update(888);
+        // Calling flat commands still behaves dynamically returning properly bounded state
+        live.update(888);
         expect(live.value).toBe(888);
     });
 
@@ -151,7 +151,7 @@ describe('Mirage tests', () => {
         }
     });
 
-    test('injects selected list id into packed child command arguments', async () => {
+    test('injects selected list id into packed child command arguments', () => {
         type PartyState = {
             addresses: { id: string; street: string }[];
         };
@@ -175,8 +175,8 @@ describe('Mirage tests', () => {
             .build();
 
         const live = createMirage(aggregate, 'p1');
-        await live.addresses('primary').amend('123 Main St');
-        await live.addresses[0].amend('456 Side St');
+        live.addresses('primary').amend('123 Main St');
+        live.addresses[0].amend('456 Side St');
 
         expect(live.addresses[0].street).toBe('456 Side St');
 
@@ -186,7 +186,7 @@ describe('Mirage tests', () => {
         expect(uncommitted[1].payload).toEqual({ id: 'primary', street: '456 Side St' });
     });
 
-    test('supports composite primary key targeting in entityList', async () => {
+    test('supports composite primary key targeting in entityList', () => {
         type PartyState = {
             addresses: { country: string; label: string; street: string }[];
         };
@@ -210,11 +210,11 @@ describe('Mirage tests', () => {
             .build();
 
         const live = createMirage(aggregate, 'p1');
-        await live.addresses({ country: 'US', label: 'primary' }).amend('123 Main St');
+        live.addresses({ country: 'US', label: 'primary' }).amend('123 Main St');
         expect(live.addresses[0].street).toBe('123 Main St');
     });
 
-    test('supports entityMap key injection via property access', async () => {
+    test('supports entityMap key injection via property access', () => {
         type PartyState = {
             identifiers: Record<string, { verified: boolean }>;
         };
@@ -241,7 +241,7 @@ describe('Mirage tests', () => {
             .build();
 
         const live = createMirage(aggregate, 'p1');
-        await (live as any).identifiers.VAT.verify();
+        (live as any).identifiers.VAT.verify();
 
         expect(live.identifiers.VAT.verified).toBe(true);
     });

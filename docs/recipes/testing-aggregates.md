@@ -25,14 +25,14 @@ import { ShipmentAggregate } from './ShipmentAggregate';
 
 describe('Shipment Aggregate', () => {
 
-  it('Given a new shipment, When dispatching, Then it should emit a dispatched event', async () => {
+  it('Given a new shipment, When dispatching, Then it should emit a dispatched event', () => {
     
     // GIVEN: We instantiate a fresh live aggregate in memory 
     const shipmentId = 'ship-123';
     const shipment = createMirage(ShipmentAggregate, shipmentId);
 
     // WHEN: We trigger the dispatch command
-    await shipment.dispatchToCarrier({ carrierName: 'FedEx' });
+    shipment.dispatchToCarrier({ carrierName: 'FedEx' });
 
     // THEN: We extract the events emitted during this session to verify behavior
     const uncommittedEvents = extractUncommittedEvents(shipment);
@@ -51,7 +51,7 @@ describe('Shipment Aggregate', () => {
   });
 
 
-  it('Given a dispatched shipment, When dispatching again, Then it throws an invariant error', async () => {
+  it('Given a dispatched shipment, When dispatching again, Then it throws an invariant error', () => {
     
     // GIVEN: We start with a shipment that has ALREADY been dispatched.
     // We recreate history by applying events during setup.
@@ -59,15 +59,15 @@ describe('Shipment Aggregate', () => {
     
     // Simulate past history by running the required commands to get into the desired state. 
     // (Alternatively, you can seed `createMirage` with an initial pre-hydrated state object directly!)
-    await shipment.dispatchToCarrier({ carrierName: 'FedEx' });
+    shipment.dispatchToCarrier({ carrierName: 'FedEx' });
 
     // Clear the event queue so we only test what happens NEXT
     clearUncommittedEvents(shipment);
 
     // WHEN / THEN: We attempt to dispatch again and assert it fails
-    await expect(
-        shipment.dispatchToCarrier({ carrierName: 'UPS' })
-    ).rejects.toThrow('Shipment has already been dispatched. Cannot dispatch twice.');
+    expect(
+      () => shipment.dispatchToCarrier({ carrierName: 'UPS' })
+    ).toThrow('Shipment has already been dispatched. Cannot dispatch twice.');
     
     // Verify no erroneous events leaked into the system
     expect(extractUncommittedEvents(shipment)).toHaveLength(0);

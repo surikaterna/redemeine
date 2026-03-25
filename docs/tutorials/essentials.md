@@ -85,14 +85,14 @@ Now we take our static blueprint and breathe life into it using `createMirage`. 
 ```ts
 import { createMirage } from 'redemeine';
 
-async function runCartFlow() {
+function runCartFlow() {
   // 1. Create a living instance of our aggregate
   const cartId = 'cart-123';
   const cart = createMirage(CartAggregate, cartId);
 
   // 2. Dispatch a command!
   // Type inference is fully active. Runtime validation is available when a Contract is provided.
-  await cart.addItem({
+  cart.addItem({
     item: { productId: 'prod-99', quantity: 1 }
   });
 
