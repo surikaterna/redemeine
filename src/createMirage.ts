@@ -4,6 +4,7 @@ import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { createReadonlyDeepProxy } from './utils/readonlyProxy';
 import type { EntityPackage } from './createEntity';
 import type { AggregateEntityRegistry } from './createAggregate';
+import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from './bindContext';
 
 type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
@@ -141,13 +142,98 @@ type SelectorCollectionMirage<TEntity, Registry extends AggregateEntityRegistry>
         at: (index: number) => AnyMountedEntityMirage<Registry> | undefined;
     };
 
-type SelectorResultMirage<R, Registry extends AggregateEntityRegistry> = R extends ReadonlyArray<infer E>
-    ? SelectorCollectionMirage<E, Registry>
-    : R;
+type SelectorUtils = { bindContext: typeof bindContext };
+
+type SelectorPublicArgs<TState, TSelector> =
+    TSelector extends (state: ReadonlyDeep<TState>, utils: SelectorUtils, ...args: infer Args) => any
+        ? Args
+        : TSelector extends (state: ReadonlyDeep<TState>, ...args: infer Args) => any
+            ? Args
+            : never;
+
+type SelectorRawResult<TState, TSelector> =
+    TSelector extends (state: ReadonlyDeep<TState>, utils: SelectorUtils, ...args: any[]) => infer R
+        ? R
+        : TSelector extends (state: ReadonlyDeep<TState>, ...args: any[]) => infer R
+            ? R
+            : never;
+
+type ArrayLikeElement<T> =
+    T extends readonly (infer E)[]
+        ? E
+        : T extends { readonly [index: number]: infer E; length: number }
+            ? E
+            : never;
+
+type IsArrayLike<T> = ArrayLikeElement<T> extends never ? false : true;
+
+type ContextBoundSingleMirage<TData, TRole> = IsArrayLike<TData> extends true
+    ? ReadonlyArray<EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, 1>>
+    : EntityScopedMirage<TData, EntityCommandsOf<TRole>, 1>;
+
+type RoleFromDiscriminator<
+    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>,
+    TDisc extends string
+> = TDisc extends keyof TRoleMap ? TRoleMap[TDisc] : never;
+
+type DiscriminatorValues<E, TKey extends string> =
+    E extends Record<TKey, infer D>
+        ? Extract<D, string>
+        : never;
+
+type MatchingDiscriminatorValues<
+    E,
+    TKey extends string,
+    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>
+> = Extract<DiscriminatorValues<E, TKey>, keyof TRoleMap & string>;
+
+type PolyRoleMirageForDiscriminator<
+    E,
+    TKey extends string,
+    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>,
+    TDisc extends string
+> = RoleFromDiscriminator<TRoleMap, TDisc> extends infer TRole
+    ? TRole extends EntityPackage<any, any, any, any, any, any, any>
+        ? EntityScopedMirage<
+            (E extends object ? Omit<E, Extract<TKey, keyof E>> : E) & Record<TKey, TDisc>,
+            EntityCommandsOf<TRole>,
+            1
+        >
+        : never
+    : never;
+
+type ContextBoundPolyMirage<
+    TData,
+    TKey extends string,
+    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>
+> = IsArrayLike<TData> extends true
+    ? ReadonlyArray<
+        ArrayLikeElement<TData> extends infer E
+        ? MatchingDiscriminatorValues<E, TKey, TRoleMap> extends infer D
+            ? D extends string
+                ? PolyRoleMirageForDiscriminator<E, TKey, TRoleMap, D>
+                : never
+            : never
+        : never
+      >
+    : never;
+
+type SelectorResultMirage<R, Registry extends AggregateEntityRegistry> =
+    R extends MirageContextSingleBinding<infer TData, infer TRole>
+        ? ContextBoundSingleMirage<TData, TRole>
+        : R extends MirageContextPolymorphicBinding<infer TData, infer TKey, infer TRoleMap>
+            ? ContextBoundPolyMirage<
+                TData,
+                Extract<TKey, string>,
+                Extract<TRoleMap, Record<string, EntityPackage<any, any, any, any, any, any, any>>>
+            >
+            : R extends ReadonlyArray<infer E>
+                ? SelectorCollectionMirage<E, Registry>
+                : R;
 
 type MirageSelectorMap<TState, Sel extends Record<string, any>, Registry extends AggregateEntityRegistry> = {
-    [K in keyof Sel]: Sel[K] extends (state: ReadonlyDeep<TState>, ...args: infer Args) => infer R
-    ? (...args: Args) => SelectorResultMirage<R, Registry>
+    [K in keyof Sel]: Sel[K] extends (...args: any[]) => any
+    ? (...args: SelectorPublicArgs<TState, Sel[K]>) => SelectorResultMirage<SelectorRawResult<TState, Sel[K]>, Registry>
         : never;
 };
 
@@ -439,6 +525,142 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         return undefined;
     };
 
+    const roleCommandNamesCache = new WeakMap<object, string[]>();
+
+    const getRoleCommandNames = (role: unknown): string[] => {
+        if (!role || typeof role !== 'object') {
+            return [];
+        }
+
+        const cached = roleCommandNamesCache.get(role);
+        if (cached) {
+            return cached;
+        }
+
+        const roleAsEntity = role as { commandFactory?: Function };
+        if (typeof roleAsEntity.commandFactory !== 'function') {
+            roleCommandNamesCache.set(role, []);
+            return [];
+        }
+
+        try {
+            const fakeEmit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
+            const fakeSelectors = new Proxy({}, { get: () => () => undefined });
+            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors }) || {};
+            const names = Object.keys(roleCommands);
+            roleCommandNamesCache.set(role, names);
+            return names;
+        } catch {
+            roleCommandNamesCache.set(role, []);
+            return [];
+        }
+    };
+
+    const resolveEntityFromSelection = (collectionPath: string[], selection: InvocationContext) => {
+        const collection = resolvePath(collectionPath);
+        if (!Array.isArray(collection)) {
+            return undefined;
+        }
+
+        return collection.find((candidate: any) => {
+            if (selection.entityPk) {
+                return Object.keys(selection.entityPk).every((k) => String(candidate?.[k]) === String(selection.entityPk?.[k]));
+            }
+            const id = (selection.idsPayload as Record<string, unknown>).id;
+            return candidate?.id === id || candidate?.id === Number(id);
+        });
+    };
+
+    const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
+        return new Proxy(items, {
+            get(target, prop) {
+                if (typeof prop !== 'string') {
+                    if (prop === Symbol.iterator) {
+                        return target[Symbol.iterator].bind(target);
+                    }
+                    return Reflect.get(target, prop);
+                }
+
+                if (!isNaN(Number(prop))) {
+                    return target[Number(prop)];
+                }
+
+                const value = (target as any)[prop];
+                return typeof value === 'function' ? value.bind(target) : value;
+            },
+            set() {
+                throw new Error('Cannot mutate selector collection directly');
+            },
+            deleteProperty() {
+                throw new Error('Cannot mutate selector collection directly');
+            }
+        });
+    };
+
+    const makeRoleScopedEntityProxy = (
+        baseProxy: any,
+        collectionPath: string[],
+        selection: InvocationContext,
+        commandNames: string[]
+    ) => {
+        const allowedCommands = new Set(commandNames);
+
+        return new Proxy({}, {
+            get(target, prop) {
+                if (typeof prop !== 'string') {
+                    return Reflect.get(target, prop);
+                }
+
+                if (prop === 'then') return undefined;
+
+                const entity = resolveEntityFromSelection(collectionPath, selection);
+                if (entity && typeof entity === 'object' && prop in entity) {
+                    return baseProxy[prop];
+                }
+
+                if (allowedCommands.has(prop)) {
+                    return baseProxy[prop];
+                }
+
+                return undefined;
+            },
+            set() {
+                throw new Error('Cannot mutate properties directly');
+            },
+            deleteProperty() {
+                throw new Error('Cannot mutate properties directly');
+            }
+        });
+    };
+
+    const wrapEntityWithRole = (entity: any, role: unknown, context: InvocationContext) => {
+        const resolved = findListMountForEntity(entity);
+        if (!resolved) {
+            throw new Error('bindContext could not resolve a mounted list entity for selector item.');
+        }
+
+        const [mountName, mount] = resolved;
+        const selection = selectFromListEntity(mountName, mount, entity);
+        if (!selection) {
+            throw new Error('bindContext could not extract key fields from selector item.');
+        }
+
+        const scopedSelection: InvocationContext = {
+            idsPayload: { ...context.idsPayload, ...selection.idsPayload },
+            packPrefix: [...context.packPrefix, ...selection.packPrefix],
+            entityPk: selection.entityPk
+        };
+
+        const baseEntityMirage = makeEntityMirageProxy(
+            [...mount.statePath],
+            [mount.commandPrefix],
+            scopedSelection
+        );
+
+        const commandNames = getRoleCommandNames(role);
+        return makeRoleScopedEntityProxy(baseEntityMirage, [...mount.statePath], scopedSelection, commandNames);
+    };
+
     const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext): any => {
         const getEntityMirageAt = (index: number) => {
             const entity = entities[index];
@@ -506,6 +728,32 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     };
 
     const wrapSelectorResult = (result: unknown, context: InvocationContext) => {
+        if (isMirageContextBinding(result)) {
+            const bound = result[MirageContextSymbol as any];
+
+            if (bound.kind === 'single') {
+                if (Array.isArray(bound.data)) {
+                    return makeReadonlyWrappedArray(bound.data.map((item) => wrapEntityWithRole(item, bound.role, context)));
+                }
+                return wrapEntityWithRole(bound.data, bound.role, context);
+            }
+
+            if (!Array.isArray(bound.data)) {
+                throw new Error('bindContext polymorphic binding expects an array of data items.');
+            }
+
+            const wrapped = bound.data.map((item) => {
+                const discriminatorValue = item?.[bound.discriminatorKey];
+                const role = bound.roleMap?.[String(discriminatorValue)];
+                if (!role) {
+                    throw new Error(`No role mapping found for discriminator value "${String(discriminatorValue)}".`);
+                }
+                return wrapEntityWithRole(item, role, context);
+            });
+
+            return makeReadonlyWrappedArray(wrapped);
+        }
+
         if (Array.isArray(result)) {
             return makeSelectedCollectionProxy(result, context);
         }
@@ -517,7 +765,14 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         if (typeof selector !== 'function') {
             throw new Error('Selector ' + selectorName + ' not found on selectors.');
         }
-        return wrapSelectorResult(selector(createReadonlyDeepProxy(core.state), ...args), context);
+
+        const stateView = createReadonlyDeepProxy(core.state);
+        const shouldInjectUtils = selector.length >= args.length + 2;
+        const result = shouldInjectUtils
+            ? selector(stateView, { bindContext }, ...args)
+            : selector(stateView, ...args);
+
+        return wrapSelectorResult(result, context);
     };
 
     const makeSelectorsProxy = (context: InvocationContext): any => {

@@ -1,6 +1,7 @@
 export * from './createAggregate';
 export * from './createCommand';
 export * from './createCommandProcessor';
+export * from './bindContext';
 export * from './createEntity';
 export * from './createEvent';
 export * from './identity';

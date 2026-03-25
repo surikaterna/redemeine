@@ -10,6 +10,15 @@ import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { defaultNamingStrategy } from './utils/naming';
 import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { bindContext } from './bindContext';
+
+type AggregateSelectorUtils = { bindContext: typeof bindContext };
+
+type AggregateSelector<S> =
+    | ((state: ReadonlyDeep<S>, ...args: any[]) => any)
+    | ((state: ReadonlyDeep<S>, utils: AggregateSelectorUtils, ...args: any[]) => any);
+
+type AggregateSelectorsMap<S> = Record<string, AggregateSelector<S>>;
 
 type UnionToIntersection<U> = (
     U extends unknown ? (arg: U) => void : never
@@ -25,7 +34,7 @@ type AggregateMixinLike<S = any, Commands = {}, Registry extends AggregateEntity
     projectors?: Record<string, Function>;
     eventOverrides?: Record<string, string>;
     commandOverrides?: Record<string, string>;
-    selectors?: Record<string, Function>;
+    selectors?: AggregateSelectorsMap<S>;
     commandFactory?: GenericCommandFactory;
     mounts?: Record<string, MountedStructureMetadata>;
     mountedEntities?: MountedEntityPackage[];
@@ -230,9 +239,14 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   getTotalWeight: (state) => state.items.reduce((sum, item) => sum + item.weight, 0)
      * })
      */
-    selectors: <NewSel extends SelectorsMap<S>>(
-        selectors: NewSel
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry>;
+    selectors: {
+        <NewSel extends AggregateSelectorsMap<S>>(
+            selectors: NewSel
+        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry>;
+        <NewSel extends AggregateSelectorsMap<S>>(
+            selectorFactory: (utils: AggregateSelectorUtils) => NewSel
+        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry>;
+    };
 
     /**
      * Register state-altering event handlers.
@@ -376,7 +390,12 @@ export function createAggregate<S, Name extends string>(
     let _hooks: AggregateHooks<S> = {};
 
     const builder = bindFluentMethods({}, {
-        selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
+        selectors: (selectorsOrFactory: AggregateSelectorsMap<S> | ((utils: AggregateSelectorUtils) => AggregateSelectorsMap<S>)) => {
+            const resolvedSelectors = typeof selectorsOrFactory === 'function'
+                ? selectorsOrFactory({ bindContext })
+                : selectorsOrFactory;
+            component.addSelectors(resolvedSelectors);
+        },
         events: (events: Record<string, Function>) => component.addEvents(events),
         overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
         commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
@@ -487,7 +506,7 @@ export function createAggregate<S, Name extends string>(
             const scopedEventProjectors: Record<string, Function> = {};
             const allEventOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...(m.eventOverrides || {}) }), snapshot.eventOverrides);
             const allCommandOverrides = _mixins.reduce((acc, m) => ({ ...acc, ...(m.commandOverrides || {}) }), snapshot.commandOverrides);
-            const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), snapshot.selectors) as SelectorsMap<S>;
+            const allSelectors = _mixins.reduce((acc, m) => ({ ...acc, ...(m.selectors || {}) }), snapshot.selectors) as AggregateSelectorsMap<S>;
             const mounts: Record<string, MountedStructureMetadata> = {};
 
             const composeMountedType = (path: string, relativeName: string, suffix: 'event' | 'command') => {
