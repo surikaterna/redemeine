@@ -4,6 +4,15 @@ export const MirageContextSymbol = Symbol.for('MirageContext');
 
 export type MirageRoleLike = EntityPackage<any, any, any, any, any, any, any>;
 
+type DotPathKeys<T> = T extends Record<string, unknown>
+  ? {
+      [K in Extract<keyof T, string>]:
+        T[K] extends Record<string, unknown>
+          ? `${K}` | `${K}.${DotPathKeys<T[K]>}`
+          : `${K}`
+    }[Extract<keyof T, string>]
+  : never;
+
 export type MirageContextSingleBinding<TData, TRole extends MirageRoleLike> = {
   [MirageContextSymbol]: {
     kind: 'single';
@@ -36,7 +45,7 @@ export function bindContext<TData, const TRole extends MirageRoleLike>(
 
 export function bindContext<
   const TData extends readonly any[],
-  const TKey extends keyof TData[number] & string,
+  const TKey extends DotPathKeys<TData[number]>,
   const TRoleMap extends Record<string, MirageRoleLike>
 >(
   data: TData,

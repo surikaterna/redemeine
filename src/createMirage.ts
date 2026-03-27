@@ -158,6 +158,24 @@ type SelectorRawResult<TState, TSelector> =
             ? R
             : never;
 
+type PathValue<T, P extends string> =
+    P extends `${infer K}.${infer Rest}`
+        ? K extends keyof T
+            ? PathValue<T[K], Rest>
+            : never
+        : P extends keyof T
+            ? T[P]
+            : never;
+
+type SetPathValue<T, P extends string, V> =
+    P extends `${infer K}.${infer Rest}`
+        ? K extends keyof T
+            ? Omit<T, K> & { [Key in K]: SetPathValue<T[K], Rest, V> }
+            : T & { [Key in K]: SetPathValue<{}, Rest, V> }
+        : P extends keyof T
+            ? Omit<T, P> & { [Key in P]: V }
+            : T & { [Key in P]: V };
+
 type ArrayLikeElement<T> =
     T extends readonly (infer E)[]
         ? E
@@ -177,9 +195,7 @@ type RoleFromDiscriminator<
 > = TDisc extends keyof TRoleMap ? TRoleMap[TDisc] : never;
 
 type DiscriminatorValues<E, TKey extends string> =
-    E extends Record<TKey, infer D>
-        ? Extract<D, string>
-        : never;
+    Extract<PathValue<E, TKey>, string>;
 
 type MatchingDiscriminatorValues<
     E,
@@ -195,7 +211,7 @@ type PolyRoleMirageForDiscriminator<
 > = RoleFromDiscriminator<TRoleMap, TDisc> extends infer TRole
     ? TRole extends EntityPackage<any, any, any, any, any, any, any>
         ? EntityScopedMirage<
-            (E extends object ? Omit<E, Extract<TKey, keyof E>> : E) & Record<TKey, TDisc>,
+            E extends object ? SetPathValue<E, TKey, TDisc> : E,
             EntityCommandsOf<TRole>,
             1
         >
@@ -728,6 +744,18 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     };
 
     const wrapSelectorResult = (result: unknown, context: InvocationContext) => {
+        const getPathValue = (obj: unknown, path: string): unknown => {
+            if (!obj || typeof obj !== 'object') {
+                return undefined;
+            }
+            return path.split('.').reduce<unknown>((acc, part) => {
+                if (acc && typeof acc === 'object') {
+                    return (acc as Record<string, unknown>)[part];
+                }
+                return undefined;
+            }, obj);
+        };
+
         if (isMirageContextBinding(result)) {
             const bound = result[MirageContextSymbol as any];
 
@@ -743,7 +771,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
             }
 
             const wrapped = bound.data.map((item) => {
-                const discriminatorValue = item?.[bound.discriminatorKey];
+                const discriminatorValue = getPathValue(item, bound.discriminatorKey);
                 const role = bound.roleMap?.[String(discriminatorValue)];
                 if (!role) {
                     throw new Error(`No role mapping found for discriminator value "${String(discriminatorValue)}".`);

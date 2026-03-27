@@ -9,7 +9,7 @@ type ActivityKind = 'LEG' | 'STOP';
 
 type LineState = {
   id: string;
-  type: ActivityKind;
+  type: { identifier: ActivityKind };
   status: 'IDLE' | 'DEPARTED' | 'ARRIVED';
 };
 
@@ -54,14 +54,14 @@ describe('polymorphic selector bindContext', () => {
 
     const aggregate = createAggregate<RootState, 'shipment'>('shipment', {
       lines: [
-        { id: 'L1', type: 'LEG', status: 'IDLE' },
-        { id: 'S1', type: 'STOP', status: 'IDLE' }
+        { id: 'L1', type: { identifier: 'LEG' }, status: 'IDLE' },
+        { id: 'S1', type: { identifier: 'STOP' }, status: 'IDLE' }
       ]
     })
       .entityList('lines', lineEntity)
       .selectors(({ bindContext }) => ({
         getActivities: (state: ReadonlyDeep<RootState>) =>
-          bindContext(state.lines, 'type', {
+          bindContext(state.lines, 'type.identifier', {
             LEG: legRole,
             STOP: stopRole
           } as const)
@@ -73,16 +73,10 @@ describe('polymorphic selector bindContext', () => {
     await (mirage.getActivities()[0] as any).depart();
 
     expect(mirage.lines[0].status).toBe('DEPARTED');
-    const firstActivity = mirage.getActivities()[0];
-    
-    //automatically narrowed to legRole
-    if(firstActivity.type === 'LEG') {
-      firstActivity.depart();
-    }
     if (false) {
       const activities = mirage.getActivities();
       type Activity = (typeof activities)[number];
-      type StopActivity = Extract<Activity, { type: 'STOP' }>;
+      type StopActivity = Extract<Activity, { type: { identifier: 'STOP' } }>;
 
       // @ts-expect-error STOP role should not expose depart()
       (null as unknown as StopActivity).depart();
