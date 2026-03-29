@@ -76,6 +76,7 @@ Unlike entities, this branch does not route nested commands.
 - `.valueObjectMap()` (Returns `this`) - Register a read-only value object map branch.
 Unlike entities, this branch does not route nested commands.
 - `.mixins()` (Returns `this`) - Compose reusable domain logic chunks (Mixins) into this aggregate.
+- `.plugins()` (Returns `this`) - Register aggregate-level plugins to be composed into Mirage/Depot runtime behavior.
 - `.events()` (Returns `this`) - Register state-altering event handlers.
 **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
 The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`). **[IMMER MUTATION ALLOWED]**
@@ -139,4 +140,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 18 Interfaces, 29 Types, 5 Public Functions.
+**Metadata:** 21 Interfaces, 39 Types, 5 Public Functions.

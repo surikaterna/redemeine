@@ -1,12 +1,31 @@
-import { Event, PackedCommandWithMeta, SelectorsMap, ShorthandCommandWithMeta } from './types';
+import { CommandContext, CommandIntents, CommandResult, Event, PackedCommandWithMeta, PluginExtensions, SelectorsMap, ShorthandCommandWithMeta } from './types';
+import { createCommandContextProxy } from './proxies/createCommandContextProxy';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import type { Merge } from './utils/types/Merge';
 import type { AllKeys } from './utils/types/AllKeys';
 import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
 
 export type GenericSelectors = Record<string, unknown>;
-export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any, Record<string, unknown>>>;
-export type GenericCommandFactory = (emit: unknown, context: { selectors: GenericSelectors }) => GenericCommandMap;
+export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any, Record<string, unknown>, {}>>;
+export type GenericCommandFactoryContext<TCommands extends Record<string, unknown> = Record<string, unknown>> = {
+  selectors: GenericSelectors;
+  commands?: CommandContext<CommandIntents<TCommands>>;
+  plugins?: Record<string, unknown>;
+};
+export type GenericCommandFactory = (emit: unknown, context: GenericCommandFactoryContext) => GenericCommandMap;
+
+export function resolveCommandFactoryContext(
+  context: GenericCommandFactoryContext
+): GenericCommandFactoryContext {
+  if (context.commands) {
+    return context;
+  }
+
+  return {
+    ...context,
+    commands: createCommandContextProxy<Record<string, unknown>>()
+  };
+}
 
 export type RedemeineEventProjector<S> = (state: S, event: Event<any, any>) => void;
 export type RedemeineEventDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
@@ -24,17 +43,21 @@ export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDef
       : never;
 };
 
-export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[]> = (
+export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[], TPlugins extends PluginExtensions = {}> = (
   state: ReadonlyDeep<S>,
   ...args: Args
-) => Event<any, any> | Event<any, any>[];
+) => Event<any, any> | CommandResult<Event<any, any>, TPlugins>;
 
-export type RedemeineCommandDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
-  | RedemeineShorthandCommand<S, any[]>
-  | ShorthandCommandWithMeta<S, any[], TMeta>
-  | PackedCommandWithMeta<S, any[], any, TMeta>;
+export type RedemeineCommandDefinition<
+  S,
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPlugins extends PluginExtensions = {}
+> =
+  | RedemeineShorthandCommand<S, any[], TPlugins>
+  | ShorthandCommandWithMeta<S, any[], TMeta, TPlugins>
+  | PackedCommandWithMeta<S, any[], any, TMeta, TPlugins>;
 
-export type RedemeineCommandMap<S, TMeta extends Record<string, unknown> = Record<string, unknown>> = Record<string, RedemeineCommandDefinition<S, TMeta>>;
+export type RedemeineCommandMap<S, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> = Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>>;
 
 export interface RedemeineComponent<
   S,
@@ -84,10 +107,11 @@ export type PublicCommandMethodsFromInternal<S, TCommands extends Record<string,
 export function composeCommandFactories(
   factories: GenericCommandFactory[]
 ): GenericCommandFactory {
-  return (emit: unknown, context: { selectors: GenericSelectors }) => {
+  return (emit: unknown, context: GenericCommandFactoryContext) => {
+    const resolvedContext = resolveCommandFactoryContext(context);
     const merged: GenericCommandMap = {};
     for (const factory of factories) {
-      Object.assign(merged, factory(emit, context));
+      Object.assign(merged, factory(emit, resolvedContext));
     }
     return merged;
   };
@@ -95,7 +119,7 @@ export function composeCommandFactories(
 
 export function resolveCommandHandler<S>(
   commandDef: RedemeineCommandDefinition<S>
-): (state: ReadonlyDeep<S>, payload: unknown) => Event<any, any> | Event<any, any>[] {
+): (state: ReadonlyDeep<S>, payload: unknown) => Event<any, any> | CommandResult<Event<any, any>, {}> {
   const handler = typeof commandDef === 'function'
     ? commandDef
     : commandDef.handler;
@@ -103,7 +127,7 @@ export function resolveCommandHandler<S>(
   return handler as (
     state: ReadonlyDeep<S>,
     payload: unknown
-  ) => Event<any, any> | Event<any, any>[];
+  ) => Event<any, any> | CommandResult<Event<any, any>, {}>;
 }
 
 export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: unknown[]): unknown {
