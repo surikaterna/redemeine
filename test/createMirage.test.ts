@@ -357,13 +357,15 @@ describe('Mirage tests', () => {
         const calls: string[] = [];
         const plugins: RedemeinePlugin[] = [
             {
+                key: 'before-first',
                 onBeforeCommand: async (ctx) => {
-                    calls.push(`first:${String((ctx.meta as any)?.requiredRole)}:${ctx.commandType}`);
+                    calls.push(`first:${ctx.pluginKey}:${String((ctx.meta as any)?.requiredRole)}:${ctx.commandType}`);
                 }
             },
             {
+                key: 'before-second',
                 onBeforeCommand: async (ctx) => {
-                    calls.push(`second:${ctx.commandType}`);
+                    calls.push(`second:${ctx.pluginKey}:${ctx.commandType}`);
                     if ((ctx.payload as number) < 0) {
                         throw new Error('blocked');
                     }
@@ -375,8 +377,8 @@ describe('Mirage tests', () => {
         await allowed.increment(5);
         expect(allowed.value).toBe(5);
         expect(calls).toEqual([
-            'first:writer:guard.increment.command',
-            'second:guard.increment.command'
+            'first:before-first:writer:guard.increment.command',
+            'second:before-second:guard.increment.command'
         ]);
 
         const blocked = createMirage(aggregate, 'g-2', { plugins });
@@ -402,14 +404,16 @@ describe('Mirage tests', () => {
         const seen: string[] = [];
         const plugins: RedemeinePlugin[] = [
             {
+                key: 'hydrate-first',
                 onHydrateEvent: async (ctx) => {
-                    seen.push(`first:${ctx.eventType}:${String((ctx.meta as any)?.stage)}`);
+                    seen.push(`first:${ctx.pluginKey}:${ctx.eventType}:${String((ctx.meta as any)?.stage)}`);
                     (ctx.payload as any).amount += 1;
                 }
             },
             {
+                key: 'hydrate-second',
                 onHydrateEvent: async (ctx) => {
-                    seen.push(`second:${ctx.eventType}`);
+                    seen.push(`second:${ctx.pluginKey}:${ctx.eventType}`);
                     return { amount: (ctx.payload as any).amount * 10 };
                 }
             }
@@ -425,11 +429,46 @@ describe('Mirage tests', () => {
 
         expect(mirage.total).toBe(50);
         expect(seen).toEqual([
-            'first:hydrate.added.event:hydration',
-            'second:hydrate.added.event',
-            'first:hydrate.added.event:hydration',
-            'second:hydrate.added.event'
+            'first:hydrate-first:hydrate.added.event:hydration',
+            'second:hydrate-second:hydrate.added.event',
+            'first:hydrate-first:hydrate.added.event:hydration',
+            'second:hydrate-second:hydrate.added.event'
         ]);
+    });
+
+    test('composes builder plugins before runtime plugins', async () => {
+        type GuardState = { value: number };
+
+        const order: string[] = [];
+        const builderPlugin: RedemeinePlugin = {
+            key: 'builder',
+            onBeforeCommand: async () => {
+                order.push('builder');
+            }
+        };
+        const runtimePlugin: RedemeinePlugin = {
+            key: 'runtime',
+            onBeforeCommand: async () => {
+                order.push('runtime');
+            }
+        };
+
+        const aggregate = createAggregate<GuardState, 'guard'>('guard', { value: 0 })
+            .plugins(builderPlugin)
+            .events({
+                incremented: (state: GuardState, event: Event<number>) => {
+                    state.value = event.payload;
+                }
+            })
+            .commands((emit) => ({
+                increment: (state: GuardState, payload: number) => emit.incremented(payload)
+            }))
+            .build();
+
+        const mirage = createMirage(aggregate, 'g-1', { plugins: [runtimePlugin] });
+        await mirage.increment(1);
+
+        expect(order).toEqual(['builder', 'runtime']);
     });
 
 });

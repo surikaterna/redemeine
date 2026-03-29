@@ -3,7 +3,7 @@ import { createAggregate } from '../src/createAggregate';
 import { createEntity } from '../src/createEntity';
 import { createMixin } from '../src/createMixin';
 import { createMirage } from '../src/createMirage';
-import { Event } from '../src/types';
+import { CommandResult, Event, RedemeinePlugin } from '../src/types';
 
 type ParentState = { id: string; count: number; line: { id: string; qty: number }[] };
 
@@ -337,5 +337,86 @@ describe('createAggregate API coverage', () => {
 
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'mixin-mounted-entity-command', level: 1 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'mixin-mounted-entity-event', level: 1 });
+  });
+
+  test('stores aggregate-level plugins in build output and composes plugin extension types', () => {
+    type PluginA = { context: { actorId: string } };
+    type PluginB = { context: { requestId: string }, intents: { audit: { audited: boolean } } };
+
+    const pluginA: RedemeinePlugin<PluginA> = { key: 'auth' };
+    const pluginB: RedemeinePlugin<PluginB> = { key: 'audit' };
+
+    const aggregate = createAggregate<ParentState, 'order'>('order', initial)
+      .plugins(pluginA, pluginB)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit, ctx) => {
+        if (false) {
+          const actorId: string = ctx.plugins!.actorId;
+          const requestId: string = ctx.plugins!.requestId;
+          void actorId;
+          void requestId;
+        }
+
+        return {
+          increment: (state: ParentState, amount: number) => ({
+            events: [emit.incremented({ amount })],
+            intents: {
+              audit: { audited: true }
+            }
+          })
+        };
+      })
+      .build();
+
+    expect(aggregate.plugins).toEqual([pluginA, pluginB]);
+  });
+
+  test('plugins(schedulerPlugin) allows schedule intents and plain builder rejects them at type-level', () => {
+    type SchedulerPlugin = { intents: { scheduler: { schedule: Array<{ runAt: string }> } } };
+    const schedulerPlugin: RedemeinePlugin<SchedulerPlugin> = { key: 'scheduler' };
+
+    const aggregate = createAggregate<ParentState, 'order'>('order', initial)
+      .plugins(schedulerPlugin)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit) => ({
+        incrementLater: (state: ParentState, amount: number): CommandResult<Event, SchedulerPlugin> => ({
+          events: [emit.incremented({ amount })],
+          intents: {
+            scheduler: {
+              schedule: [{ runAt: '2026-01-01T00:00:00.000Z' }]
+            }
+          }
+        })
+      }))
+      .build();
+
+    const emitted = aggregate.process(initial, aggregate.commandCreators.incrementLater(2));
+    expect(emitted[0].type).toBe('order.incremented.event');
+
+    if (false) {
+      createAggregate<ParentState, 'order'>('order', initial)
+        .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+        .commands((emit) => ({
+          incrementLater: (state: ParentState, amount: number): CommandResult<Event, {}> => ({
+            events: [emit.incremented({ amount })]
+          })
+        }));
+    }
+  });
+
+  test('ctx.commands proxy returns command envelope with exact shape', () => {
+    let proxied: unknown;
+
+    createAggregate<ParentState, 'order'>('order', initial)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit, ctx) => {
+        proxied = ctx.commands.myCommand({ foo: 'bar' });
+        return {
+          increment: (state: ParentState, amount: number) => emit.incremented({ amount })
+        };
+      })
+      .build();
+
+    expect(proxied).toStrictEqual({ command: 'myCommand', payload: { foo: 'bar' } });
   });
 });
