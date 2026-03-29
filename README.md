@@ -8,7 +8,7 @@
 
 ---
 
-> Mirage command dispatch is synchronous. Use async only for persistence layers like Depot/EventStore.
+> Mirage command dispatch is synchronous by default, and becomes async only when awaited plugin interceptors are configured.
 
 ## ⚡ Visual Hook
 
@@ -83,6 +83,16 @@ mirage.dispatchShipment('123 Main St', 'express');
 Redemeine treats aggregates as composable building blocks:
 *   **Inheritance**: Use `.extends(Parent)` to inherit all business rules, selectors, and events. For example, a `Shipment` can `.extends(Order)` to inherit its foundational logic while adding shipment-specific behaviors (like `Legs`).
 *   **Mixins**: Use `.mixins(Contactable, Identifiable)` to stack reusable behavior across unrelated aggregates. Internally, Redemeine flattens mixin command and projector maps using the shared `Merge` utility from `src/utils/types/Merge.ts`, so command signatures stay cohesive while avoiding duplicate wiring.
+
+## 🔌 Plugin Interceptors
+
+Mirage/Depot infrastructure supports plugin hooks for command dispatch, append, and hydration:
+
+- `onBeforeCommand(ctx)`
+- `onBeforeAppend(ctx)`
+- `onHydrateEvent(ctx)`
+
+Hooks run sequentially in registration order and are awaited. `onBeforeCommand` can throw to block execution. `onBeforeAppend` and `onHydrateEvent` can mutate payloads in-place or return a transformed payload.
 
 ## 🧭 Quick Navigation
 

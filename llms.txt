@@ -68,9 +68,14 @@ The naming engine will automatically map nested calls to targeted dot-notation c
 In the Mirage, mapped entities represent Immutable Hybrid Entity Collections: 
 They act as a safe read-only array (e.g., iterating or calculating length) 
 and as a command factory function (passing the entity ID).
+- `.entityList()` (Returns `this`) - Register a list-backed entity collection with optional simple or composite primary key definition.
+- `.entityMap()` (Returns `this`) - Register a record-backed entity map with optional known keys.
+- `.valueObject()` (Returns `this`) - Register a value object branch. It is exposed as read-only state and does not add routed commands.
+- `.valueObjectList()` (Returns `this`) - Register a read-only value object list branch.
+Unlike entities, this branch does not route nested commands.
+- `.valueObjectMap()` (Returns `this`) - Register a read-only value object map branch.
+Unlike entities, this branch does not route nested commands.
 - `.mixins()` (Returns `this`) - Compose reusable domain logic chunks (Mixins) into this aggregate.
-- `.selectors()` (Returns `this`) - Define pure functions for reading and deriving state.
-These will be injectable into your command handlers via the `context` parameter.
 - `.events()` (Returns `this`) - Register state-altering event handlers.
 **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
 The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`). **[IMMER MUTATION ALLOWED]**
@@ -87,6 +92,40 @@ Prevents the auto-namer from modifying the key into standard dot-notation routin
 Hooks intercept the execution flow but DO NOT mutate state directly.
 - `.build()` - Finalizes and compiles the aggregate.
 
+### `EntityBuilder`
+_Core library class._
+
+**Methods:**
+- `.events()` (Returns `this`) - Register state-altering event handlers for this Entity.
+**Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
+The targeted auto-namer maps camelCase keys to dot notation combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`). **[IMMER MUTATION ALLOWED]**
+- `.overrideEventNames()` (Returns `this`) - Overrides generated event names for this entity.
+- `.selectors()` (Returns `this`) - Define pure functions scoped only to this entity's structure.
+- `.commands()` (Returns `this`) - Define scoped command processors that execute business logic.
+**Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands.
+The auto-namer evaluates camelCase keys with the entity's namespace (e.g. `cancelLine` -> `aggregate.entity.cancel_line.command`). **[READONLY LOGIC LAYER]**
+- `.entityList()` (Returns `this`) - Register a list-backed nested entity collection.
+- `.entityMap()` (Returns `this`) - Register a record-backed nested entity map.
+- `.valueObjectList()` (Returns `this`) - Register a read-only nested value object list branch.
+- `.valueObjectMap()` (Returns `this`) - Register a read-only nested value object map branch.
+- `.overrideCommandNames()` (Returns `this`) - Overrides generated command names for this entity.
+- `.build()` - Finalizes and compiles the Entity into a pluggable package.
+
+### `MixinBuilder`
+_Core library class._
+
+**Methods:**
+- `.events()` (Returns `this`) - Register event handlers for this Mixin that apply state mutations. **[IMMER MUTATION ALLOWED]**
+- `.overrideEventNames()` (Returns `this`)
+- `.selectors()` (Returns `this`)
+- `.commands()` (Returns `this`) **[READONLY LOGIC LAYER]**
+- `.entityList()` (Returns `this`)
+- `.entityMap()` (Returns `this`)
+- `.valueObjectList()` (Returns `this`)
+- `.valueObjectMap()` (Returns `this`)
+- `.overrideCommandNames()` (Returns `this`)
+- `.build()`
+
 ### `NamingStrategy`
 _Interface controlling the "Targeted Naming" engine used to automatically route and identify events and commands._
 
@@ -100,4 +139,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 24 Interfaces, 13 Types, 3 Public Functions.
+**Metadata:** 18 Interfaces, 29 Types, 5 Public Functions.

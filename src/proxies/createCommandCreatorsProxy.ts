@@ -19,7 +19,7 @@ export function createCommandCreatorsProxy(
                             const cmdDef = allCommandsMap[aggregateName + prop.charAt(0).toUpperCase() + prop.slice(1)];
                             const firstArg = args[0];
                             const payload = cmdDef
-                                ? (typeof cmdDef !== 'function' && cmdDef.pack
+                                ? (typeof cmdDef !== 'function' && 'pack' in cmdDef && typeof cmdDef.pack === 'function'
                                     ? createCommandPayload(cmdDef, args)
                                     : (typeof firstArg === 'object' && firstArg !== null
                                         ? { ...(firstArg as Record<string, unknown>), id }

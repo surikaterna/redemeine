@@ -36,24 +36,9 @@ jobs:
         id: reflector
         run: |
           # Generate a JSON snapshot of the current public API
-          npx ts-node bin/redemeine-reflector.ts --json > api-surface.json
+          npx tsx bin/redemeine-reflector.ts --json > api-surface.json
           # Generate the new llms.txt content
-          npx ts-node bin/redemeine-reflector.ts --generate-llms-ctx > new-llms.txt
-
-      - name: 🧠 AI Audit & Review
-        uses: google-github-actions/run-gemini-audit@v1 # Placeholder for Gemini/AI Auditor
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        with:
-          input_file: 'api-surface.json'
-          docs_path: 'docs/'
-          prompt: |
-            You are an expert technical writer for Redemeine.
-            1. Compare 'api-surface.json' against the files in '/docs'.
-            2. If a public method or type is missing documentation, leave a Review Comment on the PR with a suggested TSDoc.
-            3. Check if the 'Targeted Naming' patterns have changed and verify the README matches.
-            4. If documentation drift is > 10%, fail the check.
+          npx tsx bin/redemeine-reflector.ts --generate-llms-ctx > new-llms.txt
 
       - name: 🤖 Update llms.txt
         run: |
@@ -64,7 +49,7 @@ jobs:
             git config --local user.name "GitHub Action"
             git add llms.txt
             git commit -m "docs(ai): auto-update llms.txt for API changes"
-            git push
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
 
       - name: 📚 Generate TypeDoc API Reference
@@ -79,7 +64,7 @@ jobs:
             git config --local user.name "GitHub Action"
             git add docs/api/
             git commit -m "docs(api): auto-generate updated TypeDoc reference"
-            git push
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
           else
             echo "No changes to API documentation."
           fi
@@ -87,4 +72,4 @@ jobs:
       - name: 🚩 Verify TSDoc Coverage
         run: |
           # Use the reflector to fail the build if public exports lack TSDocs
-          npx ts-node bin/redemeine-reflector.ts --verify-tsdoc
+          npx tsx bin/redemeine-reflector.ts --verify-tsdoc

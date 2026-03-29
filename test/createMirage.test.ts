@@ -2,7 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '../src/createAggregate';
 import { createEntity } from '../src/createEntity';
 import { createMirage, createLegacyAggregateBridge } from '../src/createMirage';
-import { Event } from '../src/types';
+import { Event, RedemeinePlugin } from '../src/types';
 
 interface TestState {
     value: number;
@@ -330,6 +330,106 @@ describe('Mirage tests', () => {
 
         expect(live.aliases[0].label).toBe('home');
         expect(live.preferencesByRegion.US.theme).toBe('light');
+    });
+
+    test('runs onBeforeCommand plugins sequentially and can block command execution', async () => {
+        type GuardState = { value: number };
+
+        const aggregate = createAggregate<GuardState, 'guard'>('guard', { value: 0 })
+            .events({
+                incremented: {
+                    projector: (state: GuardState, event: Event<number>) => {
+                        state.value = event.payload;
+                    },
+                    meta: { eventPolicy: 'mutatesValue' }
+                }
+            })
+            .commands((emit) => {
+                return {
+                    increment: {
+                        handler: (state: GuardState, payload: number) => emit.incremented(payload),
+                        meta: { requiredRole: 'writer' }
+                    }
+                };
+            })
+            .build();
+
+        const calls: string[] = [];
+        const plugins: RedemeinePlugin[] = [
+            {
+                onBeforeCommand: async (ctx) => {
+                    calls.push(`first:${String((ctx.meta as any)?.requiredRole)}:${ctx.commandType}`);
+                }
+            },
+            {
+                onBeforeCommand: async (ctx) => {
+                    calls.push(`second:${ctx.commandType}`);
+                    if ((ctx.payload as number) < 0) {
+                        throw new Error('blocked');
+                    }
+                }
+            }
+        ];
+
+        const allowed = createMirage(aggregate, 'g-1', { plugins });
+        await allowed.increment(5);
+        expect(allowed.value).toBe(5);
+        expect(calls).toEqual([
+            'first:writer:guard.increment.command',
+            'second:guard.increment.command'
+        ]);
+
+        const blocked = createMirage(aggregate, 'g-2', { plugins });
+        await expect(blocked.increment(-1)).rejects.toThrow('blocked');
+        expect(blocked.value).toBe(0);
+    });
+
+    test('runs onHydrateEvent plugins during createMirage setup events with mutation and replacement semantics', async () => {
+        type HydrateState = { total: number };
+
+        const aggregate = createAggregate<HydrateState, 'hydrate'>('hydrate', { total: 0 })
+            .events({
+                added: {
+                    projector: (state: HydrateState, event: Event<{ amount: number }>) => {
+                        state.total += event.payload.amount;
+                    },
+                    meta: { stage: 'hydration' }
+                }
+            })
+            .commands(() => ({}))
+            .build();
+
+        const seen: string[] = [];
+        const plugins: RedemeinePlugin[] = [
+            {
+                onHydrateEvent: async (ctx) => {
+                    seen.push(`first:${ctx.eventType}:${String((ctx.meta as any)?.stage)}`);
+                    (ctx.payload as any).amount += 1;
+                }
+            },
+            {
+                onHydrateEvent: async (ctx) => {
+                    seen.push(`second:${ctx.eventType}`);
+                    return { amount: (ctx.payload as any).amount * 10 };
+                }
+            }
+        ];
+
+        const mirage = await createMirage(aggregate, 'h-1', {
+            events: [
+                { type: 'hydrate.added.event', payload: { amount: 1 } },
+                { type: 'hydrate.added.event', payload: { amount: 2 } }
+            ],
+            plugins
+        });
+
+        expect(mirage.total).toBe(50);
+        expect(seen).toEqual([
+            'first:hydrate.added.event:hydration',
+            'second:hydrate.added.event',
+            'first:hydrate.added.event:hydration',
+            'second:hydrate.added.event'
+        ]);
     });
 
 });

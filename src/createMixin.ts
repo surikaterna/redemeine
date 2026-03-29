@@ -1,5 +1,5 @@
 import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import {
   MapEntityCommands,
@@ -36,7 +36,7 @@ type MixinEntityRegistryValueObjectMapEntry = {
  * A compiled reusable piece of domain logic (Commands, Events, Selectors)
  * ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
  */
-export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}>
+export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
   events: E;
   projectors: E;
@@ -44,69 +44,70 @@ export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPaylo
   eventOverrides: EOverrides;
   commandFactory: GenericCommandFactory;
   commandOverrides: COverrides;
+  eventMetadata: Record<string, TMeta | undefined>;
   selectors: Selectors;
   mounts: Record<string, MountedStructureMetadata>;
   mountedEntities: MountedEntityPackage[];
   __registryType?: Registry;
 }
 
-export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}> {
+export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>> {
   /**
    * Register event handlers for this Mixin that apply state mutations.
    */
-  events: <NewE extends Record<string, (state: S, event: Event<any, any>) => void>>(
+  events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
     events: NewE
-  ) => MixinBuilder<S, E & NewE, EOverrides, CPayloads, COverrides, Selectors, Registry>;
+  ) => MixinBuilder<S, E & NormalizeEventDefinitions<NewE>, EOverrides, CPayloads, COverrides, Selectors, Registry, TMeta>;
 
   overrideEventNames: <NewEOverrides extends Partial<Record<keyof E, EventType>>>(
     overrides: NewEOverrides
-  ) => MixinBuilder<S, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors, Registry>;
+  ) => MixinBuilder<S, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors, Registry, TMeta>;
 
   selectors: <NewSelectors extends SelectorsMap<S>>(
     selectors: NewSelectors
-  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, Registry>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, Registry, TMeta>;
 
-  commands: <NewC extends Record<string, RedemeineCommandDefinition<S>>>(
+  commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => NewC
-  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry, TMeta>;
 
   entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
     name: EN,
     entityComponent: T,
     options?: EntityListOptions<PK>,
     mountOverrides?: EntityMountOverrides
-  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryListEntry<T, PK> }>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryListEntry<T, PK> }, TMeta>;
 
   entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
     name: EN,
     entityComponent: T,
     options?: EntityMapOptions<Keys>,
     mountOverrides?: EntityMountOverrides
-  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryMapEntry<T, Keys> }>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryMapEntry<T, Keys> }, TMeta>;
 
   valueObjectList: <VOName extends string>(
     name: VOName,
     schema?: unknown
-  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry & { [K in VOName]: MixinEntityRegistryValueObjectListEntry }>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry & { [K in VOName]: MixinEntityRegistryValueObjectListEntry }, TMeta>;
 
   valueObjectMap: <VOName extends string>(
     name: VOName,
     schema?: unknown
-  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry & { [K in VOName]: MixinEntityRegistryValueObjectMapEntry }>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry & { [K in VOName]: MixinEntityRegistryValueObjectMapEntry }, TMeta>;
 
   overrideCommandNames: <NewCOverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
     overrides: NewCOverrides
-  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors, Registry>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors, Registry, TMeta>;
 
-  build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry>;
+  build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry, TMeta>;
 }
 
-export function createMixin<S>(): MixinBuilder<S> {
+export function createMixin<S, TMeta extends Record<string, unknown> = Record<string, unknown>>(): MixinBuilder<S, {}, {}, {}, {}, SelectorsMap<S>, {}, TMeta> {
   const component = createComponentBehaviorState<S>();
   const mountedEntities: MountedEntityPackage[] = [];
 
   const builder = bindFluentMethods({}, {
-    events: (events: Record<string, Function>) => component.addEvents(events),
+    events: (events: Record<string, RedemeineEventDefinition<S, TMeta>>) => component.addEvents(events as Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>),
     overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
     selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
     commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
@@ -138,6 +139,7 @@ export function createMixin<S>(): MixinBuilder<S> {
       const snapshot = component.getSnapshot();
       const {
         mergedEvents,
+        mergedEventMetadata,
         mergedEventOverrides,
         mergedCommandOverrides,
         mounts,
@@ -152,10 +154,11 @@ export function createMixin<S>(): MixinBuilder<S> {
         selectors: snapshot.selectors,
         commandFactory,
         commandOverrides: mergedCommandOverrides,
+        eventMetadata: mergedEventMetadata as Record<string, TMeta | undefined>,
         mounts,
         mountedEntities: [...mountedEntities]
       };
     }
   });
-  return builder as unknown as MixinBuilder<S>;
+  return builder as unknown as MixinBuilder<S, {}, {}, {}, {}, SelectorsMap<S>, {}, TMeta>;
 }
