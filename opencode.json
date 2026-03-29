@@ -1,0 +1,84 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "command": {
+    "on_startup": {
+      "description": "Pull Beads database state",
+      "template": "Run `bd dolt pull`."
+    }
+  },
+  "agent": {
+    "builder": {
+      "description": "Primary team lead that decomposes requests and delegates to subagents.",
+      "mode": "primary",
+      "color": "#39FF14",
+      "temperature": 0.2,
+      "prompt": "{file:.opencode/prompts/builder.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "explorer": {
+      "description": "Researches codebase context and answers discovery questions quickly.",
+      "mode": "subagent",
+      "temperature": 0.2,
+      "prompt": "{file:.opencode/prompts/explorer.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "architect": {
+      "description": "Plans with Beads decomposition and dependency mapping.",
+      "mode": "subagent",
+      "temperature": 0.3,
+      "prompt": "{file:.opencode/prompts/architect.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "engineer": {
+      "description": "Implements Beads work in atomic coding steps.",
+      "mode": "subagent",
+      "temperature": 0.2,
+      "prompt": "{file:.opencode/prompts/engineer.md}",
+      "permission": {
+        "edit": "allow"
+      }
+    },
+    "auditor": {
+      "description": "Tests and verifies Beads completion readiness.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/prompts/auditor.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "diplomat": {
+      "description": "Coordinates PRs and delivery via gh CLI.",
+      "mode": "subagent",
+      "temperature": 0.5,
+      "prompt": "{file:.opencode/prompts/diplomat.md}",
+      "permission": {
+        "edit": "ask"
+      }
+    },
+    "janitor": {
+      "description": "Handles technical debt and maintenance chores.",
+      "mode": "subagent",
+      "temperature": 0.2,
+      "prompt": "{file:.opencode/prompts/janitor.md}",
+      "permission": {
+        "edit": "allow"
+      }
+    },
+    "watchman": {
+      "description": "Identifies stalled tasks and workflow loops.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "prompt": "{file:.opencode/prompts/watchman.md}",
+      "permission": {
+        "edit": "deny"
+      }
+    }
+  }
+}
