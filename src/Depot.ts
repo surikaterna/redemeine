@@ -10,6 +10,16 @@ export type EventReadStreamOptions = {
   fromVersion?: number;
 };
 
+export type DepotSnapshot<TState> = {
+  state: TState;
+  version: number;
+};
+
+export type DepotGetOptions<TState> = {
+  initialState?: TState;
+  snapshot?: DepotSnapshot<TState>;
+};
+
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
 type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
 type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R> ? R : {};
@@ -20,7 +30,7 @@ type BuiltAggregatePlugins<T> = T extends BuiltAggregate<any, any, any, any, any
  * Handles event sourced hydration and persistence of new uncommitted events.
  */
 export interface Depot<TState extends {}, M extends Record<string, any> = any, Registry extends Record<string, any> = {}> {
-  get(id: string): Promise<Mirage<TState, M, Registry>>;
+  get(id: string, options?: DepotGetOptions<TState>): Promise<Mirage<TState, M, Registry>>;
   save(mirage: Mirage<TState, M, Registry>): Promise<void>;
 }
 
@@ -114,7 +124,20 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   };
 
   return {
-      get: async (id: string) => {
+      get: async (id: string, getOptions?: DepotGetOptions<BuiltAggregateState<BA>>) => {
+          const snapshot = getOptions?.snapshot;
+          const initialState = getOptions?.initialState;
+
+          if (snapshot) {
+            const events = store.readStream(id, { fromVersion: snapshot.version + 1 });
+            return createMirage(builder, id, { ...options, snapshot: snapshot.state, events });
+          }
+
+          if (initialState !== undefined) {
+            const events = store.readStream(id);
+            return createMirage(builder, id, { ...options, snapshot: initialState, events });
+          }
+
           const events = store.readStream(id);
           return createMirage(builder, id, { ...options, events });
       },
