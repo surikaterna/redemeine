@@ -189,9 +189,12 @@ describe('Depot', () => {
       .build();
 
     const calls: string[] = [];
+    const savedBatches: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
+    const afterCommitPayloads: Array<{ aggregateId: string; events: Event[]; intents: Record<string, unknown> }> = [];
     const store: EventStore = {
       getEvents: async () => [],
-      saveEvents: async () => {
+      saveEvents: async (id: string, events: Event[], expectedVersion?: number) => {
+        savedBatches.push({ id, events, expectedVersion });
         calls.push('save');
       }
     };
@@ -199,6 +202,11 @@ describe('Depot', () => {
     const plugins: RedemeinePlugin<PluginShape>[] = [
       {
         onAfterCommit: async (ctx) => {
+          afterCommitPayloads.push({
+            aggregateId: ctx.aggregateId,
+            events: ctx.events,
+            intents: ctx.intents
+          });
           calls.push(`after-1:${ctx.aggregateId}:${ctx.events.length}:${String(ctx.intents.traceId)}`);
         }
       },
@@ -213,6 +221,19 @@ describe('Depot', () => {
     const mirage = await depot.get('o1');
     await mirage.increment(2);
     await depot.save(mirage);
+
+    expect(savedBatches).toHaveLength(1);
+    expect(savedBatches[0]).toMatchObject({
+      id: 'o1',
+      expectedVersion: 1,
+      events: [{ type: 'order.incremented.event', payload: { amount: 2 } }]
+    });
+    expect(afterCommitPayloads).toHaveLength(1);
+    expect(afterCommitPayloads[0]).toMatchObject({
+      aggregateId: 'o1',
+      events: [{ type: 'order.incremented.event', payload: { amount: 2 } }],
+      intents: { traceId: 'trace-123', notified: true }
+    });
 
     expect(calls).toEqual([
       'save',
@@ -245,6 +266,44 @@ describe('Depot', () => {
 
     await expect(depot.save(mirage)).rejects.toThrow('save-failed');
     expect(calls).toEqual(['save']);
+  });
+
+  test('does not execute side-effects when append interceptor throws and rejects cleanly', async () => {
+    const calls: string[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.once('unhandledRejection', onUnhandledRejection);
+
+    const store: EventStore = {
+      getEvents: async () => [],
+      saveEvents: async () => {
+        calls.push('save');
+      }
+    };
+
+    const plugins: RedemeinePlugin[] = [
+      {
+        onBeforeAppend: async () => {
+          throw new Error('append-failed');
+        },
+        onAfterCommit: async () => {
+          calls.push('after');
+        }
+      }
+    ];
+
+    const depot = createDepot(aggregate, store, { plugins });
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+
+    await expect(depot.save(mirage)).rejects.toThrow('append-failed');
+    expect(calls).toEqual([]);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    process.removeListener('unhandledRejection', onUnhandledRejection);
+    expect(unhandled).toEqual([]);
   });
 
   test('composes builder plugins before depot runtime plugins', async () => {
