@@ -25,12 +25,10 @@ describe('Depot', () => {
   test('hydrates mirage from event store', async () => {
     const requestedIds: string[] = [];
     const store: EventStore = {
-      getEvents: async (id: string) => {
+      readStream: async function* (id: string) {
         requestedIds.push(id);
-        return [
-          { type: 'order.created.event', payload: { id: 'o9' } },
-          { type: 'order.incremented.event', payload: { amount: 2 } }
-        ];
+        yield { type: 'order.created.event', payload: { id: 'o9' } };
+        yield { type: 'order.incremented.event', payload: { amount: 2 } };
       },
       saveEvents: async () => undefined
     };
@@ -47,7 +45,7 @@ describe('Depot', () => {
   test('persists uncommitted events and clears them', async () => {
     const saveCalls: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async (id: string, events: Event[], expectedVersion?: number) => {
         saveCalls.push({ id, events, expectedVersion });
       }
@@ -71,7 +69,7 @@ describe('Depot', () => {
 
   test('throws when saving non-mirage object', async () => {
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => undefined
     };
 
@@ -108,10 +106,10 @@ describe('Depot', () => {
 
     const saveCalls: Array<{ id: string; events: Event[] }> = [];
     const store: EventStore = {
-      getEvents: async () => [
-        { type: 'order.created.event', payload: { id: 'o1' } },
-        { type: 'order.incremented.event', payload: { amount: 1 } }
-      ],
+      readStream: async function* () {
+        yield { type: 'order.created.event', payload: { id: 'o1' } };
+        yield { type: 'order.incremented.event', payload: { amount: 1 } };
+      },
       saveEvents: async (id: string, events: Event[]) => {
         saveCalls.push({ id, events });
       }
@@ -198,7 +196,7 @@ describe('Depot', () => {
     const savedBatches: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const afterCommitPayloads: Array<{ aggregateId: string; events: Event[]; intents: Record<string, unknown> }> = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async (id: string, events: Event[], expectedVersion?: number) => {
         savedBatches.push({ id, events, expectedVersion });
         calls.push('save');
@@ -253,7 +251,7 @@ describe('Depot', () => {
   test('does not execute onAfterCommit side-effects when save fails', async () => {
     const calls: string[] = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
         throw new Error('save-failed');
@@ -286,7 +284,7 @@ describe('Depot', () => {
     process.once('unhandledRejection', onUnhandledRejection);
 
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
       }
@@ -337,7 +335,7 @@ describe('Depot', () => {
       .build();
 
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
       }
@@ -361,7 +359,7 @@ describe('Depot', () => {
 
   test('throws structured plugin hook error for onAfterCommit and clears pending results', async () => {
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => undefined
     };
 
