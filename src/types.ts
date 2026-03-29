@@ -42,39 +42,96 @@ export interface AggregateHooks<State> {
   onEventApplied?: (event: Event<any, any>, state: ReadonlyDeep<State>) => void;
 }
 
+export interface PluginExtensions {
+  intents?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+}
+
+export type PluginIntents<TPlugins extends PluginExtensions = {}> =
+  TPlugins['intents'] extends Record<string, unknown>
+    ? TPlugins['intents']
+    : {};
+
+export type PluginContext<TPlugins extends PluginExtensions = {}> =
+  TPlugins['context'] extends Record<string, unknown>
+    ? TPlugins['context']
+    : {};
+
+export type PluginMeta<TPlugins extends PluginExtensions = {}> =
+  TPlugins['meta'] extends Record<string, unknown>
+    ? TPlugins['meta']
+    : Record<string, unknown>;
+
 export interface CommandInterceptorContext<
-  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPlugins extends PluginExtensions = {},
   TPayload = unknown
 > {
   aggregateId: string;
   commandType: string;
   payload: TPayload;
-  meta: TMeta | undefined;
+  meta: PluginMeta<TPlugins> | undefined;
 }
 
 export interface EventInterceptorContext<
-  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPlugins extends PluginExtensions = {},
   TPayload = unknown
 > {
   aggregateId: string;
   eventType: string;
   payload: TPayload;
-  meta: TMeta | undefined;
+  meta: PluginMeta<TPlugins> | undefined;
+}
+
+export interface AfterCommitContext<
+  TPlugins extends PluginExtensions = {},
+  TEvent extends Event<any, any> = Event<any, any>
+> {
+  aggregateId: string;
+  events: TEvent[];
+  intents: PluginIntents<TPlugins>;
 }
 
 export interface RedemeinePlugin<
-  TMeta extends Record<string, unknown> = Record<string, unknown>
+  TExtensions extends PluginExtensions = {}
 > {
-  onBeforeCommand?: (ctx: CommandInterceptorContext<TMeta, unknown>) => void | Promise<void>;
-  onBeforeAppend?: (ctx: EventInterceptorContext<TMeta, unknown>) => unknown | void | Promise<unknown | void>;
-  onHydrateEvent?: (ctx: EventInterceptorContext<TMeta, unknown>) => unknown | void | Promise<unknown | void>;
+  onBeforeCommand?: (ctx: CommandInterceptorContext<TExtensions, unknown>) => void | Promise<void>;
+  onBeforeAppend?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
+  onHydrateEvent?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
+  onAfterCommit?: (ctx: AfterCommitContext<TExtensions>) => void | Promise<void>;
 }
+
+export type ExtractPluginExtensions<TPlugin> =
+  TPlugin extends RedemeinePlugin<infer TExtensions>
+    ? TExtensions
+    : {};
+
+export type UnionToIntersection<U> = (
+  U extends unknown ? (arg: U) => void : never
+) extends ((arg: infer I) => void)
+  ? I
+  : never;
+
+export type MergePluginExtensions<TPlugins extends readonly RedemeinePlugin<any>[]> =
+  UnionToIntersection<ExtractPluginExtensions<TPlugins[number]>>;
 
 /**
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.
  */
 export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: any[]) => any>;
+
+export type CommandContext<TIntents extends Record<string, unknown>> = {
+  [K in keyof TIntents]: (payload: TIntents[K]) => { command: K; payload: TIntents[K] };
+} & {
+  [key: string]: (payload: unknown) => { command: string; payload: unknown };
+};
+
+export type CommandIntents<TCommands> = {
+  [K in keyof TCommands]: TCommands[K] extends { payload: infer P }
+    ? P
+    : TCommands[K];
+};
 
 /**
  * A foundational building block representing a domain event. 
@@ -99,6 +156,11 @@ export interface Command<P = any, T extends CommandType | string = CommandType> 
   headers?: EnvelopeHeaders;
   metadata?: any;
 }
+
+export type CommandResult<TEvent, TPlugins extends PluginExtensions = {}> =
+  | TEvent[]
+  | TEvent
+  | ({ events: TEvent[] } & PluginIntents<TPlugins>);
 
 /**
  * Describes the originating command attached to emitted event metadata.
@@ -197,21 +259,21 @@ export type EventEmitterFactory<AggregateName extends string, E, EOverrides> = {
     : never;
 } & Record<string, (...args: any[]) => Event<any, any>>;
 
-export type PackedCommand<S, Args extends any[], P> = {
+export type PackedCommand<S, Args extends any[], P, TPlugins extends PluginExtensions = {}> = {
   /**
    * Defines the public API signature and serializable Command payload structure.
    */
   pack: (...args: Args) => P;
-  handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[];
+  handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | CommandResult<Event<any, any>, TPlugins>;
 };
 
-export type PackedCommandWithMeta<S, Args extends any[], P, TMeta extends Record<string, unknown> = Record<string, unknown>> =
-  PackedCommand<S, Args, P> & {
+export type PackedCommandWithMeta<S, Args extends any[], P, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> =
+  PackedCommand<S, Args, P, TPlugins> & {
     meta?: TMeta;
   };
 
-export type ShorthandCommandWithMeta<S, Args extends any[] = any[], TMeta extends Record<string, unknown> = Record<string, unknown>> = {
-  handler: (state: ReadonlyDeep<S>, ...args: Args) => Event<any, any> | Event<any, any>[];
+export type ShorthandCommandWithMeta<S, Args extends any[] = any[], TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> = {
+  handler: (state: ReadonlyDeep<S>, ...args: Args) => Event<any, any> | CommandResult<Event<any, any>, TPlugins>;
   meta?: TMeta;
 };
 

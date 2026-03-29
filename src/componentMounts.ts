@@ -1,5 +1,5 @@
 import type { EntityPackage } from './createEntity';
-import type { GenericCommandFactory, GenericCommandMap } from './redemeineComponent';
+import type { GenericCommandFactory, GenericCommandFactoryContext, GenericCommandMap } from './redemeineComponent';
 
 export type MapEntityCommands<Name extends string, CPayloads> = {
   [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
@@ -116,7 +116,7 @@ export function composeMountedComponentBehavior(
     });
   });
 
-  const commandFactory: GenericCommandFactory = (emit: unknown, context: { selectors: Record<string, unknown> }) => {
+  const commandFactory: GenericCommandFactory = (emit: unknown, context: GenericCommandFactoryContext) => {
     const mergedCommands: GenericCommandMap = {
       ...baseCommandFactory(emit, context)
     };
@@ -135,7 +135,7 @@ export function composeMountedComponentBehavior(
         }
       });
 
-      const nestedCommands = nested.commandFactory(nestedEmit, context as { selectors: Record<string, unknown> });
+      const nestedCommands = nested.commandFactory(nestedEmit, context);
       Object.keys(nestedCommands).forEach((cmdKey) => {
         mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey];
       });
