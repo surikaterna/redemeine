@@ -42,6 +42,34 @@ export interface AggregateHooks<State> {
   onEventApplied?: (event: Event<any, any>, state: ReadonlyDeep<State>) => void;
 }
 
+export interface CommandInterceptorContext<
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPayload = unknown
+> {
+  aggregateId: string;
+  commandType: string;
+  payload: TPayload;
+  meta: TMeta | undefined;
+}
+
+export interface EventInterceptorContext<
+  TMeta extends Record<string, unknown> = Record<string, unknown>,
+  TPayload = unknown
+> {
+  aggregateId: string;
+  eventType: string;
+  payload: TPayload;
+  meta: TMeta | undefined;
+}
+
+export interface RedemeinePlugin<
+  TMeta extends Record<string, unknown> = Record<string, unknown>
+> {
+  onBeforeCommand?: (ctx: CommandInterceptorContext<TMeta, unknown>) => void | Promise<void>;
+  onBeforeAppend?: (ctx: EventInterceptorContext<TMeta, unknown>) => unknown | void | Promise<unknown | void>;
+  onHydrateEvent?: (ctx: EventInterceptorContext<TMeta, unknown>) => unknown | void | Promise<unknown | void>;
+}
+
 /**
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.
@@ -177,6 +205,16 @@ export type PackedCommand<S, Args extends any[], P> = {
   handler: (state: ReadonlyDeep<S>, payload: P) => Event<any, any> | Event<any, any>[];
 };
 
+export type PackedCommandWithMeta<S, Args extends any[], P, TMeta extends Record<string, unknown> = Record<string, unknown>> =
+  PackedCommand<S, Args, P> & {
+    meta?: TMeta;
+  };
+
+export type ShorthandCommandWithMeta<S, Args extends any[] = any[], TMeta extends Record<string, unknown> = Record<string, unknown>> = {
+  handler: (state: ReadonlyDeep<S>, ...args: Args) => Event<any, any> | Event<any, any>[];
+  meta?: TMeta;
+};
+
 type PublicArgsFromShorthand<T> = ReplaceFirstArg<never, T> extends (state: never, ...args: infer Args) => any
   ? Args
   : never;
@@ -184,6 +222,17 @@ type PublicArgsFromShorthand<T> = ReplaceFirstArg<never, T> extends (state: neve
 export type MapCommandsToPayloads<C> = {
   [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P>
     ? { args: Args, payload: P }
+    : C[K] extends { handler: (state: any, ...args: any[]) => any }
+      ? PublicArgsFromShorthand<C[K]['handler']> extends infer Args
+        ? {
+            args: Args;
+            payload: Args extends [infer Single]
+              ? Single
+              : Args extends []
+                ? void
+                : Args;
+          }
+        : never
     : C[K] extends (state: any, ...args: any[]) => any
       ? PublicArgsFromShorthand<C[K]> extends infer Args
         ? {

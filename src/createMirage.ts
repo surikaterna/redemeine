@@ -1,4 +1,4 @@
-import { Command, Event, AggregateHooks } from './types';
+import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, RedemeinePlugin } from './types';
 import { Contract } from './Contract';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { createReadonlyDeepProxy } from './utils/readonlyProxy';
@@ -45,6 +45,10 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
         eventProjectors: Record<string, Function>;
     };
     selectors: Sel;
+    metadata?: {
+        commands?: Record<string, { meta?: Record<string, unknown> }>;
+        events?: Record<string, { meta?: Record<string, unknown> }>;
+    };
     mounts?: Record<string, MountMetadata>;
     __registryType?: Registry;
 }
@@ -54,15 +58,16 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
  * These methods dispatch commands and return the mutated state.
  */
 type IsBroadRecord<T> = string extends keyof T ? true : false;
+type DispatchResult<T> = T | Promise<T>;
 
 export type MirageCommandMap<S, M> = IsBroadRecord<M> extends true
     ? {}
     : {
         [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-            ? (...args: Args extends any[] ? Args : never) => S
+            ? (...args: Args extends any[] ? Args : never) => DispatchResult<S>
             : [M[K]] extends [void] | [undefined] | [never]
-                ? () => S
-                : (payload: M[K]) => S;
+                ? () => DispatchResult<S>
+                : (payload: M[K]) => DispatchResult<S>;
     };
 
 type EntityStateOf<T> = T extends EntityPackage<infer ES, any, any, any, any, any, any> ? ES : never;
@@ -79,10 +84,10 @@ type InjectedArgCount<PK> = PK extends readonly any[] ? PK['length'] : 1;
 
 type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number> = {
     [K in keyof TCommands]: TCommands[K] extends { args: infer Args }
-        ? (...args: DropFirstN<Args extends any[] ? Args : [], InjectedCount>) => TEntityState
+        ? (...args: DropFirstN<Args extends any[] ? Args : [], InjectedCount>) => DispatchResult<TEntityState>
         : [TCommands[K]] extends [void] | [undefined] | [never]
-            ? () => TEntityState
-            : (payload: TCommands[K]) => TEntityState;
+            ? () => DispatchResult<TEntityState>
+            : (payload: TCommands[K]) => DispatchResult<TEntityState>;
 };
 
 type CompositePkArg<TEntityState, PK> = PK extends readonly (infer K)[]
@@ -268,7 +273,7 @@ export type Mirage<TState, M extends Record<string, any> = any, Registry extends
     MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel> & {
         readonly state: ReadonlyDeep<TState>;
         readonly selectors: MirageSelectorMap<TState, Sel, Registry>;
-        dispatch: (command: any) => TState;
+        dispatch: (command: any) => DispatchResult<TState>;
         subscribe: (listener: (state: TState) => void) => () => void;
     };
 
@@ -278,12 +283,59 @@ export type Mirage<TState, M extends Record<string, any> = any, Registry extends
  */
 export const MirageCoreSymbol = Symbol('MirageCore');
 
+const hasHydrateEventPlugins = (plugins: RedemeinePlugin[]): boolean => {
+    return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
+};
+
+const hydrateStateFromEvents = <S>(
+    builder: BuiltAggregate<S, any, any, any>,
+    baseState: S,
+    events: Event[]
+): S => {
+    return events.reduce((acc, ev) => builder.apply(acc, ev), baseState);
+};
+
+const hydrateStateFromEventsWithPlugins = async <S>(
+    builder: BuiltAggregate<S, any, any, any>,
+    aggregateId: string,
+    baseState: S,
+    events: Event[],
+    plugins: RedemeinePlugin[]
+): Promise<S> => {
+    let state = baseState;
+    const eventMetaRegistry = builder.metadata?.events || {};
+
+    for (const event of events) {
+        const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+            aggregateId,
+            eventType: event.type,
+            payload: event.payload,
+            meta: eventMetaRegistry[event.type]?.meta
+        };
+
+        for (const plugin of plugins) {
+            if (typeof plugin.onHydrateEvent === 'function') {
+                const nextPayload = await plugin.onHydrateEvent(ctx);
+                if (nextPayload !== undefined) {
+                    ctx.payload = nextPayload;
+                }
+            }
+        }
+
+        event.payload = ctx.payload;
+        state = builder.apply(state, event);
+    }
+
+    return state;
+};
+
 /**
  * Configuration options strictly passed during the instantiation of a Mirage instance.
  */
 export interface MirageOptions {
     contract?: Contract;
     strict?: boolean;
+    plugins?: RedemeinePlugin[];
 }
 
 /**
@@ -294,34 +346,45 @@ export class MirageCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
     private listeners: ((state: S) => void)[] = [];
+    private plugins: RedemeinePlugin[];
+    private hasBeforeCommandPlugins: boolean;
 
     constructor(
         public builder: BuiltAggregate<S, any, any, any>,
         public id: string,
         public state: S,
         public contract?: Contract,
-        public strict: boolean = false
-    ) {}
+        public strict: boolean = false,
+        plugins: RedemeinePlugin[] = []
+    ) {
+        this.plugins = plugins;
+        this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
+    }
 
-    public subscribe(listener: (state: S) => void) {
-        this.listeners.push(listener);
-        return () => {
-            this.listeners = this.listeners.filter(l => l !== listener);
+    private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
+        const commandMetaRegistry = this.builder.metadata?.commands || {};
+        const ctx: CommandInterceptorContext<Record<string, unknown>, unknown> = {
+            aggregateId: this.id,
+            commandType: command.type,
+            payload: command.payload,
+            meta: commandMetaRegistry[command.type]?.meta
         };
+
+        for (const plugin of this.plugins) {
+            if (typeof plugin.onBeforeCommand === 'function') {
+                await plugin.onBeforeCommand(ctx);
+            }
+        }
     }
 
-    public notify() {
-        this.listeners.forEach(l => l(this.state));
-    }
-
-    public dispatch(cmd: any): S {
+    private processAndApply(command: Command<any, string>): S {
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(cmd, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
         }
 
         if (this.contract) {
             try {
-                this.contract.validateCommand(cmd.type, cmd.payload);
+                this.contract.validateCommand(command.type, command.payload);
             } catch (err: any) {
                 if (err.message.includes('schema not found')) {
                     if (this.strict) throw err;
@@ -332,10 +395,10 @@ export class MirageCore<S> {
             }
         }
 
-        const events = this.builder.process(this.state, cmd);
-        
+        const events = this.builder.process(this.state, command);
+
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(cmd, events, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
         }
 
         for (const ev of events) {
@@ -361,6 +424,77 @@ export class MirageCore<S> {
         this.notify();
         return this.state;
     }
+
+    private async dispatchWithPlugins(command: Command<any, string>): Promise<S> {
+        await this.runBeforeCommandInterceptors(command);
+
+        if (this.builder.hooks?.onBeforeCommand) {
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
+        }
+
+        if (this.contract) {
+            try {
+                this.contract.validateCommand(command.type, command.payload);
+            } catch (err: any) {
+                if (err.message.includes('schema not found')) {
+                    if (this.strict) throw err;
+                    console.warn(err.message);
+                } else {
+                    throw err;
+                }
+            }
+        }
+
+        const events = this.builder.process(this.state, command);
+
+        if (this.builder.hooks?.onAfterCommand) {
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
+        }
+
+        for (const ev of events) {
+            if (this.contract) {
+                try {
+                    this.contract.validateEvent(ev.type, ev.payload);
+                } catch (err: any) {
+                    if (err.message.includes('schema not found')) {
+                        if (this.strict) throw err;
+                        console.warn(err.message);
+                    } else {
+                        throw err;
+                    }
+                }
+            }
+            this.state = this.builder.apply(this.state, ev);
+            this.uncommitted.push(ev);
+            if (this.builder.hooks?.onEventApplied) {
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
+            }
+        }
+        this.version++;
+        this.notify();
+        return this.state;
+    }
+
+    public subscribe(listener: (state: S) => void) {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
+    }
+
+    public notify() {
+        this.listeners.forEach(l => l(this.state));
+    }
+
+    public dispatch(cmd: any): DispatchResult<S> {
+        const command = cmd as Command<any, string>;
+
+        if (this.hasBeforeCommandPlugins) {
+            return this.dispatchWithPlugins(command);
+        }
+
+        return this.processAndApply(command);
+    }
 }
 
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
@@ -370,12 +504,37 @@ type BuiltAggregateSelectors<T> = T extends BuiltAggregate<any, any, any, any, i
 
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
+    id: string
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+    builder: BA,
+    id: string,
+    setup: (MirageOptions & { snapshot?: BuiltAggregateState<BA>; events?: undefined }) | undefined
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+    builder: BA,
+    id: string,
+    setup: (Omit<MirageOptions, 'plugins'> & { snapshot?: BuiltAggregateState<BA>; events?: Event[] }) | undefined
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+    builder: BA,
+    id: string,
+    setup: MirageOptions & { snapshot?: BuiltAggregateState<BA>; events: Event[]; plugins: RedemeinePlugin[] }
+): Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+    builder: BA,
+    id: string,
+    setup: MirageOptions & { snapshot?: BuiltAggregateState<BA>; events: Event[] }
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
+export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+    builder: BA,
     id: string,
     setup?: MirageOptions & { snapshot?: BuiltAggregateState<BA>; events?: Event[] }
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> {
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>> {
 
-    const state = setup?.events?.reduce((acc, ev) => builder.apply(acc, ev), setup?.snapshot ?? builder.initialState) ?? (setup?.snapshot ?? builder.initialState);
-    const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict);
+    const makeMirage = (state: BuiltAggregateState<BA>): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
+
+    const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, setup?.plugins || []);
     const mounts = builder.mounts || {};
     const selectors = (builder.selectors || {}) as Record<string, (state: ReadonlyDeep<BuiltAggregateState<BA>>, ...args: any[]) => any>;
 
@@ -462,7 +621,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
     // Removed local proxy implementation
 
-    const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): BuiltAggregateState<BA> => {
+    const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): DispatchResult<BuiltAggregateState<BA>> => {
         const commandName = toCommandName(commandPath);
         const creator = (builder.commandCreators as any)[commandName];
         if (typeof creator !== 'function') {
@@ -1050,6 +1209,24 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     };
 
     return makeDeepProxy([], [], { idsPayload: {}, packPrefix: [] }) as Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
+    };
+
+    const baseState = setup?.snapshot ?? builder.initialState;
+    const setupEvents = setup?.events || [];
+    const plugins = setup?.plugins || [];
+
+    if (setupEvents.length === 0) {
+        return makeMirage(baseState);
+    }
+
+    if (!hasHydrateEventPlugins(plugins)) {
+        return makeMirage(hydrateStateFromEvents(builder, baseState, setupEvents));
+    }
+
+    return (async () => {
+        const hydratedState = await hydrateStateFromEventsWithPlugins(builder, id, baseState, setupEvents, plugins);
+        return makeMirage(hydratedState);
+    })();
 }
 
 export function createLegacyAggregateBridge<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(mirage: Mirage<S, M, Registry, Sel>) {

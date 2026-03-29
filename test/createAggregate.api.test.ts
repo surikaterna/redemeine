@@ -221,4 +221,121 @@ describe('createAggregate API coverage', () => {
     expect(live.aliases[0].label).toBe('home');
     expect(live.tagsByScope.US.label).toBe('primary');
   });
+
+  test('build exposes resolved metadata registries for commands and events', () => {
+    type Meta = { source: string; version?: number };
+    type State = { id: string; status: string };
+
+    const aggregate = createAggregate<State, 'order', Meta>('order', { id: 'o1', status: 'new' })
+      .events({
+        approved: {
+          projector: (state, event: Event<{ status: string }>) => {
+            state.status = event.payload.status;
+          },
+          meta: { source: 'event-registry', version: 1 }
+        }
+      })
+      .commands((emit) => ({
+        approve: {
+          handler: (state, payload: { status: string }) => emit.approved(payload),
+          meta: { source: 'command-registry' }
+        }
+      }))
+      .build();
+
+    expect(aggregate.metadata.commands['order.approve.command'].meta).toEqual({ source: 'command-registry' });
+    expect(aggregate.metadata.events['order.approved.event'].meta).toEqual({ source: 'event-registry', version: 1 });
+
+    const emitted = aggregate.process({ id: 'o1', status: 'new' }, aggregate.commandCreators.approve({ status: 'approved' }));
+    expect(emitted[0].type).toBe('order.approved.event');
+  });
+
+  test('metadata registry inherits command/event meta from mounted entities including nested mounts', () => {
+    type Meta = { source: string; level: number };
+    type PartState = { id: string; value: number };
+    type LineState = { id: string; qty: number; parts: PartState[] };
+    type OrderState = { id: string; lines: LineState[] };
+
+    const partEntity = createEntity<PartState, 'part', Meta>('part')
+      .events({
+        valueChanged: {
+          projector: (part, event: Event<{ id: string; value: number }>) => {
+            part.value = event.payload.value;
+          },
+          meta: { source: 'part-event', level: 2 }
+        }
+      })
+      .commands((emit) => ({
+        changeValue: {
+          handler: (part, payload: { id: string; value: number }) => emit.valueChanged(payload),
+          meta: { source: 'part-command', level: 2 }
+        }
+      }))
+      .build();
+
+    const lineEntity = createEntity<LineState, 'line', Meta>('line')
+      .entityList('parts', partEntity)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const aggregate = createAggregate<OrderState, 'order', Meta>('order', {
+      id: 'o1',
+      lines: [{ id: 'l1', qty: 1, parts: [{ id: 'p1', value: 10 }] }]
+    })
+      .entityList('lines', lineEntity)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const command = aggregate.commandCreators.linesPartsChangeValue({ id: 'p1', value: 99 });
+    const emitted = aggregate.process(aggregate.initialState, command as any);
+
+    expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'part-command', level: 2 });
+    expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'part-event', level: 2 });
+  });
+
+  test('metadata registry inherits event meta from entity mounts provided through mixins', () => {
+    type Meta = { source: string; level: number };
+    type LineState = { id: string; qty: number };
+    type OrderState = { id: string; lines: LineState[] };
+
+    const lineEntity = createEntity<LineState, 'line', Meta>('line')
+      .events({
+        qtyUpdated: {
+          projector: (line, event: Event<{ id: string; qty: number }>) => {
+            line.qty = event.payload.qty;
+          },
+          meta: { source: 'mixin-mounted-entity-event', level: 1 }
+        }
+      })
+      .commands((emit) => ({
+        updateQty: {
+          handler: (line, payload: { id: string; qty: number }) => emit.qtyUpdated(payload),
+          meta: { source: 'mixin-mounted-entity-command', level: 1 }
+        }
+      }))
+      .build();
+
+    const mixin = createMixin<OrderState, Meta>()
+      .entityList('lines', lineEntity)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const aggregate = createAggregate<OrderState, 'order', Meta>('order', {
+      id: 'o1',
+      lines: [{ id: 'l1', qty: 1 }]
+    })
+      .mixins(mixin)
+      .events({})
+      .commands(() => ({}))
+      .build();
+
+    const command = aggregate.commandCreators.linesUpdateQty({ id: 'l1', qty: 7 });
+    const emitted = aggregate.process(aggregate.initialState, command as any);
+
+    expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'mixin-mounted-entity-command', level: 1 });
+    expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'mixin-mounted-entity-event', level: 1 });
+  });
 });

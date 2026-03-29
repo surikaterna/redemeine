@@ -9,7 +9,7 @@ import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { defaultNamingStrategy } from './utils/naming';
-import { RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import { bindContext } from './bindContext';
 
 type AggregateSelectorUtils = { bindContext: typeof bindContext };
@@ -32,6 +32,7 @@ type AggregateMixinLike<S = any, Commands = {}, Registry extends AggregateEntity
     commands?: Commands;
     events?: Record<string, Function>;
     projectors?: Record<string, Function>;
+    eventMetadata?: Record<string, Record<string, unknown> | undefined>;
     eventOverrides?: Record<string, string>;
     commandOverrides?: Record<string, string>;
     selectors?: AggregateSelectorsMap<S>;
@@ -139,7 +140,7 @@ type RegistryFromPackages<T extends readonly EntityPackage<any, any, any, any, a
  * The core builder interface for composing Aggregates in Redemeine.
  * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
  */
-export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}> {
+export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>> {
     /**
      * Inherit all business rules, selectors, and events from a parent aggregate builder.
      * 
@@ -148,8 +149,8 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   .extends(OrderAggregate) // Inherits standard order rules while adding legs
      */
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry>(
-        parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry>
-    ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry>;
+        parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry, TMeta>
+    ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta>;
 
     /**
      * Register nested entities into the aggregate's namespace.
@@ -172,7 +173,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
         ...entityPackages: T
-    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>>;
+    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta>;
 
     /**
      * Register a list-backed entity collection with optional simple or composite primary key definition.
@@ -182,7 +183,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         entityComponent: T,
         options?: EntityListOptions<PK>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }>;
+    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }, TMeta>;
 
     /**
      * Register a record-backed entity map with optional known keys.
@@ -192,7 +193,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         entityComponent: T,
         options?: EntityMapOptions<Keys>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }>;
+    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }, TMeta>;
 
     /**
      * Register a value object branch. It is exposed as read-only state and does not add routed commands.
@@ -200,7 +201,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     valueObject: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectEntry }>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectEntry }, TMeta>;
 
     /**
      * Register a read-only value object list branch.
@@ -209,7 +210,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     valueObjectList: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectListEntry }>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectListEntry }, TMeta>;
 
     /**
      * Register a read-only value object map branch.
@@ -218,7 +219,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     valueObjectMap: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectMapEntry }>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectMapEntry }, TMeta>;
 
     /**
      * Compose reusable domain logic chunks (Mixins) into this aggregate.
@@ -228,7 +229,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      */
     mixins: <T extends AggregateMixinLike<any, any, any>[]>(
         ...mixins: CompatibleMixins<S, T>
-    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>>;
+    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>, TMeta>;
 
     /**
      * Define pure functions for reading and deriving state.
@@ -242,10 +243,10 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     selectors: {
         <NewSel extends AggregateSelectorsMap<S>>(
             selectors: NewSel
-        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry>;
+        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry, TMeta>;
         <NewSel extends AggregateSelectorsMap<S>>(
             selectorFactory: (utils: AggregateSelectorUtils) => NewSel
-        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry>;
+        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry, TMeta>;
     };
 
     /**
@@ -258,9 +259,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   itemAdded: (state, event) => { state.items.push(event.payload); }
      * })
      */
-    events: <NewE extends Record<string, (state: any, event: Event<any, any>) => void>>(
+    events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
         events: NewE
-    ) => AggregateBuilder<S, Name, M, E & NewE, EOverrides, Sel, Registry>;
+    ) => AggregateBuilder<S, Name, M, E & NormalizeEventDefinitions<NewE>, EOverrides, Sel, Registry, TMeta>;
 
     /**
      * Overrides the default Targeted Naming engine for specific events.
@@ -271,7 +272,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      */
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
-    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel, Registry>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel, Registry, TMeta>;
 
     /**
      * Replaces the default Targeted Naming engine with a custom strategy.
@@ -280,7 +281,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * @example
      * .naming({ event: (agg, prop) => `${agg}_${prop}` })
      */
-    naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry>;
+    naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta>;
 
     /**
      * Define command processors that execute business logic and emit events.
@@ -299,9 +300,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      *   }
      * }))
      */
-commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
+commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel }) => C
-    ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry>;
+    ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry, TMeta>;
 
     /**
      * Overrides the default Targeted Naming engine for specific commands.
@@ -311,7 +312,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
      * .overrideCommandNames({ cancelOrder: 'cmd.legacy.cancel' })
      */
     overrideCommandNames: (overrides: Partial<Record<AggregateCommandKeys<M>, CommandType>>) => 
-        AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry>;
+        AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta>;
 
     /**
      * Registers lifecycle hooks for cross-cutting concerns (e.g., logging, auth, metrics).
@@ -324,7 +325,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
      *   onEventApplied: (event, state) => console.log(`State updated to ${state.status}`)
      * })
      */
-    hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry>;
+    hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta>;
 
     /**
      * Finalizes and compiles the aggregate.
@@ -349,6 +350,10 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
         selectors: Sel;
         hooks: AggregateHooks<S>;
         mounts: Record<string, MountedStructureMetadata>;
+        metadata: {
+            commands: Record<string, { meta?: TMeta }>;
+            events: Record<string, { meta?: TMeta }>;
+        };
         __registryType?: Registry;
 
     };
@@ -356,6 +361,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
     // Internal state for inheritance
     _state: {
         events: Record<string, Function>;
+        eventMetadata: Record<string, Record<string, unknown> | undefined>;
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
         commandsFactory: GenericCommandFactory;
@@ -378,10 +384,10 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
  *     }
  *   }))
  */
-export function createAggregate<S, Name extends string>(
+export function createAggregate<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>>(
     aggregateName: Name,
     initialState: S
-): AggregateBuilder<S, Name> {
+): AggregateBuilder<S, Name, {}, {}, {}, {}, {}, TMeta> {
 
     const component = createComponentBehaviorState<S>();
     let _entityPackages: MountedEntityPackage[] = [];
@@ -396,14 +402,14 @@ export function createAggregate<S, Name extends string>(
                 : selectorsOrFactory;
             component.addSelectors(resolvedSelectors);
         },
-        events: (events: Record<string, Function>) => component.addEvents(events),
+        events: (events: Record<string, RedemeineEventDefinition<S, TMeta>>) => component.addEvents(events as Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>),
         overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
         commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
         overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
     });
 
     Object.assign(builder, {
-        extends: (parentBuilder: AggregateBuilder<S, string, unknown, unknown, unknown, unknown>) => {
+        extends: (parentBuilder: AggregateBuilder<S, string, unknown, unknown, unknown, unknown, AggregateEntityRegistry, TMeta>) => {
             const parentState = parentBuilder._state;
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
@@ -489,6 +495,7 @@ export function createAggregate<S, Name extends string>(
             const snapshot = component.getSnapshot();
             return {
                 events: snapshot.events,
+                eventMetadata: snapshot.eventMetadata,
                 eventOverrides: snapshot.eventOverrides,
                 commandOverrides: snapshot.commandOverrides,
                 commandsFactory: component.getCommandsFactory(),
@@ -501,6 +508,13 @@ export function createAggregate<S, Name extends string>(
         build: () => {
             const snapshot = component.getSnapshot();
             const allEvents = _mixins.reduce((acc, m) => ({ ...acc, ...(m.projectors || m.events) }), snapshot.events);
+            const allEventMetadata: Record<string, TMeta | undefined> = {
+                ...(snapshot.eventMetadata as Record<string, TMeta | undefined>)
+            };
+            _mixins.forEach((m) => {
+                const mixinMeta = (m.eventMetadata || {}) as Record<string, TMeta | undefined>;
+                Object.assign(allEventMetadata, mixinMeta);
+            });
             const projectorByEventType: Record<string, Function> = {};
             const scopedProjectorByEventType: Record<string, Function> = {};
             const scopedEventProjectors: Record<string, Function> = {};
@@ -545,6 +559,7 @@ export function createAggregate<S, Name extends string>(
                 const collectionName = mountName + 's';
                 const entityPath = collectionName.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
                 const entityEvents = entity.projectors || entity.events || {};
+                const entityEventMetadata = (entity as unknown as { eventMetadata?: Record<string, TMeta | undefined> }).eventMetadata || {};
                 const entityEventNameOverrides = entity.eventOverrides || {};
                 const mountEventNameOverrides = {
                     ...((mountOverrides && mountOverrides.eventOverrides) || {}),
@@ -555,6 +570,7 @@ export function createAggregate<S, Name extends string>(
 
                 Object.keys(entityEvents).forEach((eventKey) => {
                     scopedEventProjectors[`${entityPath}:${eventKey}`] = entityEvents[eventKey];
+                    allEventMetadata[`${entityPath}:${eventKey}`] = entityEventMetadata[eventKey];
                     const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
                     const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
                     const scopedEventType = mountEventOverride
@@ -608,6 +624,21 @@ export function createAggregate<S, Name extends string>(
                 }
             });
 
+            const metadataByEventType = Array.from(new Set([...Object.keys(allEvents), ...Object.keys(allEventMetadata)])).reduce((acc, eventKey) => {
+                const resolvedEventType = allEventOverrides[eventKey] || _namingStrategy.event(aggregateName, eventKey);
+                const meta = allEventMetadata[eventKey];
+                acc[resolvedEventType] = meta !== undefined ? { meta } : {};
+                return acc;
+            }, {} as Record<string, { meta?: TMeta }>);
+
+            const metadataByCommandType = Object.keys(allCommandsMap).reduce((acc, key) => {
+                const resolvedCommandType = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
+                const commandDefinition = allCommandsMap[key] as unknown as { meta?: TMeta };
+                const meta = commandDefinition?.meta;
+                acc[resolvedCommandType] = meta !== undefined ? { meta } : {};
+                return acc;
+            }, {} as Record<string, { meta?: TMeta }>);
+
             const commandHandlerByType = Object.keys(allCommandsMap).reduce((acc, key) => {
                 const resolvedCommandType = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
                 acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]);
@@ -626,10 +657,14 @@ export function createAggregate<S, Name extends string>(
                 },
                 selectors: allSelectors,
                 hooks: _hooks,
-                mounts
+                mounts,
+                metadata: {
+                    commands: metadataByCommandType,
+                    events: metadataByEventType
+                }
             };
         }
     });
 
-    return builder as unknown as AggregateBuilder<S, Name>;
+    return builder as unknown as AggregateBuilder<S, Name, {}, {}, {}, {}, {}, TMeta>;
 }
