@@ -60,9 +60,9 @@ describe('Mirage tests', () => {
         expect(bridge._state.title).toBe('Loaded');
     });
 
-    test('should load existing state from events', () => {
+    test('should load existing state from events', async () => {
         const builder = setupBuilder();
-        const live = createMirage(builder, 'agg-3', {
+        const live = await createMirage(builder, 'agg-3', {
             events: [{ type: 'test.updated.event', payload: 42 }]
         });
         const bridge = createLegacyAggregateBridge(live);
@@ -71,9 +71,24 @@ describe('Mirage tests', () => {
         expect(bridge._state.title).toBe('New');
     });
 
-    test('should load existing state from snapshot and events', () => {
+    test('supports direct array replay hydration without async setup', async () => {
         const builder = setupBuilder();
-        const live = createMirage(builder, 'agg-4', {
+        const replayEvents: Event[] = [
+            { type: 'test.updated.event', payload: 5 },
+            { type: 'test.updated.event', payload: 12 }
+        ];
+
+        const live = await createMirage(builder, 'agg-3-array', {
+            events: replayEvents
+        });
+
+        const bridge = createLegacyAggregateBridge(live);
+        expect(bridge._state.value).toBe(12);
+    });
+
+    test('should load existing state from snapshot and events', async () => {
+        const builder = setupBuilder();
+        const live = await createMirage(builder, 'agg-4', {
             snapshot: { value: 10, title: 'Loaded', line: [] },
             events: [{ type: 'test.updated.event', payload: 42 }]
         });
@@ -112,9 +127,9 @@ describe('Mirage tests', () => {
         expect(uncommitted[0].payload).toEqual({ qty: 99, lineId: '123', id: '123' });
     });
 
-    test('should allow reading readable states directly from live object natively', () => {
+    test('should allow reading readable states directly from live object natively', async () => {
         const builder = setupBuilder();
-        const live = createMirage(builder, 'agg-r', {
+        const live = await createMirage(builder, 'agg-r', {
             events: [{ type: 'test.updated.event', payload: 777 }]
         });
 
