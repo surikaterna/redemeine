@@ -668,9 +668,9 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
 
             const commandHandlerByType = Object.keys(allCommandsMap).reduce((acc, key) => {
                 const resolvedCommandType = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
-                acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[] } | Event[];
+                acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[];
                 return acc;
-            }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[] } | Event[]>);
+            }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[]>);
 
             return {
                 initialState,

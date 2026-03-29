@@ -51,7 +51,7 @@ export interface PluginExtensions {
 export type PluginIntents<TPlugins extends PluginExtensions = {}> =
   TPlugins['intents'] extends Record<string, unknown>
     ? TPlugins['intents']
-    : {};
+    : never;
 
 export type PluginContext<TPlugins extends PluginExtensions = {}> =
   TPlugins['context'] extends Record<string, unknown>
@@ -67,6 +67,7 @@ export interface CommandInterceptorContext<
   TPlugins extends PluginExtensions = {},
   TPayload = unknown
 > {
+  pluginKey: string;
   aggregateId: string;
   commandType: string;
   payload: TPayload;
@@ -77,6 +78,7 @@ export interface EventInterceptorContext<
   TPlugins extends PluginExtensions = {},
   TPayload = unknown
 > {
+  pluginKey: string;
   aggregateId: string;
   eventType: string;
   payload: TPayload;
@@ -87,6 +89,7 @@ export interface AfterCommitContext<
   TPlugins extends PluginExtensions = {},
   TEvent extends Event<any, any> = Event<any, any>
 > {
+  pluginKey: string;
   aggregateId: string;
   events: TEvent[];
   intents: PluginIntents<TPlugins>;
@@ -95,6 +98,7 @@ export interface AfterCommitContext<
 export interface RedemeinePlugin<
   TExtensions extends PluginExtensions = {}
 > {
+  key: string;
   onBeforeCommand?: (ctx: CommandInterceptorContext<TExtensions, unknown>) => void | Promise<void>;
   onBeforeAppend?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
   onHydrateEvent?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
@@ -160,7 +164,39 @@ export interface Command<P = any, T extends CommandType | string = CommandType> 
 export type CommandResult<TEvent, TPlugins extends PluginExtensions = {}> =
   | TEvent[]
   | TEvent
-  | ({ events: TEvent[] } & PluginIntents<TPlugins>);
+  | (PluginIntents<TPlugins> extends never
+      ? {
+          events: TEvent[];
+          intents?: never;
+        }
+      : {
+          events: TEvent[];
+          intents: PluginIntents<TPlugins>;
+        });
+
+export type PluginHookName = 'onBeforeCommand' | 'onHydrateEvent' | 'onBeforeAppend' | 'onAfterCommit';
+
+export class RedemeinePluginHookError extends Error {
+  readonly pluginKey: string;
+  readonly hook: PluginHookName;
+  readonly aggregateId: string;
+  readonly cause: unknown;
+
+  constructor(args: {
+    pluginKey: string;
+    hook: PluginHookName;
+    aggregateId: string;
+    cause: unknown;
+  }) {
+    const causeMessage = args.cause instanceof Error ? `: ${args.cause.message}` : '';
+    super(`Plugin hook failed (${args.pluginKey}.${args.hook})${causeMessage}`);
+    this.name = 'RedemeinePluginHookError';
+    this.pluginKey = args.pluginKey;
+    this.hook = args.hook;
+    this.aggregateId = args.aggregateId;
+    this.cause = args.cause;
+  }
+}
 
 /**
  * Describes the originating command attached to emitted event metadata.

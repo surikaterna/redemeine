@@ -1,4 +1,4 @@
-import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, RedemeinePlugin } from './types';
+import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError } from './types';
 import { Contract } from './Contract';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { createReadonlyDeepProxy } from './utils/readonlyProxy';
@@ -304,6 +304,27 @@ const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean => {
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
 
+const assertPluginHasKey = (plugin: RedemeinePlugin<any>): void => {
+    if (!plugin.key || typeof plugin.key !== 'string') {
+        throw new Error('Invalid plugin configuration: plugin.key is required and must be a non-empty string.');
+    }
+};
+
+const wrapPluginHookFailure = (
+    plugin: RedemeinePlugin<any>,
+    hook: 'onBeforeCommand' | 'onHydrateEvent' | 'onBeforeAppend' | 'onAfterCommit',
+    aggregateId: string,
+    cause: unknown
+): RedemeinePluginHookError => {
+    assertPluginHasKey(plugin);
+    return new RedemeinePluginHookError({
+        pluginKey: plugin.key,
+        hook,
+        aggregateId,
+        cause
+    });
+};
+
 const hydrateStateFromEvents = <S>(
     builder: BuiltAggregate<S, any, any, any>,
     baseState: S,
@@ -324,6 +345,7 @@ const hydrateStateFromEventsWithPlugins = async <S>(
 
     for (const event of events) {
         const ctx: EventInterceptorContext<{}, unknown> = {
+            pluginKey: '',
             aggregateId,
             eventType: event.type,
             payload: event.payload,
@@ -331,10 +353,16 @@ const hydrateStateFromEventsWithPlugins = async <S>(
         };
 
         for (const plugin of plugins) {
+            assertPluginHasKey(plugin);
             if (typeof plugin.onHydrateEvent === 'function') {
-                const nextPayload = await plugin.onHydrateEvent(ctx);
-                if (nextPayload !== undefined) {
-                    ctx.payload = nextPayload;
+                ctx.pluginKey = plugin.key;
+                try {
+                    const nextPayload = await plugin.onHydrateEvent(ctx);
+                    if (nextPayload !== undefined) {
+                        ctx.payload = nextPayload;
+                    }
+                } catch (error) {
+                    throw wrapPluginHookFailure(plugin, 'onHydrateEvent', aggregateId, error);
                 }
             }
         }
@@ -360,16 +388,22 @@ export interface MirageOptions<TPlugins extends PluginExtensions = {}> {
  * Tracks the uncommitted events, current version, and executes the core command routing.
  */
 export class MirageCore<S> {
-    public uncommitted: Event[] = [];
+    private pendingResults: { events: Event[]; intents: Record<string, unknown> } = {
+        events: [],
+        intents: {}
+    };
     public version: number = 0;
-    private pendingCommitIntents: Record<string, unknown> = {};
     private listeners: ((state: S) => void)[] = [];
     private plugins: RedemeinePlugin<any>[];
     private hasBeforeCommandPlugins: boolean;
 
-    private getResultIntents(events: Event[]): Record<string, unknown> {
+    public get uncommitted(): Event[] {
+        return this.pendingResults.events;
+    }
+
+    private getResultIntents(events: Event[]): PluginIntents<any> {
         const intents = (events as Event[] & { __intents?: Record<string, unknown> }).__intents;
-        return intents && typeof intents === 'object' ? intents : {};
+        return intents && typeof intents === 'object' ? intents : {} as PluginIntents<any>;
     }
 
     constructor(
@@ -381,12 +415,14 @@ export class MirageCore<S> {
         plugins: RedemeinePlugin<any>[] = []
     ) {
         this.plugins = plugins;
+        this.plugins.forEach(assertPluginHasKey);
         this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
     }
 
     private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
         const commandMetaRegistry = this.builder.metadata?.commands || {};
         const ctx: CommandInterceptorContext<{}, unknown> = {
+            pluginKey: '',
             aggregateId: this.id,
             commandType: command.type,
             payload: command.payload,
@@ -395,7 +431,12 @@ export class MirageCore<S> {
 
         for (const plugin of this.plugins) {
             if (typeof plugin.onBeforeCommand === 'function') {
-                await plugin.onBeforeCommand(ctx);
+                ctx.pluginKey = plugin.key;
+                try {
+                    await plugin.onBeforeCommand(ctx);
+                } catch (error) {
+                    throw wrapPluginHookFailure(plugin, 'onBeforeCommand', this.id, error);
+                }
             }
         }
     }
@@ -438,14 +479,14 @@ export class MirageCore<S> {
                 }
             }
             this.state = this.builder.apply(this.state, ev);
-            this.uncommitted.push(ev);
+            this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
 
-        this.pendingCommitIntents = {
-            ...this.pendingCommitIntents,
+        this.pendingResults.intents = {
+            ...this.pendingResults.intents,
             ...this.getResultIntents(events)
         };
 
@@ -494,14 +535,14 @@ export class MirageCore<S> {
                 }
             }
             this.state = this.builder.apply(this.state, ev);
-            this.uncommitted.push(ev);
+            this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
 
-        this.pendingCommitIntents = {
-            ...this.pendingCommitIntents,
+        this.pendingResults.intents = {
+            ...this.pendingResults.intents,
             ...this.getResultIntents(events)
         };
 
@@ -510,16 +551,18 @@ export class MirageCore<S> {
         return this.state;
     }
 
-    public getPendingCommitContext(): { events: Event[]; intents: Record<string, unknown> } {
+    public getPendingResults(): { events: Event[]; intents: Record<string, unknown> } {
         return {
-            events: [...this.uncommitted],
-            intents: { ...this.pendingCommitIntents }
+            events: [...this.pendingResults.events],
+            intents: { ...this.pendingResults.intents }
         };
     }
 
-    public clearPendingCommitContext(): void {
-        this.uncommitted = [];
-        this.pendingCommitIntents = {};
+    public clearPendingResults(): void {
+        this.pendingResults = {
+            events: [],
+            intents: {}
+        };
     }
 
     public subscribe(listener: (state: S) => void) {
@@ -1301,7 +1344,7 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
         get id() { return core.id; },
         get _state() { return core.state; },
         getVersion: () => core.version,
-        clearUncommittedEvents: () => { core.clearPendingCommitContext(); },
+        clearUncommittedEvents: () => { core.clearPendingResults(); },
         getUncommittedEvents: () => [...core.uncommitted],
     };
 }

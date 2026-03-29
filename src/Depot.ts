@@ -1,5 +1,5 @@
 import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
-import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin } from './types';
+import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from './types';
 
 export interface EventStore {
     getEvents(id: string): Promise<Event[]>;
@@ -30,6 +30,28 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
   const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
 
+  const assertPluginHasKey = (plugin: RedemeinePlugin<any>): void => {
+    if (!plugin.key || typeof plugin.key !== 'string') {
+      throw new Error('Invalid plugin configuration: plugin.key is required and must be a non-empty string.');
+    }
+  };
+
+  plugins.forEach(assertPluginHasKey);
+
+  const wrapPluginHookFailure = (
+    plugin: RedemeinePlugin<any>,
+    hook: 'onBeforeAppend' | 'onAfterCommit',
+    aggregateId: string,
+    cause: unknown
+  ): RedemeinePluginHookError => {
+    return new RedemeinePluginHookError({
+      pluginKey: plugin.key,
+      hook,
+      aggregateId,
+      cause
+    });
+  };
+
   const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
     if (plugins.length === 0) return events;
 
@@ -37,6 +59,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
     for (const event of events) {
       const ctx: EventInterceptorContext<{}, unknown> = {
+        pluginKey: '',
         aggregateId: id,
         eventType: event.type,
         payload: event.payload,
@@ -45,9 +68,14 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
       for (const plugin of plugins) {
         if (typeof plugin.onBeforeAppend === 'function') {
-          const nextPayload = await plugin.onBeforeAppend(ctx);
-          if (nextPayload !== undefined) {
-            ctx.payload = nextPayload;
+          ctx.pluginKey = plugin.key;
+          try {
+            const nextPayload = await plugin.onBeforeAppend(ctx);
+            if (nextPayload !== undefined) {
+              ctx.payload = nextPayload;
+            }
+          } catch (error) {
+            throw wrapPluginHookFailure(plugin, 'onBeforeAppend', id, error);
           }
         }
       }
@@ -67,11 +95,16 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
     for (const plugin of plugins) {
       if (typeof plugin.onAfterCommit === 'function') {
-        await plugin.onAfterCommit({
-          aggregateId: id,
-          events,
-          intents
-        });
+        try {
+          await plugin.onAfterCommit({
+            pluginKey: plugin.key,
+            aggregateId: id,
+            events,
+            intents
+          });
+        } catch (error) {
+          throw wrapPluginHookFailure(plugin, 'onAfterCommit', id, error);
+        }
       }
     }
   };
@@ -85,14 +118,15 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
         const core = (mirage as any)[MirageCoreSymbol];
         if (!core) throw new Error('Not a valid Mirage Instance');
 
-          const { events, intents } = core.getPendingCommitContext();
+          const { events, intents } = core.getPendingResults();
           const appendableEvents = await runAppendInterceptors(core.id, events);
 
           await store.saveEvents(core.id, appendableEvents, core.version);
+          core.clearPendingResults();
 
+          // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
+          // so post-commit failures are retriable without coupling to request lifecycle.
           await runAfterCommitHooks(core.id, appendableEvents, intents);
-
-          core.clearPendingCommitContext();
       }
   };
 }

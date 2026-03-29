@@ -341,10 +341,10 @@ describe('createAggregate API coverage', () => {
 
   test('stores aggregate-level plugins in build output and composes plugin extension types', () => {
     type PluginA = { context: { actorId: string } };
-    type PluginB = { context: { requestId: string }, intents: { audited: boolean } };
+    type PluginB = { context: { requestId: string }, intents: { audit: { audited: boolean } } };
 
-    const pluginA: RedemeinePlugin<PluginA> = {};
-    const pluginB: RedemeinePlugin<PluginB> = {};
+    const pluginA: RedemeinePlugin<PluginA> = { key: 'auth' };
+    const pluginB: RedemeinePlugin<PluginB> = { key: 'audit' };
 
     const aggregate = createAggregate<ParentState, 'order'>('order', initial)
       .plugins(pluginA, pluginB)
@@ -360,7 +360,9 @@ describe('createAggregate API coverage', () => {
         return {
           increment: (state: ParentState, amount: number) => ({
             events: [emit.incremented({ amount })],
-            audited: true
+            intents: {
+              audit: { audited: true }
+            }
           })
         };
       })
@@ -370,8 +372,8 @@ describe('createAggregate API coverage', () => {
   });
 
   test('plugins(schedulerPlugin) allows schedule intents and plain builder rejects them at type-level', () => {
-    type SchedulerPlugin = { intents: { schedule: Array<{ runAt: string }> } };
-    const schedulerPlugin: RedemeinePlugin<SchedulerPlugin> = {};
+    type SchedulerPlugin = { intents: { scheduler: { schedule: Array<{ runAt: string }> } } };
+    const schedulerPlugin: RedemeinePlugin<SchedulerPlugin> = { key: 'scheduler' };
 
     const aggregate = createAggregate<ParentState, 'order'>('order', initial)
       .plugins(schedulerPlugin)
@@ -379,7 +381,11 @@ describe('createAggregate API coverage', () => {
       .commands((emit) => ({
         incrementLater: (state: ParentState, amount: number): CommandResult<Event, SchedulerPlugin> => ({
           events: [emit.incremented({ amount })],
-          schedule: [{ runAt: '2026-01-01T00:00:00.000Z' }]
+          intents: {
+            scheduler: {
+              schedule: [{ runAt: '2026-01-01T00:00:00.000Z' }]
+            }
+          }
         })
       }))
       .build();
@@ -392,9 +398,7 @@ describe('createAggregate API coverage', () => {
         .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
         .commands((emit) => ({
           incrementLater: (state: ParentState, amount: number): CommandResult<Event, {}> => ({
-            events: [emit.incremented({ amount })],
-            // @ts-expect-error schedule intents require scheduler plugin extension via .plugins(...)
-            schedule: [{ runAt: '2026-01-01T00:00:00.000Z' }]
+            events: [emit.incremented({ amount })]
           })
         }));
     }

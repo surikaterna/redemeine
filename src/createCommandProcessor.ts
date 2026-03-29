@@ -1,4 +1,4 @@
-import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions } from './types';
+import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions, PluginIntents } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
@@ -7,35 +7,37 @@ import { createIdentity } from './identity';
 
 type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
     events: Event[];
-    intents: Record<string, unknown> & TPlugins['intents'];
+    intents: PluginIntents<TPlugins>;
 };
 
-type CommandHandler<S, TPlugins extends PluginExtensions = {}> = (
+type CommandHandler<S> = (
     state: ReadonlyDeep<S>,
     payload: unknown
-) => Event | CommandResult<Event, TPlugins>;
+) => Event | Event[] | { events: Event[]; intents?: Record<string, unknown> };
 
 export function normalizeCommandExecutionResult<TPlugins extends PluginExtensions = {}>(
     result: Event | CommandResult<Event, TPlugins>
 ): NormalizedCommandExecutionResult<TPlugins> {
+    const emptyIntents = () => undefined as unknown as PluginIntents<TPlugins>;
+
     if (Array.isArray(result)) {
         return {
             events: result,
-            intents: {} as Record<string, unknown> & TPlugins['intents']
+            intents: emptyIntents()
         };
     }
 
     if (result && typeof result === 'object' && 'events' in result && Array.isArray((result as { events?: unknown }).events)) {
-        const { events, ...rest } = result as { events: Event[] } & Record<string, unknown>;
+        const { events, intents } = result as { events: Event[]; intents?: PluginIntents<TPlugins> };
         return {
             events,
-            intents: rest as Record<string, unknown> & TPlugins['intents']
+            intents: (intents ?? emptyIntents()) as PluginIntents<TPlugins>
         };
     }
 
     return {
         events: [result as Event],
-        intents: {} as Record<string, unknown> & TPlugins['intents']
+        intents: emptyIntents()
     };
 }
 
@@ -102,7 +104,7 @@ export function createCommandProcessor<S>(
         
         const readonlyState = createReadonlyDeepProxy(state);
         const result = handler(readonlyState as ReadonlyDeep<S>, payload);
-        const normalized = normalizeCommandExecutionResult(result);
+        const normalized = normalizeCommandExecutionResult(result as Event | CommandResult<Event, PluginExtensions>);
         const linkedEvents = normalized.events.map(event => withCommandLink(event, commandWithId));
         Object.defineProperty(linkedEvents, '__intents', {
             value: normalized.intents,

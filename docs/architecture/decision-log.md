@@ -45,3 +45,10 @@ const ShipmentBuilder = createAggregate('Shipment', initial)
 
 ### 3. Testability Without Mocks
 Because Redemeine models state updates functionally (often transparently backed by Immer), you no longer need complex mock environments to unit test an aggregate. You can invoke a command handler directly with an initial state and immediately assert against the resulting returned domain events.
+
+## Future ADR Placeholder: Transactional Outbox for Post-Commit Hooks
+
+- **Status:** TODO / pending ADR
+- **Motivation:** `onAfterCommit` currently runs inline after event persistence. This guarantees ordering but couples side-effects to request lifecycle and relies on retry orchestration outside the core runtime.
+- **Planned direction:** formalize a full transactional outbox ADR that records post-commit intents atomically with event append, then executes/retries side-effects asynchronously via worker(s).
+- **Short-term policy:** maintain current fail-closed-post-commit behavior with structured plugin hook errors while clearing pending in-memory results after successful append.
