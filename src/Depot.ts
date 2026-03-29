@@ -1,5 +1,5 @@
 import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
-import { Event } from './types';
+import { Event, EventInterceptorContext } from './types';
 
 export interface EventStore {
     getEvents(id: string): Promise<Event[]>;
@@ -27,15 +27,45 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   store: EventStore,
   options?: MirageOptions
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
+  const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
+    const plugins = options?.plugins || [];
+    if (plugins.length === 0) return events;
+
+    const eventMetaRegistry = builder.metadata?.events || {};
+
+    for (const event of events) {
+      const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+        aggregateId: id,
+        eventType: event.type,
+        payload: event.payload,
+        meta: eventMetaRegistry[event.type]?.meta
+      };
+
+      for (const plugin of plugins) {
+        if (typeof plugin.onBeforeAppend === 'function') {
+          const nextPayload = await plugin.onBeforeAppend(ctx);
+          if (nextPayload !== undefined) {
+            ctx.payload = nextPayload;
+          }
+        }
+      }
+
+      event.payload = ctx.payload;
+    }
+
+    return events;
+  };
+
   return {
       get: async (id: string) => {
           const events = await store.getEvents(id);
-        return createMirage(builder, id, { ...options, events });
+          return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {
           const core = (mirage as any)[MirageCoreSymbol];
           if (!core) throw new Error('Not a valid Mirage Instance');
-          await store.saveEvents(core.id, core.uncommitted, core.version);
+          const appendableEvents = await runAppendInterceptors(core.id, core.uncommitted);
+          await store.saveEvents(core.id, appendableEvents, core.version);
           core.uncommitted = [];
       }
   };

@@ -2,7 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '../src/createAggregate';
 import { createDepot, EventStore } from '../src/Depot';
 import { createLegacyAggregateBridge } from '../src/createMirage';
-import { Event } from '../src/types';
+import { Event, RedemeinePlugin } from '../src/types';
 
 type S = { id: string; count: number };
 
@@ -77,5 +77,94 @@ describe('Depot', () => {
 
     const depot = createDepot(aggregate, store);
     await expect(depot.save({} as any)).rejects.toThrow('Not a valid Mirage Instance');
+  });
+
+  test('runs hydrate and append plugins sequentially with payload mutation support', async () => {
+    const interceptOrder: string[] = [];
+
+    const aggregateWithMeta = createAggregate<S, 'order'>('order', { id: 'o1', count: 0 })
+      .events({
+        created: {
+          projector: (state: S, event: Event<{ id: string }>) => {
+            state.id = event.payload.id;
+          },
+          meta: { eventMeta: 'created' }
+        },
+        incremented: {
+          projector: (state: S, event: Event<{ amount: number }>) => {
+            state.count += event.payload.amount;
+          },
+          meta: { eventMeta: 'incremented' }
+        }
+      })
+      .commands(() => ({
+        create: (state, id: string) => ({ type: 'order.created.event', payload: { id } }),
+        increment: {
+          handler: (state: S, amount: number) => ({ type: 'order.incremented.event', payload: { amount } }),
+          meta: { commandMeta: 'increment' }
+        }
+      }))
+      .build();
+
+    const saveCalls: Array<{ id: string; events: Event[] }> = [];
+    const store: EventStore = {
+      getEvents: async () => [
+        { type: 'order.created.event', payload: { id: 'o1' } },
+        { type: 'order.incremented.event', payload: { amount: 1 } }
+      ],
+      saveEvents: async (id: string, events: Event[]) => {
+        saveCalls.push({ id, events });
+      }
+    };
+
+    const plugins: RedemeinePlugin[] = [
+      {
+        onHydrateEvent: async (ctx) => {
+          interceptOrder.push(`hydrate-1:${ctx.eventType}:${String((ctx.meta as any)?.eventMeta)}`);
+          if (ctx.eventType === 'order.incremented.event') {
+            return { amount: (ctx.payload as any).amount + 1 };
+          }
+        },
+        onBeforeAppend: async (ctx) => {
+          interceptOrder.push(`append-1:${ctx.eventType}`);
+          if (ctx.eventType === 'order.incremented.event') {
+            return { amount: (ctx.payload as any).amount + 10 };
+          }
+        }
+      },
+      {
+        onHydrateEvent: async (ctx) => {
+          interceptOrder.push(`hydrate-2:${ctx.eventType}`);
+          if (ctx.eventType === 'order.incremented.event') {
+            (ctx.payload as any).amount += 2;
+          }
+        },
+        onBeforeAppend: async (ctx) => {
+          interceptOrder.push(`append-2:${ctx.eventType}:${String((ctx.meta as any)?.eventMeta)}`);
+          if (ctx.eventType === 'order.incremented.event') {
+            (ctx.payload as any).amount += 20;
+          }
+        }
+      }
+    ];
+
+    const depot = createDepot(aggregateWithMeta, store, { plugins });
+    const mirage = await depot.get('o1');
+
+    expect(mirage.count).toBe(4);
+
+    await mirage.increment(3);
+    await depot.save(mirage);
+
+    expect(saveCalls).toHaveLength(1);
+    expect(saveCalls[0].events[0].payload).toEqual({ amount: 33 });
+    expect(interceptOrder).toEqual([
+      'hydrate-1:order.created.event:created',
+      'hydrate-2:order.created.event',
+      'hydrate-1:order.incremented.event:incremented',
+      'hydrate-2:order.incremented.event',
+      'append-1:order.incremented.event',
+      'append-2:order.incremented.event:incremented'
+    ]);
   });
 });

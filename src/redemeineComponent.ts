@@ -1,23 +1,40 @@
-import { Event, PackedCommand, SelectorsMap } from './types';
+import { Event, PackedCommandWithMeta, SelectorsMap, ShorthandCommandWithMeta } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import type { Merge } from './utils/types/Merge';
 import type { AllKeys } from './utils/types/AllKeys';
 import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
 
 export type GenericSelectors = Record<string, unknown>;
-export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any>>;
+export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any, Record<string, unknown>>>;
 export type GenericCommandFactory = (emit: unknown, context: { selectors: GenericSelectors }) => GenericCommandMap;
+
+export type RedemeineEventProjector<S> = (state: S, event: Event<any, any>) => void;
+export type RedemeineEventDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
+  | RedemeineEventProjector<S>
+  | {
+      projector: RedemeineEventProjector<S>;
+      meta?: TMeta;
+    };
+
+export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDefinition<any, any>>> = {
+  [K in keyof T]: T[K] extends (...args: any[]) => any
+    ? T[K]
+    : T[K] extends { projector: infer P }
+      ? Extract<P, (...args: any[]) => any>
+      : never;
+};
 
 export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[]> = (
   state: ReadonlyDeep<S>,
   ...args: Args
 ) => Event<any, any> | Event<any, any>[];
 
-export type RedemeineCommandDefinition<S> =
+export type RedemeineCommandDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
   | RedemeineShorthandCommand<S, any[]>
-  | PackedCommand<S, any[], any>;
+  | ShorthandCommandWithMeta<S, any[], TMeta>
+  | PackedCommandWithMeta<S, any[], any, TMeta>;
 
-export type RedemeineCommandMap<S> = Record<string, RedemeineCommandDefinition<S>>;
+export type RedemeineCommandMap<S, TMeta extends Record<string, unknown> = Record<string, unknown>> = Record<string, RedemeineCommandDefinition<S, TMeta>>;
 
 export interface RedemeineComponent<
   S,
@@ -79,14 +96,18 @@ export function composeCommandFactories(
 export function resolveCommandHandler<S>(
   commandDef: RedemeineCommandDefinition<S>
 ): (state: ReadonlyDeep<S>, payload: unknown) => Event<any, any> | Event<any, any>[] {
-  return (typeof commandDef === 'function' ? commandDef : commandDef.handler) as (
+  const handler = typeof commandDef === 'function'
+    ? commandDef
+    : commandDef.handler;
+
+  return handler as (
     state: ReadonlyDeep<S>,
     payload: unknown
   ) => Event<any, any> | Event<any, any>[];
 }
 
 export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: unknown[]): unknown {
-  if (typeof commandDef !== 'function' && commandDef.pack) {
+  if (typeof commandDef !== 'function' && 'pack' in commandDef && typeof commandDef.pack === 'function') {
     return commandDef.pack(...args);
   }
   return args[0];
@@ -94,6 +115,7 @@ export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S
 
 export interface ComponentBehaviorSnapshot<S> {
   events: Record<string, Function>;
+  eventMetadata: Record<string, Record<string, unknown> | undefined>;
   eventOverrides: Record<string, string>;
   selectors: SelectorsMap<S>;
   commandOverrides: Record<string, string>;
@@ -101,6 +123,7 @@ export interface ComponentBehaviorSnapshot<S> {
 
 export interface InheritableComponentBehavior {
   events: Record<string, Function>;
+  eventMetadata: Record<string, Record<string, unknown> | undefined>;
   eventOverrides: Record<string, string>;
   selectors: Record<string, Function>;
   commandOverrides: Record<string, string>;
@@ -109,14 +132,32 @@ export interface InheritableComponentBehavior {
 
 export function createComponentBehaviorState<S>() {
   let events: Record<string, Function> = {};
+  let eventMetadata: Record<string, Record<string, unknown> | undefined> = {};
   let eventOverrides: Record<string, string> = {};
   let selectors: SelectorsMap<S> = {};
   let commandOverrides: Record<string, string> = {};
   let commandFactories: GenericCommandFactory[] = [];
 
   return {
-    addEvents(next: Record<string, Function>) {
-      events = { ...events, ...next };
+    addEvents(next: Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>) {
+      const normalizedEvents: Record<string, Function> = {};
+      const normalizedMeta: Record<string, Record<string, unknown> | undefined> = {};
+
+      Object.keys(next).forEach((key) => {
+        const definition = next[key];
+        if (typeof definition === 'function') {
+          normalizedEvents[key] = definition;
+          return;
+        }
+
+        if (definition && typeof definition.projector === 'function') {
+          normalizedEvents[key] = definition.projector;
+          normalizedMeta[key] = definition.meta;
+        }
+      });
+
+      events = { ...events, ...normalizedEvents };
+      eventMetadata = { ...eventMetadata, ...normalizedMeta };
     },
 
     addEventOverrides(next: Record<string, string>) {
@@ -137,6 +178,7 @@ export function createComponentBehaviorState<S>() {
 
     inherit(parent: InheritableComponentBehavior) {
       events = { ...parent.events, ...events };
+      eventMetadata = { ...parent.eventMetadata, ...eventMetadata };
       eventOverrides = { ...parent.eventOverrides, ...eventOverrides };
       selectors = { ...(parent.selectors as SelectorsMap<S>), ...selectors };
       commandOverrides = { ...parent.commandOverrides, ...commandOverrides };
@@ -150,6 +192,7 @@ export function createComponentBehaviorState<S>() {
     getSnapshot(): ComponentBehaviorSnapshot<S> {
       return {
         events,
+        eventMetadata,
         eventOverrides,
         selectors,
         commandOverrides

@@ -43,6 +43,7 @@ export type MountedEntityPackage = {
 
 type ComponentBehaviorSnapshot = {
   events: Record<string, Function>;
+  eventMetadata: Record<string, Record<string, unknown> | undefined>;
   eventOverrides: Record<string, string>;
   commandOverrides: Record<string, string>;
 };
@@ -53,6 +54,7 @@ export function composeMountedComponentBehavior(
   baseCommandFactory: GenericCommandFactory
 ): {
   mergedEvents: Record<string, Function>;
+  mergedEventMetadata: Record<string, Record<string, unknown> | undefined>;
   mergedEventOverrides: Record<string, string>;
   mergedCommandOverrides: Record<string, string>;
   mounts: Record<string, MountedStructureMetadata>;
@@ -61,6 +63,7 @@ export function composeMountedComponentBehavior(
   const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
   const mergedEvents: Record<string, Function> = { ...snapshot.events };
+  const mergedEventMetadata: Record<string, Record<string, unknown> | undefined> = { ...snapshot.eventMetadata };
   const mergedEventOverrides: Record<string, string> = { ...snapshot.eventOverrides };
   const mergedCommandOverrides: Record<string, string> = { ...snapshot.commandOverrides };
   const mounts: Record<string, MountedStructureMetadata> = {};
@@ -79,6 +82,7 @@ export function composeMountedComponentBehavior(
     }
 
     const nestedEvents = nested.projectors || nested.events || {};
+    const nestedEventMetadata = nested.eventMetadata || {};
     const nestedEventNameOverrides = nested.eventOverrides || {};
     const nestedCommandNameOverrides = nested.commandOverrides || {};
     const mountEventNameOverrides = {
@@ -93,6 +97,7 @@ export function composeMountedComponentBehavior(
     Object.keys(nestedEvents).forEach((eventKey) => {
       const mappedEventKey = `${mountName}${capitalize(eventKey)}`;
       mergedEvents[mappedEventKey] = nestedEvents[eventKey];
+      mergedEventMetadata[mappedEventKey] = (nestedEventMetadata as Record<string, Record<string, unknown> | undefined>)[eventKey];
       if (mountEventNameOverrides[eventKey]) {
         mergedEventOverrides[mappedEventKey] = mountEventNameOverrides[eventKey];
       } else if ((nestedEventNameOverrides as Record<string, string>)[eventKey]) {
@@ -141,6 +146,7 @@ export function composeMountedComponentBehavior(
 
   return {
     mergedEvents,
+    mergedEventMetadata,
     mergedEventOverrides,
     mergedCommandOverrides,
     mounts,

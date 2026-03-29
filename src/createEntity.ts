@@ -1,5 +1,5 @@
 ﻿import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
-import { RedemeineComponent, RedemeineCommandDefinition, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import {
   MapEntityCommands,
   EntityListOptions,
@@ -15,7 +15,7 @@ import {
  * A compiled Entity ready to be injected into an AggregateBuilder via `.entities()`.
  * Maintains its own namespace and isolated lifecycle logic.
  */
-export interface EntityPackage<S, Name extends string, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>>
+export interface EntityPackage<S, Name extends string, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
   name: Name;
   events: E;
@@ -25,34 +25,35 @@ export interface EntityPackage<S, Name extends string, E = any, EOverrides exten
   selectors: Selectors;
   commandFactory: GenericCommandFactory;
   commandOverrides: COverrides;
+  eventMetadata: Record<string, TMeta | undefined>;
   mounts: Record<string, EntityMountedStructureMetadata>;
   mountedEntities: MountedEntityPackage[];
 }
 
 // 2. The Chaining Interfaces to guide the IDE
-export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>> {
+export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> {
   /**
    * Register state-altering event handlers for this Entity.
    * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
    * The targeted auto-namer maps camelCase keys to dot notation combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`).
    */
-  events: <NewE extends Record<string, (state: S, event: Event<any, any>) => void>>(
+  events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
     events: NewE
-  ) => EntityBuilder<S, Name, E & NewE, EOverrides, CPayloads, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E & NormalizeEventDefinitions<NewE>, EOverrides, CPayloads, COverrides, Selectors, TMeta>;
 
   /**
    * Overrides generated event names for this entity.
    */
   overrideEventNames: <NewEOverrides extends Partial<Record<keyof E, EventType>>>(
     overrides: NewEOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides & NewEOverrides, CPayloads, COverrides, Selectors, TMeta>;
 
   /**
    * Define pure functions scoped only to this entity's structure.
    */
   selectors: <NewSelectors extends SelectorsMap<S>>(
     selectors: NewSelectors
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, TMeta>;
 
   /**
    * Define scoped command processors that execute business logic.
@@ -67,9 +68,9 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
    *   }
    * }))
    */
-  commands: <C extends Record<string, RedemeineCommandDefinition<S>>>(
+  commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => C
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapCommandsToPayloads<C>, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapCommandsToPayloads<C>, COverrides, Selectors, TMeta>;
 
   /**
    * Register a list-backed nested entity collection.
@@ -79,7 +80,7 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
     entityComponent: T,
     options?: EntityListOptions<PK>,
     mountOverrides?: EntityMountOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta>;
 
   /**
    * Register a record-backed nested entity map.
@@ -89,7 +90,7 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
     entityComponent: T,
     options?: EntityMapOptions<Keys>,
     mountOverrides?: EntityMountOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta>;
 
   /**
    * Register a read-only nested value object list branch.
@@ -97,7 +98,7 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
   valueObjectList: <VOName extends string>(
     name: VOName,
     schema?: unknown
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors, TMeta>;
 
   /**
    * Register a read-only nested value object map branch.
@@ -105,38 +106,38 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
   valueObjectMap: <VOName extends string>(
     name: VOName,
     schema?: unknown
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides, Selectors, TMeta>;
 
   /**
    * Overrides generated command names for this entity.
    */
   overrideCommandNames: <NewCOverrides extends Partial<Record<keyof CPayloads, CommandType>>>(
     overrides: NewCOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads, COverrides & NewCOverrides, Selectors, TMeta>;
 
   /**
    * Finalizes and compiles the Entity into a pluggable package.
    */
-  build: () => EntityPackage<S, Name, E, EOverrides, CPayloads, COverrides, Selectors>;
+  build: () => EntityPackage<S, Name, E, EOverrides, CPayloads, COverrides, Selectors, TMeta>;
 }
 
-export type EntityEventsStage<S, Name extends string> = EntityBuilder<S, Name>;
-export type EntityEventOverridesStage<S, Name extends string, E> = EntityBuilder<S, Name, E>;
-export type EntitySelectorsStage<S, Name extends string, E, EOverrides extends object> = EntityBuilder<S, Name, E, EOverrides>;
-export type EntityCommandsStage<S, Name extends string, E, EOverrides extends object, Selectors extends SelectorsMap<S>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, Selectors>;
-export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides extends object, CPayloads, Selectors extends SelectorsMap<S>> = EntityBuilder<S, Name, E, EOverrides, CPayloads, {}, Selectors>;
+export type EntityEventsStage<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, {}, {}, {}, {}, SelectorsMap<S>, TMeta>;
+export type EntityEventOverridesStage<S, Name extends string, E, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, {}, {}, {}, SelectorsMap<S>, TMeta>;
+export type EntitySelectorsStage<S, Name extends string, E, EOverrides extends object, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, SelectorsMap<S>, TMeta>;
+export type EntityCommandsStage<S, Name extends string, E, EOverrides extends object, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, Selectors, TMeta>;
+export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides extends object, CPayloads, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, CPayloads, {}, Selectors, TMeta>;
 
 // 3. The Implementation
 /**
  * Bootstraps a new cohesive domain Entity. 
  * An entity encapsulates state, scoped selectors, events, and commands, to be injected into an AggregateBuilder.
  */
-export function createEntity<S, Name extends string>(name: Name): EntityEventsStage<S, Name> {
+export function createEntity<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>>(name: Name): EntityEventsStage<S, Name, TMeta> {
   const component = createComponentBehaviorState<S>();
   const mountedEntities: MountedEntityPackage[] = [];
 
   const builder = bindFluentMethods({}, {
-    events: (events: Record<string, Function>) => component.addEvents(events),
+    events: (events: Record<string, RedemeineEventDefinition<S, TMeta>>) => component.addEvents(events as Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>),
     overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
     selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
     commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
@@ -168,27 +169,29 @@ export function createEntity<S, Name extends string>(name: Name): EntityEventsSt
       const snapshot = component.getSnapshot();
       const {
         mergedEvents,
+        mergedEventMetadata,
         mergedEventOverrides,
         mergedCommandOverrides,
         mounts,
         commandFactory
       } = composeMountedComponentBehavior(mountedEntities, snapshot, component.getCommandsFactory());
 
-      return {
+        return {
         name,
         events: mergedEvents,
         projectors: mergedEvents,
         commands: {} as unknown as GenericCommandMap,
-        eventOverrides: mergedEventOverrides,
+          eventOverrides: mergedEventOverrides,
         selectors: snapshot.selectors,
-        commandFactory,
-        commandOverrides: mergedCommandOverrides,
-        mounts,
-        mountedEntities: [...mountedEntities],
-      };
+          commandFactory,
+          commandOverrides: mergedCommandOverrides,
+          eventMetadata: mergedEventMetadata as Record<string, TMeta | undefined>,
+          mounts,
+          mountedEntities: [...mountedEntities],
+        };
     }
   });
 
-  return builder as unknown as EntityBuilder<S, Name>;
+  return builder as unknown as EntityBuilder<S, Name, {}, {}, {}, {}, SelectorsMap<S>, TMeta>;
 }
 
