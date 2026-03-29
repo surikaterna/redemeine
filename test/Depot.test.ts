@@ -59,6 +59,89 @@ describe('Depot', () => {
     expect(bridge._state.count).toBe(4);
   });
 
+  test('replays from beginning when no snapshot is provided', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        yield { type: 'order.created.event', payload: { id: 'o1' } };
+        yield { type: 'order.incremented.event', payload: { amount: 3 } };
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1');
+
+    expect(readOptions).toEqual([undefined]);
+    expect(mirage.count).toBe(3);
+  });
+
+  test('uses snapshot version boundary and skips replay when snapshot is current', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        const events: Array<Event<{ amount: number }> & { version: number }> = [
+          { type: 'order.incremented.event', payload: { amount: 1 }, version: 1 },
+          { type: 'order.incremented.event', payload: { amount: 2 }, version: 2 },
+          { type: 'order.incremented.event', payload: { amount: 3 }, version: 3 }
+        ];
+
+        const fromVersion = options?.fromVersion ?? 1;
+        for (const event of events) {
+          if ((event as any).version >= fromVersion) {
+            yield event;
+          }
+        }
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1', {
+      snapshot: {
+        state: { id: 'o1', count: 6 },
+        version: 3
+      }
+    });
+
+    expect(readOptions).toEqual([{ fromVersion: 4 }]);
+    expect(mirage.count).toBe(6);
+  });
+
+  test('replays strictly after snapshot version (off-by-one semantics)', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        const events: Array<Event<{ amount: number }> & { version: number }> = [
+          { type: 'order.incremented.event', payload: { amount: 100 }, version: 1 },
+          { type: 'order.incremented.event', payload: { amount: 7 }, version: 2 }
+        ];
+
+        const fromVersion = options?.fromVersion ?? 1;
+        for (const event of events) {
+          if ((event as any).version >= fromVersion) {
+            yield event;
+          }
+        }
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1', {
+      snapshot: {
+        state: { id: 'o1', count: 5 },
+        version: 1
+      }
+    });
+
+    expect(readOptions).toEqual([{ fromVersion: 2 }]);
+    expect(mirage.count).toBe(12);
+  });
+
   test('yields to event loop during long hydration replay', async () => {
     const totalEvents = 10000;
     let intervalTicks = 0;
