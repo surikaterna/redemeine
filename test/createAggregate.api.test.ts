@@ -3,7 +3,7 @@ import { createAggregate } from '../src/createAggregate';
 import { createEntity } from '../src/createEntity';
 import { createMixin } from '../src/createMixin';
 import { createMirage } from '../src/createMirage';
-import { Event } from '../src/types';
+import { Event, RedemeinePlugin } from '../src/types';
 
 type ParentState = { id: string; count: number; line: { id: string; qty: number }[] };
 
@@ -337,5 +337,35 @@ describe('createAggregate API coverage', () => {
 
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'mixin-mounted-entity-command', level: 1 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'mixin-mounted-entity-event', level: 1 });
+  });
+
+  test('stores aggregate-level plugins in build output and composes plugin extension types', () => {
+    type PluginA = { context: { actorId: string } };
+    type PluginB = { context: { requestId: string }, intents: { audited: boolean } };
+
+    const pluginA: RedemeinePlugin<PluginA> = {};
+    const pluginB: RedemeinePlugin<PluginB> = {};
+
+    const aggregate = createAggregate<ParentState, 'order'>('order', initial)
+      .plugins(pluginA, pluginB)
+      .events({ incremented: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands((emit, ctx) => {
+        if (false) {
+          const actorId: string = ctx.plugins!.actorId;
+          const requestId: string = ctx.plugins!.requestId;
+          void actorId;
+          void requestId;
+        }
+
+        return {
+          increment: (state: ParentState, amount: number) => ({
+            events: [emit.incremented({ amount })],
+            audited: true
+          })
+        };
+      })
+      .build();
+
+    expect(aggregate.plugins).toEqual([pluginA, pluginB]);
   });
 });

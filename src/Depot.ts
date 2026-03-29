@@ -1,5 +1,5 @@
 import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
-import { Event, EventInterceptorContext } from './types';
+import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin } from './types';
 
 export interface EventStore {
     getEvents(id: string): Promise<Event[]>;
@@ -9,6 +9,7 @@ export interface EventStore {
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
 type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
 type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R> ? R : {};
+type BuiltAggregatePlugins<T> = T extends BuiltAggregate<any, any, any, any, any, infer P> ? P : {};
 
 /**
  * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
@@ -25,10 +26,11 @@ export interface Depot<TState extends {}, M extends Record<string, any> = any, R
 export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   builder: BA,
   store: EventStore,
-  options?: MirageOptions
+  options?: MirageOptions<BuiltAggregatePlugins<BA>>
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
+  const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
+
   const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
-    const plugins = options?.plugins || [];
     if (plugins.length === 0) return events;
 
     const eventMetaRegistry = builder.metadata?.events || {};
@@ -61,7 +63,6 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     events: Event[],
     intents: Record<string, unknown>
   ): Promise<void> => {
-    const plugins = options?.plugins || [];
     if (plugins.length === 0) return;
 
     for (const plugin of plugins) {

@@ -101,6 +101,20 @@ export interface RedemeinePlugin<
   onAfterCommit?: (ctx: AfterCommitContext<TExtensions>) => void | Promise<void>;
 }
 
+export type ExtractPluginExtensions<TPlugin> =
+  TPlugin extends RedemeinePlugin<infer TExtensions>
+    ? TExtensions
+    : {};
+
+export type UnionToIntersection<U> = (
+  U extends unknown ? (arg: U) => void : never
+) extends ((arg: infer I) => void)
+  ? I
+  : never;
+
+export type MergePluginExtensions<TPlugins extends readonly RedemeinePlugin<any>[]> =
+  UnionToIntersection<ExtractPluginExtensions<TPlugins[number]>>;
+
 /**
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.

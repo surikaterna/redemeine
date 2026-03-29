@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
@@ -233,6 +233,13 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>, TMeta, TPlugins>;
 
     /**
+     * Register aggregate-level plugins to be composed into Mirage/Depot runtime behavior.
+     */
+    plugins: <P extends RedemeinePlugin<any>[]>(
+        ...plugins: P
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & MergePluginExtensions<P>>;
+
+    /**
      * Define pure functions for reading and deriving state.
      * These will be injectable into your command handlers via the `context` parameter.
      * 
@@ -355,6 +362,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
             commands: Record<string, { meta?: TMeta }>;
             events: Record<string, { meta?: TMeta }>;
         };
+        plugins: RedemeinePlugin<TPlugins>[];
         __registryType?: Registry;
 
     };
@@ -369,6 +377,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
         mixins: AggregateMixinLike<S>[];
         selectors: Record<string, Function>;
         hooks: AggregateHooks<S>;
+        plugins: RedemeinePlugin<TPlugins>[];
     };
 }
 
@@ -395,6 +404,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
     let _mixins: AggregateMixinLike<any>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
+    let _plugins: RedemeinePlugin<any>[] = [];
 
     const builder = bindFluentMethods({}, {
         selectors: (selectorsOrFactory: AggregateSelectorsMap<S> | ((utils: AggregateSelectorUtils) => AggregateSelectorsMap<S>)) => {
@@ -414,6 +424,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             const parentState = parentBuilder._state;
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
+            _plugins = [...parentState.plugins, ..._plugins];
             _mixins = [...parentState.mixins, ..._mixins];
             const inheritedMounted = (parentState.mixins as any[])
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
@@ -482,6 +493,11 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             return builder;
         },
 
+        plugins: (...plugins: RedemeinePlugin<any>[]) => {
+            _plugins.push(...plugins);
+            return builder;
+        },
+
         naming: (strategy: Partial<NamingStrategy>) => {
             _namingStrategy = { ..._namingStrategy, ...strategy };
             return builder;
@@ -502,7 +518,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 commandsFactory: component.getCommandsFactory(),
                 mixins: _mixins,
                 selectors: snapshot.selectors,
-                hooks: _hooks
+                hooks: _hooks,
+                plugins: _plugins as RedemeinePlugin<TPlugins>[]
             };
         },
 
@@ -671,7 +688,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 metadata: {
                     commands: metadataByCommandType,
                     events: metadataByEventType
-                }
+                },
+                plugins: _plugins as RedemeinePlugin<TPlugins>[]
             };
         }
     });

@@ -432,4 +432,37 @@ describe('Mirage tests', () => {
         ]);
     });
 
+    test('composes builder plugins before runtime plugins', async () => {
+        type GuardState = { value: number };
+
+        const order: string[] = [];
+        const builderPlugin: RedemeinePlugin = {
+            onBeforeCommand: async () => {
+                order.push('builder');
+            }
+        };
+        const runtimePlugin: RedemeinePlugin = {
+            onBeforeCommand: async () => {
+                order.push('runtime');
+            }
+        };
+
+        const aggregate = createAggregate<GuardState, 'guard'>('guard', { value: 0 })
+            .plugins(builderPlugin)
+            .events({
+                incremented: (state: GuardState, event: Event<number>) => {
+                    state.value = event.payload;
+                }
+            })
+            .commands((emit) => ({
+                increment: (state: GuardState, payload: number) => emit.incremented(payload)
+            }))
+            .build();
+
+        const mirage = createMirage(aggregate, 'g-1', { plugins: [runtimePlugin] });
+        await mirage.increment(1);
+
+        expect(order).toEqual(['builder', 'runtime']);
+    });
+
 });
