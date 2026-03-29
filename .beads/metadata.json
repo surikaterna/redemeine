@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "redemeine",
+  "project_id": "05b5b8a8-a657-4020-a84c-323da86ad773"
+}
