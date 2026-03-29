@@ -302,6 +302,15 @@ export const MirageCoreSymbol = Symbol('MirageCore');
 
 export type HydrationEvents<TEvent> = Iterable<TEvent> | AsyncIterable<TEvent>;
 
+/**
+ * Maximum number of replayed hydration events before yielding back to the Node.js event loop.
+ */
+export const HYDRATION_REPLAY_YIELD_THRESHOLD = 250;
+
+const yieldToEventLoop = async (): Promise<void> => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+};
+
 const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean => {
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
@@ -335,6 +344,7 @@ const hydrateStateFromEvents = async <S>(
     plugins: RedemeinePlugin<any>[]
 ): Promise<S> => {
     let state = baseState;
+    let replayedEvents = 0;
     const eventMetaRegistry = builder.metadata?.events || {};
     const hasHydratePlugins = hasHydrateEventPlugins(plugins);
 
@@ -367,6 +377,11 @@ const hydrateStateFromEvents = async <S>(
         }
 
         state = builder.apply(state, event);
+        replayedEvents++;
+
+        if (replayedEvents % HYDRATION_REPLAY_YIELD_THRESHOLD === 0) {
+            await yieldToEventLoop();
+        }
     }
 
     return state;

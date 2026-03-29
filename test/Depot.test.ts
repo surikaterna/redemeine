@@ -59,6 +59,37 @@ describe('Depot', () => {
     expect(bridge._state.count).toBe(4);
   });
 
+  test('yields to event loop during long hydration replay', async () => {
+    const totalEvents = 10000;
+    let intervalTicks = 0;
+    let replayStarted = false;
+    let replayFinished = false;
+
+    const store: EventStore = {
+      readStream: async function* () {
+        replayStarted = true;
+        for (let index = 0; index < totalEvents; index++) {
+          yield { type: 'order.incremented.event', payload: { amount: 1 } };
+        }
+        replayFinished = true;
+      },
+      saveEvents: async () => undefined
+    };
+
+    const interval = setInterval(() => {
+      if (replayStarted && !replayFinished) {
+        intervalTicks++;
+      }
+    }, 0);
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('yield-check');
+    clearInterval(interval);
+
+    expect(mirage.count).toBe(totalEvents);
+    expect(intervalTicks).toBeGreaterThan(0);
+  });
+
   test('persists uncommitted events and clears them', async () => {
     const saveCalls: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const store: EventStore = {
