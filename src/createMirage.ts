@@ -322,7 +322,7 @@ const hydrateStateFromEventsWithPlugins = async <S>(
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
-        const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+        const ctx: EventInterceptorContext<{}, unknown> = {
             aggregateId,
             eventType: event.type,
             payload: event.payload,
@@ -379,7 +379,7 @@ export class MirageCore<S> {
 
     private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
         const commandMetaRegistry = this.builder.metadata?.commands || {};
-        const ctx: CommandInterceptorContext<Record<string, unknown>, unknown> = {
+        const ctx: CommandInterceptorContext<{}, unknown> = {
             aggregateId: this.id,
             commandType: command.type,
             payload: command.payload,
@@ -721,7 +721,10 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         try {
             const fakeEmit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
             const fakeSelectors = new Proxy({}, { get: () => () => undefined });
-            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors }) || {};
+            const fakeCommands = new Proxy({}, {
+                get: (_target, prop: string) => (payload: unknown) => ({ command: prop, payload })
+            });
+            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors, commands: fakeCommands }) || {};
             const names = Object.keys(roleCommands);
             roleCommandNamesCache.set(role, names);
             return names;
