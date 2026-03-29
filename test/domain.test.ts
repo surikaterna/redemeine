@@ -108,7 +108,7 @@ describe('Domain Exmaple', () => {
 
     expect(events[0].type).toBe('order.order_lines.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
-    const order = createMirage(orderAggregateDef, 'order-1', { events });
+    const order = await createMirage(orderAggregateDef, 'order-1', { events });
     await order.orderLines('l1').changeQty(10);
 
     const deepLines = order.findOrderLinesDeep((line) => line.id === 'l1');

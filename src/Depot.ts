@@ -1,8 +1,8 @@
-import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
+import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol, HydrationEvents } from './createMirage';
 import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from './types';
 
 export interface EventStore {
-    getEvents(id: string): Promise<Event[]>;
+    getEvents(id: string): HydrationEvents<Event> | Promise<HydrationEvents<Event>>;
     saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
 }
 

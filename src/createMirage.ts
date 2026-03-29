@@ -300,6 +300,8 @@ export type Mirage<TState, M extends Record<string, any> = any, Registry extends
  */
 export const MirageCoreSymbol = Symbol('MirageCore');
 
+export type HydrationEvents<TEvent> = Iterable<TEvent> | AsyncIterable<TEvent>;
+
 const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean => {
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
@@ -325,49 +327,45 @@ const wrapPluginHookFailure = (
     });
 };
 
-const hydrateStateFromEvents = <S>(
-    builder: BuiltAggregate<S, any, any, any>,
-    baseState: S,
-    events: Event[]
-): S => {
-    return events.reduce((acc, ev) => builder.apply(acc, ev), baseState);
-};
-
-const hydrateStateFromEventsWithPlugins = async <S>(
+const hydrateStateFromEvents = async <S>(
     builder: BuiltAggregate<S, any, any, any>,
     aggregateId: string,
     baseState: S,
-    events: Event[],
+    events: HydrationEvents<Event>,
     plugins: RedemeinePlugin<any>[]
 ): Promise<S> => {
     let state = baseState;
     const eventMetaRegistry = builder.metadata?.events || {};
+    const hasHydratePlugins = hasHydrateEventPlugins(plugins);
 
-    for (const event of events) {
-        const ctx: EventInterceptorContext<{}, unknown> = {
-            pluginKey: '',
-            aggregateId,
-            eventType: event.type,
-            payload: event.payload,
-            meta: eventMetaRegistry[event.type]?.meta
-        };
+    for await (const event of events) {
+        if (hasHydratePlugins) {
+            const ctx: EventInterceptorContext<{}, unknown> = {
+                pluginKey: '',
+                aggregateId,
+                eventType: event.type,
+                payload: event.payload,
+                meta: eventMetaRegistry[event.type]?.meta
+            };
 
-        for (const plugin of plugins) {
-            assertPluginHasKey(plugin);
-            if (typeof plugin.onHydrateEvent === 'function') {
-                ctx.pluginKey = plugin.key;
-                try {
+            for (const plugin of plugins) {
+                assertPluginHasKey(plugin);
+                if (typeof plugin.onHydrateEvent === 'function') {
+                    ctx.pluginKey = plugin.key;
+                    try {
                     const nextPayload = await plugin.onHydrateEvent(ctx);
                     if (nextPayload !== undefined) {
                         ctx.payload = nextPayload;
                     }
-                } catch (error) {
-                    throw wrapPluginHookFailure(plugin, 'onHydrateEvent', aggregateId, error);
+                    } catch (error) {
+                        throw wrapPluginHookFailure(plugin, 'onHydrateEvent', aggregateId, error);
+                    }
                 }
             }
+
+            event.payload = ctx.payload;
         }
 
-        event.payload = ctx.payload;
         state = builder.apply(state, event);
     }
 
@@ -605,22 +603,17 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
-    setup: (Omit<MirageOptions<BuiltAggregatePlugins<BA>>, 'plugins'> & { snapshot?: BuiltAggregateState<BA>; events?: Event[] }) | undefined
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string,
-    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: Event[]; plugins: RedemeinePlugin<any>[] }
+    setup: (MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: HydrationEvents<Event> }) | undefined
 ): Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
-    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: Event[] }
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
+    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: undefined }
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
-    setup?: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: Event[] }
+    setup?: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: HydrationEvents<Event> }
 ): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>> {
 
     const makeMirage = (state: BuiltAggregateState<BA>, plugins: RedemeinePlugin<any>[]): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
@@ -1318,19 +1311,15 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     };
 
     const baseState = setup?.snapshot ?? builder.initialState;
-    const setupEvents = setup?.events || [];
+    const setupEvents = setup?.events;
     const plugins = [...(builder.plugins || []), ...(setup?.plugins || [])] as RedemeinePlugin<any>[];
 
-    if (setupEvents.length === 0) {
+    if (!setupEvents) {
         return makeMirage(baseState, plugins);
     }
 
-    if (!hasHydrateEventPlugins(plugins)) {
-        return makeMirage(hydrateStateFromEvents(builder, baseState, setupEvents), plugins);
-    }
-
     return (async () => {
-        const hydratedState = await hydrateStateFromEventsWithPlugins(builder, id, baseState, setupEvents, plugins);
+        const hydratedState = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins);
         return makeMirage(hydratedState, plugins);
     })();
 }
