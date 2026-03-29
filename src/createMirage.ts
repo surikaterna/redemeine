@@ -322,7 +322,7 @@ const hydrateStateFromEventsWithPlugins = async <S>(
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
-        const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+        const ctx: EventInterceptorContext<{}, unknown> = {
             aggregateId,
             eventType: event.type,
             payload: event.payload,
@@ -361,9 +361,15 @@ export interface MirageOptions {
 export class MirageCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
+    private pendingCommitIntents: Record<string, unknown> = {};
     private listeners: ((state: S) => void)[] = [];
     private plugins: RedemeinePlugin[];
     private hasBeforeCommandPlugins: boolean;
+
+    private getResultIntents(events: Event[]): Record<string, unknown> {
+        const intents = (events as Event[] & { __intents?: Record<string, unknown> }).__intents;
+        return intents && typeof intents === 'object' ? intents : {};
+    }
 
     constructor(
         public builder: BuiltAggregate<S, any, any, any>,
@@ -379,7 +385,7 @@ export class MirageCore<S> {
 
     private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
         const commandMetaRegistry = this.builder.metadata?.commands || {};
-        const ctx: CommandInterceptorContext<Record<string, unknown>, unknown> = {
+        const ctx: CommandInterceptorContext<{}, unknown> = {
             aggregateId: this.id,
             commandType: command.type,
             payload: command.payload,
@@ -436,6 +442,12 @@ export class MirageCore<S> {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
+
+        this.pendingCommitIntents = {
+            ...this.pendingCommitIntents,
+            ...this.getResultIntents(events)
+        };
+
         this.version++;
         this.notify();
         return this.state;
@@ -486,9 +498,27 @@ export class MirageCore<S> {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
+
+        this.pendingCommitIntents = {
+            ...this.pendingCommitIntents,
+            ...this.getResultIntents(events)
+        };
+
         this.version++;
         this.notify();
         return this.state;
+    }
+
+    public getPendingCommitContext(): { events: Event[]; intents: Record<string, unknown> } {
+        return {
+            events: [...this.uncommitted],
+            intents: { ...this.pendingCommitIntents }
+        };
+    }
+
+    public clearPendingCommitContext(): void {
+        this.uncommitted = [];
+        this.pendingCommitIntents = {};
     }
 
     public subscribe(listener: (state: S) => void) {
@@ -721,7 +751,10 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         try {
             const fakeEmit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
             const fakeSelectors = new Proxy({}, { get: () => () => undefined });
-            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors }) || {};
+            const fakeCommands = new Proxy({}, {
+                get: (_target, prop: string) => (payload: unknown) => ({ command: prop, payload })
+            });
+            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors, commands: fakeCommands }) || {};
             const names = Object.keys(roleCommands);
             roleCommandNamesCache.set(role, names);
             return names;
@@ -1266,7 +1299,7 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
         get id() { return core.id; },
         get _state() { return core.state; },
         getVersion: () => core.version,
-        clearUncommittedEvents: () => { core.uncommitted = []; },
+        clearUncommittedEvents: () => { core.clearPendingCommitContext(); },
         getUncommittedEvents: () => [...core.uncommitted],
     };
 }

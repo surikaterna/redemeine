@@ -1,11 +1,43 @@
-﻿import { Event, Command, EventCommandLink, EnvelopeHeaders } from './types';
+import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions } from './types';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 import { formatCommandType } from './utils/naming';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
 import { createReadonlyDeepProxy } from './utils/readonlyProxy';
 import { createIdentity } from './identity';
 
-type CommandHandler<S> = (state: ReadonlyDeep<S>, payload: unknown) => Event | Event[];
+type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
+    events: Event[];
+    intents: Record<string, unknown> & TPlugins['intents'];
+};
+
+type CommandHandler<S, TPlugins extends PluginExtensions = {}> = (
+    state: ReadonlyDeep<S>,
+    payload: unknown
+) => Event | CommandResult<Event, TPlugins>;
+
+export function normalizeCommandExecutionResult<TPlugins extends PluginExtensions = {}>(
+    result: Event | CommandResult<Event, TPlugins>
+): NormalizedCommandExecutionResult<TPlugins> {
+    if (Array.isArray(result)) {
+        return {
+            events: result,
+            intents: {} as Record<string, unknown> & TPlugins['intents']
+        };
+    }
+
+    if (result && typeof result === 'object' && 'events' in result && Array.isArray((result as { events?: unknown }).events)) {
+        const { events, ...rest } = result as { events: Event[] } & Record<string, unknown>;
+        return {
+            events,
+            intents: rest as Record<string, unknown> & TPlugins['intents']
+        };
+    }
+
+    return {
+        events: [result as Event],
+        intents: {} as Record<string, unknown> & TPlugins['intents']
+    };
+}
 
 function ensureCommandId(command: Command<unknown, string>): Command<unknown, string> {
     if (command.id) {
@@ -57,7 +89,7 @@ export function createCommandProcessor<S>(
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
-        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]);
+        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as CommandHandler<S>;
         return acc;
     }, {} as Record<string, CommandHandler<S>>);
 
@@ -70,7 +102,14 @@ export function createCommandProcessor<S>(
         
         const readonlyState = createReadonlyDeepProxy(state);
         const result = handler(readonlyState as ReadonlyDeep<S>, payload);
-        const events = Array.isArray(result) ? result : [result];
-        return events.map(event => withCommandLink(event, commandWithId));
+        const normalized = normalizeCommandExecutionResult(result);
+        const linkedEvents = normalized.events.map(event => withCommandLink(event, commandWithId));
+        Object.defineProperty(linkedEvents, '__intents', {
+            value: normalized.intents,
+            enumerable: false,
+            configurable: true,
+            writable: false
+        });
+        return linkedEvents;
     };
 }

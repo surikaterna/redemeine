@@ -34,7 +34,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
-      const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+      const ctx: EventInterceptorContext<{}, unknown> = {
         aggregateId: id,
         eventType: event.type,
         payload: event.payload,
@@ -56,17 +56,42 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     return events;
   };
 
+  const runAfterCommitHooks = async (
+    id: string,
+    events: Event[],
+    intents: Record<string, unknown>
+  ): Promise<void> => {
+    const plugins = options?.plugins || [];
+    if (plugins.length === 0) return;
+
+    for (const plugin of plugins) {
+      if (typeof plugin.onAfterCommit === 'function') {
+        await plugin.onAfterCommit({
+          aggregateId: id,
+          events,
+          intents
+        });
+      }
+    }
+  };
+
   return {
       get: async (id: string) => {
           const events = await store.getEvents(id);
           return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {
-          const core = (mirage as any)[MirageCoreSymbol];
-          if (!core) throw new Error('Not a valid Mirage Instance');
-          const appendableEvents = await runAppendInterceptors(core.id, core.uncommitted);
+        const core = (mirage as any)[MirageCoreSymbol];
+        if (!core) throw new Error('Not a valid Mirage Instance');
+
+          const { events, intents } = core.getPendingCommitContext();
+          const appendableEvents = await runAppendInterceptors(core.id, events);
+
           await store.saveEvents(core.id, appendableEvents, core.version);
-          core.uncommitted = [];
+
+          await runAfterCommitHooks(core.id, appendableEvents, intents);
+
+          core.clearPendingCommitContext();
       }
   };
 }

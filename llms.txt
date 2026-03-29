@@ -139,4 +139,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 18 Interfaces, 29 Types, 5 Public Functions.
+**Metadata:** 19 Interfaces, 35 Types, 5 Public Functions.
