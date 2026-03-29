@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents } from './types';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
@@ -8,6 +8,7 @@ import { applyEvent } from './utils/applyEvent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
+import { createCommandContextProxy } from './proxies/createCommandContextProxy';
 import { defaultNamingStrategy } from './utils/naming';
 import { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import { bindContext } from './bindContext';
@@ -301,7 +302,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
      * }))
      */
 commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>>>(
-        factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel; plugins?: PluginContext<TPlugins> }) => C
+        factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel; commands: CommandContext<CommandIntents<M>>; plugins?: PluginContext<TPlugins> }) => C
     ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry, TMeta, TPlugins>;
 
     /**
@@ -534,10 +535,16 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             const emit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy);
 
             const allCommandsMap: GenericCommandMap = {
-                ...component.getCommandsFactory()(emit, { selectors: allSelectors }),
+                ...component.getCommandsFactory()(emit, {
+                    selectors: allSelectors,
+                    commands: createCommandContextProxy<Record<string, unknown>>()
+                }),
                 ..._mixins.reduce((acc, m) => ({
                     ...acc,
-                    ...(m.commandFactory ? m.commandFactory(emit, { selectors: allSelectors }) : {})
+                    ...(m.commandFactory ? m.commandFactory(emit, {
+                        selectors: allSelectors,
+                        commands: createCommandContextProxy<Record<string, unknown>>()
+                    }) : {})
                 }), {} as GenericCommandMap)
             };
 
@@ -596,7 +603,10 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 });
 
                 const entityEmit = createEmitProxy(aggregateName, allEventOverrides, _namingStrategy, entityPath);
-                const entityCommands = entity.commandFactory(entityEmit, { selectors: mergedSelectors });
+                const entityCommands = entity.commandFactory(entityEmit, {
+                    selectors: mergedSelectors,
+                    commands: createCommandContextProxy<Record<string, unknown>>()
+                });
                 const entityCommandNameOverrides = entity.commandOverrides || {};
                 const mountCommandNameOverrides = {
                     ...((mountOverrides && mountOverrides.commandOverrides) || {}),

@@ -721,7 +721,10 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         try {
             const fakeEmit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
             const fakeSelectors = new Proxy({}, { get: () => () => undefined });
-            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors }) || {};
+            const fakeCommands = new Proxy({}, {
+                get: (_target, prop: string) => (payload: unknown) => ({ command: prop, payload })
+            });
+            const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors, commands: fakeCommands }) || {};
             const names = Object.keys(roleCommands);
             roleCommandNamesCache.set(role, names);
             return names;

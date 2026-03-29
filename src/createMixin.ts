@@ -1,4 +1,4 @@
-import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads } from './types';
+import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads, CommandContext, CommandIntents } from './types';
 import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import {
@@ -68,7 +68,7 @@ export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloa
   ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, Registry, TMeta>;
 
   commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
-    factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors }) => NewC
+    factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors; commands: CommandContext<CommandIntents<CPayloads>> }) => NewC
   ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry, TMeta>;
 
   entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
