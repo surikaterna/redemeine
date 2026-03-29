@@ -57,7 +57,7 @@ export function createCommandProcessor<S>(
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
-        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]);
+        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as CommandHandler<S>;
         return acc;
     }, {} as Record<string, CommandHandler<S>>);
 
