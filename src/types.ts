@@ -97,6 +97,18 @@ export interface RedemeinePlugin<
  */
 export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: any[]) => any>;
 
+export type CommandContext<TIntents extends Record<string, unknown>> = {
+  [K in keyof TIntents]: (payload: TIntents[K]) => { command: K; payload: TIntents[K] };
+} & {
+  [key: string]: (payload: unknown) => { command: string; payload: unknown };
+};
+
+export type CommandIntents<TCommands> = {
+  [K in keyof TCommands]: TCommands[K] extends { payload: infer P }
+    ? P
+    : TCommands[K];
+};
+
 /**
  * A foundational building block representing a domain event. 
  * Records an intent that has successfully altered the aggregate state.
