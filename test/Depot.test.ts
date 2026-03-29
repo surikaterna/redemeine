@@ -44,7 +44,7 @@ describe('Depot', () => {
 
   test('hydrates mirage from async iterable event replay', async () => {
     const store: EventStore = {
-      getEvents: async function* () {
+      readStream: async function* () {
         yield { type: 'order.created.event', payload: { id: 'streamed' } };
         yield { type: 'order.incremented.event', payload: { amount: 4 } };
       },
