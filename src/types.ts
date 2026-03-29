@@ -83,12 +83,22 @@ export interface EventInterceptorContext<
   meta: PluginMeta<TPlugins> | undefined;
 }
 
+export interface AfterCommitContext<
+  TPlugins extends PluginExtensions = {},
+  TEvent extends Event<any, any> = Event<any, any>
+> {
+  aggregateId: string;
+  events: TEvent[];
+  intents: PluginIntents<TPlugins>;
+}
+
 export interface RedemeinePlugin<
   TExtensions extends PluginExtensions = {}
 > {
   onBeforeCommand?: (ctx: CommandInterceptorContext<TExtensions, unknown>) => void | Promise<void>;
   onBeforeAppend?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
   onHydrateEvent?: (ctx: EventInterceptorContext<TExtensions, unknown>) => unknown | void | Promise<unknown | void>;
+  onAfterCommit?: (ctx: AfterCommitContext<TExtensions>) => void | Promise<void>;
 }
 
 /**
@@ -135,6 +145,7 @@ export interface Command<P = any, T extends CommandType | string = CommandType> 
 
 export type CommandResult<TEvent, TPlugins extends PluginExtensions = {}> =
   | TEvent[]
+  | TEvent
   | ({ events: TEvent[] } & PluginIntents<TPlugins>);
 
 /**

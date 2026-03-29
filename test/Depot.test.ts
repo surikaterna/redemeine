@@ -167,4 +167,83 @@ describe('Depot', () => {
       'append-2:order.incremented.event:incremented'
     ]);
   });
+
+  test('runs onAfterCommit sequentially with normalized intents payload', async () => {
+    type PluginShape = { intents: { traceId?: string; notified?: boolean } };
+
+    const aggregateWithIntents = createAggregate<S, 'order', Record<string, unknown>, PluginShape>('order', { id: 'o1', count: 0 })
+      .events({
+        incremented: (state, event: Event<{ amount: number }>) => {
+          state.count += event.payload.amount;
+        }
+      })
+      .commands(() => ({
+        increment: {
+          handler: (state: S, amount: number) => ({
+            events: [{ type: 'order.incremented.event', payload: { amount } }],
+            traceId: 'trace-123',
+            notified: true
+          })
+        }
+      }))
+      .build();
+
+    const calls: string[] = [];
+    const store: EventStore = {
+      getEvents: async () => [],
+      saveEvents: async () => {
+        calls.push('save');
+      }
+    };
+
+    const plugins: RedemeinePlugin<PluginShape>[] = [
+      {
+        onAfterCommit: async (ctx) => {
+          calls.push(`after-1:${ctx.aggregateId}:${ctx.events.length}:${String(ctx.intents.traceId)}`);
+        }
+      },
+      {
+        onAfterCommit: async (ctx) => {
+          calls.push(`after-2:${String(ctx.intents.notified)}`);
+        }
+      }
+    ];
+
+    const depot = createDepot(aggregateWithIntents, store, { plugins });
+    const mirage = await depot.get('o1');
+    await mirage.increment(2);
+    await depot.save(mirage);
+
+    expect(calls).toEqual([
+      'save',
+      'after-1:o1:1:trace-123',
+      'after-2:true'
+    ]);
+  });
+
+  test('does not execute onAfterCommit side-effects when save fails', async () => {
+    const calls: string[] = [];
+    const store: EventStore = {
+      getEvents: async () => [],
+      saveEvents: async () => {
+        calls.push('save');
+        throw new Error('save-failed');
+      }
+    };
+
+    const plugins: RedemeinePlugin[] = [
+      {
+        onAfterCommit: async () => {
+          calls.push('after');
+        }
+      }
+    ];
+
+    const depot = createDepot(aggregate, store, { plugins });
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+
+    await expect(depot.save(mirage)).rejects.toThrow('save-failed');
+    expect(calls).toEqual(['save']);
+  });
 });
