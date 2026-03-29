@@ -246,4 +246,45 @@ describe('Depot', () => {
     await expect(depot.save(mirage)).rejects.toThrow('save-failed');
     expect(calls).toEqual(['save']);
   });
+
+  test('composes builder plugins before depot runtime plugins', async () => {
+    const calls: string[] = [];
+
+    const aggregateWithBuilderPlugin = createAggregate<S, 'order'>('order', { id: 'o1', count: 0 })
+      .plugins({
+        onBeforeAppend: async () => {
+          calls.push('builder-before-append');
+        }
+      })
+      .events({
+        incremented: (state, event: Event<{ amount: number }>) => {
+          state.count += event.payload.amount;
+        }
+      })
+      .commands((emit) => ({
+        increment: (state, amount: number) => emit.incremented({ amount })
+      }))
+      .build();
+
+    const store: EventStore = {
+      getEvents: async () => [],
+      saveEvents: async () => {
+        calls.push('save');
+      }
+    };
+
+    const depot = createDepot(aggregateWithBuilderPlugin, store, {
+      plugins: [{
+        onBeforeAppend: async () => {
+          calls.push('runtime-before-append');
+        }
+      }]
+    });
+
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+    await depot.save(mirage);
+
+    expect(calls).toEqual(['builder-before-append', 'runtime-before-append', 'save']);
+  });
 });
