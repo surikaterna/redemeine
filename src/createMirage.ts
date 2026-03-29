@@ -361,9 +361,15 @@ export interface MirageOptions {
 export class MirageCore<S> {
     public uncommitted: Event[] = [];
     public version: number = 0;
+    private pendingCommitIntents: Record<string, unknown> = {};
     private listeners: ((state: S) => void)[] = [];
     private plugins: RedemeinePlugin[];
     private hasBeforeCommandPlugins: boolean;
+
+    private getResultIntents(events: Event[]): Record<string, unknown> {
+        const intents = (events as Event[] & { __intents?: Record<string, unknown> }).__intents;
+        return intents && typeof intents === 'object' ? intents : {};
+    }
 
     constructor(
         public builder: BuiltAggregate<S, any, any, any>,
@@ -436,6 +442,12 @@ export class MirageCore<S> {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
+
+        this.pendingCommitIntents = {
+            ...this.pendingCommitIntents,
+            ...this.getResultIntents(events)
+        };
+
         this.version++;
         this.notify();
         return this.state;
@@ -486,9 +498,27 @@ export class MirageCore<S> {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
             }
         }
+
+        this.pendingCommitIntents = {
+            ...this.pendingCommitIntents,
+            ...this.getResultIntents(events)
+        };
+
         this.version++;
         this.notify();
         return this.state;
+    }
+
+    public getPendingCommitContext(): { events: Event[]; intents: Record<string, unknown> } {
+        return {
+            events: [...this.uncommitted],
+            intents: { ...this.pendingCommitIntents }
+        };
+    }
+
+    public clearPendingCommitContext(): void {
+        this.uncommitted = [];
+        this.pendingCommitIntents = {};
     }
 
     public subscribe(listener: (state: S) => void) {
@@ -1269,7 +1299,7 @@ export function createLegacyAggregateBridge<S, M extends Record<string, any>, Re
         get id() { return core.id; },
         get _state() { return core.state; },
         getVersion: () => core.version,
-        clearUncommittedEvents: () => { core.uncommitted = []; },
+        clearUncommittedEvents: () => { core.clearPendingCommitContext(); },
         getUncommittedEvents: () => [...core.uncommitted],
     };
 }
