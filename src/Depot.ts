@@ -1,4 +1,4 @@
-import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol } from './createMirage';
+import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol, HydrationEvents } from './createMirage';
 import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from './types';
 
 export interface EventStore {
@@ -115,10 +115,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
   return {
       get: async (id: string) => {
-          const events: Event[] = [];
-          for await (const event of store.readStream(id)) {
-            events.push(event);
-          }
+          const events = store.readStream(id);
           return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {

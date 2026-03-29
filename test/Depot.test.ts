@@ -42,6 +42,23 @@ describe('Depot', () => {
     expect(bridge._state.count).toBe(2);
   });
 
+  test('hydrates mirage from async iterable event replay', async () => {
+    const store: EventStore = {
+      getEvents: async function* () {
+        yield { type: 'order.created.event', payload: { id: 'streamed' } };
+        yield { type: 'order.incremented.event', payload: { amount: 4 } };
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('streamed');
+    const bridge = createLegacyAggregateBridge(mirage);
+
+    expect(bridge._state.id).toBe('streamed');
+    expect(bridge._state.count).toBe(4);
+  });
+
   test('persists uncommitted events and clears them', async () => {
     const saveCalls: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const store: EventStore = {
