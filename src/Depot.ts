@@ -34,7 +34,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
-      const ctx: EventInterceptorContext<Record<string, unknown>, unknown> = {
+      const ctx: EventInterceptorContext<{}, unknown> = {
         aggregateId: id,
         eventType: event.type,
         payload: event.payload,
