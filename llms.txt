@@ -144,10 +144,19 @@ _Builder interface for creating projections fluently_
 - `.join()` (Returns `this`) - Add a joined stream for correlating related aggregates
 - `.build()` - Build the final projection definition
 
+### `SagaBuilder`
+_Core library class._
+
+**Methods:**
+- `.initialState()` (Returns `this`)
+- `.correlate()` (Returns `this`)
+- `.on()` (Returns `this`)
+- `.build()`
+
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
 - `command` (Auto-formatted path component)
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 37 Interfaces, 49 Types, 6 Public Functions.
+**Metadata:** 42 Interfaces, 60 Types, 7 Public Functions.
