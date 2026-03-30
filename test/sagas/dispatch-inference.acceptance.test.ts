@@ -14,6 +14,8 @@ describe('S27 acceptance: ctx.dispatch inference safety', () => {
         created: ctx => {
           ctx.dispatch('invoice.create', { invoiceId: 'inv-1', amount: 100 });
           ctx.dispatch('invoice.pay', { invoiceId: 'inv-1', paidAt: '2026-03-30T00:00:00.000Z' });
+
+          return { state: ctx.state, intents: [] };
         }
       })
       .build();
@@ -28,6 +30,8 @@ describe('S27 acceptance: ctx.dispatch inference safety', () => {
         created: ctx => {
           // @ts-expect-error payload for invoice.create must include amount:number
           ctx.dispatch('invoice.create', { invoiceId: 'inv-1' });
+
+          return { state: ctx.state, intents: [] };
         }
       })
       .build();
@@ -42,6 +46,8 @@ describe('S27 acceptance: ctx.dispatch inference safety', () => {
         created: ctx => {
           // @ts-expect-error command key must exist in InvoiceCommandMap
           ctx.dispatch('invoice.cancel', { invoiceId: 'inv-1' });
+
+          return { state: ctx.state, intents: [] };
         }
       })
       .build();

@@ -25,6 +25,8 @@ describe('createSaga ctx schedule/retry helper typing', () => {
               jitterCoefficient: 0.2
             }
           );
+
+          return { state: ctx.state, intents: [] };
         }
       })
       .build();
@@ -58,6 +60,8 @@ describe('createSaga ctx schedule/retry helper typing', () => {
             maxAttempts: 3,
             initialBackoffMs: 250
           });
+
+          return { state: ctx.state, intents: [] };
         }
       })
       .build();

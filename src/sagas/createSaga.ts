@@ -88,10 +88,53 @@ export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap>
   runActivity: SagaRunActivity;
 }
 
+export interface SagaStateTransition<TState> {
+  readonly state: TState;
+}
+
+export type SagaDispatchIntent<TCommandMap extends SagaCommandMap> = {
+  [TCommandName in SagaCommandName<TCommandMap>]: {
+    readonly type: 'dispatch';
+    readonly command: TCommandName;
+    readonly payload: SagaCommandPayload<TCommandMap, TCommandName>;
+  };
+}[SagaCommandName<TCommandMap>];
+
+export interface SagaScheduleIntent {
+  readonly type: 'schedule';
+  readonly id: string;
+  readonly delay: number;
+}
+
+export interface SagaCancelScheduleIntent {
+  readonly type: 'cancelSchedule';
+  readonly id: string;
+}
+
+export interface SagaRunActivityIntent {
+  readonly type: 'runActivity';
+  readonly name: string;
+  readonly retryPolicy?: SagaRetryPolicy;
+}
+
+export type SagaIntent<TCommandMap extends SagaCommandMap> =
+  | SagaDispatchIntent<TCommandMap>
+  | SagaScheduleIntent
+  | SagaCancelScheduleIntent
+  | SagaRunActivityIntent;
+
+export interface SagaReducerOutput<TState, TCommandMap extends SagaCommandMap> extends SagaStateTransition<TState> {
+  readonly intents: readonly SagaIntent<TCommandMap>[];
+}
+
+export type SagaHandlerResult<TState, TCommandMap extends SagaCommandMap> =
+  | SagaReducerOutput<TState, TCommandMap>
+  | Promise<SagaReducerOutput<TState, TCommandMap>>;
+
 export type SagaHandler<TState, TCommandMap extends SagaCommandMap> = (
   ctx: SagaDispatchContext<TState, TCommandMap>,
   ...args: unknown[]
-) => unknown;
+) => SagaHandlerResult<TState, TCommandMap>;
 
 export type SagaHandlers<TState, TCommandMap extends SagaCommandMap> = Record<
   string,
