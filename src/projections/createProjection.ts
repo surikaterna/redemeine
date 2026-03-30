@@ -22,6 +22,12 @@ type EventProjectorsOf<TAggregate> =
       : never
     : never;
 
+type ProjectionAggregateSource = {
+  pure: {
+    eventProjectors: Record<string, unknown>;
+  };
+};
+
 /**
  * Extract aggregate event payload map from real `createAggregate(...).build()` outputs.
  * Falls back to explicit AggregateDefinition generic payloads for compatibility.
@@ -157,9 +163,9 @@ export interface ProjectionBuilder<TState> {
   /**
    * Define the primary stream to project from
    */
-  from<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  from<TAggregate extends ProjectionAggregateSource>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
   ): ProjectionBuilder<TState>;
   
   /**
@@ -203,9 +209,9 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  from<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  from<TAggregate extends ProjectionAggregateSource>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
@@ -218,7 +224,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     }
 
     this._fromStream = {
-      aggregate: aggregate as AggregateDefinition<unknown, Record<string, unknown>>,
+      aggregate: aggregate as unknown as AggregateDefinition<unknown, Record<string, unknown>>,
       handlers: handlersMap
     };
     
