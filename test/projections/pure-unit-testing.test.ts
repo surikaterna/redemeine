@@ -6,6 +6,9 @@ import { produce } from 'immer';
 interface AggregateDefinition<State, Payload> {
   __aggregateType: string;
   initialState: State;
+  pure: {
+    eventProjectors: Record<string, (state: State, event: { payload: Payload }) => void>;
+  };
 }
 
 // Test aggregate with realistic payload types
@@ -33,12 +36,22 @@ interface OrderSummaryState {
 }
 
 // Test aggregate definition
-const orderAgg: AggregateDefinition<OrderSummaryState, Record<string, unknown>> = {
+const orderAgg: AggregateDefinition<OrderSummaryState, OrderCreatedPayload | OrderShippedPayload> = {
   __aggregateType: 'order',
   initialState: { orderId: '', customerId: '', totalAmount: 0, itemCount: 0, shippedAt: null, trackingNumber: null, status: 'pending' },
-} as any;
+  pure: {
+    eventProjectors: {
+      created: () => {},
+      shipped: () => {}
+    }
+  }
+};
 
 describe('Pure Unit Testing of Projection Handlers', () => {
+  it('defines a typed aggregate fixture for projection tests', () => {
+    expect(orderAgg.__aggregateType).toBe('order');
+  });
+
   describe('Testing handlers in isolation', () => {
     it('should test orderCreated handler with mock event', () => {
       // This is how a developer would test their handler:
@@ -66,7 +79,7 @@ describe('Pure Unit Testing of Projection Handlers', () => {
             { sku: 'SKU-001', quantity: 2, price: 25.00 },
             { sku: 'SKU-002', quantity: 1, price: 50.00 }
           ]
-        } as OrderCreatedPayload,
+        },
         sequence: 1,
         timestamp: new Date().toISOString()
       };
@@ -121,7 +134,7 @@ describe('Pure Unit Testing of Projection Handlers', () => {
           orderId: 'order-123',
           trackingNumber: '1Z999AA10123456784',
           carrier: 'UPS'
-        } as OrderShippedPayload,
+        },
         sequence: 2,
         timestamp: new Date().toISOString()
       };
@@ -161,7 +174,7 @@ describe('Pure Unit Testing of Projection Handlers', () => {
           orderId: 'order-123',
           customerId: 'cust-456',
           items: [{ sku: 'SKU-001', quantity: 2, price: 25.00 }]
-        } as OrderCreatedPayload
+        }
       };
       
       const shippedEvent = {
@@ -169,7 +182,7 @@ describe('Pure Unit Testing of Projection Handlers', () => {
           orderId: 'order-123',
           trackingNumber: 'TRACK123',
           carrier: 'FedEx'
-        } as OrderShippedPayload
+        }
       };
       
       // Apply events in sequence (like the daemon does)
