@@ -6,6 +6,48 @@ import { ProjectionEvent as BaseProjectionEvent } from './types';
  */
 type HandlerEvent<TPayload> = Omit<BaseProjectionEvent, 'payload'> & { payload: TPayload };
 
+type AnyProjector = (...args: any[]) => unknown;
+
+type ProjectorPayload<TProjector> =
+  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+    ? TEvent extends { payload: infer TPayload }
+      ? TPayload
+      : unknown
+    : unknown;
+
+type EventProjectorsOf<TAggregate> =
+  TAggregate extends { pure: { eventProjectors: infer TProjectors } }
+    ? TProjectors extends Record<string, AnyProjector>
+      ? TProjectors
+      : never
+    : never;
+
+/**
+ * Extract aggregate event payload map from real `createAggregate(...).build()` outputs.
+ * Falls back to explicit AggregateDefinition generic payloads for compatibility.
+ */
+export type AggregateEventPayloadMap<TAggregate> =
+  [EventProjectorsOf<TAggregate>] extends [never]
+    ? TAggregate extends AggregateDefinition<unknown, infer TPayloads>
+      ? TPayloads
+      : Record<string, unknown>
+    : {
+      [K in keyof EventProjectorsOf<TAggregate> & string]: ProjectorPayload<EventProjectorsOf<TAggregate>[K]>;
+    };
+
+/**
+ * Event keys for an aggregate derived from event payload map.
+ */
+export type AggregateEventKeys<TAggregate> = keyof AggregateEventPayloadMap<TAggregate> & string;
+
+/**
+ * Payload type for a specific aggregate event key.
+ */
+export type AggregateEventPayloadByKey<
+  TAggregate,
+  TEventKey extends AggregateEventKeys<TAggregate>
+> = AggregateEventPayloadMap<TAggregate>[TEventKey];
+
 /**
  * Aggregate definition interface - defines an aggregate that can be used in projections
  */

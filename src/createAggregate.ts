@@ -62,6 +62,9 @@ type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName, any, a
 
 type MergeEntities<T extends any[]> = Merge<ExtractEntityCommands<T[number]> & {}>;
 type AggregateCommandKeys<T> = AllKeys<T & {}>;
+type AggregateEventProjectorsMap<TEvents> = TEvents extends Record<string, (...args: any[]) => any>
+    ? TEvents
+    : Record<string, (...args: any[]) => any>;
 
 type EntityMountOverrides = {
     eventNameOverrides?: Record<string, string>;
@@ -353,7 +356,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
         /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
         pure: {
             commandProcessors: Record<string, Function>;
-            eventProjectors: Record<string, Function>;
+            eventProjectors: AggregateEventProjectorsMap<E>;
         };
         selectors: Sel;
         hooks: AggregateHooks<S>;
