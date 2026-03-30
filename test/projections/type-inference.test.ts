@@ -335,4 +335,31 @@ describe('Compile-time Type Verification', () => {
       })
       .build();
   });
+
+  it('narrows event.type to handler key or canonical key in .from() handlers', () => {
+    createProjection('verify-from-event-type', () => ({ total: 0 }))
+      .from(invoiceAgg, {
+        created: (state, event) => {
+          const _literal: 'created' | 'invoice.created.event' = event.type;
+          expect(_literal).toBeDefined();
+          // @ts-expect-error event.type should not narrow to unrelated literal
+          const _invalid: 'paid' = event.type;
+        }
+      })
+      .build();
+  });
+
+  it('narrows event.type to handler key or canonical key in .join() handlers', () => {
+    createProjection('verify-join-event-type', () => ({ total: 0 }))
+      .from(invoiceAgg, { created: () => {} })
+      .join(orderAgg, {
+        shipped: (state, event) => {
+          const _literal: 'shipped' | 'order.shipped.event' = event.type;
+          expect(_literal).toBeDefined();
+          // @ts-expect-error event.type should not narrow to unrelated literal
+          const _invalid: 'delivered' = event.type;
+        }
+      })
+      .build();
+  });
 });
