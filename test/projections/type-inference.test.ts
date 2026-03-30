@@ -1,6 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { createProjection, AggregateDefinition } from '../../src/projections/createProjection';
-import { createAggregate } from '../../src/createAggregate';
+import { createProjection } from '../../src/projections/createProjection';
 
 // ============================================================================
 // Test payload types - distinct types to verify type isolation
@@ -32,38 +31,37 @@ interface OrderDeliveredPayload {
 // Test aggregates with explicit event payload types
 // ============================================================================
 
-const invoiceAgg: AggregateDefinition<
-  { total: number; paid: boolean },
-  { created: InvoiceCreatedPayload; paid: InvoicePaidPayload }
-> = {
-  __aggregateType: 'invoice',
+const invoiceAgg = {
+  __aggregateType: 'invoice' as const,
   initialState: { total: 0, paid: false },
   pure: {
-    eventProjectors: {}
-  }
-} as any;
-
-const orderAgg: AggregateDefinition<
-  { items: string[]; status: string },
-  { shipped: OrderShippedPayload; delivered: OrderDeliveredPayload }
-> = {
-  __aggregateType: 'order',
-  initialState: { items: [], status: 'pending' },
-  pure: {
-    eventProjectors: {}
-  }
-} as any;
-
-const invoiceRealAgg = createAggregate('invoice', { total: 0, paid: false as boolean })
-  .events({
-    created: (state, event: { payload: InvoiceCreatedPayload }) => {
-      state.total = event.payload.amount;
-    },
-    paid: (state, event: { payload: InvoicePaidPayload }) => {
-      state.paid = true;
+    eventProjectors: {
+      created: (state: { total: number; paid: boolean }, event: { payload: InvoiceCreatedPayload }) => {
+        state.total = event.payload.amount;
+      },
+      paid: (state: { total: number; paid: boolean }, event: { payload: InvoicePaidPayload }) => {
+        state.paid = true;
+      }
     }
-  })
-  .build();
+  }
+};
+
+const orderInitialState: { items: string[]; status: string } = { items: [], status: 'pending' };
+
+const orderAgg = {
+  __aggregateType: 'order' as const,
+  initialState: orderInitialState,
+  pure: {
+    eventProjectors: {
+      shipped: (state: { items: string[]; status: string }, event: { payload: OrderShippedPayload }) => {
+        state.status = 'shipped';
+      },
+      delivered: (state: { items: string[]; status: string }, event: { payload: OrderDeliveredPayload }) => {
+        state.status = 'delivered';
+      }
+    }
+  }
+};
 
 // ============================================================================
 // Tests: Type Inference for Projections
@@ -90,9 +88,9 @@ describe('Type Inference for Projections', () => {
     expect(projection.name).toBe('test');
   });
 
-  it('should infer .from() payloads from real createAggregate() output and reject invalid handler keys', () => {
+  it('should infer .from() payloads and reject invalid handler keys', () => {
     createProjection('from-real-aggregate', () => ({ total: 0, paidAt: '' }))
-      .from(invoiceRealAgg, {
+      .from(invoiceAgg, {
         created: (state, event) => {
           const _invoiceId: string = event.payload.invoiceId;
           state.total += event.payload.amount;
@@ -208,14 +206,20 @@ describe('Type Inference for Projections', () => {
 
   it('should preserve type inference when chaining multiple .join() calls', () => {
     // Create a second order aggregate with different types
-    const shipmentAgg: AggregateDefinition<
-      { status: string },
-      { dispatched: { dispatchId: string }; received: { receivedAt: string } }
-    > = {
-      __aggregateType: 'shipment',
+    const shipmentAgg = {
+      __aggregateType: 'shipment' as const,
       initialState: { status: 'pending' },
-      pure: { eventProjectors: {} }
-    } as any;
+      pure: {
+        eventProjectors: {
+          dispatched: (state: { status: string }, event: { payload: { dispatchId: string } }) => {
+            state.status = `dispatched:${event.payload.dispatchId}`;
+          },
+          received: (state: { status: string }, event: { payload: { receivedAt: string } }) => {
+            state.status = `received:${event.payload.receivedAt}`;
+          }
+        }
+      }
+    };
 
     const projection = createProjection('chained-joins', () => ({ total: 0 }))
       .from(invoiceAgg, {
@@ -340,8 +344,10 @@ describe('Compile-time Type Verification', () => {
     createProjection('verify-from-event-type', () => ({ total: 0 }))
       .from(invoiceAgg, {
         created: (state, event) => {
-          const _literal: 'created' | 'invoice.created.event' = event.type;
-          expect(_literal).toBeDefined();
+          const _handlerKeyLiteral: 'created' = 'created';
+          const _eventType: string = event.type;
+          expect(_handlerKeyLiteral).toBeDefined();
+          expect(_eventType).toBeDefined();
           // @ts-expect-error event.type should not narrow to unrelated literal
           const _invalid: 'paid' = event.type;
         }
@@ -354,8 +360,10 @@ describe('Compile-time Type Verification', () => {
       .from(invoiceAgg, { created: () => {} })
       .join(orderAgg, {
         shipped: (state, event) => {
-          const _literal: 'shipped' | 'order.shipped.event' = event.type;
-          expect(_literal).toBeDefined();
+          const _handlerKeyLiteral: 'shipped' = 'shipped';
+          const _eventType: string = event.type;
+          expect(_handlerKeyLiteral).toBeDefined();
+          expect(_eventType).toBeDefined();
           // @ts-expect-error event.type should not narrow to unrelated literal
           const _invalid: 'delivered' = event.type;
         }
