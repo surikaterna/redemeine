@@ -25,13 +25,40 @@ const invoiceSummary = createProjection<{
   .build();
 ```
 
-## 2) `.from()` / `.join()` lifecycle semantics
+## 2) Projection inference model (`.from()` + `.join()`)
+
+- Handler keys in `.from()` and `.join()` are inferred from the actual aggregate event map.
+- `event.payload` is inferred per handler key, so payload fields are type-safe without manual casts.
+- `event.type` narrows to the selected handler key and may include the aggregate’s canonical scoped event type (for example, `'created' | 'invoice.created.event'`).
+
+Example (`.from()` + `.join()`):
+
+```ts
+const projection = createProjection<{ seen: string[] }>('projection', () => ({ seen: [] }))
+  .from(invoiceAgg, {
+    created: (state, event) => {
+      // event.type: 'created' | 'invoice.created.event'
+      state.seen.push(event.type);
+      state.seen.push(event.payload.id);
+    }
+  })
+  .join(orderAgg, {
+    shipped: (state, event) => {
+      // event.type: 'shipped' | 'order.shipped.event'
+      state.seen.push(event.type);
+      state.seen.push(event.payload.invoiceId);
+    }
+  })
+  .build();
+```
+
+## 3) `.from()` / `.join()` lifecycle semantics
 
 - `.from()` is the **owner stream**. Events from this aggregate can create or update documents.
 - `.join()` is **opt-in correlation**. A join event is processed only after a `.from()` handler calls `ctx.subscribeTo(joinAgg, joinAggregateId)`.
 - If no subscription exists, `.join()` events are ignored (prevents ghost documents).
 
-## 3) Identity override example
+## 4) Identity override example
 
 Default routing uses `event.aggregateId`. Override it when your projection document id differs:
 
@@ -46,7 +73,7 @@ const byCustomer = createProjection<{ invoices: number }>('customer-summary', ()
   .build();
 ```
 
-## 4) Unit-test handlers as pure functions (Immer)
+## 5) Unit-test handlers as pure functions (Immer)
 
 You can test a handler without daemon/store setup:
 
@@ -68,7 +95,7 @@ const next = produce(state, (draft) => {
 // state.total === 0 (unchanged)
 ```
 
-## 5) Cursor semantics (quick note)
+## 6) Cursor semantics (quick note)
 
 - `fromCursor` is **exclusive** (`sequence > fromCursor.sequence`).
 - `nextCursor` points to the **last processed event** (not last + 1).
