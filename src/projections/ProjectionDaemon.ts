@@ -94,12 +94,33 @@ export class ProjectionDaemon<TState = unknown> {
       return emptyStats;
     }
     
-    // Group events by target document ID for batching
-    const eventsByDoc = this.groupEventsByTarget(batch.events);
+    // Separate .from events and .join events
+    const fromEvents = batch.events.filter(e => 
+      e.aggregateType === projection.fromStream.aggregate.__aggregateType
+    );
+    const joinEvents = batch.events.filter(e => {
+      const isJoinStream = projection.joinStreams?.some(
+        js => js.aggregate.__aggregateType === e.aggregateType
+      );
+      return isJoinStream;
+    });
     
-    // Process each document's events
-    for (const [docId, events] of eventsByDoc) {
+    // Track documents updated for stats
+    const documentsUpdated = new Set<string>();
+    
+    // First pass: process .from events (these can create subscriptions)
+    const fromEventsByDoc = this.groupEventsByTarget(fromEvents);
+    for (const [docId, events] of fromEventsByDoc) {
       await this.processDocumentEvents(docId, events);
+      documentsUpdated.add(docId);
+    }
+    
+    // Second pass: process .join events (now with subscriptions from first pass)
+    // This is the key fix - we need to re-evaluate join events after subscriptions are created
+    const joinEventsByDoc = this.groupEventsByTarget(joinEvents);
+    for (const [docId, events] of joinEventsByDoc) {
+      await this.processDocumentEvents(docId, events);
+      documentsUpdated.add(docId);
     }
     
     // Save checkpoint
@@ -107,7 +128,7 @@ export class ProjectionDaemon<TState = unknown> {
     
     const stats = {
       eventsProcessed: batch.events.length,
-      documentsUpdated: eventsByDoc.size,
+      documentsUpdated: documentsUpdated.size,
       duration: Date.now() - startTime
     };
     

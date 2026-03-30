@@ -7,17 +7,21 @@
  */
 export interface Checkpoint {
   sequence: number;
+  sequenceNumber?: number;
   timestamp?: string;
+  timestamp_?: number;
+  custom?: Record<string, unknown>;
 }
 
 /**
  * Event representing something that happened in the domain
+ * Used by the ProjectionDaemon when processing events from subscriptions
  */
-export interface ProjectionEvent {
+export interface ProjectionEvent<TPayload = unknown> {
   aggregateType: string;
   aggregateId: string;
   type: string;
-  payload: Record<string, unknown>;
+  payload: TPayload;
   sequence: number;
   timestamp: string;
   metadata?: Record<string, unknown>;
@@ -26,9 +30,10 @@ export interface ProjectionEvent {
 /**
  * Batch of events returned from subscription
  */
-export interface EventBatch {
-  events: ProjectionEvent[];
+export interface EventBatch<TEvent extends ProjectionEvent = ProjectionEvent> {
+  events: TEvent[];
   nextCursor: Checkpoint;
+  hasMore?: boolean;
 }
 
 /**
