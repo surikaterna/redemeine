@@ -86,13 +86,43 @@ Redemeine treats aggregates as composable building blocks:
 
 ## 🔌 Plugin Interceptors
 
-Mirage/Depot infrastructure supports plugin hooks for command dispatch, append, and hydration:
+Mirage/Depot infrastructure supports plugin hooks for command dispatch, append, hydration, and post-commit:
 
 - `onBeforeCommand(ctx)`
-- `onBeforeAppend(ctx)`
 - `onHydrateEvent(ctx)`
+- `onBeforeAppend(ctx)`
+- `onAfterCommit(ctx)`
 
-Hooks run sequentially in registration order and are awaited. `onBeforeCommand` can throw to block execution. `onBeforeAppend` and `onHydrateEvent` can mutate payloads in-place or return a transformed payload.
+Every plugin must provide a stable `key`:
+
+```ts
+const auditPlugin = {
+  key: 'audit',
+  onAfterCommit: async (ctx) => {
+    // ctx.pluginKey === 'audit'
+  }
+};
+```
+
+Command handlers that return plugin intents must use the namespaced envelope shape:
+
+```ts
+return {
+  events: [emit.incremented({ amount })],
+  intents: {
+    audit: { traceId: 'trace-123' }
+  }
+};
+```
+
+Flat root-level plugin keys are not accepted.
+
+### Hook failure policy matrix
+
+- `onBeforeCommand`: **fail_closed** (command is blocked, no events applied)
+- `onHydrateEvent`: **fail_closed** (hydrate is blocked)
+- `onBeforeAppend`: **fail_closed** (append/save is blocked)
+- `onAfterCommit`: **fail_closed_post_commit** (events already persisted; pending results are cleared and a structured `RedemeinePluginHookError` is thrown with `pluginKey` + `hook`)
 
 ## 🧭 Quick Navigation
 
