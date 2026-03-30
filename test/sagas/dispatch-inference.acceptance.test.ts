@@ -6,8 +6,8 @@ type InvoiceCommandMap = {
   'invoice.pay': { invoiceId: string; paidAt: string };
 };
 
-describe('createSaga ctx.dispatch type inference', () => {
-  it('accepts valid command names and payloads', () => {
+describe('S27 acceptance: ctx.dispatch inference safety', () => {
+  it('valid payload compiles for known command key', () => {
     const saga = createSaga<InvoiceCommandMap>()
       .initialState(() => ({ dispatched: 0 }))
       .on('invoice', {
@@ -21,16 +21,27 @@ describe('createSaga ctx.dispatch type inference', () => {
     expect(saga.handlers).toHaveLength(1);
   });
 
-  it('rejects invalid command keys and payload shapes at compile time', () => {
+  it('invalid payload fails at compile time', () => {
+    createSaga<InvoiceCommandMap>()
+      .initialState(() => ({ dispatched: 0 }))
+      .on('invoice', {
+        created: ctx => {
+          // @ts-expect-error payload for invoice.create must include amount:number
+          ctx.dispatch('invoice.create', { invoiceId: 'inv-1' });
+        }
+      })
+      .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('invalid command key fails at compile time', () => {
     createSaga<InvoiceCommandMap>()
       .initialState(() => ({ dispatched: 0 }))
       .on('invoice', {
         created: ctx => {
           // @ts-expect-error command key must exist in InvoiceCommandMap
           ctx.dispatch('invoice.cancel', { invoiceId: 'inv-1' });
-
-          // @ts-expect-error payload for invoice.create must include amount:number
-          ctx.dispatch('invoice.create', { invoiceId: 'inv-1' });
         }
       })
       .build();
