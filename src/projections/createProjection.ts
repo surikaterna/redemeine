@@ -110,7 +110,7 @@ export interface ProjectionStreamDefinition<TState> {
  */
 export interface JoinStreamDefinition<TState> {
   /** The aggregate type for this joined stream */
-  aggregate: AggregateDefinition<unknown, Record<string, unknown>>;
+  aggregate: { __aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
 }
@@ -165,9 +165,9 @@ export interface ProjectionBuilder<TState> {
   /**
    * Add a joined stream for correlating related aggregates
    */
-  join<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  join<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
   ): ProjectionBuilder<TState>;
   
   /**
@@ -225,9 +225,9 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  join<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  join<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
@@ -239,7 +239,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     }
 
     this._joinStreams.push({
-      aggregate: aggregate as AggregateDefinition<unknown, Record<string, unknown>>,
+      aggregate,
       handlers: handlersMap
     });
     
