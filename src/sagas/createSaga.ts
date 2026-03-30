@@ -18,9 +18,28 @@ export type SagaDispatch<TCommandMap extends SagaCommandMap> = <
   payload: SagaCommandPayload<TCommandMap, TCommandName>
 ) => void;
 
+export interface SagaRetryPolicy {
+  maxAttempts: number;
+  initialBackoffMs: number;
+  backoffCoefficient: number;
+  maxBackoffMs?: number;
+  jitterCoefficient?: number;
+}
+
+export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
+
+export type SagaRunActivity = <TResult = unknown>(
+  name: string,
+  closure: SagaActivityClosure<TResult>,
+  retryPolicy?: SagaRetryPolicy
+) => TResult | Promise<TResult>;
+
 export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap> {
   readonly state: TState;
   dispatch: SagaDispatch<TCommandMap>;
+  schedule: (id: string, delay: number) => void;
+  cancelSchedule: (id: string) => void;
+  runActivity: SagaRunActivity;
 }
 
 export type SagaHandler<TState, TCommandMap extends SagaCommandMap> = (
