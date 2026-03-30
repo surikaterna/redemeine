@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   InMemorySagaEventStore,
+  createSagaIntentIdempotencyKey,
   type SagaReducerOutput,
   persistSagaReducerOutputIntents
 } from '../../src/sagas';
@@ -35,6 +36,7 @@ describe('S09 intent recorded persistence', () => {
     expect(recorded[0]).toEqual({
       type: 'saga.intent-recorded',
       sagaStreamId: 'saga-stream-1',
+      idempotencyKey: createSagaIntentIdempotencyKey('saga-stream-1', 0, output.intents[0]),
       intent: output.intents[0],
       recordedAt: '2026-03-30T00:00:00.000Z'
     });
@@ -83,5 +85,36 @@ describe('S09 intent recorded persistence', () => {
         size: 2
       }
     ]);
+  });
+
+  it('generates deterministic idempotency keys for equal intent content', () => {
+    const firstIntent = {
+      type: 'dispatch' as const,
+      command: 'billing.charge' as const,
+      payload: { amount: 250, invoiceId: 'inv-1' },
+      metadata: {
+        sagaId: 'saga-1',
+        correlationId: 'corr-1',
+        causationId: 'cause-1'
+      }
+    };
+
+    const sameContentDifferentOrder = {
+      type: 'dispatch' as const,
+      command: 'billing.charge' as const,
+      payload: { invoiceId: 'inv-1', amount: 250 },
+      metadata: {
+        causationId: 'cause-1',
+        correlationId: 'corr-1',
+        sagaId: 'saga-1'
+      }
+    };
+
+    const firstKey = createSagaIntentIdempotencyKey('saga-stream-stable', 0, firstIntent);
+    const secondKey = createSagaIntentIdempotencyKey('saga-stream-stable', 0, sameContentDifferentOrder);
+
+    expect(firstKey).toBe(secondKey);
+    expect(createSagaIntentIdempotencyKey('saga-stream-stable', 1, firstIntent)).not.toBe(firstKey);
+    expect(createSagaIntentIdempotencyKey('saga-stream-other', 0, firstIntent)).not.toBe(firstKey);
   });
 });

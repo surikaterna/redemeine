@@ -3,6 +3,7 @@ import type { SagaCommandMap, SagaIntent, SagaReducerOutput } from './createSaga
 export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly type: 'saga.intent-recorded';
   readonly sagaStreamId: string;
+  readonly idempotencyKey: string;
   readonly intent: SagaIntent<TCommandMap>;
   readonly recordedAt: string;
 }
@@ -42,6 +43,41 @@ export type SagaLifecycleEvent =
   | SagaIntentSucceededEvent
   | SagaIntentFailedEvent;
 
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableSerialize(item)).join(',')}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, nested]) => `${JSON.stringify(key)}:${stableSerialize(nested)}`);
+
+  return `{${entries.join(',')}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function createSagaIntentIdempotencyKey<TCommandMap extends SagaCommandMap>(
+  sagaStreamId: string,
+  intentOrdinal: number,
+  intent: SagaIntent<TCommandMap>
+): string {
+  const intentHash = hashString(stableSerialize(intent));
+  return `${sagaStreamId}:${intentOrdinal}:${intentHash}`;
+}
 export interface SagaEventStore {
   appendIntentRecordedBatch<TCommandMap extends SagaCommandMap>(
     sagaStreamId: string,
@@ -182,9 +218,10 @@ export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaC
   output: SagaReducerOutput<TState, TCommandMap>,
   createRecordedAt: () => string = () => new Date().toISOString()
 ): SagaIntentRecordedEvent<TCommandMap>[] {
-  return output.intents.map(intent => ({
+  return output.intents.map((intent, intentOrdinal) => ({
     type: 'saga.intent-recorded',
     sagaStreamId,
+    idempotencyKey: createSagaIntentIdempotencyKey(sagaStreamId, intentOrdinal, intent),
     intent,
     recordedAt: createRecordedAt()
   }));
