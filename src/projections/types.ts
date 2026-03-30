@@ -1,12 +1,37 @@
 /**
- * Represents a cursor/checkpoint position for resumable event processing.
- * The checkpoint captures the event sequence position for reliable recovery.
+ * Core types for the projections system
+ */
+
+/**
+ * Checkpoint for tracking event progress
  */
 export interface Checkpoint {
-  /** The sequence ID or offset of the last processed event */
   sequence: number;
-  /** Optional timestamp for debugging and ordering purposes */
-  timestamp?: number;
-  /** Optional metadata for additional checkpoint context */
+  timestamp?: string;
+}
+
+/**
+ * Event representing something that happened in the domain
+ */
+export interface ProjectionEvent {
+  aggregateType: string;
+  aggregateId: string;
+  type: string;
+  payload: Record<string, unknown>;
+  sequence: number;
+  timestamp: string;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * Batch of events returned from subscription
+ */
+export interface EventBatch {
+  events: ProjectionEvent[];
+  nextCursor: Checkpoint;
+}
+
+/**
+ * Cursor for resuming event consumption
+ */
+export type Cursor = Checkpoint;

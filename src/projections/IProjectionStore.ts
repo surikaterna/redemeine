@@ -1,39 +1,33 @@
 import { Checkpoint } from './types';
 
 /**
- * Abstract interface for projection state persistence.
- * Any database adapter (MongoDB, PostgreSQL, In-Memory, etc.) must implement this.
- * 
- * CRITICAL: The save() method MUST enforce atomic commit of both:
- * 1. The projection state data
- * 2. The checkpoint cursor (for resumable processing)
+ * Interface for storing and retrieving projection state
  */
 export interface IProjectionStore<TState = unknown> {
   /**
-   * Load projection state by document ID.
-   * @param id The document/projection ID
-   * @returns The current state or null if not yet created
+   * Load the current state for a projection document
+   * @param documentId The document ID to load
+   * @returns The current state or null if not found
    */
-  load(id: string): Promise<TState | null>;
-
+  load(documentId: string): Promise<TState | null>;
+  
   /**
-   * Save projection state atomically with its checkpoint.
-   * The store must persist both the state and cursor together.
-   * 
-   * @param id The document/projection ID
-   * @param state The updated projection state
-   * @param cursor The checkpoint after processing this state
+   * Save the projection state atomically
+   * @param documentId The document ID to save
+   * @param state The state to save
+   * @param checkpoint The checkpoint for this state
    */
-  save(id: string, state: TState, cursor: Checkpoint): Promise<void>;
-
+  save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void>;
+  
   /**
-   * Check if a document exists (optional method for optimization).
-   * Default implementation calls load() and checks for null.
+   * Get a checkpoint for a specific key
+   * @param key The checkpoint key
    */
-  exists?(id: string): Promise<boolean>;
-
+  getCheckpoint?(key: string): Promise<Checkpoint | null>;
+  
   /**
-   * Delete a projection document (optional, for cleanup scenarios).
+   * Delete a projection document
+   * @param documentId The document ID to delete
    */
-  delete?(id: string): Promise<void>;
+  delete?(documentId: string): Promise<void>;
 }

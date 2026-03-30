@@ -1,4 +1,12 @@
-// Projections module exports
-export type { Checkpoint } from './types';
-export type { IProjectionStore } from './IProjectionStore';
-export { InMemoryProjectionStore } from './InMemoryProjectionStore';
+// Types
+export * from './types';
+
+// Interfaces
+export * from './IProjectionStore';
+export * from './IEventSubscription';
+
+// Builder API
+export * from './createProjection';
+
+// Daemon
+export * from './ProjectionDaemon';
