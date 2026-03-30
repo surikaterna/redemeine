@@ -1,16 +1,4 @@
-export {
-  createProjection,
-  projectFromAggregate,
-  type ProjectionBuilder,
-  type ProjectionDefinition,
-  type ProjectionHandler,
-  type ProjectionHandlers,
-  type ProjectionEvent,
-  type ProjectionContext,
-  type AggregateDefinition
-} from './createProjection';
-
-export {
-  type Checkpoint,
-  type EventBatch
-} from './createProjection';
+// Projections module exports
+export type { Checkpoint } from './types';
+export type { IProjectionStore } from './IProjectionStore';
+export { InMemoryProjectionStore } from './InMemoryProjectionStore';
