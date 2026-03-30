@@ -11,12 +11,16 @@ export type SagaCommandPayload<
   TCommandName extends SagaCommandName<TCommandMap>
 > = TCommandMap[TCommandName];
 
+export type SagaDispatch<TCommandMap extends SagaCommandMap> = <
+  TCommandName extends SagaCommandName<TCommandMap>
+>(
+  command: TCommandName,
+  payload: SagaCommandPayload<TCommandMap, TCommandName>
+) => void;
+
 export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap> {
   readonly state: TState;
-  dispatch<TCommandName extends SagaCommandName<TCommandMap>>(
-    command: TCommandName,
-    payload: SagaCommandPayload<TCommandMap, TCommandName>
-  ): void;
+  dispatch: SagaDispatch<TCommandMap>;
 }
 
 export type SagaHandler<TState, TCommandMap extends SagaCommandMap> = (
