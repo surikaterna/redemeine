@@ -25,12 +25,10 @@ describe('Depot', () => {
   test('hydrates mirage from event store', async () => {
     const requestedIds: string[] = [];
     const store: EventStore = {
-      getEvents: async (id: string) => {
+      readStream: async function* (id: string) {
         requestedIds.push(id);
-        return [
-          { type: 'order.created.event', payload: { id: 'o9' } },
-          { type: 'order.incremented.event', payload: { amount: 2 } }
-        ];
+        yield { type: 'order.created.event', payload: { id: 'o9' } };
+        yield { type: 'order.incremented.event', payload: { amount: 2 } };
       },
       saveEvents: async () => undefined
     };
@@ -44,10 +42,141 @@ describe('Depot', () => {
     expect(bridge._state.count).toBe(2);
   });
 
+  test('hydrates mirage from async iterable event replay', async () => {
+    const store: EventStore = {
+      readStream: async function* () {
+        yield { type: 'order.created.event', payload: { id: 'streamed' } };
+        yield { type: 'order.incremented.event', payload: { amount: 4 } };
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('streamed');
+    const bridge = createLegacyAggregateBridge(mirage);
+
+    expect(bridge._state.id).toBe('streamed');
+    expect(bridge._state.count).toBe(4);
+  });
+
+  test('replays from beginning when no snapshot is provided', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        yield { type: 'order.created.event', payload: { id: 'o1' } };
+        yield { type: 'order.incremented.event', payload: { amount: 3 } };
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1');
+
+    expect(readOptions).toEqual([undefined]);
+    expect(mirage.count).toBe(3);
+  });
+
+  test('uses snapshot version boundary and skips replay when snapshot is current', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        const events: Array<Event<{ amount: number }> & { version: number }> = [
+          { type: 'order.incremented.event', payload: { amount: 1 }, version: 1 },
+          { type: 'order.incremented.event', payload: { amount: 2 }, version: 2 },
+          { type: 'order.incremented.event', payload: { amount: 3 }, version: 3 }
+        ];
+
+        const fromVersion = options?.fromVersion ?? 1;
+        for (const event of events) {
+          if ((event as any).version >= fromVersion) {
+            yield event;
+          }
+        }
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1', {
+      snapshot: {
+        state: { id: 'o1', count: 6 },
+        version: 3
+      }
+    });
+
+    expect(readOptions).toEqual([{ fromVersion: 4 }]);
+    expect(mirage.count).toBe(6);
+  });
+
+  test('replays strictly after snapshot version (off-by-one semantics)', async () => {
+    const readOptions: Array<{ fromVersion?: number } | undefined> = [];
+    const store: EventStore = {
+      readStream: async function* (_id: string, options?: { fromVersion?: number }) {
+        readOptions.push(options);
+        const events: Array<Event<{ amount: number }> & { version: number }> = [
+          { type: 'order.incremented.event', payload: { amount: 100 }, version: 1 },
+          { type: 'order.incremented.event', payload: { amount: 7 }, version: 2 }
+        ];
+
+        const fromVersion = options?.fromVersion ?? 1;
+        for (const event of events) {
+          if ((event as any).version >= fromVersion) {
+            yield event;
+          }
+        }
+      },
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('o1', {
+      snapshot: {
+        state: { id: 'o1', count: 5 },
+        version: 1
+      }
+    });
+
+    expect(readOptions).toEqual([{ fromVersion: 2 }]);
+    expect(mirage.count).toBe(12);
+  });
+
+  test('yields to event loop during long hydration replay', async () => {
+    const totalEvents = 10000;
+    let intervalTicks = 0;
+    let replayStarted = false;
+    let replayFinished = false;
+
+    const store: EventStore = {
+      readStream: async function* () {
+        replayStarted = true;
+        for (let index = 0; index < totalEvents; index++) {
+          yield { type: 'order.incremented.event', payload: { amount: 1 } };
+        }
+        replayFinished = true;
+      },
+      saveEvents: async () => undefined
+    };
+
+    const interval = setInterval(() => {
+      if (replayStarted && !replayFinished) {
+        intervalTicks++;
+      }
+    }, 0);
+
+    const depot = createDepot(aggregate, store);
+    const mirage = await depot.get('yield-check');
+    clearInterval(interval);
+
+    expect(mirage.count).toBe(totalEvents);
+    expect(intervalTicks).toBeGreaterThan(0);
+  });
+
   test('persists uncommitted events and clears them', async () => {
     const saveCalls: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async (id: string, events: Event[], expectedVersion?: number) => {
         saveCalls.push({ id, events, expectedVersion });
       }
@@ -71,7 +200,7 @@ describe('Depot', () => {
 
   test('throws when saving non-mirage object', async () => {
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => undefined
     };
 
@@ -108,10 +237,10 @@ describe('Depot', () => {
 
     const saveCalls: Array<{ id: string; events: Event[] }> = [];
     const store: EventStore = {
-      getEvents: async () => [
-        { type: 'order.created.event', payload: { id: 'o1' } },
-        { type: 'order.incremented.event', payload: { amount: 1 } }
-      ],
+      readStream: async function* () {
+        yield { type: 'order.created.event', payload: { id: 'o1' } };
+        yield { type: 'order.incremented.event', payload: { amount: 1 } };
+      },
       saveEvents: async (id: string, events: Event[]) => {
         saveCalls.push({ id, events });
       }
@@ -198,7 +327,7 @@ describe('Depot', () => {
     const savedBatches: Array<{ id: string; events: Event[]; expectedVersion?: number }> = [];
     const afterCommitPayloads: Array<{ aggregateId: string; events: Event[]; intents: Record<string, unknown> }> = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async (id: string, events: Event[], expectedVersion?: number) => {
         savedBatches.push({ id, events, expectedVersion });
         calls.push('save');
@@ -253,7 +382,7 @@ describe('Depot', () => {
   test('does not execute onAfterCommit side-effects when save fails', async () => {
     const calls: string[] = [];
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
         throw new Error('save-failed');
@@ -286,7 +415,7 @@ describe('Depot', () => {
     process.once('unhandledRejection', onUnhandledRejection);
 
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
       }
@@ -337,7 +466,7 @@ describe('Depot', () => {
       .build();
 
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => {
         calls.push('save');
       }
@@ -361,7 +490,7 @@ describe('Depot', () => {
 
   test('throws structured plugin hook error for onAfterCommit and clears pending results', async () => {
     const store: EventStore = {
-      getEvents: async () => [],
+      readStream: async function* () {},
       saveEvents: async () => undefined
     };
 
