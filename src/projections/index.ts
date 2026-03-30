@@ -7,6 +7,9 @@ export {
 } from './createProjection';
 export type {
   AggregateDefinition,
+  AggregateEventPayloadMap,
+  AggregateEventKeys,
+  AggregateEventPayloadByKey,
   ProjectionContext,
   ProjectionHandler,
   ProjectionHandlers,

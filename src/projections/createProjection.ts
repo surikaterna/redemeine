@@ -4,7 +4,69 @@ import { ProjectionEvent as BaseProjectionEvent } from './types';
 /**
  * Event shape passed to projection handlers with narrowed payload type.
  */
-type HandlerEvent<TPayload> = Omit<BaseProjectionEvent, 'payload'> & { payload: TPayload };
+type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'payload' | 'type'> & {
+  payload: TPayload;
+  type: TType;
+};
+
+type AnyProjector = (...args: any[]) => unknown;
+
+type ProjectorPayload<TProjector> =
+  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+    ? TEvent extends { payload: infer TPayload }
+      ? TPayload
+      : unknown
+    : unknown;
+
+type EventProjectorsOf<TAggregate> =
+  TAggregate extends { pure: { eventProjectors: infer TProjectors } }
+    ? TProjectors extends Record<string, AnyProjector>
+      ? TProjectors
+      : never
+    : never;
+
+type ProjectionAggregateSource = {
+  pure: {
+    eventProjectors: Record<string, unknown>;
+  };
+};
+
+/**
+ * Extract aggregate event payload map from real `createAggregate(...).build()` outputs.
+ * Falls back to explicit AggregateDefinition generic payloads for compatibility.
+ */
+export type AggregateEventPayloadMap<TAggregate> =
+  [EventProjectorsOf<TAggregate>] extends [never]
+    ? TAggregate extends AggregateDefinition<unknown, infer TPayloads>
+      ? TPayloads
+      : Record<string, unknown>
+    : {
+      [K in keyof EventProjectorsOf<TAggregate> & string]: ProjectorPayload<EventProjectorsOf<TAggregate>[K]>;
+    };
+
+/**
+ * Event keys for an aggregate derived from event payload map.
+ */
+export type AggregateEventKeys<TAggregate> = keyof AggregateEventPayloadMap<TAggregate> & string;
+
+/**
+ * Payload type for a specific aggregate event key.
+ */
+export type AggregateEventPayloadByKey<
+  TAggregate,
+  TEventKey extends AggregateEventKeys<TAggregate>
+> = AggregateEventPayloadMap<TAggregate>[TEventKey];
+
+type AggregateTypeOf<TAggregate> =
+  TAggregate extends { __aggregateType: infer TAggregateType extends string }
+    ? TAggregateType
+    : string;
+
+type CanonicalEventTypeByKey<TAggregate, TEventKey extends string> =
+  `${AggregateTypeOf<TAggregate>}.${TEventKey}.event`;
+
+type HandlerEventTypeByKey<TAggregate, TEventKey extends string> =
+  TEventKey | CanonicalEventTypeByKey<TAggregate, TEventKey>;
 
 /**
  * Aggregate definition interface - defines an aggregate that can be used in projections
@@ -50,7 +112,23 @@ export type ProjectionHandler<TState, TEvent extends BaseProjectionEvent = BaseP
  * Projection handlers map - keyed by event type
  */
 export type ProjectionHandlers<TState, TPayloads extends Record<string, unknown>> = {
-  [K in keyof TPayloads]?: ProjectionHandler<TState, HandlerEvent<NonNullable<TPayloads[K]>>>;
+  [K in keyof TPayloads & string]?: ProjectionHandler<
+    TState,
+    HandlerEvent<
+      NonNullable<TPayloads[K]>,
+      HandlerEventTypeByKey<unknown, K>
+    >
+  >;
+};
+
+type ProjectionHandlersForAggregate<TState, TAggregate> = {
+  [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<
+    TState,
+    HandlerEvent<
+      NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
+      HandlerEventTypeByKey<TAggregate, K>
+    >
+  >;
 };
 
 /**
@@ -68,7 +146,7 @@ export interface ProjectionStreamDefinition<TState> {
  */
 export interface JoinStreamDefinition<TState> {
   /** The aggregate type for this joined stream */
-  aggregate: AggregateDefinition<unknown, Record<string, unknown>>;
+  aggregate: { __aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
 }
@@ -115,17 +193,17 @@ export interface ProjectionBuilder<TState> {
   /**
    * Define the primary stream to project from
    */
-  from<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  from<TAggregate extends ProjectionAggregateSource>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
   
   /**
    * Add a joined stream for correlating related aggregates
    */
-  join<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  join<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
   
   /**
@@ -161,9 +239,9 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  from<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  from<TAggregate extends ProjectionAggregateSource>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
@@ -176,16 +254,16 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     }
 
     this._fromStream = {
-      aggregate: aggregate as AggregateDefinition<unknown, Record<string, unknown>>,
+      aggregate: aggregate as unknown as AggregateDefinition<unknown, Record<string, unknown>>,
       handlers: handlersMap
     };
     
     return this;
   }
 
-  join<TPayloads extends Record<string, unknown>>(
-    aggregate: AggregateDefinition<unknown, TPayloads>,
-    handlers: ProjectionHandlers<TState, TPayloads>
+  join<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
@@ -197,7 +275,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     }
 
     this._joinStreams.push({
-      aggregate: aggregate as AggregateDefinition<unknown, Record<string, unknown>>,
+      aggregate,
       handlers: handlersMap
     });
     

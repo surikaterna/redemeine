@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { createProjection } from '../../src/projections/createProjection';
+import { createProjection, ProjectionDefinition } from '../../src/projections/createProjection';
 import { InMemoryProjectionStore } from '../../src/projections/InMemoryProjectionStore';
 import { ProjectionDaemon } from '../../src/projections/ProjectionDaemon';
 import { ProjectionEvent, Checkpoint } from '../../src/projections/types';
 import { IEventSubscription } from '../../src/projections/IEventSubscription';
+
+type TestProjectionEvent = ProjectionEvent & { id: string };
 
 // Define payload types
 interface InvoiceCreatedPayload {
@@ -38,10 +40,16 @@ interface InvoiceSummaryState {
 }
 
 // Test aggregates - need proper aggregate definition
-const invoiceAgg = { 
+const invoiceAgg = {
   __aggregateType: 'invoice' as const,
   initialState: {},
-  pure: { eventProjectors: {} }
+  pure: {
+    eventProjectors: {
+      'invoice.created.event': (_state: unknown, _event: { payload: InvoiceCreatedPayload }) => {},
+      'invoice.line.added.event': (_state: unknown, _event: { payload: InvoiceLineAddedPayload }) => {},
+      'invoice.paid.event': (_state: unknown, _event: { payload: InvoicePaidPayload }) => {}
+    }
+  }
 };
 
 // Create mock subscription with specific events
@@ -63,7 +71,7 @@ function createMockSubscription(events: ProjectionEvent[]): IEventSubscription {
 
 describe('End-to-End Engine Test', () => {
   let store: InMemoryProjectionStore<InvoiceSummaryState>;
-  let projection: ReturnType<typeof createProjection<InvoiceSummaryState>>;
+  let projection: ProjectionDefinition<InvoiceSummaryState>;
   
   beforeEach(() => {
     store = new InMemoryProjectionStore<InvoiceSummaryState>();
@@ -81,25 +89,25 @@ describe('End-to-End Engine Test', () => {
     }))
       .from(invoiceAgg, {
         'invoice.created.event': (state, event) => {
-          state.invoiceId = event.payload.invoiceId as string;
-          state.customerId = event.payload.customerId as string;
-          state.subtotal = event.payload.amount as number;
-          state.total = event.payload.amount as number;
+          state.invoiceId = event.payload.invoiceId;
+          state.customerId = event.payload.customerId;
+          state.subtotal = event.payload.amount;
+          state.total = event.payload.amount;
           state.eventCount++;
         },
         'invoice.line.added.event': (state, event) => {
           state.lines.push({
-            lineId: event.payload.lineId as string,
-            description: event.payload.description as string,
-            amount: event.payload.amount as number
+            lineId: event.payload.lineId,
+            description: event.payload.description,
+            amount: event.payload.amount
           });
-          state.subtotal += event.payload.amount as number;
+          state.subtotal += event.payload.amount;
           state.total = state.subtotal;
           state.eventCount++;
         },
         'invoice.paid.event': (state, event) => {
           state.paid = true;
-          state.paidAt = event.payload.paidAt as string;
+          state.paidAt = event.payload.paidAt;
           state.eventCount++;
         }
       })
@@ -108,7 +116,7 @@ describe('End-to-End Engine Test', () => {
 
   it('should process 5 events and produce correct final state', async () => {
     // Define 5 events in sequence
-    const events: ProjectionEvent[] = [
+    const events: TestProjectionEvent[] = [
       {
         id: 'evt-1',
         aggregateType: 'invoice',
@@ -118,7 +126,7 @@ describe('End-to-End Engine Test', () => {
           invoiceId: 'invoice-001',
           customerId: 'cust-123',
           amount: 100
-        } as InvoiceCreatedPayload,
+        },
         sequence: 1,
         timestamp: '2024-01-15T10:00:00Z'
       },
@@ -132,7 +140,7 @@ describe('End-to-End Engine Test', () => {
           lineId: 'line-1',
           description: 'Consulting hours',
           amount: 150
-        } as InvoiceLineAddedPayload,
+        },
         sequence: 2,
         timestamp: '2024-01-15T10:30:00Z'
       },
@@ -146,7 +154,7 @@ describe('End-to-End Engine Test', () => {
           lineId: 'line-2',
           description: 'Travel expenses',
           amount: 50
-        } as InvoiceLineAddedPayload,
+        },
         sequence: 3,
         timestamp: '2024-01-15T11:00:00Z'
       },
@@ -160,7 +168,7 @@ describe('End-to-End Engine Test', () => {
           lineId: 'line-3',
           description: 'Materials',
           amount: 75
-        } as InvoiceLineAddedPayload,
+        },
         sequence: 4,
         timestamp: '2024-01-15T11:30:00Z'
       },
@@ -173,7 +181,7 @@ describe('End-to-End Engine Test', () => {
           invoiceId: 'invoice-001',
           paidAt: '2024-01-16T09:00:00Z',
           amount: 375
-        } as InvoicePaidPayload,
+        },
         sequence: 5,
         timestamp: '2024-01-16T09:00:00Z'
       }
@@ -208,13 +216,13 @@ describe('End-to-End Engine Test', () => {
   });
 
   it('should handle multiple documents in single batch', async () => {
-    const events: ProjectionEvent[] = [
+    const events: TestProjectionEvent[] = [
       {
         id: 'evt-1',
         aggregateType: 'invoice',
         aggregateId: 'invoice-001',
         type: 'invoice.created.event',
-        payload: { invoiceId: 'invoice-001', customerId: 'cust-A', amount: 100 } as InvoiceCreatedPayload,
+        payload: { invoiceId: 'invoice-001', customerId: 'cust-A', amount: 100 },
         sequence: 1,
         timestamp: '2024-01-15T10:00:00Z'
       },
@@ -223,7 +231,7 @@ describe('End-to-End Engine Test', () => {
         aggregateType: 'invoice',
         aggregateId: 'invoice-002',
         type: 'invoice.created.event',
-        payload: { invoiceId: 'invoice-002', customerId: 'cust-B', amount: 200 } as InvoiceCreatedPayload,
+        payload: { invoiceId: 'invoice-002', customerId: 'cust-B', amount: 200 },
         sequence: 2,
         timestamp: '2024-01-15T10:05:00Z'
       },
@@ -232,7 +240,7 @@ describe('End-to-End Engine Test', () => {
         aggregateType: 'invoice',
         aggregateId: 'invoice-001',
         type: 'invoice.paid.event',
-        payload: { invoiceId: 'invoice-001', paidAt: '2024-01-16T09:00:00Z', amount: 100 } as InvoicePaidPayload,
+        payload: { invoiceId: 'invoice-001', paidAt: '2024-01-16T09:00:00Z', amount: 100 },
         sequence: 3,
         timestamp: '2024-01-16T09:00:00Z'
       }
@@ -260,7 +268,7 @@ describe('End-to-End Engine Test', () => {
 
   it('should fold multiple events for same document before saving', async () => {
     // Create 100 events for the same document
-    const events: ProjectionEvent[] = Array.from({ length: 100 }, (_, i) => ({
+    const events: TestProjectionEvent[] = Array.from({ length: 100 }, (_, i) => ({
       id: `evt-${i + 1}`,
       aggregateType: 'invoice',
       aggregateId: 'invoice-001',
@@ -270,7 +278,7 @@ describe('End-to-End Engine Test', () => {
         lineId: `line-${i + 1}`,
         description: `Line item ${i + 1}`,
         amount: 10
-      } as InvoiceLineAddedPayload,
+      },
       sequence: i + 1,
       timestamp: new Date().toISOString()
     }));
