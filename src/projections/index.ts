@@ -1,3 +1,4 @@
 // Projections module exports
-export { Checkpoint } from './types';
+export type { Checkpoint } from './types';
 export type { IProjectionStore } from './IProjectionStore';
+export { InMemoryProjectionStore } from './InMemoryProjectionStore';
