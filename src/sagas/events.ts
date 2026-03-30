@@ -1,6 +1,7 @@
 export const SAGA_EVENT_NAMES = [
   'saga.event-observed',
   'saga.intent-recorded',
+  'saga.intent-started',
   'saga.intent-dispatched',
   'saga.intent-succeeded',
   'saga.intent-failed',

@@ -7,15 +7,55 @@ export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = Sa
   readonly recordedAt: string;
 }
 
+export interface SagaIntentLifecycleContext {
+  readonly intentKey: string;
+  readonly metadata: {
+    readonly sagaId: string;
+    readonly correlationId: string;
+    readonly causationId: string;
+  };
+}
+
+export interface SagaIntentStartedEvent {
+  readonly type: 'saga.intent-started';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly startedAt: string;
+}
+
+export interface SagaIntentSucceededEvent {
+  readonly type: 'saga.intent-succeeded';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly succeededAt: string;
+}
+
+export interface SagaIntentFailedEvent {
+  readonly type: 'saga.intent-failed';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly failedAt: string;
+}
+
+export type SagaLifecycleEvent =
+  | SagaIntentStartedEvent
+  | SagaIntentSucceededEvent
+  | SagaIntentFailedEvent;
+
 export interface SagaEventStore {
   appendIntentRecordedBatch<TCommandMap extends SagaCommandMap>(
     sagaStreamId: string,
     events: readonly SagaIntentRecordedEvent<TCommandMap>[]
   ): Promise<void>;
+  appendLifecycleEvent(sagaStreamId: string, event: SagaLifecycleEvent): Promise<void>;
 }
+
+export type SagaIntentRecordedWriter = Pick<SagaEventStore, 'appendIntentRecordedBatch'>;
+export type SagaLifecycleEventWriter = Pick<SagaEventStore, 'appendLifecycleEvent'>;
 
 export class InMemorySagaEventStore implements SagaEventStore {
   private readonly streams = new Map<string, SagaIntentRecordedEvent[]>();
+  private readonly lifecycleStreams = new Map<string, SagaLifecycleEvent[]>();
 
   async appendIntentRecordedBatch<TCommandMap extends SagaCommandMap>(
     sagaStreamId: string,
@@ -29,6 +69,11 @@ export class InMemorySagaEventStore implements SagaEventStore {
     ]);
   }
 
+  async appendLifecycleEvent(sagaStreamId: string, event: SagaLifecycleEvent): Promise<void> {
+    const existing = this.lifecycleStreams.get(sagaStreamId) ?? [];
+    this.lifecycleStreams.set(sagaStreamId, [...existing, event]);
+  }
+
   async loadIntentRecordedEvents(
     sagaStreamId: string
   ): Promise<readonly SagaIntentRecordedEvent[]> {
@@ -36,9 +81,100 @@ export class InMemorySagaEventStore implements SagaEventStore {
     return [...events];
   }
 
+  async loadLifecycleEvents(sagaStreamId: string): Promise<readonly SagaLifecycleEvent[]> {
+    const events = this.lifecycleStreams.get(sagaStreamId) ?? [];
+    return [...events];
+  }
+
   clear(): void {
     this.streams.clear();
+    this.lifecycleStreams.clear();
   }
+}
+
+export interface SagaIntentLifecycleAppendInput {
+  readonly sagaStreamId: string;
+  readonly intentKey: string;
+  readonly metadata: {
+    readonly sagaId: string;
+    readonly correlationId: string;
+    readonly causationId: string;
+  };
+}
+
+export function createSagaIntentStartedEvent(
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentStartedEvent {
+  return {
+    type: 'saga.intent-started',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    startedAt: createTimestamp()
+  };
+}
+
+export function createSagaIntentSucceededEvent(
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentSucceededEvent {
+  return {
+    type: 'saga.intent-succeeded',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    succeededAt: createTimestamp()
+  };
+}
+
+export function createSagaIntentFailedEvent(
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentFailedEvent {
+  return {
+    type: 'saga.intent-failed',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    failedAt: createTimestamp()
+  };
+}
+
+export async function appendSagaIntentStartedEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentStartedEvent> {
+  const event = createSagaIntentStartedEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentSucceededEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentSucceededEvent> {
+  const event = createSagaIntentSucceededEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentFailedEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentFailedEvent> {
+  const event = createSagaIntentFailedEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
 }
 
 export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaCommandMap>(
@@ -57,7 +193,7 @@ export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaC
 export async function persistSagaReducerOutputIntents<TState, TCommandMap extends SagaCommandMap>(
   sagaStreamId: string,
   output: SagaReducerOutput<TState, TCommandMap>,
-  eventStore: SagaEventStore,
+  eventStore: SagaIntentRecordedWriter,
   createRecordedAt: () => string = () => new Date().toISOString()
 ): Promise<readonly SagaIntentRecordedEvent<TCommandMap>[]> {
   const events = createSagaIntentRecordedEvents(sagaStreamId, output, createRecordedAt);
