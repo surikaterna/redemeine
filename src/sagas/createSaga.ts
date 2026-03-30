@@ -17,39 +17,43 @@ export interface SagaIntentMetadata {
   causationId: string;
 }
 
-export interface SagaDispatchIntent<
+export type SagaDispatchIntentForCommand<
   TCommandMap extends SagaCommandMap,
   TCommandName extends SagaCommandName<TCommandMap>
-> {
-  type: 'dispatch';
-  command: TCommandName;
-  payload: SagaCommandPayload<TCommandMap, TCommandName>;
-  metadata: SagaIntentMetadata;
-}
+> = {
+  readonly type: 'dispatch';
+  readonly command: TCommandName;
+  readonly payload: SagaCommandPayload<TCommandMap, TCommandName>;
+  readonly metadata: SagaIntentMetadata;
+};
+
+export type SagaDispatchIntent<TCommandMap extends SagaCommandMap> = {
+  [TCommandName in SagaCommandName<TCommandMap>]: SagaDispatchIntentForCommand<TCommandMap, TCommandName>;
+}[SagaCommandName<TCommandMap>];
 
 export interface SagaScheduleIntent {
-  type: 'schedule';
-  id: string;
-  delay: number;
-  metadata: SagaIntentMetadata;
+  readonly type: 'schedule';
+  readonly id: string;
+  readonly delay: number;
+  readonly metadata: SagaIntentMetadata;
 }
 
 export interface SagaCancelScheduleIntent {
-  type: 'cancel-schedule';
-  id: string;
-  metadata: SagaIntentMetadata;
+  readonly type: 'cancel-schedule';
+  readonly id: string;
+  readonly metadata: SagaIntentMetadata;
 }
 
 export interface SagaRunActivityIntent<TResult = unknown> {
-  type: 'run-activity';
-  name: string;
-  closure: SagaActivityClosure<TResult>;
-  retryPolicy?: SagaRetryPolicy;
-  metadata: SagaIntentMetadata;
+  readonly type: 'run-activity';
+  readonly name: string;
+  readonly closure: SagaActivityClosure<TResult>;
+  readonly retryPolicy?: SagaRetryPolicy;
+  readonly metadata: SagaIntentMetadata;
 }
 
-export type SagaIntent =
-  | SagaDispatchIntent<SagaCommandMap, string>
+export type SagaIntent<TCommandMap extends SagaCommandMap> =
+  | SagaDispatchIntent<TCommandMap>
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent;
@@ -60,7 +64,7 @@ export type SagaDispatch<TCommandMap extends SagaCommandMap> = <
   command: TCommandName,
   payload: SagaCommandPayload<TCommandMap, TCommandName>,
   metadata?: Partial<SagaIntentMetadata>
-) => SagaDispatchIntent<TCommandMap, TCommandName>;
+) => SagaDispatchIntentForCommand<TCommandMap, TCommandName>;
 
 export interface SagaRetryPolicy {
   maxAttempts: number;
@@ -91,37 +95,6 @@ export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap>
 export interface SagaStateTransition<TState> {
   readonly state: TState;
 }
-
-export type SagaDispatchIntent<TCommandMap extends SagaCommandMap> = {
-  [TCommandName in SagaCommandName<TCommandMap>]: {
-    readonly type: 'dispatch';
-    readonly command: TCommandName;
-    readonly payload: SagaCommandPayload<TCommandMap, TCommandName>;
-  };
-}[SagaCommandName<TCommandMap>];
-
-export interface SagaScheduleIntent {
-  readonly type: 'schedule';
-  readonly id: string;
-  readonly delay: number;
-}
-
-export interface SagaCancelScheduleIntent {
-  readonly type: 'cancelSchedule';
-  readonly id: string;
-}
-
-export interface SagaRunActivityIntent {
-  readonly type: 'runActivity';
-  readonly name: string;
-  readonly retryPolicy?: SagaRetryPolicy;
-}
-
-export type SagaIntent<TCommandMap extends SagaCommandMap> =
-  | SagaDispatchIntent<TCommandMap>
-  | SagaScheduleIntent
-  | SagaCancelScheduleIntent
-  | SagaRunActivityIntent;
 
 export interface SagaReducerOutput<TState, TCommandMap extends SagaCommandMap> extends SagaStateTransition<TState> {
   readonly intents: readonly SagaIntent<TCommandMap>[];

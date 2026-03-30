@@ -20,16 +20,52 @@ describe('S08 reducer output contract typing', () => {
             {
               type: 'dispatch',
               command: 'billing.charge',
-              payload: { invoiceId: ctx.state.invoiceId, amount: 250 }
+              payload: { invoiceId: ctx.state.invoiceId, amount: 250 },
+              metadata: {
+                sagaId: 'saga-1',
+                correlationId: 'corr-1',
+                causationId: 'cause-1'
+              }
             },
             {
               type: 'dispatch',
               command: 'billing.notify',
-              payload: { invoiceId: ctx.state.invoiceId, channel: 'email' }
+              payload: { invoiceId: ctx.state.invoiceId, channel: 'email' },
+              metadata: {
+                sagaId: 'saga-1',
+                correlationId: 'corr-1',
+                causationId: 'cause-2'
+              }
             },
-            { type: 'schedule', id: 'billing-reminder', delay: 5_000 },
-            { type: 'cancelSchedule', id: 'billing-reminder' },
-            { type: 'runActivity', name: 'send-receipt' }
+            {
+              type: 'schedule',
+              id: 'billing-reminder',
+              delay: 5_000,
+              metadata: {
+                sagaId: 'saga-1',
+                correlationId: 'corr-1',
+                causationId: 'cause-3'
+              }
+            },
+            {
+              type: 'cancel-schedule',
+              id: 'billing-reminder',
+              metadata: {
+                sagaId: 'saga-1',
+                correlationId: 'corr-1',
+                causationId: 'cause-4'
+              }
+            },
+            {
+              type: 'run-activity',
+              name: 'send-receipt',
+              closure: () => undefined,
+              metadata: {
+                sagaId: 'saga-1',
+                correlationId: 'corr-1',
+                causationId: 'cause-5'
+              }
+            }
           ];
 
           const output: SagaReducerOutput<typeof ctx.state, BillingCommandMap> = {
@@ -62,14 +98,24 @@ describe('S08 reducer output contract typing', () => {
           const badDispatchIntent: SagaIntent<BillingCommandMap> = {
             type: 'dispatch',
             command: 'billing.charge',
-            payload: { invoiceId: 'inv-1', amount: '250' }
+            payload: { invoiceId: 'inv-1', amount: '250' },
+            metadata: {
+              sagaId: 'saga-1',
+              correlationId: 'corr-1',
+              causationId: 'cause-1'
+            }
           };
 
           // @ts-expect-error schedule delay must be number
           const badScheduleIntent: SagaIntent<BillingCommandMap> = {
             type: 'schedule',
             id: 'billing-reminder',
-            delay: '5000'
+            delay: '5000',
+            metadata: {
+              sagaId: 'saga-1',
+              correlationId: 'corr-1',
+              causationId: 'cause-2'
+            }
           };
 
           return {
