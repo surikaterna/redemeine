@@ -131,6 +131,7 @@ src/
 
 Notes:
 
+- S01 baseline implementation references live in `src/sagas/events.ts` and are re-exported by `src/sagas/index.ts`.
 - `events.ts` defines the canonical saga event taxonomy used by that saga.
 - `intents.ts` defines typed intent contracts and payloads.
 - `reducer.ts` applies saga events to saga state (event-sourced progression).
