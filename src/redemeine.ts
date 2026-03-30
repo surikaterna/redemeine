@@ -10,3 +10,4 @@ export * from './createMixin';
 export * from './Depot';
 export * from './types';
 export * from './Contract';
+export * from './projections';
