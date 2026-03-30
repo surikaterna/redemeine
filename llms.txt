@@ -134,10 +134,20 @@ _Interface controlling the "Targeted Naming" engine used to automatically route 
 - `.command()` - Transforms a given property name (and optionally its path) into a fully qualified command type string.
 - `.event()` - Transforms a given property name (and optionally its path) into a fully qualified event type string.
 
+### `ProjectionBuilder`
+_Builder interface for creating projections fluently_
+
+**Methods:**
+- `.initialState()` (Returns `this`) - Override the initial state factory
+- `.identity()` (Returns `this`) - Override the default identity resolver
+- `.from()` (Returns `this`) - Define the primary stream to project from
+- `.join()` (Returns `this`) - Add a joined stream for correlating related aggregates
+- `.build()` - Build the final projection definition
+
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
 - `command` (Auto-formatted path component)
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 21 Interfaces, 43 Types, 6 Public Functions.
+**Metadata:** 37 Interfaces, 46 Types, 6 Public Functions.
