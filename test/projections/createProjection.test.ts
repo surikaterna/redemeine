@@ -5,7 +5,10 @@ import {
   ProjectionBuilder,
   ProjectionDefinition,
   ProjectionEvent,
-  AggregateDefinition
+  AggregateDefinition,
+  AggregateEventPayloadMap,
+  AggregateEventKeys,
+  AggregateEventPayloadByKey
 } from '../../src/projections';
 
 // ============================================================================
@@ -93,6 +96,31 @@ const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string
   },
   metadata: orderAgg.metadata
 };
+
+// Compile-time assertion helpers for aggregate event-map extraction
+type Assert<T extends true> = T;
+type IsExact<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? true
+    : false;
+
+type InvoiceAggPayloadMap = AggregateEventPayloadMap<typeof invoiceAgg>;
+type InvoiceAggEventKeys = AggregateEventKeys<typeof invoiceAgg>;
+type InvoiceAggCreatedPayload = AggregateEventPayloadByKey<typeof invoiceAgg, 'created'>;
+
+type _AssertInvoiceAggPayloadMap = Assert<IsExact<InvoiceAggPayloadMap, {
+  created: InvoiceCreatedPayload;
+  paid: InvoicePaidPayload;
+}>>;
+type _AssertInvoiceAggEventKeys = Assert<IsExact<InvoiceAggEventKeys, 'created' | 'paid'>>;
+type _AssertInvoiceAggCreatedPayload = Assert<IsExact<InvoiceAggCreatedPayload, InvoiceCreatedPayload>>;
+
+type InvoiceDefPayloadMap = AggregateEventPayloadMap<typeof invoiceAggDef>;
+type _AssertInvoiceDefPayloadMapCompatibility = Assert<IsExact<InvoiceDefPayloadMap, {
+  created: InvoiceCreatedPayload;
+  paid: InvoicePaidPayload;
+}>>;
 
 // ============================================================================
 // Tests: Basic Builder API
