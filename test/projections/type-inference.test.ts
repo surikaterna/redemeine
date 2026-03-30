@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { createProjection, AggregateDefinition } from '../../src/projections/createProjection';
+import { createAggregate } from '../../src/createAggregate';
 
 // ============================================================================
 // Test payload types - distinct types to verify type isolation
@@ -53,6 +54,17 @@ const orderAgg: AggregateDefinition<
   }
 } as any;
 
+const invoiceRealAgg = createAggregate('invoice', { total: 0, paid: false as boolean })
+  .events({
+    created: (state, event: { payload: InvoiceCreatedPayload }) => {
+      state.total = event.payload.amount;
+    },
+    paid: (state, event: { payload: InvoicePaidPayload }) => {
+      state.paid = true;
+    }
+  })
+  .build();
+
 // ============================================================================
 // Tests: Type Inference for Projections
 // ============================================================================
@@ -76,6 +88,24 @@ describe('Type Inference for Projections', () => {
       .build();
 
     expect(projection.name).toBe('test');
+  });
+
+  it('should infer .from() payloads from real createAggregate() output and reject invalid handler keys', () => {
+    createProjection('from-real-aggregate', () => ({ total: 0, paidAt: '' }))
+      .from(invoiceRealAgg, {
+        created: (state, event) => {
+          const _invoiceId: string = event.payload.invoiceId;
+          state.total += event.payload.amount;
+        },
+        paid: (state, event) => {
+          state.paidAt = event.payload.paidAt;
+        },
+        // @ts-expect-error real aggregate should constrain .from() handler keys
+        shipped: (state, event) => {
+          state.total += 1;
+        }
+      })
+      .build();
   });
 
   it('should infer event.payload types from .join() aggregate', () => {
