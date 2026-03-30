@@ -4,7 +4,10 @@ import { ProjectionEvent as BaseProjectionEvent } from './types';
 /**
  * Event shape passed to projection handlers with narrowed payload type.
  */
-type HandlerEvent<TPayload> = Omit<BaseProjectionEvent, 'payload'> & { payload: TPayload };
+type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'payload' | 'type'> & {
+  payload: TPayload;
+  type: TType;
+};
 
 type AnyProjector = (...args: any[]) => unknown;
 
@@ -54,6 +57,17 @@ export type AggregateEventPayloadByKey<
   TEventKey extends AggregateEventKeys<TAggregate>
 > = AggregateEventPayloadMap<TAggregate>[TEventKey];
 
+type AggregateTypeOf<TAggregate> =
+  TAggregate extends { __aggregateType: infer TAggregateType extends string }
+    ? TAggregateType
+    : string;
+
+type CanonicalEventTypeByKey<TAggregate, TEventKey extends string> =
+  `${AggregateTypeOf<TAggregate>}.${TEventKey}.event`;
+
+type HandlerEventTypeByKey<TAggregate, TEventKey extends string> =
+  TEventKey | CanonicalEventTypeByKey<TAggregate, TEventKey>;
+
 /**
  * Aggregate definition interface - defines an aggregate that can be used in projections
  */
@@ -98,7 +112,23 @@ export type ProjectionHandler<TState, TEvent extends BaseProjectionEvent = BaseP
  * Projection handlers map - keyed by event type
  */
 export type ProjectionHandlers<TState, TPayloads extends Record<string, unknown>> = {
-  [K in keyof TPayloads]?: ProjectionHandler<TState, HandlerEvent<NonNullable<TPayloads[K]>>>;
+  [K in keyof TPayloads & string]?: ProjectionHandler<
+    TState,
+    HandlerEvent<
+      NonNullable<TPayloads[K]>,
+      HandlerEventTypeByKey<unknown, K>
+    >
+  >;
+};
+
+type ProjectionHandlersForAggregate<TState, TAggregate> = {
+  [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<
+    TState,
+    HandlerEvent<
+      NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
+      HandlerEventTypeByKey<TAggregate, K>
+    >
+  >;
 };
 
 /**
@@ -165,7 +195,7 @@ export interface ProjectionBuilder<TState> {
    */
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
-    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
   
   /**
@@ -173,7 +203,7 @@ export interface ProjectionBuilder<TState> {
    */
   join<TAggregate extends { __aggregateType: string }>(
     aggregate: TAggregate,
-    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
   
   /**
@@ -211,7 +241,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
-    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
@@ -233,7 +263,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
   join<TAggregate extends { __aggregateType: string }>(
     aggregate: TAggregate,
-    handlers: ProjectionHandlers<TState, AggregateEventPayloadMap<TAggregate>>
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
     // Convert handlers to the required format
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
