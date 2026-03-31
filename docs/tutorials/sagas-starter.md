@@ -2,13 +2,14 @@
 
 This starter walks through the minimum moving parts for building an event-sourced saga in Redemeine.
 
+> ⚠️ **Breaking change:** this tutorial now focuses on the stable public API (`createSaga`, retry helpers, registry, event taxonomy). Runtime execution/persistence modules are internal and no longer public imports.
+
 You will:
 
 1. Define a typed command map.
 2. Build a saga with `createSaga`.
-3. Persist emitted intents through the hidden runtime aggregate command path.
-4. Track lifecycle events and query pending work.
-5. Replay reducer output without re-running side effects.
+3. Attach retry policy where needed.
+4. Register saga definitions for runtime discovery.
 
 ## 1) Define command contracts
 
@@ -57,90 +58,80 @@ export const BillingSaga = createSaga<BillingCommandMap>()
 
 Every handler returns `{ state, intents }`, which keeps state transitions deterministic and side effects explicit.
 
-## 3) Persist reducer intents through runtime aggregate
+## 3) Add retry policy to activity intents
 
 ```ts
 import {
-  persistSagaReducerOutputThroughRuntimeAggregate
+  createSaga,
+  validateRetryPolicy
 } from 'redemeine';
 
-const output = {
-  state: { attempts: 1, settled: false },
-  intents: [
-    {
-      type: 'dispatch' as const,
-      command: 'billing.charge' as const,
-      payload: { invoiceId: 'inv-1', amount: 250 },
-      metadata: {
-        sagaId: 'saga-1',
-        correlationId: 'corr-1',
-        causationId: 'cause-1'
-      }
-    }
-  ]
-};
-
-await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
-  sagaStreamId: 'saga-stream-1'
+const policy = validateRetryPolicy({
+  maxAttempts: 5,
+  initialBackoffMs: 500,
+  backoffCoefficient: 2,
+  maxBackoffMs: 30_000,
+  jitterCoefficient: 0.2
 });
+
+const sagaWithActivity = createSaga<BillingCommandMap>()
+  .initialState(() => ({ attempts: 0, settled: false }))
+  .on('invoice', {
+    created: ctx => ({
+      state: ctx.state,
+      intents: [
+        ctx.runActivity('charge-card', async () => {
+          // external call
+        }, policy)
+      ]
+    })
+  })
+  .build();
 ```
 
-Runtime persistence now flows through the hidden `SagaRuntimeAggregate`; there is no separate runtime SagaEventStore model.
+`ctx.runActivity(...)` keeps retries explicit and typed while the runtime handles scheduling/execution internally.
 
-## 4) Record lifecycle and query pending work
+## 4) Register sagas for runtime discovery
 
 ```ts
 import {
-  PendingIntentProjection,
-  InMemorySagaRuntimeEventBuffer,
-  createSagaIntentRecordedEvents,
-  appendSagaIntentStartedEvent,
-  appendSagaIntentSucceededEvent
+  createSagaRegistry,
+  registerSaga,
+  getSagaRegistry
 } from 'redemeine';
 
-const eventBuffer = new InMemorySagaRuntimeEventBuffer();
-const [recorded] = createSagaIntentRecordedEvents('saga-stream-1', output);
-await eventBuffer.appendIntentRecordedBatch('saga-stream-1', [recorded]);
+const registry = createSagaRegistry();
 
-await appendSagaIntentStartedEvent(eventBuffer, {
-  sagaStreamId: 'saga-stream-1',
-  intentKey: recorded.idempotencyKey,
-  metadata: recorded.intent.metadata
+registerSaga({
+  name: 'billing',
+  definition: BillingSaga
+}, registry);
+
+const discovered = registry.get('billing');
+
+// shared process-level registry is also available
+registerSaga({
+  name: 'billing-shared',
+  definition: BillingSaga
 });
 
-await appendSagaIntentSucceededEvent(eventBuffer, {
-  sagaStreamId: 'saga-stream-1',
-  intentKey: recorded.idempotencyKey,
-  metadata: recorded.intent.metadata
-});
-
-const projection = new PendingIntentProjection<BillingCommandMap>();
-projection.projectEvents(
-  await eventBuffer.loadIntentRecordedEvents('saga-stream-1'),
-  await eventBuffer.loadLifecycleEvents('saga-stream-1')
-);
-
-const executable = projection.getExecutablePendingIntents(new Date());
-// empty after success
+const shared = getSagaRegistry().list();
 ```
 
-## 5) Replay safely
+## Runtime architecture (internal-only)
 
-```ts
-import { executeSagaReducerOutputInReplay } from 'redemeine';
+Redemeine persists and executes saga intents through an internal runtime aggregate/projection system. Those runtime modules now live under internal paths and are intentionally not part of the stable public API.
 
-const replay = await executeSagaReducerOutputInReplay(output);
+In practice:
 
-console.log(replay.outcomes);
-// [{ intentType: 'dispatch', executed: false, reason: 'replay-mode-suppressed' }]
-```
+- Keep consumer code on exported saga definition APIs.
+- Avoid importing runtime execution/persistence helpers directly.
+- Treat internal runtime placement as implementation detail.
 
-Replay mode suppresses side effects and returns what would have run.
-
-## 6) Optional runtime seams
+## Optional public seams
 
 - `createSagaRegistry`, `registerSaga`, `getSagaRegistry`: register and discover saga definitions.
-- `decideIntentExecutionFromProjection` / `decideIntentExecutionFromRecordedLifecycleEvents`: dedupe guard helpers.
-- `SagaRouterDaemon`: polling seam for worker loop orchestration.
+- `validateRetryPolicy`, `computeNextAttemptAt`, `isRetryableError`, `classifyRetryableError`: retry behavior helpers.
+- `SAGA_EVENT_NAMES`: canonical saga taxonomy constants.
 
 For full API details, see `/docs/reference/sagas-reference` and `/docs/api/`.

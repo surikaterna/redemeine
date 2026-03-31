@@ -112,11 +112,14 @@ Saga intents are persisted as explicit execution requests and grouped by categor
 - **Timer Intent**: schedule delayed wake-up or timeout transition.
 - **Compensation Intent**: execute compensating action for prior successful step.
 
-### Module Placement and Structure
+### Module Placement and Structure (updated for slim-core)
 
-Saga runtime modules currently live under `src/sagas/` as shared building blocks for definition, hidden runtime aggregate persistence, projection indexing, replay, retry policy, dedupe, and daemon seams.
+Saga architecture is now split into:
 
-Current baseline placement:
+1. **Public saga API** (stable imports for consumers)
+2. **Internal runtime implementation** (non-public, runtime-only)
+
+Public surface (exported from `src/sagas/index.ts`):
 
 ```text
 src/
@@ -124,29 +127,54 @@ src/
     index.ts
     createSaga.ts
     events.ts
-    SagaRuntimeAggregate.ts
-    SagaRuntimePersistenceAdapter.ts
-    SagaRuntimeEvents.ts
-    RuntimeIntentProjection.ts
-    PendingIntentProjection.ts
-    DedupeGuard.ts
     RetryPolicy.ts
-    replayExecution.ts
-    SagaRouterDaemon.ts
     SagaRegistry.ts
+```
+
+Runtime implementation (internal-only):
+
+```text
+src/
+  sagas/
+    internal/
+      runtime/
+        SagaRuntimeAggregate.ts
+        SagaRuntimePersistenceAdapter.ts
+        RuntimeIntentProjection.ts
+        SagaIntentExecutionAdapter.ts
+        SagaIntentRouter.ts
+        SagaRouterDaemon.ts
+        IntentLease.ts
+        replayExecution.ts
+        execution/
+          contracts.ts
+          decision.ts
+          execute.ts
+          orchestration.ts
+        aggregate/
+          observationStartMixin.ts
+          queueingMixin.ts
+          executionTransitionsMixin.ts
+          retryDeadLetterMixin.ts
+          shared.ts
+          types.ts
 ```
 
 Notes:
 
 - `events.ts` defines the canonical saga taxonomy exported via `SAGA_EVENT_NAMES`.
 - `createSaga.ts` defines typed saga reducers and intent contracts.
-- `SagaRuntimeAggregate.ts` is the hidden runtime source-of-truth for saga execution state.
-- `SagaRuntimePersistenceAdapter.ts` translates fluent reducer output into runtime aggregate commands.
-- `RuntimeIntentProjection.ts` indexes pending/due intent state via `createProjection` identity keys.
-- `SagaRuntimeEvents.ts` defines intent/lifecycle helper event contracts for tests/local orchestration.
-- `PendingIntentProjection.ts` builds queryable pending-intent state.
-- `DedupeGuard.ts` provides replay/recovery no-op decisions.
-- `replayExecution.ts` guarantees replay-mode side-effect suppression.
-- `SagaRouterDaemon.ts` exposes the worker polling/orchestration seam.
+- Runtime aggregate/projection/execution modules are intentionally internal and may change without semver guarantees.
+
+### Breaking change notice (R20)
+
+The following saga modules/helpers are no longer documented as public API and should be treated as internal runtime plumbing:
+
+- runtime aggregate/persistence adapters
+- runtime projections and event buffers
+- dedupe/replay execution helpers
+- router/worker runtime orchestration seams
+
+Consumers should depend on the public saga definition surface only (`createSaga`, retry helpers, registry helpers, canonical event names).
 
 As saga feature slices progress, these shared modules can be complemented by feature-first saga folders where appropriate.
