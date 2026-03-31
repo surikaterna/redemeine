@@ -3,6 +3,7 @@ import type {
   SagaIntentDispatchedEvent,
   SagaIntentFailedEvent,
   SagaIntentRecordedEvent,
+  SagaIntentRetryScheduledEvent,
   SagaIntentStartedEvent,
   SagaIntentSucceededEvent,
   SagaLifecycleEvent
@@ -46,7 +47,8 @@ type SagaLifecycleEventsByIntentKey =
   | SagaIntentStartedEvent
   | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
-  | SagaIntentFailedEvent;
+  | SagaIntentFailedEvent
+  | SagaIntentRetryScheduledEvent;
 
 function toIsoString(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : value;
@@ -198,6 +200,12 @@ export class PendingIntentProjection<TCommandMap extends SagaCommandMap = SagaCo
 
     if (event.type === 'saga.intent-dispatched') {
       current.status = 'dispatched';
+      return;
+    }
+
+    if (event.type === 'saga.intent-retry-scheduled') {
+      current.status = 'pending';
+      current.dueAt = event.retry.nextAttemptAt;
       return;
     }
 

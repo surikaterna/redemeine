@@ -1,4 +1,5 @@
 import type { SagaCommandMap, SagaIntent, SagaReducerOutput } from './createSaga';
+import { computeNextAttemptAt, type RetrySchedulingNow, type SagaRetryPolicy } from './RetryPolicy';
 
 export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly type: 'saga.intent-recorded';
@@ -45,11 +46,23 @@ export interface SagaIntentFailedEvent {
   readonly failedAt: string;
 }
 
+export interface SagaIntentRetryScheduledEvent {
+  readonly type: 'saga.intent-retry-scheduled';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly retry: {
+    readonly attempt: number;
+    readonly nextAttemptAt: string;
+  };
+  readonly scheduledAt: string;
+}
+
 export type SagaLifecycleEvent =
   | SagaIntentStartedEvent
   | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
-  | SagaIntentFailedEvent;
+  | SagaIntentFailedEvent
+  | SagaIntentRetryScheduledEvent;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -146,6 +159,18 @@ export interface SagaIntentLifecycleAppendInput {
   };
 }
 
+export interface SagaIntentRetryScheduledAppendInput extends SagaIntentLifecycleAppendInput {
+  readonly attempt: number;
+  readonly nextAttemptAt: string;
+}
+
+export interface SagaIntentRetryFromPolicyAppendInput extends SagaIntentLifecycleAppendInput {
+  readonly policy: SagaRetryPolicy;
+  readonly attempt: number;
+  readonly now: RetrySchedulingNow;
+  readonly jitter?: number;
+}
+
 export function createSagaIntentStartedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -206,6 +231,41 @@ export function createSagaIntentFailedEvent(
   };
 }
 
+export function createSagaIntentRetryScheduledEvent(
+  input: SagaIntentRetryScheduledAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentRetryScheduledEvent {
+  return {
+    type: 'saga.intent-retry-scheduled',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    retry: {
+      attempt: input.attempt,
+      nextAttemptAt: input.nextAttemptAt
+    },
+    scheduledAt: createTimestamp()
+  };
+}
+
+export function createSagaIntentRetryScheduledEventFromPolicy(
+  input: SagaIntentRetryFromPolicyAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentRetryScheduledEvent {
+  return createSagaIntentRetryScheduledEvent(
+    {
+      sagaStreamId: input.sagaStreamId,
+      intentKey: input.intentKey,
+      metadata: input.metadata,
+      attempt: input.attempt,
+      nextAttemptAt: computeNextAttemptAt(input.policy, input.attempt, input.now, input.jitter)
+    },
+    createTimestamp
+  );
+}
+
 export async function appendSagaIntentStartedEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -242,6 +302,26 @@ export async function appendSagaIntentFailedEvent(
   createTimestamp: () => string = () => new Date().toISOString()
 ): Promise<SagaIntentFailedEvent> {
   const event = createSagaIntentFailedEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentRetryScheduledEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentRetryScheduledAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentRetryScheduledEvent> {
+  const event = createSagaIntentRetryScheduledEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentRetryScheduledEventFromPolicy(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentRetryFromPolicyAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentRetryScheduledEvent> {
+  const event = createSagaIntentRetryScheduledEventFromPolicy(input, createTimestamp);
   await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
   return event;
 }

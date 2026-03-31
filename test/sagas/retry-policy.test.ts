@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   classifyRetryableError,
+  computeNextAttemptAt,
   isRetryableError,
   validateRetryPolicy,
   type SagaRetryPolicy
@@ -64,5 +65,22 @@ describe('saga retry policy helpers', () => {
         }
       )
     ).toBe(false);
+  });
+
+  it('computes exponentially increasing retry timestamps', () => {
+    const now = '2026-03-31T00:00:00.000Z';
+
+    expect(computeNextAttemptAt(validPolicy, 1, now)).toBe('2026-03-31T00:00:00.250Z');
+    expect(computeNextAttemptAt(validPolicy, 2, now)).toBe('2026-03-31T00:00:00.500Z');
+    expect(computeNextAttemptAt(validPolicy, 3, now)).toBe('2026-03-31T00:00:01.000Z');
+    expect(computeNextAttemptAt(validPolicy, 6, now)).toBe('2026-03-31T00:00:05.000Z');
+  });
+
+  it('applies bounded jitter when provided', () => {
+    const now = '2026-03-31T00:00:00.000Z';
+
+    expect(computeNextAttemptAt(validPolicy, 2, now, 0)).toBe('2026-03-31T00:00:00.375Z');
+    expect(computeNextAttemptAt(validPolicy, 2, now, 0.5)).toBe('2026-03-31T00:00:00.500Z');
+    expect(computeNextAttemptAt(validPolicy, 2, now, 1)).toBe('2026-03-31T00:00:00.625Z');
   });
 });

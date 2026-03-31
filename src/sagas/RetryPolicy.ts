@@ -15,6 +15,8 @@ export interface RetryableErrorClassificationOptions {
   useDefaults?: boolean;
 }
 
+export type RetrySchedulingNow = string | number | Date;
+
 const DEFAULT_RETRYABLE_ERROR_CODES = new Set([
   'ECONNRESET',
   'ECONNREFUSED',
@@ -60,6 +62,18 @@ function normalizeErrorStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
+function toEpochMilliseconds(now: RetrySchedulingNow): number {
+  if (typeof now === 'number') {
+    return now;
+  }
+
+  if (now instanceof Date) {
+    return now.getTime();
+  }
+
+  return Date.parse(now);
+}
+
 /**
  * Validates a retry policy shape and constraints.
  *
@@ -95,6 +109,48 @@ export function validateRetryPolicy(policy: SagaRetryPolicy): SagaRetryPolicy {
   }
 
   return policy;
+}
+
+/**
+ * Computes the next retry schedule timestamp for a retry attempt.
+ *
+ * `attempt` is 1-indexed for retries (attempt=1 yields `initialBackoffMs`).
+ * When jitter is provided, it must be normalized in [0, 1].
+ */
+export function computeNextAttemptAt(
+  policy: SagaRetryPolicy,
+  attempt: number,
+  now: RetrySchedulingNow,
+  jitter?: number
+): string {
+  validateRetryPolicy(policy);
+
+  if (!Number.isInteger(attempt) || attempt < 1) {
+    throw new RangeError('Retry attempt must be an integer greater than or equal to 1.');
+  }
+
+  const nowMs = toEpochMilliseconds(now);
+
+  if (!Number.isFinite(nowMs)) {
+    throw new RangeError('Retry scheduling "now" must be a valid Date, timestamp, or ISO datetime string.');
+  }
+
+  if (jitter !== undefined && (!Number.isFinite(jitter) || jitter < 0 || jitter > 1)) {
+    throw new RangeError('Retry scheduling jitter must be between 0 and 1 inclusive when provided.');
+  }
+
+  const attemptBackoffMs = policy.initialBackoffMs * Math.pow(policy.backoffCoefficient, attempt - 1);
+  const boundedBackoffMs = policy.maxBackoffMs === undefined
+    ? attemptBackoffMs
+    : Math.min(attemptBackoffMs, policy.maxBackoffMs);
+
+  const jitterCoefficient = policy.jitterCoefficient ?? 0;
+  const jitterFactor = jitter === undefined
+    ? 1
+    : Math.max(0, 1 + ((jitter * 2) - 1) * jitterCoefficient);
+
+  const scheduledAtMs = nowMs + Math.round(boundedBackoffMs * jitterFactor);
+  return new Date(scheduledAtMs).toISOString();
 }
 
 /**
