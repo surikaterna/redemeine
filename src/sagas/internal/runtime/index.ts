@@ -4,7 +4,6 @@ export * from './replayExecution';
 export * from './SagaRouterDaemon';
 export * from './SagaIntentRouter';
 export * from './SagaIntentExecutionAdapter';
-export * from './SagaTimeoutCronScanner';
 export * from './IntentLease';
 export * from './RuntimeIntentProjection';
 export * from './SagaRuntimePersistenceAdapter';
