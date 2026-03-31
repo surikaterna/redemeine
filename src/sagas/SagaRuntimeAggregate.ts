@@ -1,31 +1,7 @@
 import { createAggregate } from '../createAggregate';
 import type { Event } from '../types';
+import { formatFlatEventType } from '../utils/naming';
 import type { ReadonlyDeep } from '../utils/types/ReadonlyDeep';
-
-export const SAGA_RUNTIME_COMMAND_TAXONOMY = [
-  'observeEvent',
-  'queueIntent',
-  'startIntent',
-  'completeIntent',
-  'failIntent',
-  'scheduleRetry',
-  'deadLetterIntent'
-] as const;
-
-export type SagaRuntimeCommandName = (typeof SAGA_RUNTIME_COMMAND_TAXONOMY)[number];
-
-export const SAGA_RUNTIME_EVENT_TAXONOMY = [
-  'eventObserved',
-  'started',
-  'intentQueued',
-  'intentStarted',
-  'intentCompleted',
-  'intentFailed',
-  'intentRetryScheduled',
-  'intentDeadLettered'
-] as const;
-
-export type SagaRuntimeEventName = (typeof SAGA_RUNTIME_EVENT_TAXONOMY)[number];
 
 export interface SagaRuntimeState {
   lifecycle: 'idle' | 'active';
@@ -222,13 +198,8 @@ function pushUnique(values: readonly string[], value: string): string[] {
  * Hidden/internal runtime aggregate contract for saga execution bookkeeping.
  */
 export const SagaRuntimeAggregate = createAggregate<SagaRuntimeState, 'sagaRuntime'>('sagaRuntime', INITIAL_SAGA_RUNTIME_STATE)
-  .overrideEventNames({
-    intentQueued: 'sagaRuntime.intentQueued.event',
-    intentStarted: 'sagaRuntime.intentStarted.event',
-    intentCompleted: 'sagaRuntime.intentCompleted.event',
-    intentFailed: 'sagaRuntime.intentFailed.event',
-    intentRetryScheduled: 'sagaRuntime.intentRetryScheduled.event',
-    intentDeadLettered: 'sagaRuntime.intentDeadLettered.event'
+  .naming({
+    event: formatFlatEventType
   })
   .events({
     eventObserved: (state, event: Event<SagaRuntimeObservedEventPayload>) => {
@@ -468,3 +439,6 @@ export const SagaRuntimeAggregate = createAggregate<SagaRuntimeState, 'sagaRunti
     }
   }))
   .build();
+
+export type SagaRuntimeCommandName = keyof typeof SagaRuntimeAggregate.commandCreators;
+export type SagaRuntimeEventName = keyof typeof SagaRuntimeAggregate.pure.eventProjectors;

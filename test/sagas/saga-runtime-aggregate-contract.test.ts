@@ -99,7 +99,7 @@ describe('R1 SagaRuntimeAggregate contract', () => {
     );
 
     expect(startEvents.map(event => event.type)).toEqual([
-      'sagaRuntime.event.observed.event',
+      'sagaRuntime.eventObserved.event',
       'sagaRuntime.started.event'
     ]);
 
@@ -119,7 +119,7 @@ describe('R1 SagaRuntimeAggregate contract', () => {
     );
 
     expect(followUpEvents.map(event => event.type)).toEqual([
-      'sagaRuntime.event.observed.event'
+      'sagaRuntime.eventObserved.event'
     ]);
   });
 
