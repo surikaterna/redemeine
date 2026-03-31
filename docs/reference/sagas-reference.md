@@ -9,6 +9,7 @@ For generated API signatures, use `/docs/api/`.
 - `createSaga.ts`: typed saga definition builder and intent types.
 - `SagaEventStore.ts`: persisted intent and lifecycle event contracts plus helpers.
 - `PendingIntentProjection.ts`: read model for pending/executable intent queries.
+- `RuntimeIntentProjection.ts`: createProjection-based pending/due index over runtime aggregate events.
 - `DedupeGuard.ts`: no-op decision helpers for replay and crash recovery.
 - `RetryPolicy.ts`: retry validation, backoff scheduling, and classification helpers.
 - `replayExecution.ts`: replay-mode execution suppression helpers.
@@ -98,6 +99,21 @@ Common methods:
 - `getExecutablePendingIntents(now)`
 
 Record shape: `PendingIntentRecord<TCommandMap>` with `status`, `dueAt`, and lifecycle timestamps.
+
+## Runtime intent projection (createProjection-based)
+
+`createRuntimeIntentProjection()` materializes `SagaRuntimeAggregate` events into a read-only pending/due index.
+
+Use it with `ProjectionDaemon` + `InMemoryRuntimeIntentProjectionStore` (or another `IProjectionStore` implementation) to query worker-ready intents while keeping runtime aggregate events as source of truth.
+
+Common query methods on `InMemoryRuntimeIntentProjectionStore`:
+
+- `getByIntentKey(intentKey)`
+- `query({ statuses, dueAtBeforeOrEqual, dueAtAfterOrEqual })`
+- `getPendingIntents()`
+- `getDueIntents(now)`
+
+Record shape: `RuntimeIntentProjectionRecord` with `status`, `attempts`, `dueAt`, `nextAttemptAt`, and lifecycle timestamps.
 
 ## Dedupe and recovery decisions
 

@@ -10,4 +10,5 @@ export * from './SagaRouterDaemon';
 export * from './SagaIntentRouter';
 export * from './SagaTimeoutCronScanner';
 export * from './IntentLease';
+export * from './RuntimeIntentProjection';
 export * from './SagaRuntimePersistenceAdapter';
