@@ -5,6 +5,7 @@ import {
 } from './SagaRuntimeAggregate';
 import type { SagaCommandMap } from './createSaga';
 import type { PendingIntentRecord } from './PendingIntentProjection';
+import type { RuntimeIntentProjectionRecord } from './RuntimeIntentProjection';
 import {
   decidePendingIntentRoute,
   executePendingIntentRouteDecision,
@@ -57,6 +58,35 @@ export interface SagaIntentExecutionResult {
   readonly executed: boolean;
   readonly outcome: 'completed' | 'retry-scheduled' | 'dead-lettered' | 'skipped';
   readonly reason?: SagaIntentExecutionDecisionReason;
+}
+
+export interface RuntimeIntentProjectionDueReader {
+  getDueIntents(now?: string | Date): RuntimeIntentProjectionRecord[];
+}
+
+export interface PendingIntentRecordLookup<TCommandMap extends SagaCommandMap = SagaCommandMap> {
+  getByIntentKey(intentKey: string): PendingIntentRecord<TCommandMap> | undefined;
+}
+
+export interface RouteDueRuntimeIntentOptions {
+  readonly now?: () => string | Date;
+  readonly createTimestamp?: () => string;
+  readonly retryJitter?: number;
+  readonly onResult?: (result: SagaIntentExecutionResult) => void;
+}
+
+export class MissingPendingIntentRecordForRuntimeIntentError extends Error {
+  readonly intentKey: string;
+  readonly sagaStreamId: string;
+
+  constructor(runtimeRecord: RuntimeIntentProjectionRecord) {
+    super(
+      `Unable to execute runtime intent '${runtimeRecord.intentKey}' on stream '${runtimeRecord.sagaStreamId}' because no pending intent record exists.`
+    );
+    this.name = 'MissingPendingIntentRecordForRuntimeIntentError';
+    this.intentKey = runtimeRecord.intentKey;
+    this.sagaStreamId = runtimeRecord.sagaStreamId;
+  }
 }
 
 function toIsoString(value: string | Date): string {
@@ -281,4 +311,66 @@ export async function executeSagaIntentExecutionTicket<TCommandMap extends SagaC
       outcome: 'dead-lettered'
     };
   }
+}
+
+export async function routeDueRuntimeIntentRecord<TCommandMap extends SagaCommandMap>(
+  runtimeRecord: RuntimeIntentProjectionRecord,
+  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
+  runtimeDepot: SagaRuntimeDepotLike,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>,
+  options: RouteDueRuntimeIntentOptions = {}
+): Promise<SagaIntentExecutionResult> {
+  const pendingRecord = pendingIntentLookup.getByIntentKey(runtimeRecord.intentKey);
+  if (!pendingRecord) {
+    throw new MissingPendingIntentRecordForRuntimeIntentError(runtimeRecord);
+  }
+
+  const ticket = await decideDueSagaIntentExecution(pendingRecord, runtimeDepot, {
+    now: options.now
+  });
+
+  const result = await executeSagaIntentExecutionTicket(ticket, runtimeDepot, handlers, {
+    createTimestamp: options.createTimestamp,
+    retryJitter: options.retryJitter
+  });
+
+  options.onResult?.(result);
+  return result;
+}
+
+export function createRuntimeIntentProcessTick<TCommandMap extends SagaCommandMap>(
+  runtimeProjection: RuntimeIntentProjectionDueReader,
+  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
+  runtimeDepot: SagaRuntimeDepotLike,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>,
+  options: RouteDueRuntimeIntentOptions = {}
+): () => Promise<number> {
+  const now = options.now ?? (() => new Date());
+
+  return async () => {
+    const dueIntents = runtimeProjection.getDueIntents(now());
+    let executedCount = 0;
+
+    for (const dueIntent of dueIntents) {
+      const result = await routeDueRuntimeIntentRecord(dueIntent, pendingIntentLookup, runtimeDepot, handlers, {
+        ...options,
+        now
+      });
+      if (result.executed) {
+        executedCount += 1;
+      }
+    }
+
+    return executedCount;
+  };
+}
+
+export function createRuntimeStartupRecoveryScan<TCommandMap extends SagaCommandMap>(
+  runtimeProjection: RuntimeIntentProjectionDueReader,
+  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
+  runtimeDepot: SagaRuntimeDepotLike,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>,
+  options: RouteDueRuntimeIntentOptions = {}
+): () => Promise<number> {
+  return createRuntimeIntentProcessTick(runtimeProjection, pendingIntentLookup, runtimeDepot, handlers, options);
 }

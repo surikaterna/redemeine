@@ -2,16 +2,22 @@ import { describe, expect, it, jest } from '@jest/globals';
 import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
 import {
+  InMemoryRuntimeIntentProjectionStore,
   PendingIntentProjection,
+  createRuntimeIntentProjection,
   createSagaIntentRecordedEvents,
+  createRuntimeIntentProcessTick,
+  createRuntimeStartupRecoveryScan,
   decideDueSagaIntentExecution,
   executeSagaIntentExecutionTicket,
+  persistSagaReducerOutputThroughRuntimeAggregate,
   type SagaRuntimeDepotLike,
   type SagaRunActivityIntent,
   type SagaIntentWorkerHandlers,
   type SagaReducerOutput
 } from '../../src/sagas';
 import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
+import { ProjectionDaemon, type IEventSubscription, type ProjectionEvent } from '../../src/projections';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };
@@ -42,6 +48,29 @@ function createPendingProjection(
   const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => recordedAt);
   projection.projectEvents([recorded], []);
   return projection;
+}
+
+function createSubscription(events: ProjectionEvent[]): IEventSubscription {
+  return {
+    async poll(cursor, batchSize) {
+      const batch = events
+        .filter(event => event.sequence > cursor.sequence)
+        .sort((left, right) => left.sequence - right.sequence)
+        .slice(0, batchSize);
+
+      const nextCursor = batch.length > 0
+        ? {
+          sequence: batch[batch.length - 1].sequence,
+          timestamp: batch[batch.length - 1].timestamp
+        }
+        : cursor;
+
+      return {
+        events: batch,
+        nextCursor
+      };
+    }
+  };
 }
 
 describe('R7 intent decision/execution split adapters', () => {
@@ -188,5 +217,138 @@ describe('R7 intent decision/execution split adapters', () => {
     });
 
     expect(handlers.runActivity).toHaveBeenCalledTimes(2);
+  });
+
+  it('R10 startup recovery scans runtime due projection and executes pending intent once', async () => {
+    const store = new InMemoryEventStore();
+    const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
+    const sagaStreamId = 'saga-runtime-startup-recovery';
+
+    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
+      state: { attempts: 0 },
+      intents: [
+        {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-recover-runtime', amount: 250 },
+          metadata: { sagaId: 'saga-recover-runtime', correlationId: 'corr-recover-runtime', causationId: 'cause-recover-runtime' }
+        }
+      ]
+    };
+
+    const pendingProjection = createPendingProjection(output, sagaStreamId);
+    const runtimeQueuedAt = '2026-03-31T00:00:00.000Z';
+    await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+      sagaStreamId,
+      createQueuedAt: () => runtimeQueuedAt
+    });
+
+    const streamEvents = (store as unknown as { streams: Map<string, Event[]> }).streams.get(sagaStreamId) ?? [];
+    const projectionEvents: ProjectionEvent[] = streamEvents.map((event, index) => ({
+      aggregateType: 'sagaRuntime',
+      aggregateId: sagaStreamId,
+      type: event.type,
+      payload: event.payload,
+      sequence: index + 1,
+      timestamp: new Date(Date.parse(runtimeQueuedAt) + index).toISOString()
+    }));
+
+    const runtimeProjectionStore = new InMemoryRuntimeIntentProjectionStore();
+    const runtimeProjectionDaemon = new ProjectionDaemon({
+      projection: createRuntimeIntentProjection(),
+      subscription: createSubscription(projectionEvents),
+      store: runtimeProjectionStore
+    });
+    await runtimeProjectionDaemon.processBatch();
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const startupScan = createRuntimeStartupRecoveryScan(
+      runtimeProjectionStore,
+      pendingProjection,
+      runtimeDepot,
+      handlers,
+      {
+        now: () => new Date(runtimeQueuedAt),
+        createTimestamp: () => '2026-03-31T00:00:00.010Z'
+      }
+    );
+
+    await expect(startupScan()).resolves.toBe(1);
+    await expect(startupScan()).resolves.toBe(0);
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('R10 due routing executes through worker pipeline from runtime projection index', async () => {
+    const store = new InMemoryEventStore();
+    const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
+    const sagaStreamId = 'saga-runtime-due-routing';
+
+    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
+      state: { attempts: 0 },
+      intents: [
+        {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-due-runtime', amount: 310 },
+          metadata: { sagaId: 'saga-due-runtime', correlationId: 'corr-due-runtime', causationId: 'cause-due-runtime' }
+        }
+      ]
+    };
+
+    const pendingProjection = createPendingProjection(output, sagaStreamId);
+    const runtimeQueuedAt = '2026-03-31T01:00:00.000Z';
+    await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+      sagaStreamId,
+      createQueuedAt: () => runtimeQueuedAt
+    });
+
+    const streamEvents = (store as unknown as { streams: Map<string, Event[]> }).streams.get(sagaStreamId) ?? [];
+    const projectionEvents: ProjectionEvent[] = streamEvents.map((event, index) => ({
+      aggregateType: 'sagaRuntime',
+      aggregateId: sagaStreamId,
+      type: event.type,
+      payload: event.payload,
+      sequence: index + 1,
+      timestamp: new Date(Date.parse(runtimeQueuedAt) + index).toISOString()
+    }));
+
+    const runtimeProjectionStore = new InMemoryRuntimeIntentProjectionStore();
+    const runtimeProjectionDaemon = new ProjectionDaemon({
+      projection: createRuntimeIntentProjection(),
+      subscription: createSubscription(projectionEvents),
+      store: runtimeProjectionStore
+    });
+    await runtimeProjectionDaemon.processBatch();
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const processTick = createRuntimeIntentProcessTick(
+      runtimeProjectionStore,
+      pendingProjection,
+      runtimeDepot,
+      handlers,
+      {
+        now: () => new Date(runtimeQueuedAt),
+        createTimestamp: () => '2026-03-31T01:00:00.010Z'
+      }
+    );
+
+    await expect(processTick()).resolves.toBe(1);
+    await expect(processTick()).resolves.toBe(0);
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
+
+    const updatedEvents = (store as unknown as { streams: Map<string, Event[]> }).streams.get(sagaStreamId) ?? [];
+    expect(updatedEvents.some(event => event.type === 'sagaRuntime.intentCompleted.event')).toBe(true);
   });
 });
