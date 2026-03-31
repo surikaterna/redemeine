@@ -250,4 +250,39 @@ describe('S20 intent lease acquisition', () => {
     );
     expect(expiresOnOriginalDeadline).toBeUndefined();
   });
+
+  it('S31 acceptance: concurrent workers contend and only lease holder executes intent', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+    const executionLog: string[] = [];
+    let executionCount = 0;
+
+    const attemptExecution = async (workerId: string) => {
+      const lease = await leaseStore.acquireLease({
+        intentKey: 'intent-s31-contention',
+        workerId,
+        leaseDurationMs: 30_000,
+        now: '2026-03-31T00:00:00.000Z'
+      });
+
+      if (!lease) {
+        return false;
+      }
+
+      executionCount += 1;
+      executionLog.push(workerId);
+      return true;
+    };
+
+    const workerIds = Array.from({ length: 16 }, (_unused, index) => `worker-${index + 1}`);
+    const outcomes = await Promise.all(workerIds.map(workerId => attemptExecution(workerId)));
+
+    const winners = workerIds.filter((_workerId, index) => outcomes[index]);
+    expect(winners).toHaveLength(1);
+    expect(executionCount).toBe(1);
+    expect(executionLog).toEqual([winners[0]]);
+
+    const activeLease = await leaseStore.getActiveLease('intent-s31-contention', '2026-03-31T00:00:00.001Z');
+    expect(activeLease).toBeDefined();
+    expect(activeLease?.workerId).toBe(winners[0]);
+  });
 });
