@@ -188,8 +188,8 @@ describe('S26 acceptance: DLQ inspection query path', () => {
     const sagaAEntries = await store.loadDeadLetteredEvents({ sagaId: 'saga-A' });
 
     expect(sagaAEntries).toHaveLength(2);
-    expect(sagaAEntries.map(entry => entry.lifecycle.intentKey)).toEqual(['intent-a1', 'intent-a2']);
-    expect(sagaAEntries.every(entry => entry.lifecycle.metadata.sagaId === 'saga-A')).toBe(true);
+    expect(sagaAEntries.map(entry => entry.intentKey)).toEqual(['intent-a1', 'intent-a2']);
+    expect(sagaAEntries.every(entry => entry.sagaId === 'saga-A')).toBe(true);
   });
 
   it('lists dead-letter entries filtered by intent identifier', () => {
@@ -254,8 +254,8 @@ describe('S26 acceptance: DLQ inspection query path', () => {
     const filtered = queryDeadLetterEvents(lifecycleEvents, { intentKey: 'intent-target' });
 
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].lifecycle.intentKey).toBe('intent-target');
-    expect(filtered[0].lifecycle.metadata.sagaId).toBe('saga-A');
+    expect(filtered[0].intentKey).toBe('intent-target');
+    expect(filtered[0].sagaId).toBe('saga-A');
   });
 });
 
@@ -308,21 +308,98 @@ describe('S33 acceptance: DLQ metadata includes identifiers, attempts, and error
 
     expect(dlqEntries).toHaveLength(1);
     expect(dlqEntries[0]).toMatchObject({
-      lifecycle: {
-        intentKey: recorded.idempotencyKey,
-        metadata: {
-          sagaId: 'saga-metadata'
-        }
-      },
-      deadLetter: {
-        attempt: 3,
-        error: {
-          name: 'Error',
-          message: 'upstream dependency failed',
-          code: 'EUPSTREAM',
-          status: 503
-        }
+      intentKey: recorded.idempotencyKey,
+      sagaId: 'saga-metadata',
+      attempts: 3,
+      error: {
+        name: 'Error',
+        message: 'upstream dependency failed',
+        code: 'EUPSTREAM',
+        status: 503
       }
     });
+  });
+
+  it('projects and queries dead-letter entries via createProjection index', () => {
+    const lifecycleEvents = [
+      {
+        type: 'saga.intent-failed' as const,
+        sagaStreamId: 'stream-a',
+        lifecycle: {
+          intentKey: 'intent-ignore',
+          metadata: {
+            sagaId: 'saga-A',
+            correlationId: 'corr-ignore',
+            causationId: 'cause-ignore'
+          }
+        },
+        failedAt: '2026-03-31T00:00:09.000Z'
+      },
+      {
+        type: 'saga.intent-dead-lettered' as const,
+        sagaStreamId: 'stream-a',
+        lifecycle: {
+          intentKey: 'intent-1',
+          metadata: {
+            sagaId: 'saga-A',
+            correlationId: 'corr-1',
+            causationId: 'cause-1'
+          }
+        },
+        deadLetter: {
+          attempt: 2,
+          classification: 'retryable' as const,
+          reason: 'max-attempts-exhausted' as const,
+          error: {
+            message: 'timeout',
+            code: 'ETIMEDOUT',
+            status: 504
+          }
+        },
+        deadLetteredAt: '2026-03-31T00:00:10.000Z'
+      },
+      {
+        type: 'saga.intent-dead-lettered' as const,
+        sagaStreamId: 'stream-b',
+        lifecycle: {
+          intentKey: 'intent-2',
+          metadata: {
+            sagaId: 'saga-B',
+            correlationId: 'corr-2',
+            causationId: 'cause-2'
+          }
+        },
+        deadLetter: {
+          attempt: 1,
+          classification: 'non-retryable' as const,
+          reason: 'non-retryable' as const,
+          error: {
+            message: 'validation failed'
+          }
+        },
+        deadLetteredAt: '2026-03-31T00:00:11.000Z'
+      }
+    ];
+
+    const filtered = queryDeadLetterEvents(lifecycleEvents, { sagaId: 'saga-A' });
+
+    expect(filtered).toEqual([
+      {
+        sagaStreamId: 'stream-a',
+        sagaId: 'saga-A',
+        intentKey: 'intent-1',
+        correlationId: 'corr-1',
+        causationId: 'cause-1',
+        attempts: 2,
+        classification: 'retryable',
+        reason: 'max-attempts-exhausted',
+        error: {
+          message: 'timeout',
+          code: 'ETIMEDOUT',
+          status: 504
+        },
+        deadLetteredAt: '2026-03-31T00:00:10.000Z'
+      }
+    ]);
   });
 });

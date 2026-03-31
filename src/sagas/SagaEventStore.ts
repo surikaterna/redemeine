@@ -7,6 +7,7 @@ import {
   type RetryableErrorClassificationOptions,
   type SagaRetryPolicy
 } from './RetryPolicy';
+import { querySagaDeadLetterIndex, type SagaDeadLetterIndexEntry } from './DeadLetterIndexProjection';
 
 /** Persisted event recording a reducer-emitted intent. */
 export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = SagaCommandMap> {
@@ -105,35 +106,11 @@ export type SagaLifecycleEvent =
   | SagaIntentRetryScheduledEvent
   | SagaIntentDeadLetteredEvent;
 
-function matchesDeadLetterQuery(
-  event: SagaIntentDeadLetteredEvent,
-  query: SagaDeadLetterQuery
-): boolean {
-  if (query.sagaId && event.lifecycle.metadata.sagaId !== query.sagaId) {
-    return false;
-  }
-
-  if (query.intentKey && event.lifecycle.intentKey !== query.intentKey) {
-    return false;
-  }
-
-  return true;
-}
-
 export function queryDeadLetterEvents(
   events: readonly SagaLifecycleEvent[],
   query: SagaDeadLetterQuery = {}
-): SagaIntentDeadLetteredEvent[] {
-  return events
-    .filter((event): event is SagaIntentDeadLetteredEvent => event.type === 'saga.intent-dead-lettered')
-    .filter(event => matchesDeadLetterQuery(event, query))
-    .sort((left, right) => {
-      if (left.deadLetteredAt === right.deadLetteredAt) {
-        return left.lifecycle.intentKey.localeCompare(right.lifecycle.intentKey);
-      }
-
-      return left.deadLetteredAt.localeCompare(right.deadLetteredAt);
-    });
+): SagaDeadLetterIndexEntry[] {
+  return querySagaDeadLetterIndex(events, query);
 }
 
 export type SagaIntentFailureDecision =
@@ -235,7 +212,7 @@ export class InMemorySagaEventStore implements SagaEventStore {
     return [...events];
   }
 
-  async loadDeadLetteredEvents(query: SagaDeadLetterQuery = {}): Promise<readonly SagaIntentDeadLetteredEvent[]> {
+  async loadDeadLetteredEvents(query: SagaDeadLetterQuery = {}): Promise<readonly SagaDeadLetterIndexEntry[]> {
     const lifecycleEvents = Array.from(this.lifecycleStreams.values()).flatMap(stream => stream);
     return queryDeadLetterEvents(lifecycleEvents, query);
   }

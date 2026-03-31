@@ -3,6 +3,7 @@ export * from './createSaga';
 export * from './RetryPolicy';
 export * from './SagaRegistry';
 export * from './SagaEventStore';
+export * from './DeadLetterIndexProjection';
 export * from './PendingIntentProjection';
 export * from './DedupeGuard';
 export * from './replayExecution';
