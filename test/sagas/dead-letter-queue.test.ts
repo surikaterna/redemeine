@@ -258,3 +258,71 @@ describe('S26 acceptance: DLQ inspection query path', () => {
     expect(filtered[0].lifecycle.metadata.sagaId).toBe('saga-A');
   });
 });
+
+describe('S33 acceptance: DLQ metadata includes identifiers, attempts, and error details', () => {
+  it('records and returns sagaId, intentKey, attempt count, and error details in DLQ entries', async () => {
+    const store = new InMemorySagaEventStore();
+    const reducerOutput: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
+      state: { attempts: 0 },
+      intents: [
+        {
+          type: 'run-activity',
+          name: 'charge-card',
+          closure: async () => 'ok',
+          retryPolicy: {
+            maxAttempts: 3,
+            initialBackoffMs: 100,
+            backoffCoefficient: 2
+          },
+          metadata: {
+            sagaId: 'saga-metadata',
+            correlationId: 'corr-metadata',
+            causationId: 'cause-metadata'
+          }
+        }
+      ]
+    };
+
+    const [recorded] = createSagaIntentRecordedEvents('saga-stream-metadata', reducerOutput, () => '2026-03-31T00:00:00.000Z');
+
+    const error = Object.assign(new Error('upstream dependency failed'), {
+      code: 'EUPSTREAM',
+      status: 503
+    });
+
+    await appendSagaIntentFailureOutcomeEvent(
+      store,
+      {
+        sagaStreamId: 'saga-stream-metadata',
+        intentKey: recorded.idempotencyKey,
+        metadata: recorded.intent.metadata,
+        error,
+        attempt: 3,
+        policy: recorded.intent.type === 'run-activity' ? recorded.intent.retryPolicy : undefined,
+        now: '2026-03-31T00:00:05.000Z'
+      },
+      () => '2026-03-31T00:00:05.000Z'
+    );
+
+    const dlqEntries = await store.loadDeadLetteredEvents({ sagaId: 'saga-metadata', intentKey: recorded.idempotencyKey });
+
+    expect(dlqEntries).toHaveLength(1);
+    expect(dlqEntries[0]).toMatchObject({
+      lifecycle: {
+        intentKey: recorded.idempotencyKey,
+        metadata: {
+          sagaId: 'saga-metadata'
+        }
+      },
+      deadLetter: {
+        attempt: 3,
+        error: {
+          name: 'Error',
+          message: 'upstream dependency failed',
+          code: 'EUPSTREAM',
+          status: 503
+        }
+      }
+    });
+  });
+});
