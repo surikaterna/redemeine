@@ -1,5 +1,18 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { SagaRouterDaemon, SagaRouterDaemonHealthEvent } from '../../src/sagas';
+import {
+  PendingIntentProjection,
+  SagaRouterDaemon,
+  SagaRouterDaemonHealthEvent,
+  createSagaIntentRecordedEvents,
+  createSagaTimeoutCronScanner,
+  createSagaTimeoutWakeUpIntentRouter,
+  type SagaIntentWorkerHandlers,
+  type SagaReducerOutput
+} from '../../src/sagas';
+
+type BillingCommandMap = {
+  'billing.charge': { invoiceId: string; amount: number };
+};
 
 describe('SagaRouterDaemon', () => {
   it('starts, emits health events, ticks, and stops cleanly', async () => {
@@ -101,5 +114,61 @@ describe('SagaRouterDaemon', () => {
 
     expect(startupScan).toHaveBeenCalledTimes(1);
     expect(processTick).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes due timeout wake-up through worker pipeline during daemon tick', async () => {
+    const projection = new PendingIntentProjection<BillingCommandMap>();
+    const output: SagaReducerOutput<{ step: number }, BillingCommandMap> = {
+      state: { step: 1 },
+      intents: [
+        {
+          type: 'schedule',
+          id: 'timer-daemon-due',
+          delay: 500,
+          metadata: { sagaId: 'saga-daemon', correlationId: 'corr-daemon', causationId: 'cause-daemon' }
+        }
+      ]
+    };
+
+    const [recorded] = createSagaIntentRecordedEvents('saga-stream-daemon', output, () => '2026-03-31T00:00:00.000Z');
+    projection.projectEvents([recorded], []);
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+    const timeoutScan = createSagaTimeoutCronScanner(projection, routeWakeUpIntent, {
+      now: () => '2026-03-31T00:00:00.500Z'
+    });
+
+    const healthEvents: SagaRouterDaemonHealthEvent[] = [];
+    let daemon: SagaRouterDaemon;
+    const processTick = jest.fn(async () => {
+      daemon.stop();
+      return 0;
+    });
+
+    daemon = new SagaRouterDaemon({
+      timeoutScan,
+      processTick,
+      pollIntervalMs: 0,
+      onHealthEvent: event => healthEvents.push(event)
+    });
+
+    await daemon.start();
+
+    expect(handlers.schedule).toHaveBeenCalledTimes(1);
+    expect(handlers.dispatch).not.toHaveBeenCalled();
+    expect(processTick).toHaveBeenCalledTimes(1);
+
+    const tickEvents = healthEvents.filter(
+      (event): event is Extract<SagaRouterDaemonHealthEvent, { type: 'tick' }> => event.type === 'tick'
+    );
+    expect(tickEvents).toHaveLength(1);
+    expect(tickEvents[0].processedCount).toBe(1);
   });
 });

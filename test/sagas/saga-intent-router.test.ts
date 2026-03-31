@@ -1,12 +1,16 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { PendingIntentRecord, SagaIntentWorkerHandlers, SagaReducerOutput } from '../../src/sagas';
 import {
+  MissingSagaWakeUpIntentRecordError,
   PendingIntentProjection,
   UnknownSagaIntentTypeError,
+  createSagaTimeoutWakeUpIntentRouter,
   createSagaIntentDispatchedEvent,
   createSagaIntentRecordedEvents,
   createSagaStartupRequeueScan,
   createSagaRouterProcessTick,
+  detectDueSagaTimers,
+  toSagaTimerWakeUpIntent,
   resolveSagaWorkerHandlerPath,
   routePendingIntentByType
 } from '../../src/sagas';
@@ -205,5 +209,65 @@ describe('S17 saga intent routing by type', () => {
 
     await expect(secondBootRequeue()).resolves.toBe(0);
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes timeout wake-up intents through normal intent-type worker pipeline', async () => {
+    const projection = new PendingIntentProjection<BillingCommandMap>();
+    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
+      state: { attempts: 0 },
+      intents: [
+        {
+          type: 'schedule',
+          id: 'timer-due-through-router',
+          delay: 500,
+          metadata: { sagaId: 'saga-timeout', correlationId: 'corr-timeout', causationId: 'cause-timeout' }
+        }
+      ]
+    };
+
+    const [recorded] = createSagaIntentRecordedEvents('saga-stream-timeout-router', output, () => '2026-03-31T00:00:00.000Z');
+    projection.projectEvents([recorded], []);
+
+    const dueTimerRecord = detectDueSagaTimers(projection, '2026-03-31T00:00:00.500Z')[0];
+    const wakeUpIntent = toSagaTimerWakeUpIntent(dueTimerRecord);
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+    const decision = await routeWakeUpIntent(wakeUpIntent);
+
+    expect(decision.handlerPath).toBe('worker.schedule');
+    expect(handlers.schedule).toHaveBeenCalledTimes(1);
+    expect(handlers.dispatch).not.toHaveBeenCalled();
+    expect(handlers.cancelSchedule).not.toHaveBeenCalled();
+    expect(handlers.runActivity).not.toHaveBeenCalled();
+  });
+
+  it('throws when timeout wake-up intent references missing pending record', async () => {
+    const projection = new PendingIntentProjection<BillingCommandMap>();
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+
+    await expect(
+      routeWakeUpIntent({
+        type: 'saga.timer-wake-up',
+        sagaStreamId: 'saga-stream-missing',
+        intentKey: 'missing-key',
+        scheduleId: 'timer-404',
+        dueAt: '2026-03-31T00:00:00.000Z',
+        metadata: { sagaId: 'saga-missing', correlationId: 'corr-missing', causationId: 'cause-missing' }
+      })
+    ).rejects.toBeInstanceOf(MissingSagaWakeUpIntentRecordError);
   });
 });

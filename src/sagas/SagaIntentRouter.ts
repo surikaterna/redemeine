@@ -8,6 +8,7 @@ import type {
 } from './createSaga';
 import { decideIntentExecutionFromProjection } from './DedupeGuard';
 import type { PendingIntentProjection, PendingIntentRecord } from './PendingIntentProjection';
+import type { SagaTimerWakeUpIntent } from './SagaTimeoutCronScanner';
 
 export const SAGA_WORKER_HANDLER_PATHS = {
   dispatch: 'worker.dispatch',
@@ -103,6 +104,20 @@ export interface SagaRouterProcessTickOptions {
   readonly onRouted?: (decision: SagaIntentRouteDecision) => void;
 }
 
+export interface SagaTimeoutWakeUpRoutingOptions {
+  readonly onRouted?: (decision: SagaIntentRouteDecision) => void;
+}
+
+export class MissingSagaWakeUpIntentRecordError extends Error {
+  readonly intentKey: string;
+
+  constructor(intentKey: string) {
+    super(`Unable to route wake-up intent '${intentKey}' because no pending intent record exists.`);
+    this.name = 'MissingSagaWakeUpIntentRecordError';
+    this.intentKey = intentKey;
+  }
+}
+
 export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
   projection: PendingIntentProjection<TCommandMap>,
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
@@ -119,6 +134,27 @@ export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
     }
 
     return pendingIntents.length;
+  };
+}
+
+/**
+ * S19 bridge for routing timeout wake-up intents through normal intent routing.
+ */
+export function createSagaTimeoutWakeUpIntentRouter<TCommandMap extends SagaCommandMap>(
+  projection: PendingIntentProjection<TCommandMap>,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>,
+  options: SagaTimeoutWakeUpRoutingOptions = {}
+): (wakeUpIntent: SagaTimerWakeUpIntent) => Promise<SagaIntentRouteDecision> {
+  return async wakeUpIntent => {
+    const record = projection.getByIntentKey(wakeUpIntent.intentKey);
+    if (!record) {
+      throw new MissingSagaWakeUpIntentRecordError(wakeUpIntent.intentKey);
+    }
+
+    const decision = await routePendingIntentByType(record, handlers);
+    options.onRouted?.(decision);
+
+    return decision;
   };
 }
 
