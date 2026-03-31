@@ -145,7 +145,7 @@ _Builder interface for creating projections fluently_
 - `.build()` - Build the final projection definition
 
 ### `SagaBuilder`
-_Core library class._
+_Fluent builder for composing a saga definition._
 
 **Methods:**
 - `.initialState()` (Returns `this`)
