@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { InMemorySagaIntentLeaseStore } from '../../src/sagas';
+import { InMemorySagaIntentLeaseStore } from '../../src/sagas/internal/runtime';
 
 describe('S20 intent lease acquisition', () => {
   it('allows only one worker to acquire lease for same intent key at once', async () => {

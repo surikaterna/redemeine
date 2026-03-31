@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
-import type { SagaReducerOutput } from '../../src/sagas';
+import type { SagaReducerOutput } from '../../src/sagas/internal/runtime';
 import {
   decideDueSagaIntentExecution,
   executeSagaIntentExecutionTicket,
@@ -10,8 +10,8 @@ import {
   type SagaRuntimeDepotLike,
   type SagaRunActivityIntent,
   type SagaIntentWorkerHandlers
-} from '../../src/sagas';
-import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
+} from '../../src/sagas/internal/runtime';
+import { SagaRuntimeAggregate } from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

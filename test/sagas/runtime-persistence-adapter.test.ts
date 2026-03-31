@@ -6,7 +6,7 @@ import {
   createSaga,
   persistSagaReducerOutputThroughRuntimeAggregate,
   type SagaReducerOutput
-} from '../../src/sagas';
+} from '../../src/sagas/internal/runtime';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

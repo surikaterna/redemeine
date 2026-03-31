@@ -1,6 +1,6 @@
-import type { Command } from '../types';
-import type { SagaCommandMap, SagaReducerOutput } from './createSaga';
-import { type SagaRuntimeTranslationOptions, translateSagaReducerOutputToRuntimeCommands } from './internal/translateSagaReducerOutputToRuntimeCommands';
+import type { Command } from '../../../types';
+import type { SagaCommandMap, SagaReducerOutput } from '../../createSaga';
+import { type SagaRuntimeTranslationOptions, translateSagaReducerOutputToRuntimeCommands } from '../translateSagaReducerOutputToRuntimeCommands';
 
 interface SagaRuntimeMirageLike {
   dispatch(command: Command): unknown;

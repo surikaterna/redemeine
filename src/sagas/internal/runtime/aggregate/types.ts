@@ -1,4 +1,4 @@
-import type { SagaCommandMap, SagaIntent } from '../createSaga';
+import type { SagaCommandMap, SagaIntent } from '../../../createSaga';
 
 export type SagaRuntimePersistedIntent = SagaIntent<SagaCommandMap>;
 

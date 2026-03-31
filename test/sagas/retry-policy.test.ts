@@ -5,7 +5,7 @@ import {
   isRetryableError,
   validateRetryPolicy,
   type SagaRetryPolicy
-} from '../../src/sagas';
+} from '../../src/sagas/internal/runtime';
 
 describe('saga retry policy helpers', () => {
   const validPolicy: SagaRetryPolicy = {

@@ -14,8 +14,8 @@ import {
   type SagaIntentWorkerHandlers,
   type SagaReducerOutput,
   type RuntimeIntentProjectionRecordFor
-} from '../../src/sagas';
-import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
+} from '../../src/sagas/internal/runtime';
+import { SagaRuntimeAggregate } from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 import { ProjectionDaemon, type IEventSubscription, type ProjectionEvent } from '../../src/projections';
 
 type BillingCommandMap = {

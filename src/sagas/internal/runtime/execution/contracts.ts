@@ -1,6 +1,6 @@
 import type { RuntimeIntentProjectionRecord, RuntimeIntentProjectionRecordFor } from '../RuntimeIntentProjection';
 import type { SagaIntentRouteDecision, SagaIntentWorkerHandlers } from '../SagaIntentRouter';
-import type { SagaCommandMap } from '../createSaga';
+import type { SagaCommandMap } from '../../../createSaga';
 import type { SagaRuntimeIntentState } from '../SagaRuntimeAggregate';
 
 export interface SagaRuntimeMirageLike {

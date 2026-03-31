@@ -9,12 +9,12 @@ export {
   type SagaIntentExecutionTicket,
   type SagaRuntimeDepotLike,
   type SagaRuntimeMirageLike
-} from './runtimeExecution/contracts';
+} from './execution/contracts';
 
-export { decideDueSagaIntentExecution } from './runtimeExecution/decision';
-export { executeSagaIntentExecutionTicket } from './runtimeExecution/execute';
+export { decideDueSagaIntentExecution } from './execution/decision';
+export { executeSagaIntentExecutionTicket } from './execution/execute';
 export {
   createRuntimeIntentProcessTick,
   createRuntimeStartupRecoveryScan,
   routeDueRuntimeIntentRecord
-} from './runtimeExecution/orchestration';
+} from './execution/orchestration';

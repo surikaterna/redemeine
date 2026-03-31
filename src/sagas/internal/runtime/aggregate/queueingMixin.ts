@@ -1,5 +1,5 @@
-import { createMixin } from '../../createMixin';
-import type { Event } from '../../types';
+import { createMixin } from '../../../../createMixin';
+import type { Event } from '../../../../types';
 import type {
   SagaRuntimeIntentQueuedEventPayload,
   SagaRuntimeQueueIntentPayload,

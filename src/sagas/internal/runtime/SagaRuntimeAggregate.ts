@@ -1,14 +1,14 @@
-import { createAggregate } from '../createAggregate';
-import { formatFlatEventType } from '../utils/naming';
+import { createAggregate } from '../../../createAggregate';
+import { formatFlatEventType } from '../../../utils/naming';
 import {
   deriveSagaRuntimeInstanceKey,
   shouldActivateSagaFromObservation
-} from './runtimeAggregate/shared';
-import { sagaRuntimeExecutionTransitionsMixin } from './runtimeAggregate/executionTransitionsMixin';
-import { sagaRuntimeObservationStartMixin } from './runtimeAggregate/observationStartMixin';
-import { sagaRuntimeQueueingMixin } from './runtimeAggregate/queueingMixin';
-import { sagaRuntimeRetryDeadLetterMixin } from './runtimeAggregate/retryDeadLetterMixin';
-import { INITIAL_SAGA_RUNTIME_STATE } from './runtimeAggregate/types';
+} from './aggregate/shared';
+import { sagaRuntimeExecutionTransitionsMixin } from './aggregate/executionTransitionsMixin';
+import { sagaRuntimeObservationStartMixin } from './aggregate/observationStartMixin';
+import { sagaRuntimeQueueingMixin } from './aggregate/queueingMixin';
+import { sagaRuntimeRetryDeadLetterMixin } from './aggregate/retryDeadLetterMixin';
+import { INITIAL_SAGA_RUNTIME_STATE } from './aggregate/types';
 
 export type {
   SagaRuntimeCompleteIntentPayload,
@@ -28,7 +28,7 @@ export type {
   SagaRuntimeStartIntentPayload,
   SagaRuntimeStartedEventPayload,
   SagaRuntimeState
-} from './runtimeAggregate/types';
+} from './aggregate/types';
 
 export {
   deriveSagaRuntimeInstanceKey,

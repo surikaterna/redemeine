@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../../src/sagas';
+import { createSaga } from '../../src/sagas/internal/runtime';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

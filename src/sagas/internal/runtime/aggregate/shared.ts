@@ -1,4 +1,4 @@
-import type { ReadonlyDeep } from '../../utils/types/ReadonlyDeep';
+import type { ReadonlyDeep } from '../../../../utils/types/ReadonlyDeep';
 import type { SagaRuntimeIntentState, SagaRuntimeState } from './types';
 
 export function shouldActivateSagaFromObservation(

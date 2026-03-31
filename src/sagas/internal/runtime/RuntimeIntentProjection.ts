@@ -3,8 +3,8 @@ import {
   type Checkpoint,
   type IProjectionStore,
   type ProjectionDefinition
-} from '../projections';
-import type { SagaCommandMap, SagaIntent } from './createSaga';
+} from '../../../projections';
+import type { SagaCommandMap, SagaIntent } from '../../createSaga';
 import {
   SagaRuntimeAggregate,
   type SagaRuntimeDeadLetterIntentPayload,

@@ -5,8 +5,8 @@ import type {
   SagaReducerOutput,
   SagaRunActivityIntent,
   SagaScheduleIntent
-} from './createSaga';
-import { translateSagaReducerOutputToRuntimeCommands } from './internal/translateSagaReducerOutputToRuntimeCommands';
+} from '../../createSaga';
+import { translateSagaReducerOutputToRuntimeCommands } from '../translateSagaReducerOutputToRuntimeCommands';
 
 export interface SagaIntentExecutors<TCommandMap extends SagaCommandMap> {
   dispatch?: (intent: SagaDispatchIntent<TCommandMap>) => unknown | Promise<unknown>;

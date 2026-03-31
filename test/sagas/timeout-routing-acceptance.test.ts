@@ -3,17 +3,17 @@ import type {
   SagaIntentWorkerHandlers,
   SagaReducerOutput,
   SagaRuntimeDepotLike
-} from '../../src/sagas';
+} from '../../src/sagas/internal/runtime';
 import {
   InMemoryRuntimeIntentProjectionStore,
   SagaRouterDaemon,
   createRuntimeIntentProcessTick,
   createRuntimeIntentProjection,
-  persistSagaReducerOutputThroughRuntimeAggregate
-} from '../../src/sagas';
+  persistSagaReducerOutputThroughRuntimeAggregate,
+  SagaRuntimeAggregate
+} from '../../src/sagas/internal/runtime';
 import { ProjectionDaemon } from '../../src/projections';
 import { createDepot } from '../../src/Depot';
-import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
 import type { Event } from '../../src/types';
 
 type BillingCommandMap = {

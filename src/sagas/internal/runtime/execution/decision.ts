@@ -2,7 +2,7 @@ import { decidePendingIntentRoute } from '../SagaIntentRouter';
 import type { RuntimeIntentProjectionRecordFor } from '../RuntimeIntentProjection';
 import type { SagaRuntimeIntentState } from '../SagaRuntimeAggregate';
 import type { SagaIntentRouteDecision } from '../SagaIntentRouter';
-import type { SagaCommandMap } from '../createSaga';
+import type { SagaCommandMap } from '../../../createSaga';
 import type {
   DecideDueSagaIntentExecutionOptions,
   SagaIntentExecutionDecision,

@@ -5,7 +5,7 @@ import type {
   SagaIntent,
   SagaRunActivityIntent,
   SagaScheduleIntent
-} from './createSaga';
+} from '../../createSaga';
 import type { RuntimeIntentProjectionRecordFor } from './RuntimeIntentProjection';
 
 export const SAGA_WORKER_HANDLER_PATHS = {

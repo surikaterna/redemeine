@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { SagaReducerOutput } from '../../src/sagas';
-import { executeSagaReducerOutputInReplay } from '../../src/sagas';
+import type { SagaReducerOutput } from '../../src/sagas/internal/runtime';
+import { executeSagaReducerOutputInReplay } from '../../src/sagas/internal/runtime';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

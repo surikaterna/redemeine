@@ -4,7 +4,7 @@ import {
   createSagaDispatchContext,
   executeSagaReducerOutputInReplay,
   type SagaReducerOutput
-} from '../../src/sagas';
+} from '../../src/sagas/internal/runtime';
 
 type InvoiceCommandMap = {
   'invoice.create': { invoiceId: string; amount: number };

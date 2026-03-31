@@ -1,6 +1,6 @@
 import type { Command } from '../../types';
 import type { SagaCommandMap, SagaIntent, SagaReducerOutput } from '../createSaga';
-import type { SagaRuntimeQueueIntentPayload } from '../SagaRuntimeAggregate';
+import type { SagaRuntimeQueueIntentPayload } from './runtime/SagaRuntimeAggregate';
 
 type SagaRuntimeQueueIntentCommandType = 'sagaRuntime.queueIntent.command';
 

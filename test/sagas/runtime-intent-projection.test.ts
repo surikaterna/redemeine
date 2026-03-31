@@ -4,7 +4,7 @@ import {
   InMemoryRuntimeIntentProjectionStore,
   createRuntimeIntentProjection,
   type RuntimeIntentProjectionRecord
-} from '../../src/sagas';
+} from '../../src/sagas/internal/runtime';
 
 function createSubscription(events: ProjectionEvent[]): IEventSubscription {
   return {

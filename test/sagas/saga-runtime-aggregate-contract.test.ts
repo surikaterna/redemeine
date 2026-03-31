@@ -10,7 +10,7 @@ import {
   type SagaRuntimeScheduleRetryPayload,
   type SagaRuntimeStartIntentPayload,
   type SagaRuntimeState
-} from '../../src/sagas/SagaRuntimeAggregate';
+} from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 
 const createIdleRuntimeState = (): SagaRuntimeState => ({
   lifecycle: 'idle',
