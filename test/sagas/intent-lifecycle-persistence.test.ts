@@ -1,13 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   InMemorySagaEventStore,
+  appendSagaIntentDispatchedEvent,
   appendSagaIntentFailedEvent,
   appendSagaIntentStartedEvent,
   appendSagaIntentSucceededEvent
 } from '../../src/sagas';
 
 describe('S10 intent lifecycle persistence', () => {
-  it('writes started/succeeded/failed lifecycle events with timestamps', async () => {
+  it('writes started/dispatched/succeeded/failed lifecycle events with timestamps', async () => {
     const store = new InMemorySagaEventStore();
 
     const input = {
@@ -21,6 +22,7 @@ describe('S10 intent lifecycle persistence', () => {
     };
 
     await appendSagaIntentStartedEvent(store, input, () => '2026-03-30T00:00:01.000Z');
+    await appendSagaIntentDispatchedEvent(store, input, () => '2026-03-30T00:00:01.500Z');
     await appendSagaIntentSucceededEvent(store, input, () => '2026-03-30T00:00:02.000Z');
     await appendSagaIntentFailedEvent(store, input, () => '2026-03-30T00:00:03.000Z');
 
@@ -39,6 +41,19 @@ describe('S10 intent lifecycle persistence', () => {
           }
         },
         startedAt: '2026-03-30T00:00:01.000Z'
+      },
+      {
+        type: 'saga.intent-dispatched',
+        sagaStreamId: 'saga-stream-1',
+        lifecycle: {
+          intentKey: 'intent-1',
+          metadata: {
+            sagaId: 'saga-1',
+            correlationId: 'corr-1',
+            causationId: 'cause-1'
+          }
+        },
+        dispatchedAt: '2026-03-30T00:00:01.500Z'
       },
       {
         type: 'saga.intent-succeeded',

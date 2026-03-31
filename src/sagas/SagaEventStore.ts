@@ -31,6 +31,13 @@ export interface SagaIntentSucceededEvent {
   readonly succeededAt: string;
 }
 
+export interface SagaIntentDispatchedEvent {
+  readonly type: 'saga.intent-dispatched';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly dispatchedAt: string;
+}
+
 export interface SagaIntentFailedEvent {
   readonly type: 'saga.intent-failed';
   readonly sagaStreamId: string;
@@ -40,6 +47,7 @@ export interface SagaIntentFailedEvent {
 
 export type SagaLifecycleEvent =
   | SagaIntentStartedEvent
+  | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
   | SagaIntentFailedEvent;
 
@@ -168,6 +176,21 @@ export function createSagaIntentSucceededEvent(
   };
 }
 
+export function createSagaIntentDispatchedEvent(
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentDispatchedEvent {
+  return {
+    type: 'saga.intent-dispatched',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    dispatchedAt: createTimestamp()
+  };
+}
+
 export function createSagaIntentFailedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -199,6 +222,16 @@ export async function appendSagaIntentSucceededEvent(
   createTimestamp: () => string = () => new Date().toISOString()
 ): Promise<SagaIntentSucceededEvent> {
   const event = createSagaIntentSucceededEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentDispatchedEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentLifecycleAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentDispatchedEvent> {
+  const event = createSagaIntentDispatchedEvent(input, createTimestamp);
   await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
   return event;
 }

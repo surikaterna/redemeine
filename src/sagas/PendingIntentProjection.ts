@@ -1,5 +1,6 @@
 import type { SagaCommandMap, SagaIntent } from './createSaga';
 import type {
+  SagaIntentDispatchedEvent,
   SagaIntentFailedEvent,
   SagaIntentRecordedEvent,
   SagaIntentStartedEvent,
@@ -7,7 +8,7 @@ import type {
   SagaLifecycleEvent
 } from './SagaEventStore';
 
-export type PendingIntentStatus = 'pending' | 'started' | 'succeeded' | 'failed';
+export type PendingIntentStatus = 'pending' | 'started' | 'dispatched' | 'succeeded' | 'failed';
 
 export interface PendingIntentRecord<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly intentKey: string;
@@ -43,6 +44,7 @@ interface MutablePendingIntentRecord<TCommandMap extends SagaCommandMap> {
 
 type SagaLifecycleEventsByIntentKey =
   | SagaIntentStartedEvent
+  | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
   | SagaIntentFailedEvent;
 
@@ -191,6 +193,11 @@ export class PendingIntentProjection<TCommandMap extends SagaCommandMap = SagaCo
     if (event.type === 'saga.intent-succeeded') {
       current.status = 'succeeded';
       current.succeededAt = event.succeededAt;
+      return;
+    }
+
+    if (event.type === 'saga.intent-dispatched') {
+      current.status = 'dispatched';
       return;
     }
 
