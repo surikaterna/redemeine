@@ -82,4 +82,24 @@ describe('SagaRouterDaemon', () => {
     expect(logger.tick).toHaveBeenCalled();
     expect(logger.stopped).toHaveBeenCalledTimes(1);
   });
+
+  it('runs startup scan once before polling loop', async () => {
+    let daemon: SagaRouterDaemon;
+    const startupScan = jest.fn(async () => 1);
+    const processTick = jest.fn(async () => {
+      daemon.stop();
+      return 0;
+    });
+
+    daemon = new SagaRouterDaemon({
+      startupScan,
+      processTick,
+      pollIntervalMs: 0
+    });
+
+    await daemon.start();
+
+    expect(startupScan).toHaveBeenCalledTimes(1);
+    expect(processTick).toHaveBeenCalledTimes(1);
+  });
 });

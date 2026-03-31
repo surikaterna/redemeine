@@ -40,6 +40,8 @@ export interface SagaRouterDaemonOptions {
    * Returns the number of records processed by the tick.
    */
   readonly processTick?: () => number | Promise<number>;
+  /** Optional startup scan for recovering pending intents before polling loop */
+  readonly startupScan?: () => number | Promise<number>;
   /** Internal seam for testability */
   readonly createTimestamp?: () => string;
 }
@@ -51,6 +53,7 @@ export class SagaRouterDaemon {
   private readonly logger?: SagaRouterDaemonLoggerHooks;
   private readonly onHealthEvent?: (event: SagaRouterDaemonHealthEvent) => void;
   private readonly processTickFn: () => number | Promise<number>;
+  private readonly startupScanFn?: () => number | Promise<number>;
   private readonly createTimestamp: () => string;
 
   private running = false;
@@ -62,6 +65,7 @@ export class SagaRouterDaemon {
     this.logger = options.logger;
     this.onHealthEvent = options.onHealthEvent;
     this.processTickFn = options.processTick ?? (() => 0);
+    this.startupScanFn = options.startupScan;
     this.createTimestamp = options.createTimestamp ?? (() => new Date().toISOString());
   }
 
@@ -87,6 +91,10 @@ export class SagaRouterDaemon {
       startedAt: this.createTimestamp()
     };
     this.emitHealthEvent(startedEvent);
+
+    if (this.startupScanFn) {
+      await this.startupScanFn();
+    }
 
     try {
       while (!this.shouldStop) {

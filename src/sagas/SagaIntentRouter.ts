@@ -6,6 +6,7 @@ import type {
   SagaRunActivityIntent,
   SagaScheduleIntent
 } from './createSaga';
+import { decideIntentExecutionFromProjection } from './DedupeGuard';
 import type { PendingIntentProjection, PendingIntentRecord } from './PendingIntentProjection';
 
 export const SAGA_WORKER_HANDLER_PATHS = {
@@ -113,6 +114,36 @@ export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
     const pendingIntents = projection.getExecutablePendingIntents(now());
 
     for (const pending of pendingIntents) {
+      const decision = await routePendingIntentByType(pending, handlers);
+      options.onRouted?.(decision);
+    }
+
+    return pendingIntents.length;
+  };
+}
+
+export type SagaStartupRequeueOptions = SagaRouterProcessTickOptions;
+
+/**
+ * S15 startup recovery scan.
+ * Requeues executable pending intents once per process start.
+ */
+export function createSagaStartupRequeueScan<TCommandMap extends SagaCommandMap>(
+  projection: PendingIntentProjection<TCommandMap>,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>,
+  options: SagaStartupRequeueOptions = {}
+): () => Promise<number> {
+  const now = options.now ?? (() => new Date());
+
+  return async () => {
+    const pendingIntents = projection.getExecutablePendingIntents(now());
+
+    for (const pending of pendingIntents) {
+      const executionDecision = decideIntentExecutionFromProjection(projection, pending.intentKey);
+      if (!executionDecision.shouldExecute) {
+        continue;
+      }
+
       const decision = await routePendingIntentByType(pending, handlers);
       options.onRouted?.(decision);
     }
