@@ -7,7 +7,6 @@ import type {
   SagaScheduleIntent
 } from './createSaga';
 import type { RuntimeIntentProjectionRecordFor } from './RuntimeIntentProjection';
-import type { SagaTimerWakeUpIntent } from './SagaTimeoutCronScanner';
 
 export const SAGA_WORKER_HANDLER_PATHS = {
   dispatch: 'worker.dispatch',
@@ -134,86 +133,3 @@ export async function executePendingIntentRouteDecision<TCommandMap extends Saga
   throw new UnknownSagaIntentTypeError((intent as { type: string }).type, record.intentKey);
 }
 
-export interface SagaRouterProcessTickOptions {
-  readonly now?: () => string | Date;
-  readonly onRouted?: (decision: SagaIntentRouteDecision) => void;
-}
-
-export interface SagaTimeoutWakeUpRoutingOptions {
-  readonly onRouted?: (decision: SagaIntentRouteDecision) => void;
-}
-
-export class MissingSagaWakeUpIntentRecordError extends Error {
-  readonly intentKey: string;
-
-  constructor(intentKey: string) {
-    super(`Unable to route wake-up intent '${intentKey}' because no pending intent record exists.`);
-    this.name = 'MissingSagaWakeUpIntentRecordError';
-    this.intentKey = intentKey;
-  }
-}
-
-export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
-  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
-  handlers: SagaIntentWorkerHandlers<TCommandMap>,
-  options: SagaRouterProcessTickOptions = {}
-): () => Promise<number> {
-  const now = options.now ?? (() => new Date());
-
-  return async () => {
-    const pendingIntents = projection.getDueIntents(now());
-
-    for (const pending of pendingIntents) {
-      const decision = await routePendingIntentByType(pending, handlers);
-      options.onRouted?.(decision);
-    }
-
-    return pendingIntents.length;
-  };
-}
-
-/**
- * S19 bridge for routing timeout wake-up intents through normal intent routing.
- */
-export function createSagaTimeoutWakeUpIntentRouter<TCommandMap extends SagaCommandMap>(
-  projection: { getByIntentKey(intentKey: string): RuntimeIntentProjectionRecordFor<TCommandMap> | null },
-  handlers: SagaIntentWorkerHandlers<TCommandMap>,
-  options: SagaTimeoutWakeUpRoutingOptions = {}
-): (wakeUpIntent: SagaTimerWakeUpIntent) => Promise<SagaIntentRouteDecision> {
-  return async wakeUpIntent => {
-    const record = projection.getByIntentKey(wakeUpIntent.intentKey);
-    if (!record) {
-      throw new MissingSagaWakeUpIntentRecordError(wakeUpIntent.intentKey);
-    }
-
-    const decision = await routePendingIntentByType(record, handlers);
-    options.onRouted?.(decision);
-
-    return decision;
-  };
-}
-
-export type SagaStartupRequeueOptions = SagaRouterProcessTickOptions;
-
-/**
- * S15 startup recovery scan.
- * Requeues executable pending intents once per process start.
- */
-export function createSagaStartupRequeueScan<TCommandMap extends SagaCommandMap>(
-  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
-  handlers: SagaIntentWorkerHandlers<TCommandMap>,
-  options: SagaStartupRequeueOptions = {}
-): () => Promise<number> {
-  const now = options.now ?? (() => new Date());
-
-  return async () => {
-    const pendingIntents = projection.getDueIntents(now());
-
-    for (const pending of pendingIntents) {
-      const decision = await routePendingIntentByType(pending, handlers);
-      options.onRouted?.(decision);
-    }
-
-    return pendingIntents.length;
-  };
-}

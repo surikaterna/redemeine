@@ -8,10 +8,8 @@ import {
   SagaRouterDaemonHealthEvent,
   createRuntimeIntentProjection,
   createRuntimeStartupRecoveryScan,
-  createSagaTimeoutCronScanner,
-  createSagaTimeoutWakeUpIntentRouter,
+  createRuntimeIntentProcessTick,
   persistSagaReducerOutputThroughRuntimeAggregate,
-  type RuntimeIntentProjectionRecordFor,
   type SagaRuntimeDepotLike,
   type SagaIntentWorkerHandlers,
   type SagaReducerOutput
@@ -62,29 +60,6 @@ function createSubscription(events: ProjectionEvent[]): IEventSubscription {
         nextCursor
       };
     }
-  };
-}
-
-function makeRuntimeRecord(
-  output: SagaReducerOutput<{ step: number }, BillingCommandMap>,
-  sagaStreamId: string,
-  dueAt: string
-): RuntimeIntentProjectionRecordFor<BillingCommandMap> {
-  return {
-    intentKey: `${sagaStreamId}:0:test-hash`,
-    sagaStreamId,
-    intentType: output.intents[0].type,
-    intent: output.intents[0],
-    status: 'queued',
-    attempts: 0,
-    queuedAt: '2026-03-31T00:00:00.000Z',
-    dueAt,
-    startedAt: null,
-    completedAt: null,
-    failedAt: null,
-    nextAttemptAt: null,
-    deadLetteredAt: null,
-    lastErrorMessage: null
   };
 }
 
@@ -218,8 +193,10 @@ describe('SagaRouterDaemon', () => {
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('routes due timeout wake-up through worker pipeline during daemon tick', async () => {
-    const projection = new InMemoryRuntimeIntentProjectionStore();
+  it('routes due runtime intents through execution adapter during daemon tick', async () => {
+    const store = new InMemoryEventStore();
+    const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
+
     const output: SagaReducerOutput<{ step: number }, BillingCommandMap> = {
       state: { step: 1 },
       intents: [
@@ -232,13 +209,29 @@ describe('SagaRouterDaemon', () => {
       ]
     };
 
-    const record = makeRuntimeRecord(output, 'saga-stream-daemon', '2026-03-31T00:00:00.500Z');
-    (projection as any).documents.set('intent:saga-stream-daemon:0:test-hash', record);
+    const sagaStreamId = 'saga-stream-daemon';
+    await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+      sagaStreamId,
+      createQueuedAt: () => '2026-03-31T00:00:00.000Z'
+    });
 
-    const typedProjection = {
-      getDueIntents: (now?: string | Date) => projection.getDueIntents(now) as RuntimeIntentProjectionRecordFor<BillingCommandMap>[],
-      getByIntentKey: (intentKey: string) => projection.getByIntentKey(intentKey) as RuntimeIntentProjectionRecordFor<BillingCommandMap> | null
-    };
+    const streamEvents = store.getStream(sagaStreamId);
+    const projectionEvents: ProjectionEvent[] = streamEvents.map((event, index) => ({
+      aggregateType: 'sagaRuntime',
+      aggregateId: sagaStreamId,
+      type: event.type,
+      payload: event.payload,
+      sequence: index + 1,
+      timestamp: new Date(Date.parse('2026-03-31T00:00:00.000Z') + index).toISOString()
+    }));
+
+    const runtimeProjectionStore = new InMemoryRuntimeIntentProjectionStore();
+    const runtimeProjectionDaemon = new ProjectionDaemon({
+      projection: createRuntimeIntentProjection(),
+      subscription: createSubscription(projectionEvents),
+      store: runtimeProjectionStore
+    });
+    await runtimeProjectionDaemon.processBatch();
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(async () => undefined),
@@ -247,21 +240,27 @@ describe('SagaRouterDaemon', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter<BillingCommandMap>(typedProjection, handlers);
-    const timeoutScan = createSagaTimeoutCronScanner(typedProjection, routeWakeUpIntent, {
-      now: () => '2026-03-31T00:00:00.500Z'
-    });
+    const processTick = createRuntimeIntentProcessTick<BillingCommandMap>(
+      runtimeProjectionStore,
+      runtimeDepot,
+      handlers,
+      {
+        now: () => '2026-03-31T00:00:00.500Z',
+        createTimestamp: () => '2026-03-31T00:00:00.501Z'
+      }
+    );
 
     let daemon: SagaRouterDaemon;
-    const processTick = jest.fn(async () => {
+    const wrappedTick = jest.fn(async () => {
+      const processed = await processTick();
       daemon.stop();
-      return 0;
+      return processed;
     });
 
-    daemon = new SagaRouterDaemon({ timeoutScan, processTick, pollIntervalMs: 0 });
+    daemon = new SagaRouterDaemon({ processTick: wrappedTick, pollIntervalMs: 0 });
     await daemon.start();
 
     expect(handlers.schedule).toHaveBeenCalledTimes(1);
-    expect(processTick).toHaveBeenCalledTimes(1);
+    expect(wrappedTick).toHaveBeenCalledTimes(1);
   });
 });

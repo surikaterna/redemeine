@@ -47,8 +47,6 @@ export interface SagaRouterDaemonOptions {
   readonly processTick?: () => number | Promise<number>;
   /** Optional startup scan for recovering pending intents before polling loop */
   readonly startupScan?: () => number | Promise<number>;
-  /** Optional timeout scanner hook that emits due wake-up intents */
-  readonly timeoutScan?: () => number | Promise<number>;
   /** Internal seam for testability */
   readonly createTimestamp?: () => string;
 }
@@ -66,7 +64,6 @@ export class SagaRouterDaemon {
   private readonly onHealthEvent?: (event: SagaRouterDaemonHealthEvent) => void;
   private readonly processTickFn: () => number | Promise<number>;
   private readonly startupScanFn?: () => number | Promise<number>;
-  private readonly timeoutScanFn?: () => number | Promise<number>;
   private readonly createTimestamp: () => string;
 
   private running = false;
@@ -79,7 +76,6 @@ export class SagaRouterDaemon {
     this.onHealthEvent = options.onHealthEvent;
     this.processTickFn = options.processTick ?? (() => 0);
     this.startupScanFn = options.startupScan;
-    this.timeoutScanFn = options.timeoutScan;
     this.createTimestamp = options.createTimestamp ?? (() => new Date().toISOString());
   }
 
@@ -135,20 +131,18 @@ export class SagaRouterDaemon {
   }
 
   async tick(): Promise<number> {
-    const timeoutScannedCount = this.timeoutScanFn ? await this.timeoutScanFn() : 0;
     const processedCount = await this.processTickFn();
-    const totalProcessedCount = timeoutScannedCount + processedCount;
     this.tickCount += 1;
 
     const tickEvent: SagaRouterDaemonTickHealthEvent = {
       type: 'tick',
       tickCount: this.tickCount,
-      processedCount: totalProcessedCount,
+      processedCount,
       processedAt: this.createTimestamp()
     };
     this.emitHealthEvent(tickEvent);
 
-    return totalProcessedCount;
+    return processedCount;
   }
 
   private emitHealthEvent(event: SagaRouterDaemonHealthEvent): void {
