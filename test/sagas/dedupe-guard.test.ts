@@ -1,12 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import type { SagaReducerOutput } from '../../src/sagas';
 import {
-  InMemorySagaEventStore,
+  InMemorySagaRuntimeEventBuffer,
   PendingIntentProjection,
   appendSagaIntentDispatchedEvent,
   appendSagaIntentSucceededEvent,
   createSagaIntentRecordedEvents,
-  decideIntentExecutionFromEventStore,
+  decideIntentExecutionFromRecordedLifecycleEvents,
   decideIntentExecutionFromProjection
 } from '../../src/sagas';
 
@@ -16,7 +16,7 @@ type BillingCommandMap = {
 
 describe('saga execution dedupe guard', () => {
   it('returns no-op when intent key has already succeeded', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
 
     const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
       state: { attempts: 1 },
@@ -46,7 +46,7 @@ describe('saga execution dedupe guard', () => {
       () => '2026-03-30T00:00:01.000Z'
     );
 
-    const decision = await decideIntentExecutionFromEventStore(
+    const decision = await decideIntentExecutionFromRecordedLifecycleEvents(
       store,
       'saga-stream-1',
       recorded.idempotencyKey
@@ -59,7 +59,7 @@ describe('saga execution dedupe guard', () => {
   });
 
   it('returns no-op when intent key has already been dispatched', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
 
     const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
       state: { attempts: 1 },
@@ -89,7 +89,7 @@ describe('saga execution dedupe guard', () => {
       () => '2026-03-30T00:00:00.500Z'
     );
 
-    const decision = await decideIntentExecutionFromEventStore(
+    const decision = await decideIntentExecutionFromRecordedLifecycleEvents(
       store,
       'saga-stream-2',
       recorded.idempotencyKey

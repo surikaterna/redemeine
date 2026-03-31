@@ -6,7 +6,7 @@ You will:
 
 1. Define a typed command map.
 2. Build a saga with `createSaga`.
-3. Persist emitted intents as `saga.intent-recorded` events.
+3. Persist emitted intents through the hidden runtime aggregate command path.
 4. Track lifecycle events and query pending work.
 5. Replay reducer output without re-running side effects.
 
@@ -57,15 +57,12 @@ export const BillingSaga = createSaga<BillingCommandMap>()
 
 Every handler returns `{ state, intents }`, which keeps state transitions deterministic and side effects explicit.
 
-## 3) Persist reducer intents
+## 3) Persist reducer intents through runtime aggregate
 
 ```ts
 import {
-  InMemorySagaEventStore,
-  persistSagaReducerOutputIntents
+  persistSagaReducerOutputThroughRuntimeAggregate
 } from 'redemeine';
-
-const eventStore = new InMemorySagaEventStore();
 
 const output = {
   state: { attempts: 1, settled: false },
@@ -83,29 +80,35 @@ const output = {
   ]
 };
 
-await persistSagaReducerOutputIntents('saga-stream-1', output, eventStore);
+await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+  sagaStreamId: 'saga-stream-1'
+});
 ```
 
-`persistSagaReducerOutputIntents` writes one atomic `saga.intent-recorded` batch and generates deterministic idempotency keys.
+Runtime persistence now flows through the hidden `SagaRuntimeAggregate`; there is no separate runtime SagaEventStore model.
 
 ## 4) Record lifecycle and query pending work
 
 ```ts
 import {
   PendingIntentProjection,
+  InMemorySagaRuntimeEventBuffer,
+  createSagaIntentRecordedEvents,
   appendSagaIntentStartedEvent,
   appendSagaIntentSucceededEvent
 } from 'redemeine';
 
-const [recorded] = await eventStore.loadIntentRecordedEvents('saga-stream-1');
+const eventBuffer = new InMemorySagaRuntimeEventBuffer();
+const [recorded] = createSagaIntentRecordedEvents('saga-stream-1', output);
+await eventBuffer.appendIntentRecordedBatch('saga-stream-1', [recorded]);
 
-await appendSagaIntentStartedEvent(eventStore, {
+await appendSagaIntentStartedEvent(eventBuffer, {
   sagaStreamId: 'saga-stream-1',
   intentKey: recorded.idempotencyKey,
   metadata: recorded.intent.metadata
 });
 
-await appendSagaIntentSucceededEvent(eventStore, {
+await appendSagaIntentSucceededEvent(eventBuffer, {
   sagaStreamId: 'saga-stream-1',
   intentKey: recorded.idempotencyKey,
   metadata: recorded.intent.metadata
@@ -113,8 +116,8 @@ await appendSagaIntentSucceededEvent(eventStore, {
 
 const projection = new PendingIntentProjection<BillingCommandMap>();
 projection.projectEvents(
-  await eventStore.loadIntentRecordedEvents('saga-stream-1'),
-  await eventStore.loadLifecycleEvents('saga-stream-1')
+  await eventBuffer.loadIntentRecordedEvents('saga-stream-1'),
+  await eventBuffer.loadLifecycleEvents('saga-stream-1')
 );
 
 const executable = projection.getExecutablePendingIntents(new Date());
@@ -137,7 +140,7 @@ Replay mode suppresses side effects and returns what would have run.
 ## 6) Optional runtime seams
 
 - `createSagaRegistry`, `registerSaga`, `getSagaRegistry`: register and discover saga definitions.
-- `decideIntentExecutionFromProjection` / `decideIntentExecutionFromEventStore`: dedupe guard helpers.
+- `decideIntentExecutionFromProjection` / `decideIntentExecutionFromRecordedLifecycleEvents`: dedupe guard helpers.
 - `SagaRouterDaemon`: polling seam for worker loop orchestration.
 
 For full API details, see `/docs/reference/sagas-reference` and `/docs/api/`.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  InMemorySagaEventStore,
+  InMemorySagaRuntimeEventBuffer,
   createSagaIntentIdempotencyKey,
   type SagaReducerOutput,
   persistSagaReducerOutputIntents
@@ -12,7 +12,7 @@ type BillingCommandMap = {
 
 describe('S09 intent recorded persistence', () => {
   it('persists reducer output intents as saga.intent-recorded events', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
     const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
       state: { attempts: 1 },
       intents: [

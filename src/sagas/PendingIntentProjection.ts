@@ -8,7 +8,7 @@ import type {
   SagaIntentStartedEvent,
   SagaIntentSucceededEvent,
   SagaLifecycleEvent
-} from './SagaEventStore';
+} from './SagaRuntimeEvents';
 
 export type PendingIntentStatus = 'pending' | 'started' | 'dispatched' | 'succeeded' | 'failed';
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  InMemorySagaEventStore,
+  InMemorySagaRuntimeEventBuffer,
   appendSagaIntentDispatchedEvent,
   appendSagaIntentFailedEvent,
   appendSagaIntentRetryScheduledEventFromPolicy,
@@ -10,7 +10,7 @@ import {
 
 describe('S10 intent lifecycle persistence', () => {
   it('writes started/dispatched/succeeded/failed lifecycle events with timestamps', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
 
     const input = {
       sagaStreamId: 'saga-stream-1',
@@ -86,7 +86,7 @@ describe('S10 intent lifecycle persistence', () => {
   });
 
   it('persists retry attempt metadata with computed nextAttemptAt', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
 
     const input = {
       sagaStreamId: 'saga-stream-1',

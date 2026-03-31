@@ -1,6 +1,6 @@
 import type { SagaCommandMap } from './createSaga';
 import { PendingIntentProjection, type PendingIntentRecord } from './PendingIntentProjection';
-import type { SagaIntentRecordedEvent, SagaLifecycleEvent } from './SagaEventStore';
+import type { SagaIntentRecordedEvent, SagaLifecycleEvent } from './SagaRuntimeEvents';
 
 export type SagaExecutionDecisionReason =
   | 'execute'
@@ -14,8 +14,8 @@ export interface SagaExecutionDecision {
   readonly reason: SagaExecutionDecisionReason;
 }
 
-/** Event-store capability required for projection-based dedupe checks. */
-export interface SagaEventStoreIntentReader<TCommandMap extends SagaCommandMap = SagaCommandMap> {
+/** Recorded/lifecycle event reader required for projection-based dedupe checks. */
+export interface SagaIntentEventReader<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   loadIntentRecordedEvents(sagaStreamId: string): Promise<readonly SagaIntentRecordedEvent<TCommandMap>[]>;
   loadLifecycleEvents(sagaStreamId: string): Promise<readonly SagaLifecycleEvent[]>;
 }
@@ -58,17 +58,17 @@ export function decideIntentExecutionFromProjection<TCommandMap extends SagaComm
 }
 
 /**
- * Rehydrates pending intent state from the event store and decides if an intent
+ * Rehydrates pending intent state from recorded/lifecycle events and decides if an intent
  * should execute or be skipped as a no-op.
  */
-export async function decideIntentExecutionFromEventStore<TCommandMap extends SagaCommandMap>(
-  eventStore: SagaEventStoreIntentReader<TCommandMap>,
+export async function decideIntentExecutionFromRecordedLifecycleEvents<TCommandMap extends SagaCommandMap>(
+  eventReader: SagaIntentEventReader<TCommandMap>,
   sagaStreamId: string,
   intentKey: string
 ): Promise<SagaExecutionDecision> {
   const [recordedEvents, lifecycleEvents] = await Promise.all([
-    eventStore.loadIntentRecordedEvents(sagaStreamId),
-    eventStore.loadLifecycleEvents(sagaStreamId)
+    eventReader.loadIntentRecordedEvents(sagaStreamId),
+    eventReader.loadLifecycleEvents(sagaStreamId)
   ]);
 
   const projection = new PendingIntentProjection<TCommandMap>();

@@ -114,7 +114,7 @@ Saga intents are persisted as explicit execution requests and grouped by categor
 
 ### Module Placement and Structure
 
-Saga runtime modules currently live under `src/sagas/` as shared building blocks for definition, persistence, projection, replay, retry policy, dedupe, and daemon seams.
+Saga runtime modules currently live under `src/sagas/` as shared building blocks for definition, hidden runtime aggregate persistence, projection indexing, replay, retry policy, dedupe, and daemon seams.
 
 Current baseline placement:
 
@@ -124,7 +124,10 @@ src/
     index.ts
     createSaga.ts
     events.ts
-    SagaEventStore.ts
+    SagaRuntimeAggregate.ts
+    SagaRuntimePersistenceAdapter.ts
+    SagaRuntimeEvents.ts
+    RuntimeIntentProjection.ts
     PendingIntentProjection.ts
     DedupeGuard.ts
     RetryPolicy.ts
@@ -137,7 +140,10 @@ Notes:
 
 - `events.ts` defines the canonical saga taxonomy exported via `SAGA_EVENT_NAMES`.
 - `createSaga.ts` defines typed saga reducers and intent contracts.
-- `SagaEventStore.ts` persists intent-recorded and lifecycle events.
+- `SagaRuntimeAggregate.ts` is the hidden runtime source-of-truth for saga execution state.
+- `SagaRuntimePersistenceAdapter.ts` translates fluent reducer output into runtime aggregate commands.
+- `RuntimeIntentProjection.ts` indexes pending/due intent state via `createProjection` identity keys.
+- `SagaRuntimeEvents.ts` defines intent/lifecycle helper event contracts for tests/local orchestration.
 - `PendingIntentProjection.ts` builds queryable pending-intent state.
 - `DedupeGuard.ts` provides replay/recovery no-op decisions.
 - `replayExecution.ts` guarantees replay-mode side-effect suppression.

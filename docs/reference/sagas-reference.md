@@ -7,7 +7,9 @@ For generated API signatures, use `/docs/api/`.
 ## Module overview
 
 - `createSaga.ts`: typed saga definition builder and intent types.
-- `SagaEventStore.ts`: persisted intent and lifecycle event contracts plus helpers.
+- `SagaRuntimeEvents.ts`: runtime intent/lifecycle event contracts and helper appenders.
+- `SagaRuntimeAggregate.ts`: hidden runtime aggregate command/event contract used for persistence/execution.
+- `SagaRuntimePersistenceAdapter.ts`: reducer output -> runtime aggregate command bridge.
 - `PendingIntentProjection.ts`: read model for pending/executable intent queries.
 - `RuntimeIntentProjection.ts`: createProjection-based pending/due index over runtime aggregate events.
 - `DedupeGuard.ts`: no-op decision helpers for replay and crash recovery.
@@ -54,25 +56,27 @@ Core contracts:
 - `SagaIntent<TCommandMap>`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
-## Persisting intents
+## Persisting intents through runtime aggregate
 
-Use `persistSagaReducerOutputIntents` to map reducer output intents into recorded events and append them atomically.
+Use `persistSagaReducerOutputThroughRuntimeAggregate` to translate reducer output into runtime aggregate queue commands and save through Depot.
 
 ```ts
 import {
-  InMemorySagaEventStore,
-  persistSagaReducerOutputIntents
+  persistSagaReducerOutputThroughRuntimeAggregate
 } from 'redemeine';
 
-const store = new InMemorySagaEventStore();
-await persistSagaReducerOutputIntents('saga-stream-1', output, store);
+await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+  sagaStreamId: 'saga-stream-1'
+});
 ```
 
-Key helpers:
+No separate SagaEventStore model is required in the runtime path.
+
+Runtime helper contracts:
 
 - `createSagaIntentRecordedEvents(...)`
 - `createSagaIntentIdempotencyKey(...)`
-- `InMemorySagaEventStore`
+- `InMemorySagaRuntimeEventBuffer` (test/local helper)
 
 ## Lifecycle events
 
@@ -120,7 +124,7 @@ Record shape: `RuntimeIntentProjectionRecord` with `status`, `attempts`, `dueAt`
 Use these helpers before executing a worker intent:
 
 - `decideIntentExecutionFromProjection(projection, intentKey)`
-- `decideIntentExecutionFromEventStore(eventStore, sagaStreamId, intentKey)`
+- `decideIntentExecutionFromRecordedLifecycleEvents(eventReader, sagaStreamId, intentKey)`
 
 Decision result: `SagaExecutionDecision` with reasons:
 
@@ -169,3 +173,8 @@ Registered shape: `RegisteredSagaDefinition<TState, TCommandMap>`.
 `SAGA_EVENT_NAMES` exports the canonical taxonomy, and `SagaEventName` is its union type.
 
 This taxonomy is aligned with the ADR entry in `docs/architecture/decision-log.md`.
+
+## `commandsFor` and projection indexing notes
+
+- `ctx.commandsFor(Aggregate, aggregateId, metadataOverride?)` creates typed command factories from aggregate definitions while preserving saga intent metadata defaults.
+- Runtime pending/due worker scans should use `createRuntimeIntentProjection()` + projection identity indexing (`intent:${intentKey}`) instead of a separate saga event-store read model.

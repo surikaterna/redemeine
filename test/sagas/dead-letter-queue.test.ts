@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  InMemorySagaEventStore,
+  InMemorySagaRuntimeEventBuffer,
   PendingIntentProjection,
   appendSagaIntentFailureOutcomeEvent,
   createSagaIntentRecordedEvents,
@@ -35,7 +35,7 @@ describe('S25 acceptance: terminal failures emit DLQ lifecycle events', () => {
   };
 
   it('dead-letters non-retryable failures with failure context', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
     const projection = new PendingIntentProjection<BillingCommandMap>();
     const [recorded] = createSagaIntentRecordedEvents('saga-stream-1', baseOutput, () => '2026-03-31T00:00:00.000Z');
 
@@ -83,7 +83,7 @@ describe('S25 acceptance: terminal failures emit DLQ lifecycle events', () => {
   });
 
   it('dead-letters retryable failures when max attempts are exhausted', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
     const [recorded] = createSagaIntentRecordedEvents('saga-stream-2', baseOutput, () => '2026-03-31T00:00:00.000Z');
     const retryPolicy = recorded.intent.type === 'run-activity' ? recorded.intent.retryPolicy : undefined;
 
@@ -117,7 +117,7 @@ describe('S25 acceptance: terminal failures emit DLQ lifecycle events', () => {
 
 describe('S26 acceptance: DLQ inspection query path', () => {
   it('lists dead-letter entries filtered by saga identifier', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
 
     await store.appendLifecycleEvent('stream-a', {
       type: 'saga.intent-dead-lettered',
@@ -261,7 +261,7 @@ describe('S26 acceptance: DLQ inspection query path', () => {
 
 describe('S33 acceptance: DLQ metadata includes identifiers, attempts, and error details', () => {
   it('records and returns sagaId, intentKey, attempt count, and error details in DLQ entries', async () => {
-    const store = new InMemorySagaEventStore();
+    const store = new InMemorySagaRuntimeEventBuffer();
     const reducerOutput: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
       state: { attempts: 0 },
       intents: [

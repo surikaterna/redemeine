@@ -1,5 +1,5 @@
 import { createProjection, type ProjectionContext, type ProjectionEvent } from '../projections';
-import type { SagaIntentDeadLetteredEvent, SagaLifecycleEvent } from './SagaEventStore';
+import type { SagaIntentDeadLetteredEvent, SagaLifecycleEvent } from './SagaRuntimeEvents';
 
 const SAGA_LIFECYCLE_AGGREGATE = {
   __aggregateType: 'saga',
