@@ -3,7 +3,9 @@ import {
   PendingIntentProjection,
   SagaRouterDaemon,
   SagaRouterDaemonHealthEvent,
+  createSagaIntentDispatchedEvent,
   createSagaIntentRecordedEvents,
+  createSagaStartupRequeueScan,
   createSagaTimeoutCronScanner,
   createSagaTimeoutWakeUpIntentRouter,
   type SagaIntentWorkerHandlers,
@@ -114,6 +116,83 @@ describe('SagaRouterDaemon', () => {
 
     expect(startupScan).toHaveBeenCalledTimes(1);
     expect(processTick).toHaveBeenCalledTimes(1);
+  });
+
+  it('S30 acceptance: forced crash then restart executes pending dispatch exactly once', async () => {
+    const projection = new PendingIntentProjection<BillingCommandMap>();
+    const output: SagaReducerOutput<{ step: number }, BillingCommandMap> = {
+      state: { step: 1 },
+      intents: [
+        {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-crash-restart', amount: 420 },
+          metadata: {
+            sagaId: 'saga-crash-restart',
+            correlationId: 'corr-crash-restart',
+            causationId: 'cause-crash-restart'
+          }
+        }
+      ]
+    };
+
+    const [recorded] = createSagaIntentRecordedEvents('saga-stream-crash-restart', output, () => '2026-03-31T00:00:00.000Z');
+    projection.projectEvents([recorded], []);
+
+    let crashArmed = true;
+    const dispatchHandler: SagaIntentWorkerHandlers<BillingCommandMap>['dispatch'] = async (_intent, record) => {
+      projection.projectLifecycleEvent(
+        createSagaIntentDispatchedEvent(
+          {
+            sagaStreamId: record.sagaStreamId,
+            intentKey: record.intentKey,
+            metadata: record.intent.metadata
+          },
+          () => '2026-03-31T00:00:00.005Z'
+        )
+      );
+
+      if (crashArmed) {
+        crashArmed = false;
+        throw new Error('forced-crash');
+      }
+    };
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(dispatchHandler),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const startupScan = createSagaStartupRequeueScan(projection, handlers, {
+      now: () => '2026-03-31T00:00:00.000Z'
+    });
+
+    const crashedDaemon = new SagaRouterDaemon({
+      startupScan,
+      processTick: jest.fn(async () => 0),
+      pollIntervalMs: 0
+    });
+
+    await expect(crashedDaemon.start()).rejects.toThrow('forced-crash');
+
+    let restartedDaemon: SagaRouterDaemon;
+    restartedDaemon = new SagaRouterDaemon({
+      startupScan: createSagaStartupRequeueScan(projection, handlers, {
+        now: () => '2026-03-31T00:00:00.000Z'
+      }),
+      processTick: jest.fn(async () => {
+        restartedDaemon.stop();
+        return 0;
+      }),
+      pollIntervalMs: 0
+    });
+
+    await restartedDaemon.start();
+
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
+    expect(projection.getByIntentKey(recorded.idempotencyKey)?.status).toBe('dispatched');
   });
 
   it('routes due timeout wake-up through worker pipeline during daemon tick', async () => {
