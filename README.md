@@ -124,6 +124,17 @@ Flat root-level plugin keys are not accepted.
 - `onBeforeAppend`: **fail_closed** (append/save is blocked)
 - `onAfterCommit`: **fail_closed_post_commit** (events already persisted; pending results are cleared and a structured `RedemeinePluginHookError` is thrown with `pluginKey` + `hook`)
 
+## 🔁 Sagas / Process Managers
+
+Redemeine includes an event-sourced saga toolkit for long-running, cross-aggregate workflows.
+
+- Define saga behavior with `createSaga<TCommandMap>()` and typed `ctx.dispatch`/`ctx.schedule`/`ctx.runActivity` helpers.
+- Persist reducer intents as `saga.intent-recorded` events via `persistSagaReducerOutputIntents`.
+- Track execution lifecycle with `appendSagaIntent*` helpers and query pending work using `PendingIntentProjection`.
+- Enforce replay safety by suppressing side effects through `executeSagaReducerOutputInReplay`.
+
+Start with the docs tutorial at `docs/tutorials/sagas-starter.md` and the reference at `docs/reference/sagas-reference.md`.
+
 ## 🧭 Quick Navigation
 
 *   📖 [**`/docs`**](./docs) - Deep dives into Commands, Events, Aggregates, and Mixins.
@@ -171,14 +182,7 @@ The Gap: If you have 5 different commands that can affect allocation, you don't 
 
 The Solution: Support a .invariants() or .ensure() block in the builder. These are rules that run after any command handler but before the events are committed. If an invariant fails, the whole transaction rolls back.
 
-3. Sagas / Process Managers (Long-running flows)
-DDD often deals with "Eventually Consistent" flows across aggregates (e.g., "When a Party is created, go create a Default Billing Account in the Account Aggregate").
-
-The Gap: The Mirage is great for a single aggregate, but it doesn't "react" to events by triggering other commands yet.
-
-The Solution: A redemeine-manager or Saga builder that listens to an Event Stream and dispatches commands to other Mirages.
-
-4. Specification Pattern (Complex Query Logic)
+3. Specification Pattern (Complex Query Logic)
 In party_domain.txt, you might want to ask: party.isEligibleForDiscount().
 
 The Gap: If this logic is complex, you don't want it sitting in a UI component or a Service. You want it on the Aggregate.
