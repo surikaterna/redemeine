@@ -42,6 +42,12 @@ export interface SagaRuntimeState {
 
 export interface SagaRuntimeIntentState {
   readonly intentKey: string;
+  readonly idempotencyKey: string | null;
+  readonly metadata: {
+    readonly sagaId: string;
+    readonly correlationId: string;
+    readonly causationId: string;
+  } | null;
   readonly intentType: string;
   readonly status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'retry_scheduled' | 'dead_lettered';
   readonly attempts: number;
@@ -83,6 +89,12 @@ export interface SagaRuntimeStartedEventPayload {
 
 export interface SagaRuntimeQueueIntentPayload {
   readonly intentKey: string;
+  readonly idempotencyKey: string;
+  readonly metadata: {
+    readonly sagaId: string;
+    readonly correlationId: string;
+    readonly causationId: string;
+  };
   readonly intentType: string;
   readonly queuedAt: string;
 }
@@ -232,6 +244,8 @@ export const SagaRuntimeAggregate = createAggregate<SagaRuntimeState, 'sagaRunti
     intentQueued: (state, event: Event<SagaRuntimeIntentQueuedEventPayload>) => {
       state.intents[event.payload.intentKey] = {
         intentKey: event.payload.intentKey,
+        idempotencyKey: event.payload.idempotencyKey,
+        metadata: event.payload.metadata,
         intentType: event.payload.intentType,
         status: 'queued',
         attempts: 0,
@@ -253,6 +267,8 @@ export const SagaRuntimeAggregate = createAggregate<SagaRuntimeState, 'sagaRunti
       state.intents[event.payload.intentKey] = {
         ...(previous as SagaRuntimeIntentState),
         intentKey: event.payload.intentKey,
+        idempotencyKey: previous?.idempotencyKey ?? null,
+        metadata: previous?.metadata ?? null,
         intentType: previous?.intentType ?? 'unknown',
         status: 'in_progress',
         attempts,

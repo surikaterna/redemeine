@@ -130,6 +130,12 @@ describe('R1 SagaRuntimeAggregate contract', () => {
 
     const queueIntent: SagaRuntimeQueueIntentPayload = {
       intentKey: 'intent-1',
+      idempotencyKey: 'intent-1',
+      metadata: {
+        sagaId: 'saga-1',
+        correlationId: 'corr-1',
+        causationId: 'cause-1'
+      },
       intentType: 'dispatch',
       queuedAt
     };
@@ -176,6 +182,12 @@ describe('R1 SagaRuntimeAggregate contract', () => {
     const finalState = applyEvents(createIdleRuntimeState(), [
       SagaRuntimeAggregate.commandCreators.queueIntent({
         intentKey: 'intent-2',
+        idempotencyKey: 'intent-2',
+        metadata: {
+          sagaId: 'saga-1',
+          correlationId: 'corr-1',
+          causationId: 'cause-1'
+        },
         intentType: 'dispatch',
         queuedAt: '2026-03-31T10:00:00.000Z'
       }),
@@ -216,6 +228,12 @@ describe('R1 SagaRuntimeAggregate contract', () => {
     const deadLetteredState = applyEvents(createIdleRuntimeState(), [
       SagaRuntimeAggregate.commandCreators.queueIntent({
         intentKey: 'intent-3',
+        idempotencyKey: 'intent-3',
+        metadata: {
+          sagaId: 'saga-1',
+          correlationId: 'corr-1',
+          causationId: 'cause-1'
+        },
         intentType: 'dispatch',
         queuedAt: '2026-03-31T11:00:00.000Z'
       }),

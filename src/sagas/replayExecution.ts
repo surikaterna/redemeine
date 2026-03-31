@@ -43,7 +43,7 @@ export async function executeSagaReducerOutputInReplay<TState, TCommandMap exten
   return {
     state: output.state,
     outcomes: runtimeCommands.map(runtimeCommand => ({
-      intentType: runtimeCommand.payload.intent.type,
+      intentType: runtimeCommand.payload.intentType as SagaReplayIntentOutcome['intentType'],
       executed: false,
       reason: 'replay-mode-suppressed'
     }))
