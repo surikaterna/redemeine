@@ -1,3 +1,5 @@
+import type { SagaRetryPolicy } from './RetryPolicy';
+
 export type SagaInitialStateFactory<TState> = () => TState;
 
 export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
@@ -65,14 +67,6 @@ export type SagaDispatch<TCommandMap extends SagaCommandMap> = <
   payload: SagaCommandPayload<TCommandMap, TCommandName>,
   metadata?: Partial<SagaIntentMetadata>
 ) => SagaDispatchIntentForCommand<TCommandMap, TCommandName>;
-
-export interface SagaRetryPolicy {
-  maxAttempts: number;
-  initialBackoffMs: number;
-  backoffCoefficient: number;
-  maxBackoffMs?: number;
-  jitterCoefficient?: number;
-}
 
 export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
 
