@@ -6,6 +6,7 @@ import type {
   SagaRunActivityIntent,
   SagaScheduleIntent
 } from './createSaga';
+import { translateSagaReducerOutputToRuntimeCommands } from './internal/translateSagaReducerOutputToRuntimeCommands';
 
 export interface SagaIntentExecutors<TCommandMap extends SagaCommandMap> {
   dispatch?: (intent: SagaDispatchIntent<TCommandMap>) => unknown | Promise<unknown>;
@@ -37,10 +38,12 @@ export async function executeSagaReducerOutputInReplay<TState, TCommandMap exten
   output: SagaReducerOutput<TState, TCommandMap>,
   _executors?: SagaIntentExecutors<TCommandMap>
 ): Promise<SagaReplayExecutionResult<TState>> {
+  const runtimeCommands = translateSagaReducerOutputToRuntimeCommands(output);
+
   return {
     state: output.state,
-    outcomes: output.intents.map(intent => ({
-      intentType: intent.type,
+    outcomes: runtimeCommands.map(runtimeCommand => ({
+      intentType: runtimeCommand.payload.intent.type,
       executed: false,
       reason: 'replay-mode-suppressed'
     }))
