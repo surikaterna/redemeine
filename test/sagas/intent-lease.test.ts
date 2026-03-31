@@ -141,6 +141,85 @@ describe('S20 intent lease acquisition', () => {
     expect(heartbeat?.expiresAt).toBe('2026-03-31T00:00:00.170Z');
   });
 
+  it('releases completed lease and allows immediate reacquisition', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+
+    const initial = await leaseStore.acquireLease({
+      intentKey: 'intent-release',
+      workerId: 'worker-a',
+      leaseDurationMs: 30_000,
+      now: '2026-03-31T00:00:00.000Z'
+    });
+
+    if (!initial) {
+      throw new Error('expected initial lease to be acquired');
+    }
+
+    const released = await leaseStore.releaseLease({
+      intentKey: 'intent-release',
+      workerId: 'worker-a',
+      leaseId: initial.leaseId,
+      now: '2026-03-31T00:00:00.050Z'
+    });
+
+    expect(released).toBe(true);
+
+    const activeAfterRelease = await leaseStore.getActiveLease('intent-release', '2026-03-31T00:00:00.051Z');
+    expect(activeAfterRelease).toBeUndefined();
+
+    const reacquired = await leaseStore.acquireLease({
+      intentKey: 'intent-release',
+      workerId: 'worker-b',
+      leaseDurationMs: 30_000,
+      now: '2026-03-31T00:00:00.052Z'
+    });
+
+    expect(reacquired).toBeDefined();
+    expect(reacquired?.workerId).toBe('worker-b');
+    expect(reacquired?.fencingToken).toBe(2);
+  });
+
+  it('fences stale worker release after expiry reclaim', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+
+    const initial = await leaseStore.acquireLease({
+      intentKey: 'intent-stale-release',
+      workerId: 'worker-a',
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.000Z'
+    });
+
+    if (!initial) {
+      throw new Error('expected initial lease to be acquired');
+    }
+
+    const reclaimed = await leaseStore.acquireLease({
+      intentKey: 'intent-stale-release',
+      workerId: 'worker-b',
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.101Z'
+    });
+
+    if (!reclaimed) {
+      throw new Error('expected reclaimed lease to be acquired');
+    }
+
+    const staleRelease = await leaseStore.releaseLease({
+      intentKey: 'intent-stale-release',
+      workerId: 'worker-a',
+      leaseId: initial.leaseId,
+      now: '2026-03-31T00:00:00.102Z'
+    });
+
+    expect(staleRelease).toBe(false);
+
+    const stillHeldByReclaimer = await leaseStore.getActiveLease('intent-stale-release', '2026-03-31T00:00:00.103Z');
+    expect(stillHeldByReclaimer).toBeDefined();
+    expect(stillHeldByReclaimer?.workerId).toBe('worker-b');
+    expect(stillHeldByReclaimer?.leaseId).toBe(reclaimed.leaseId);
+    expect(stillHeldByReclaimer?.fencingToken).toBe(2);
+  });
+
   it('rejects lease renewal from non-holder worker', async () => {
     const leaseStore = new InMemorySagaIntentLeaseStore();
 
