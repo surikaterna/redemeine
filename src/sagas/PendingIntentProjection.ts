@@ -1,5 +1,6 @@
 import type { SagaCommandMap, SagaIntent } from './createSaga';
 import type {
+  SagaIntentDeadLetteredEvent,
   SagaIntentDispatchedEvent,
   SagaIntentFailedEvent,
   SagaIntentRecordedEvent,
@@ -48,7 +49,8 @@ type SagaLifecycleEventsByIntentKey =
   | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
   | SagaIntentFailedEvent
-  | SagaIntentRetryScheduledEvent;
+  | SagaIntentRetryScheduledEvent
+  | SagaIntentDeadLetteredEvent;
 
 function toIsoString(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : value;
@@ -206,6 +208,12 @@ export class PendingIntentProjection<TCommandMap extends SagaCommandMap = SagaCo
     if (event.type === 'saga.intent-retry-scheduled') {
       current.status = 'pending';
       current.dueAt = event.retry.nextAttemptAt;
+      return;
+    }
+
+    if (event.type === 'saga.intent-dead-lettered') {
+      current.status = 'failed';
+      current.failedAt = event.deadLetteredAt;
       return;
     }
 
