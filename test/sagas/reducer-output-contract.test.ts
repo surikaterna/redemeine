@@ -94,10 +94,10 @@ describe('S08 reducer output contract typing', () => {
             state: ctx.state
           };
 
-          // @ts-expect-error dispatch payload must match mapped command payload
           const badDispatchIntent: SagaIntent<BillingCommandMap> = {
             type: 'dispatch',
             command: 'billing.charge',
+            // @ts-expect-error dispatch payload must match mapped command payload
             payload: { invoiceId: 'inv-1', amount: '250' },
             metadata: {
               sagaId: 'saga-1',
@@ -106,10 +106,10 @@ describe('S08 reducer output contract typing', () => {
             }
           };
 
-          // @ts-expect-error schedule delay must be number
           const badScheduleIntent: SagaIntent<BillingCommandMap> = {
             type: 'schedule',
             id: 'billing-reminder',
+            // @ts-expect-error schedule delay must be number
             delay: '5000',
             metadata: {
               sagaId: 'saga-1',

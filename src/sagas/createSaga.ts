@@ -93,6 +93,25 @@ function mergeSagaIntentMetadata(
   };
 }
 
+function createSagaDispatchIntentFromEnvelope<
+  TCommandMap extends SagaCommandMap,
+  TCommandName extends SagaCommandName<TCommandMap>
+>(
+  command: TCommandName,
+  envelope: { payload: SagaCommandPayload<TCommandMap, TCommandName> },
+  metadata: SagaIntentMetadata,
+  metadataOverride?: Partial<SagaIntentMetadata>,
+  aggregateId?: string
+): SagaDispatchIntentForCommand<TCommandMap, TCommandName> {
+  return {
+    type: 'dispatch',
+    command,
+    payload: envelope.payload,
+    aggregateId,
+    metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+  };
+}
+
 /**
  * Creates typed aggregate-driven command intent emitters for saga reducers.
  *
@@ -116,13 +135,13 @@ export function createSagaCommandsFor<
     (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
       const command = createCommand(...args);
 
-      return {
-        type: 'dispatch',
-        command: commandName,
-        payload: command.payload,
-        aggregateId,
-        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-      };
+      return createSagaDispatchIntentFromEnvelope(
+        commandName as Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>,
+        command as { payload: SagaCommandPayload<TCommandMap, Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>> },
+        metadata,
+        metadataOverride,
+        aggregateId
+      );
     };
   }
 
@@ -202,6 +221,54 @@ export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap>
   schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaScheduleIntent;
   cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaCancelScheduleIntent;
   runActivity: SagaRunActivity;
+}
+
+/**
+ * Builds runtime saga intent helper implementations for reducer execution.
+ *
+ * First-class public helpers (`dispatch`, `schedule`, `cancelSchedule`,
+ * `runActivity`) share the same metadata merge semantics as `commandsFor`.
+ */
+export function createSagaDispatchContext<TState, TCommandMap extends SagaCommandMap>(
+  state: TState,
+  metadata: SagaIntentMetadata
+): SagaDispatchContext<TState, TCommandMap> {
+  return {
+    state,
+    metadata,
+    dispatch: (command, payload, metadataOverride) => createSagaDispatchIntentFromEnvelope(
+      command,
+      {
+        payload
+      },
+      metadata,
+      metadataOverride
+    ),
+    commandsFor: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
+      aggregateDef,
+      aggregateId,
+      metadata,
+      metadataOverride
+    ),
+    schedule: (id, delay, metadataOverride) => ({
+      type: 'schedule',
+      id,
+      delay,
+      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+    }),
+    cancelSchedule: (id, metadataOverride) => ({
+      type: 'cancel-schedule',
+      id,
+      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+    }),
+    runActivity: (name, closure, retryPolicy, metadataOverride) => ({
+      type: 'run-activity',
+      name,
+      closure,
+      retryPolicy,
+      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+    })
+  };
 }
 
 /** Deterministic state transition emitted by saga handlers. */

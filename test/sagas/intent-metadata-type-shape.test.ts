@@ -48,6 +48,11 @@ describe('S07 acceptance: intent metadata type shape', () => {
           expect(dispatchedSagaId).toBeDefined();
           expect(scheduledCorrelationId).toBeDefined();
           expect(activityCausationId).toBeDefined();
+
+          return {
+            state: ctx.state,
+            intents: [dispatchIntent, scheduleIntent, runActivityIntent]
+          };
         }
       })
       .build();
@@ -70,6 +75,11 @@ describe('S07 acceptance: intent metadata type shape', () => {
           // @ts-expect-error context metadata fields are required strings
           const invalid: number = ctx.metadata.sagaId;
           expect(invalid).toBeDefined();
+
+          return {
+            state: ctx.state,
+            intents: []
+          };
         }
       })
       .build();

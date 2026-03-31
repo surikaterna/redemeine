@@ -48,8 +48,8 @@ describe('createSaga ctx schedule/retry helper typing', () => {
           // @ts-expect-error closure must be a function
           ctx.runActivity('send-reminder', 'not-a-function');
 
-          // @ts-expect-error retry policy must include numeric maxAttempts
           ctx.runActivity('send-reminder', () => undefined, {
+            // @ts-expect-error retry policy must include numeric maxAttempts
             maxAttempts: '3',
             initialBackoffMs: 250,
             backoffCoefficient: 2
