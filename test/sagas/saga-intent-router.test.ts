@@ -3,7 +3,9 @@ import type { PendingIntentRecord, SagaIntentWorkerHandlers, SagaReducerOutput }
 import {
   PendingIntentProjection,
   UnknownSagaIntentTypeError,
+  createSagaIntentDispatchedEvent,
   createSagaIntentRecordedEvents,
+  createSagaStartupRequeueScan,
   createSagaRouterProcessTick,
   resolveSagaWorkerHandlerPath,
   routePendingIntentByType
@@ -154,5 +156,54 @@ describe('S17 saga intent routing by type', () => {
     expect(routed).toEqual(['dispatch']);
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
     expect(handlers.schedule).not.toHaveBeenCalled();
+  });
+
+  it('startup requeue scan requeues previously pending intent exactly once across restart simulation', async () => {
+    const projection = new PendingIntentProjection<BillingCommandMap>();
+    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
+      state: { attempts: 0 },
+      intents: [
+        {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-recover', amount: 175 },
+          metadata: { sagaId: 'saga-recover', correlationId: 'corr-recover', causationId: 'cause-recover' }
+        }
+      ]
+    };
+
+    const [recorded] = createSagaIntentRecordedEvents('saga-stream-recover', output, () => '2026-03-31T00:00:00.000Z');
+    projection.projectEvents([recorded], []);
+
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async (_intent: PendingIntentRecord<BillingCommandMap>['intent'], record: PendingIntentRecord<BillingCommandMap>) => {
+        const dispatched = createSagaIntentDispatchedEvent(
+          {
+            sagaStreamId: record.sagaStreamId,
+            intentKey: record.intentKey,
+            metadata: record.intent.metadata
+          },
+          () => '2026-03-31T00:00:00.010Z'
+        );
+        projection.projectLifecycleEvent(dispatched);
+      }),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const firstBootRequeue = createSagaStartupRequeueScan(projection, handlers, {
+      now: () => '2026-03-31T00:00:00.000Z'
+    });
+
+    await expect(firstBootRequeue()).resolves.toBe(1);
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
+
+    const secondBootRequeue = createSagaStartupRequeueScan(projection, handlers, {
+      now: () => '2026-03-31T00:00:00.000Z'
+    });
+
+    await expect(secondBootRequeue()).resolves.toBe(0);
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
   });
 });
