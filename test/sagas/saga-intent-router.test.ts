@@ -12,7 +12,9 @@ import {
   detectDueSagaTimers,
   toSagaTimerWakeUpIntent,
   resolveSagaWorkerHandlerPath,
-  routePendingIntentByType
+  routePendingIntentByType,
+  decidePendingIntentRoute,
+  executePendingIntentRouteDecision
 } from '../../src/sagas';
 
 type BillingCommandMap = {
@@ -105,6 +107,38 @@ describe('S17 saga intent routing by type', () => {
       activityRecord.intent as Parameters<SagaIntentWorkerHandlers<BillingCommandMap>['runActivity']>[0],
       activityRecord
     );
+  });
+
+  it('separates decision and execution phases for pending intent routing', async () => {
+    const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
+      dispatch: jest.fn(async () => undefined),
+      schedule: jest.fn(async () => undefined),
+      cancelSchedule: jest.fn(async () => undefined),
+      runActivity: jest.fn(async () => undefined)
+    };
+
+    const dispatchRecord = createRecordFromIntent({
+      type: 'dispatch',
+      command: 'billing.charge',
+      payload: { invoiceId: 'inv-split', amount: 111 },
+      metadata: { sagaId: 'saga-split', correlationId: 'corr-split', causationId: 'cause-split' }
+    });
+
+    const decision = decidePendingIntentRoute(dispatchRecord);
+
+    expect(decision).toMatchObject({
+      intentKey: dispatchRecord.intentKey,
+      intentType: 'dispatch',
+      handlerPath: 'worker.dispatch'
+    });
+    expect(handlers.dispatch).not.toHaveBeenCalled();
+
+    await executePendingIntentRouteDecision({
+      decision,
+      record: dispatchRecord
+    }, handlers);
+
+    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('throws clear error when resolving unknown intent type', () => {

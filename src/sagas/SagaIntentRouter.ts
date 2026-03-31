@@ -27,6 +27,11 @@ export interface SagaIntentRouteDecision {
   readonly handlerPath: SagaWorkerHandlerPath;
 }
 
+export interface SagaIntentRouteExecutionInput<TCommandMap extends SagaCommandMap> {
+  readonly record: PendingIntentRecord<TCommandMap>;
+  readonly decision: SagaIntentRouteDecision;
+}
+
 export interface SagaIntentWorkerHandlers<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly dispatch: (
     intent: SagaDispatchIntent<TCommandMap>,
@@ -77,26 +82,57 @@ export async function routePendingIntentByType<TCommandMap extends SagaCommandMa
   record: PendingIntentRecord<TCommandMap>,
   handlers: SagaIntentWorkerHandlers<TCommandMap>
 ): Promise<SagaIntentRouteDecision> {
-  const { intent } = record;
-  const handlerPath = resolveSagaWorkerHandlerPath(intent.type, record.intentKey);
+  const decision = decidePendingIntentRoute(record);
+  await executePendingIntentRouteDecision({ record, decision }, handlers);
+  return decision;
+}
 
-  if (intent.type === 'dispatch') {
-    await handlers.dispatch(intent, record);
-  } else if (intent.type === 'schedule') {
-    await handlers.schedule(intent, record);
-  } else if (intent.type === 'cancel-schedule') {
-    await handlers.cancelSchedule(intent, record);
-  } else if (intent.type === 'run-activity') {
-    await handlers.runActivity(intent, record);
-  } else {
-    throw new UnknownSagaIntentTypeError((intent as { type: string }).type, record.intentKey);
-  }
+/**
+ * Decision phase: resolve handler path and routing metadata without side-effects.
+ */
+export function decidePendingIntentRoute<TCommandMap extends SagaCommandMap>(
+  record: PendingIntentRecord<TCommandMap>
+): SagaIntentRouteDecision {
+  const { intent } = record;
 
   return {
     intentKey: record.intentKey,
     intentType: intent.type,
-    handlerPath
+    handlerPath: resolveSagaWorkerHandlerPath(intent.type, record.intentKey)
   };
+}
+
+/**
+ * Execution phase: invoke previously selected handler.
+ */
+export async function executePendingIntentRouteDecision<TCommandMap extends SagaCommandMap>(
+  input: SagaIntentRouteExecutionInput<TCommandMap>,
+  handlers: SagaIntentWorkerHandlers<TCommandMap>
+): Promise<void> {
+  const { record, decision } = input;
+  const { intent } = record;
+
+  if (decision.intentType === 'dispatch') {
+    await handlers.dispatch(intent as SagaDispatchIntent<TCommandMap>, record);
+    return;
+  }
+
+  if (decision.intentType === 'schedule') {
+    await handlers.schedule(intent as SagaScheduleIntent, record);
+    return;
+  }
+
+  if (decision.intentType === 'cancel-schedule') {
+    await handlers.cancelSchedule(intent as SagaCancelScheduleIntent, record);
+    return;
+  }
+
+  if (decision.intentType === 'run-activity') {
+    await handlers.runActivity(intent as SagaRunActivityIntent, record);
+    return;
+  }
+
+  throw new UnknownSagaIntentTypeError((intent as { type: string }).type, record.intentKey);
 }
 
 export interface SagaRouterProcessTickOptions {
