@@ -8,3 +8,4 @@ export * from './DedupeGuard';
 export * from './replayExecution';
 export * from './SagaRouterDaemon';
 export * from './SagaIntentRouter';
+export * from './IntentLease';
