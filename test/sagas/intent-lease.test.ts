@@ -73,4 +73,102 @@ describe('S20 intent lease acquisition', () => {
     expect(second?.workerId).toBe('worker-b');
     expect(second?.fencingToken).toBe(2);
   });
+
+  it('renews lease expiry while execution is active', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+
+    const initial = await leaseStore.acquireLease({
+      intentKey: 'intent-renew',
+      workerId: 'worker-a',
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.000Z'
+    });
+
+    if (!initial) {
+      throw new Error('expected initial lease to be acquired');
+    }
+
+    expect(initial.expiresAt).toBe('2026-03-31T00:00:00.100Z');
+
+    const renewed = await leaseStore.renewLease({
+      intentKey: 'intent-renew',
+      workerId: 'worker-a',
+      leaseId: initial.leaseId,
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.050Z'
+    });
+
+    expect(renewed).toBeDefined();
+    expect(renewed?.expiresAt).toBe('2026-03-31T00:00:00.150Z');
+
+    const stillActiveAfterOriginalExpiry = await leaseStore.getActiveLease(
+      'intent-renew',
+      '2026-03-31T00:00:00.120Z'
+    );
+    expect(stillActiveAfterOriginalExpiry).toBeDefined();
+    expect(stillActiveAfterOriginalExpiry?.workerId).toBe('worker-a');
+
+    const expiredAfterRenewedWindow = await leaseStore.getActiveLease(
+      'intent-renew',
+      '2026-03-31T00:00:00.151Z'
+    );
+    expect(expiredAfterRenewedWindow).toBeUndefined();
+  });
+
+  it('supports heartbeat alias to renew lease expiry', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+
+    const initial = await leaseStore.acquireLease({
+      intentKey: 'intent-heartbeat',
+      workerId: 'worker-a',
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.000Z'
+    });
+
+    if (!initial) {
+      throw new Error('expected initial lease to be acquired');
+    }
+
+    const heartbeat = await leaseStore.heartbeatLease({
+      intentKey: 'intent-heartbeat',
+      workerId: 'worker-a',
+      leaseId: initial.leaseId,
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.070Z'
+    });
+
+    expect(heartbeat).toBeDefined();
+    expect(heartbeat?.expiresAt).toBe('2026-03-31T00:00:00.170Z');
+  });
+
+  it('rejects lease renewal from non-holder worker', async () => {
+    const leaseStore = new InMemorySagaIntentLeaseStore();
+
+    const initial = await leaseStore.acquireLease({
+      intentKey: 'intent-renew-fenced',
+      workerId: 'worker-a',
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.000Z'
+    });
+
+    if (!initial) {
+      throw new Error('expected initial lease to be acquired');
+    }
+
+    const renewalAttempt = await leaseStore.renewLease({
+      intentKey: 'intent-renew-fenced',
+      workerId: 'worker-b',
+      leaseId: initial.leaseId,
+      leaseDurationMs: 100,
+      now: '2026-03-31T00:00:00.050Z'
+    });
+
+    expect(renewalAttempt).toBeUndefined();
+
+    const expiresOnOriginalDeadline = await leaseStore.getActiveLease(
+      'intent-renew-fenced',
+      '2026-03-31T00:00:00.101Z'
+    );
+    expect(expiresOnOriginalDeadline).toBeUndefined();
+  });
 });
