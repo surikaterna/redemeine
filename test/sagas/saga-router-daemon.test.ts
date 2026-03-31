@@ -1,20 +1,70 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import type { Event } from '../../src/types';
+import { createDepot, type EventStore } from '../../src/Depot';
+import { ProjectionDaemon, type IEventSubscription, type ProjectionEvent } from '../../src/projections';
 import {
+  InMemoryRuntimeIntentProjectionStore,
   PendingIntentProjection,
   SagaRouterDaemon,
   SagaRouterDaemonHealthEvent,
-  createSagaIntentDispatchedEvent,
+  createRuntimeIntentProjection,
+  createRuntimeStartupRecoveryScan,
   createSagaIntentRecordedEvents,
-  createSagaStartupRequeueScan,
   createSagaTimeoutCronScanner,
   createSagaTimeoutWakeUpIntentRouter,
+  persistSagaReducerOutputThroughRuntimeAggregate,
+  type SagaRuntimeDepotLike,
   type SagaIntentWorkerHandlers,
   type SagaReducerOutput
 } from '../../src/sagas';
+import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };
 };
+
+class InMemoryEventStore implements EventStore {
+  private readonly streams = new Map<string, Event[]>();
+
+  async *readStream(id: string): AsyncIterable<Event> {
+    const events = this.streams.get(id) ?? [];
+    for (const event of events) {
+      yield event;
+    }
+  }
+
+  async saveEvents(id: string, events: Event[]): Promise<void> {
+    const existing = this.streams.get(id) ?? [];
+    this.streams.set(id, [...existing, ...events]);
+  }
+
+  getStream(id: string): readonly Event[] {
+    return this.streams.get(id) ?? [];
+  }
+}
+
+function createSubscription(events: ProjectionEvent[]): IEventSubscription {
+  return {
+    async poll(cursor, batchSize) {
+      const batch = events
+        .filter(event => event.sequence > cursor.sequence)
+        .sort((left, right) => left.sequence - right.sequence)
+        .slice(0, batchSize);
+
+      const nextCursor = batch.length > 0
+        ? {
+          sequence: batch[batch.length - 1].sequence,
+          timestamp: batch[batch.length - 1].timestamp
+        }
+        : cursor;
+
+      return {
+        events: batch,
+        nextCursor
+      };
+    }
+  };
+}
 
 describe('SagaRouterDaemon', () => {
   it('starts, emits health events, ticks, and stops cleanly', async () => {
@@ -119,6 +169,9 @@ describe('SagaRouterDaemon', () => {
   });
 
   it('S30 acceptance: forced crash then restart executes pending dispatch exactly once', async () => {
+    const store = new InMemoryEventStore();
+    const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
+
     const projection = new PendingIntentProjection<BillingCommandMap>();
     const output: SagaReducerOutput<{ step: number }, BillingCommandMap> = {
       state: { step: 1 },
@@ -136,27 +189,34 @@ describe('SagaRouterDaemon', () => {
       ]
     };
 
-    const [recorded] = createSagaIntentRecordedEvents('saga-stream-crash-restart', output, () => '2026-03-31T00:00:00.000Z');
+    const sagaStreamId = 'saga-stream-crash-restart';
+    const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => '2026-03-31T00:00:00.000Z');
     projection.projectEvents([recorded], []);
 
-    let crashArmed = true;
-    const dispatchHandler: SagaIntentWorkerHandlers<BillingCommandMap>['dispatch'] = async (_intent, record) => {
-      projection.projectLifecycleEvent(
-        createSagaIntentDispatchedEvent(
-          {
-            sagaStreamId: record.sagaStreamId,
-            intentKey: record.intentKey,
-            metadata: record.intent.metadata
-          },
-          () => '2026-03-31T00:00:00.005Z'
-        )
-      );
+    await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
+      sagaStreamId,
+      createQueuedAt: () => recorded.recordedAt
+    });
 
-      if (crashArmed) {
-        crashArmed = false;
-        throw new Error('forced-crash');
-      }
-    };
+    const streamEvents = store.getStream(sagaStreamId);
+    const projectionEvents: ProjectionEvent[] = streamEvents.map((event, index) => ({
+      aggregateType: 'sagaRuntime',
+      aggregateId: sagaStreamId,
+      type: event.type,
+      payload: event.payload,
+      sequence: index + 1,
+      timestamp: new Date(Date.parse(recorded.recordedAt) + index).toISOString()
+    }));
+
+    const runtimeProjectionStore = new InMemoryRuntimeIntentProjectionStore();
+    const runtimeProjectionDaemon = new ProjectionDaemon({
+      projection: createRuntimeIntentProjection(),
+      subscription: createSubscription(projectionEvents),
+      store: runtimeProjectionStore
+    });
+    await runtimeProjectionDaemon.processBatch();
+
+    const dispatchHandler: SagaIntentWorkerHandlers<BillingCommandMap>['dispatch'] = async () => undefined;
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(dispatchHandler),
@@ -165,8 +225,26 @@ describe('SagaRouterDaemon', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const startupScan = createSagaStartupRequeueScan(projection, handlers, {
-      now: () => '2026-03-31T00:00:00.000Z'
+    const runtimeStartupScan = createRuntimeStartupRecoveryScan(
+      runtimeProjectionStore,
+      projection,
+      runtimeDepot,
+      handlers,
+      {
+        now: () => new Date('2026-03-31T00:00:00.000Z'),
+        createTimestamp: () => '2026-03-31T00:00:00.005Z'
+      }
+    );
+
+    let crashArmed = true;
+    const startupScan = jest.fn(async () => {
+      const processed = await runtimeStartupScan();
+      if (crashArmed) {
+        crashArmed = false;
+        throw new Error('forced-crash');
+      }
+
+      return processed;
     });
 
     const crashedDaemon = new SagaRouterDaemon({
@@ -179,9 +257,7 @@ describe('SagaRouterDaemon', () => {
 
     let restartedDaemon: SagaRouterDaemon;
     restartedDaemon = new SagaRouterDaemon({
-      startupScan: createSagaStartupRequeueScan(projection, handlers, {
-        now: () => '2026-03-31T00:00:00.000Z'
-      }),
+      startupScan: runtimeStartupScan,
       processTick: jest.fn(async () => {
         restartedDaemon.stop();
         return 0;
@@ -192,7 +268,8 @@ describe('SagaRouterDaemon', () => {
     await restartedDaemon.start();
 
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
-    expect(projection.getByIntentKey(recorded.idempotencyKey)?.status).toBe('dispatched');
+    const runtime = await runtimeDepot.get(sagaStreamId);
+    expect(runtime.intents[recorded.idempotencyKey]?.status).toBe('completed');
   });
 
   it('routes due timeout wake-up through worker pipeline during daemon tick', async () => {
