@@ -21,9 +21,19 @@ export interface ReleaseSagaIntentLeaseInput {
   readonly now?: string | Date;
 }
 
+export interface RenewSagaIntentLeaseInput {
+  readonly intentKey: string;
+  readonly workerId: string;
+  readonly leaseId: string;
+  readonly leaseDurationMs: number;
+  readonly now?: string | Date;
+}
+
 export interface SagaIntentLeaseStore {
   acquireLease(input: AcquireSagaIntentLeaseInput): Promise<SagaIntentLease | undefined>;
   releaseLease(input: ReleaseSagaIntentLeaseInput): Promise<boolean>;
+  renewLease(input: RenewSagaIntentLeaseInput): Promise<SagaIntentLease | undefined>;
+  heartbeatLease(input: RenewSagaIntentLeaseInput): Promise<SagaIntentLease | undefined>;
   getActiveLease(intentKey: string, now?: string | Date): Promise<SagaIntentLease | undefined>;
 }
 
@@ -98,6 +108,26 @@ export class InMemorySagaIntentLeaseStore implements SagaIntentLeaseStore {
 
     this.leasesByIntentKey.delete(input.intentKey);
     return true;
+  }
+
+  async renewLease(input: RenewSagaIntentLeaseInput): Promise<SagaIntentLease | undefined> {
+    const now = toDate(input.now ?? new Date());
+    const existing = this.getLeaseIfActive(input.intentKey, now);
+
+    if (!existing) {
+      return undefined;
+    }
+
+    if (existing.workerId !== input.workerId || existing.leaseId !== input.leaseId) {
+      return undefined;
+    }
+
+    existing.expiresAt = new Date(now.getTime() + input.leaseDurationMs).toISOString();
+    return cloneLease(existing);
+  }
+
+  async heartbeatLease(input: RenewSagaIntentLeaseInput): Promise<SagaIntentLease | undefined> {
+    return this.renewLease(input);
   }
 
   async getActiveLease(intentKey: string, now: string | Date = new Date()): Promise<SagaIntentLease | undefined> {
