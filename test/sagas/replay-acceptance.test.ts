@@ -7,9 +7,9 @@ import {
   executeSagaIntentExecutionTicket,
   executeSagaReducerOutputInReplay,
   persistSagaReducerOutputThroughRuntimeAggregate,
+  SagaRuntimeAggregate,
   type RuntimeIntentProjectionRecordFor
 } from '../../src/sagas/internal/runtime';
-import { SagaRuntimeAggregate } from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

@@ -6,12 +6,12 @@ import {
   decideDueSagaIntentExecution,
   executeSagaIntentExecutionTicket,
   persistSagaReducerOutputThroughRuntimeAggregate,
+  SagaRuntimeAggregate,
   type RuntimeIntentProjectionRecordFor,
   type SagaRuntimeDepotLike,
   type SagaRunActivityIntent,
   type SagaIntentWorkerHandlers
 } from '../../src/sagas/internal/runtime';
-import { SagaRuntimeAggregate } from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

@@ -3,6 +3,7 @@ import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
 import {
   InMemoryRuntimeIntentProjectionStore,
+  SagaRuntimeAggregate,
   createRuntimeIntentProjection,
   createRuntimeIntentProcessTick,
   createRuntimeStartupRecoveryScan,
@@ -15,7 +16,6 @@ import {
   type SagaReducerOutput,
   type RuntimeIntentProjectionRecordFor
 } from '../../src/sagas/internal/runtime';
-import { SagaRuntimeAggregate } from '../../src/sagas/internal/runtime/SagaRuntimeAggregate';
 import { ProjectionDaemon, type IEventSubscription, type ProjectionEvent } from '../../src/projections';
 
 type BillingCommandMap = {

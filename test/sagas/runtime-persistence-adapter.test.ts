@@ -1,11 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 import type { Event } from '../../src/types';
-import { createAggregate } from '../../src/createAggregate';
 import { createDepot, type EventStore } from '../../src/Depot';
 import {
   createSaga,
   persistSagaReducerOutputThroughRuntimeAggregate,
-  type SagaReducerOutput
+  SagaRuntimeAggregate,
+  type SagaReducerOutput,
+  type SagaRuntimeDepotLike
 } from '../../src/sagas/internal/runtime';
 
 type BillingCommandMap = {
@@ -33,39 +34,9 @@ class InMemoryEventStore implements EventStore {
 }
 
 describe('R3 runtime aggregate persistence adapter', () => {
-  it('translates fluent reducer intents and persists via Mirage+Depot aggregate path', async () => {
-    const RuntimeAggregate = createAggregate('sagaRuntimeBridge', {
-      queueCount: 0,
-      queued: [] as Array<{
-        intentKey: string;
-        idempotencyKey: string;
-        metadata: { sagaId: string; correlationId: string; causationId: string };
-        intentType: string;
-        queuedAt: string;
-      }>
-    })
-      .events({
-        intentQueued: (state, event) => {
-          state.queueCount += 1;
-          state.queued.push(event.payload);
-        }
-      })
-      .commands(emit => ({
-        queueIntent: (_state, payload: {
-          intentKey: string;
-          idempotencyKey: string;
-          metadata: { sagaId: string; correlationId: string; causationId: string };
-          intentType: string;
-          queuedAt: string;
-        }) => (emit as any).intentQueued(payload)
-      }))
-      .overrideCommandNames({
-        queueIntent: 'sagaRuntime.queueIntent.command'
-      })
-      .build();
-
+  it('translates fluent reducer intents and persists via runtime aggregate path', async () => {
     const store = new InMemoryEventStore();
-    const depot = createDepot(RuntimeAggregate, store);
+    const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
 
     const saga = createSaga<BillingCommandMap>()
       .initialState(() => ({ invoiceId: 'inv-1' }))
@@ -133,7 +104,7 @@ describe('R3 runtime aggregate persistence adapter', () => {
 
     await persistSagaReducerOutputThroughRuntimeAggregate(
       output as SagaReducerOutput<{ invoiceId: string }, BillingCommandMap>,
-      depot,
+      runtimeDepot,
       {
         sagaStreamId: 'saga-runtime-stream-1',
         createQueuedAt: () => '2026-03-31T00:00:00.000Z'
@@ -142,7 +113,7 @@ describe('R3 runtime aggregate persistence adapter', () => {
 
     const events = store.getStream('saga-runtime-stream-1');
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe('sagaRuntimeBridge.intent.queued.event');
+    expect(events[0].type).toBe('sagaRuntime.intentQueued.event');
     expect(events[0].payload).toMatchObject({
       intentType: 'dispatch',
       intent: output.intents[0],
