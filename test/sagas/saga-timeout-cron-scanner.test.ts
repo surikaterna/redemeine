@@ -1,11 +1,11 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
-  PendingIntentProjection,
-  type SagaReducerOutput,
-  createSagaIntentRecordedEvents,
+  InMemoryRuntimeIntentProjectionStore,
   createSagaTimeoutCronScanner,
   detectDueSagaTimers,
   toSagaTimerWakeUpIntent,
+  type RuntimeIntentProjectionRecordFor,
+  type SagaReducerOutput,
   type SagaTimerWakeUpIntent
 } from '../../src/sagas';
 
@@ -13,59 +13,79 @@ type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };
 };
 
-function createProjectionWithDueAndFutureTimers(): PendingIntentProjection<BillingCommandMap> {
-  const projection = new PendingIntentProjection<BillingCommandMap>();
-  const output: SagaReducerOutput<{ step: number }, BillingCommandMap> = {
-    state: { step: 1 },
-    intents: [
-      {
-        type: 'dispatch',
-        command: 'billing.charge',
-        payload: { invoiceId: 'inv-dispatch', amount: 100 },
-        metadata: {
-          sagaId: 'saga-1',
-          correlationId: 'corr-1',
-          causationId: 'cause-1'
-        }
-      },
-      {
-        type: 'schedule',
-        id: 'timer-due',
-        delay: 5_000,
-        metadata: {
-          sagaId: 'saga-1',
-          correlationId: 'corr-1',
-          causationId: 'cause-2'
-        }
-      },
-      {
-        type: 'schedule',
-        id: 'timer-future',
-        delay: 10_000,
-        metadata: {
-          sagaId: 'saga-1',
-          correlationId: 'corr-1',
-          causationId: 'cause-3'
-        }
-      }
-    ]
+function createRuntimeRecord(
+  intent: SagaReducerOutput<{ step: number }, BillingCommandMap>['intents'][number],
+  intentKey: string,
+  dueAt: string
+): RuntimeIntentProjectionRecordFor<BillingCommandMap> {
+  return {
+    intentKey,
+    sagaStreamId: 'saga-stream-1',
+    intentType: intent.type,
+    intent,
+    status: 'queued',
+    attempts: 0,
+    queuedAt: '2026-03-30T00:00:00.000Z',
+    dueAt,
+    startedAt: null,
+    completedAt: null,
+    failedAt: null,
+    nextAttemptAt: null,
+    deadLetteredAt: null,
+    lastErrorMessage: null
+  };
+}
+
+function createProjectionWithDueAndFutureTimers() {
+  const projection = new InMemoryRuntimeIntentProjectionStore();
+
+  const dispatchIntent: SagaReducerOutput<{ step: number }, BillingCommandMap>['intents'][number] = {
+    type: 'dispatch',
+    command: 'billing.charge',
+    payload: { invoiceId: 'inv-dispatch', amount: 100 },
+    metadata: { sagaId: 'saga-1', correlationId: 'corr-1', causationId: 'cause-1' }
+  };
+  const dueScheduleIntent: SagaReducerOutput<{ step: number }, BillingCommandMap>['intents'][number] = {
+    type: 'schedule',
+    id: 'timer-due',
+    delay: 5_000,
+    metadata: { sagaId: 'saga-1', correlationId: 'corr-1', causationId: 'cause-2' }
+  };
+  const futureScheduleIntent: SagaReducerOutput<{ step: number }, BillingCommandMap>['intents'][number] = {
+    type: 'schedule',
+    id: 'timer-future',
+    delay: 10_000,
+    metadata: { sagaId: 'saga-1', correlationId: 'corr-1', causationId: 'cause-3' }
   };
 
-  const recordedEvents = createSagaIntentRecordedEvents(
-    'saga-stream-1',
-    output,
-    () => '2026-03-30T00:00:00.000Z'
-  );
+  (projection as any).documents.set('intent:intent-dispatch', createRuntimeRecord(
+    dispatchIntent,
+    'intent-dispatch',
+    '2026-03-30T00:00:00.000Z'
+  ));
+  (projection as any).documents.set('intent:intent-due', createRuntimeRecord(
+    dueScheduleIntent,
+    'intent-due',
+    '2026-03-30T00:00:05.000Z'
+  ));
+  (projection as any).documents.set('intent:intent-future', createRuntimeRecord(
+    futureScheduleIntent,
+    'intent-future',
+    '2026-03-30T00:00:10.000Z'
+  ));
 
-  projection.projectEvents(recordedEvents, []);
-  return projection;
+  const typedProjection = {
+    getDueIntents: (now?: string | Date) => projection.getDueIntents(now) as RuntimeIntentProjectionRecordFor<BillingCommandMap>[]
+  };
+
+  return { projection, typedProjection };
 }
 
 describe('S18 saga timeout cron scanner', () => {
-  it('detects only due schedule timers from pending intents', () => {
-    const projection = createProjectionWithDueAndFutureTimers();
+  it('detects only due schedule timers from runtime projection', () => {
+    const { typedProjection } = createProjectionWithDueAndFutureTimers();
 
-    const dueTimers = detectDueSagaTimers(projection, '2026-03-30T00:00:05.000Z');
+    const dueTimers = detectDueSagaTimers(typedProjection, '2026-03-30T00:00:05.000Z');
 
     expect(dueTimers).toHaveLength(1);
     expect(dueTimers[0].intent.type).toBe('schedule');
@@ -74,8 +94,8 @@ describe('S18 saga timeout cron scanner', () => {
   });
 
   it('maps due timer to wake-up intent envelope', () => {
-    const projection = createProjectionWithDueAndFutureTimers();
-    const dueTimer = detectDueSagaTimers(projection, '2026-03-30T00:00:05.000Z')[0];
+    const { typedProjection } = createProjectionWithDueAndFutureTimers();
+    const dueTimer = detectDueSagaTimers(typedProjection, '2026-03-30T00:00:05.000Z')[0];
 
     const wakeUp = toSagaTimerWakeUpIntent(dueTimer);
 
@@ -94,13 +114,13 @@ describe('S18 saga timeout cron scanner', () => {
   });
 
   it('emits wake-up intents for each due timer and returns count', async () => {
-    const projection = createProjectionWithDueAndFutureTimers();
+    const { typedProjection } = createProjectionWithDueAndFutureTimers();
     const emitted: SagaTimerWakeUpIntent[] = [];
     const emitWakeUpIntent = jest.fn(async (intent: SagaTimerWakeUpIntent) => {
       emitted.push(intent);
     });
 
-    const scan = createSagaTimeoutCronScanner(projection, emitWakeUpIntent, {
+    const scan = createSagaTimeoutCronScanner(typedProjection, emitWakeUpIntent, {
       now: () => '2026-03-30T00:00:05.000Z'
     });
 

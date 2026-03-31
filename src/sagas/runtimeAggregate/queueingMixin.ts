@@ -14,6 +14,7 @@ export const sagaRuntimeQueueingMixin = createMixin<SagaRuntimeState>()
         idempotencyKey: event.payload.idempotencyKey,
         metadata: event.payload.metadata,
         intentType: event.payload.intentType,
+        intent: event.payload.intent,
         status: 'queued',
         attempts: 0,
         queuedAt: event.payload.queuedAt,

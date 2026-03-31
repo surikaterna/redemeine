@@ -28,6 +28,7 @@ export const sagaRuntimeExecutionTransitionsMixin = createMixin<SagaRuntimeState
         idempotencyKey: previous?.idempotencyKey ?? null,
         metadata: previous?.metadata ?? null,
         intentType: previous?.intentType ?? 'unknown',
+        intent: previous?.intent ?? null,
         status: 'in_progress',
         attempts,
         queuedAt: previous?.queuedAt ?? event.payload.startedAt,

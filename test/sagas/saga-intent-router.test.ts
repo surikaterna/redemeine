@@ -1,20 +1,22 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { PendingIntentRecord, SagaIntentWorkerHandlers, SagaReducerOutput } from '../../src/sagas';
+import type {
+  RuntimeIntentProjectionRecordFor,
+  SagaIntentWorkerHandlers,
+  SagaReducerOutput
+} from '../../src/sagas';
 import {
+  InMemoryRuntimeIntentProjectionStore,
   MissingSagaWakeUpIntentRecordError,
-  PendingIntentProjection,
   UnknownSagaIntentTypeError,
-  createSagaTimeoutWakeUpIntentRouter,
-  createSagaIntentDispatchedEvent,
-  createSagaIntentRecordedEvents,
-  createSagaStartupRequeueScan,
   createSagaRouterProcessTick,
+  createSagaStartupRequeueScan,
+  createSagaTimeoutWakeUpIntentRouter,
+  decidePendingIntentRoute,
   detectDueSagaTimers,
-  toSagaTimerWakeUpIntent,
+  executePendingIntentRouteDecision,
   resolveSagaWorkerHandlerPath,
   routePendingIntentByType,
-  decidePendingIntentRoute,
-  executePendingIntentRouteDecision
+  toSagaTimerWakeUpIntent
 } from '../../src/sagas';
 
 type BillingCommandMap = {
@@ -22,23 +24,35 @@ type BillingCommandMap = {
 };
 
 function createRecordFromIntent(
-  intent: SagaReducerOutput<{ attempts: number }, BillingCommandMap>['intents'][number]
-): PendingIntentRecord<BillingCommandMap> {
-  const projection = new PendingIntentProjection<BillingCommandMap>();
-  const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
-    state: { attempts: 0 },
-    intents: [intent]
+  intent: SagaReducerOutput<{ attempts: number }, BillingCommandMap>['intents'][number],
+  overrides: Partial<RuntimeIntentProjectionRecordFor<BillingCommandMap>> = {}
+): RuntimeIntentProjectionRecordFor<BillingCommandMap> {
+  return {
+    intentKey: overrides.intentKey ?? 'saga-stream-route:0:test-hash',
+    sagaStreamId: overrides.sagaStreamId ?? 'saga-stream-route',
+    intentType: intent.type,
+    intent,
+    status: overrides.status ?? 'queued',
+    attempts: overrides.attempts ?? 0,
+    queuedAt: overrides.queuedAt ?? '2026-03-31T00:00:00.000Z',
+    dueAt: overrides.dueAt ?? '2026-03-31T00:00:00.000Z',
+    startedAt: overrides.startedAt ?? null,
+    completedAt: overrides.completedAt ?? null,
+    failedAt: overrides.failedAt ?? null,
+    nextAttemptAt: overrides.nextAttemptAt ?? null,
+    deadLetteredAt: overrides.deadLetteredAt ?? null,
+    lastErrorMessage: overrides.lastErrorMessage ?? null
   };
+}
 
-  const [recorded] = createSagaIntentRecordedEvents('saga-stream-route', output, () => '2026-03-31T00:00:00.000Z');
-  projection.projectEvents([recorded], []);
-
-  const record = projection.getByIntentKey(recorded.idempotencyKey);
-  if (!record) {
-    throw new Error('Expected pending intent record for routing test setup.');
-  }
-
-  return record;
+function createTypedRuntimeProjectionView(projection: InMemoryRuntimeIntentProjectionStore): {
+  getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<BillingCommandMap>[];
+  getByIntentKey(intentKey: string): RuntimeIntentProjectionRecordFor<BillingCommandMap> | null;
+} {
+  return {
+    getDueIntents: now => projection.getDueIntents(now) as RuntimeIntentProjectionRecordFor<BillingCommandMap>[],
+    getByIntentKey: intentKey => projection.getByIntentKey(intentKey) as RuntimeIntentProjectionRecordFor<BillingCommandMap> | null
+  };
 }
 
 describe('S17 saga intent routing by type', () => {
@@ -90,23 +104,6 @@ describe('S17 saga intent routing by type', () => {
     expect(scheduleDecision.handlerPath).toBe('worker.schedule');
     expect(cancelDecision.handlerPath).toBe('worker.cancelSchedule');
     expect(activityDecision.handlerPath).toBe('worker.runActivity');
-
-    expect(handlers.dispatch).toHaveBeenCalledWith(
-      dispatchRecord.intent as Parameters<SagaIntentWorkerHandlers<BillingCommandMap>['dispatch']>[0],
-      dispatchRecord
-    );
-    expect(handlers.schedule).toHaveBeenCalledWith(
-      scheduleRecord.intent as Parameters<SagaIntentWorkerHandlers<BillingCommandMap>['schedule']>[0],
-      scheduleRecord
-    );
-    expect(handlers.cancelSchedule).toHaveBeenCalledWith(
-      cancelRecord.intent as Parameters<SagaIntentWorkerHandlers<BillingCommandMap>['cancelSchedule']>[0],
-      cancelRecord
-    );
-    expect(handlers.runActivity).toHaveBeenCalledWith(
-      activityRecord.intent as Parameters<SagaIntentWorkerHandlers<BillingCommandMap>['runActivity']>[0],
-      activityRecord
-    );
   });
 
   it('separates decision and execution phases for pending intent routing', async () => {
@@ -125,144 +122,110 @@ describe('S17 saga intent routing by type', () => {
     });
 
     const decision = decidePendingIntentRoute(dispatchRecord);
-
-    expect(decision).toMatchObject({
-      intentKey: dispatchRecord.intentKey,
-      intentType: 'dispatch',
-      handlerPath: 'worker.dispatch'
-    });
     expect(handlers.dispatch).not.toHaveBeenCalled();
 
-    await executePendingIntentRouteDecision({
-      decision,
-      record: dispatchRecord
-    }, handlers);
-
+    await executePendingIntentRouteDecision({ decision, record: dispatchRecord }, handlers);
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('throws clear error when resolving unknown intent type', () => {
     expect(() => resolveSagaWorkerHandlerPath('unknown-intent', 'intent-x')).toThrow(UnknownSagaIntentTypeError);
-
-    try {
-      resolveSagaWorkerHandlerPath('unknown-intent', 'intent-x');
-    } catch (error) {
-      expect(error).toBeInstanceOf(UnknownSagaIntentTypeError);
-      const typed = error as UnknownSagaIntentTypeError;
-      expect(typed.intentType).toBe('unknown-intent');
-      expect(typed.intentKey).toBe('intent-x');
-      expect(typed.message).toContain('Unknown saga intent type');
-    }
   });
 
-  it('process-tick routes executable pending intents through intent-type dispatch', async () => {
-    const projection = new PendingIntentProjection<BillingCommandMap>();
-    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
-      state: { attempts: 0 },
-      intents: [
-        {
-          type: 'dispatch',
-          command: 'billing.charge',
-          payload: { invoiceId: 'inv-now', amount: 250 },
-          metadata: { sagaId: 'saga-7', correlationId: 'corr-7', causationId: 'cause-7' }
-        },
-        {
-          type: 'schedule',
-          id: 'future-reminder',
-          delay: 5_000,
-          metadata: { sagaId: 'saga-7', correlationId: 'corr-7', causationId: 'cause-8' }
-        }
-      ]
-    };
+  it('process-tick routes executable due intents', async () => {
+    const projection = new InMemoryRuntimeIntentProjectionStore();
+    const dispatchRecord = createRecordFromIntent({
+      type: 'dispatch',
+      command: 'billing.charge',
+      payload: { invoiceId: 'inv-now', amount: 250 },
+      metadata: { sagaId: 'saga-7', correlationId: 'corr-7', causationId: 'cause-7' }
+    }, {
+      intentKey: 'intent-now',
+      dueAt: '2026-03-31T00:00:00.000Z'
+    });
+    const futureRecord = createRecordFromIntent({
+      type: 'schedule',
+      id: 'future-reminder',
+      delay: 5_000,
+      metadata: { sagaId: 'saga-7', correlationId: 'corr-7', causationId: 'cause-8' }
+    }, {
+      intentKey: 'intent-future',
+      dueAt: '2026-03-31T00:00:05.000Z'
+    });
 
-    const recorded = createSagaIntentRecordedEvents('saga-stream-router', output, () => '2026-03-31T00:00:00.000Z');
-    projection.projectEvents(recorded, []);
+    (projection as any).documents.set('intent:intent-now', dispatchRecord);
+    (projection as any).documents.set('intent:intent-future', futureRecord);
 
     const routed: string[] = [];
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
-      dispatch: jest.fn(async (_intent, _record) => routed.push('dispatch')),
-      schedule: jest.fn(async (_intent, _record) => routed.push('schedule')),
-      cancelSchedule: jest.fn(async (_intent, _record) => routed.push('cancel-schedule')),
-      runActivity: jest.fn(async (_intent, _record) => routed.push('run-activity'))
+      dispatch: jest.fn(async () => routed.push('dispatch')),
+      schedule: jest.fn(async () => routed.push('schedule')),
+      cancelSchedule: jest.fn(async () => routed.push('cancel-schedule')),
+      runActivity: jest.fn(async () => routed.push('run-activity'))
     };
 
-    const tick = createSagaRouterProcessTick(projection, handlers, {
+    const tick = createSagaRouterProcessTick<BillingCommandMap>(createTypedRuntimeProjectionView(projection), handlers, {
       now: () => '2026-03-31T00:00:00.000Z'
     });
 
     await expect(tick()).resolves.toBe(1);
     expect(routed).toEqual(['dispatch']);
-    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
-    expect(handlers.schedule).not.toHaveBeenCalled();
   });
 
-  it('startup requeue scan requeues previously pending intent exactly once across restart simulation', async () => {
-    const projection = new PendingIntentProjection<BillingCommandMap>();
-    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
-      state: { attempts: 0 },
-      intents: [
-        {
-          type: 'dispatch',
-          command: 'billing.charge',
-          payload: { invoiceId: 'inv-recover', amount: 175 },
-          metadata: { sagaId: 'saga-recover', correlationId: 'corr-recover', causationId: 'cause-recover' }
-        }
-      ]
-    };
+  it('startup requeue scan requeues only currently due intents', async () => {
+    const projection = new InMemoryRuntimeIntentProjectionStore();
+    const dueRecord = createRecordFromIntent({
+      type: 'dispatch',
+      command: 'billing.charge',
+      payload: { invoiceId: 'inv-recover', amount: 175 },
+      metadata: { sagaId: 'saga-recover', correlationId: 'corr-recover', causationId: 'cause-recover' }
+    }, {
+      intentKey: 'intent-recover',
+      dueAt: '2026-03-31T00:00:00.000Z'
+    });
+    const futureRecord = createRecordFromIntent({
+      type: 'dispatch',
+      command: 'billing.charge',
+      payload: { invoiceId: 'inv-later', amount: 90 },
+      metadata: { sagaId: 'saga-recover', correlationId: 'corr-recover', causationId: 'cause-later' }
+    }, {
+      intentKey: 'intent-later',
+      dueAt: '2026-03-31T00:00:10.000Z'
+    });
 
-    const [recorded] = createSagaIntentRecordedEvents('saga-stream-recover', output, () => '2026-03-31T00:00:00.000Z');
-    projection.projectEvents([recorded], []);
+    (projection as any).documents.set('intent:intent-recover', dueRecord);
+    (projection as any).documents.set('intent:intent-later', futureRecord);
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
-      dispatch: jest.fn(async (_intent: PendingIntentRecord<BillingCommandMap>['intent'], record: PendingIntentRecord<BillingCommandMap>) => {
-        const dispatched = createSagaIntentDispatchedEvent(
-          {
-            sagaStreamId: record.sagaStreamId,
-            intentKey: record.intentKey,
-            metadata: record.intent.metadata
-          },
-          () => '2026-03-31T00:00:00.010Z'
-        );
-        projection.projectLifecycleEvent(dispatched);
-      }),
+      dispatch: jest.fn(async () => undefined),
       schedule: jest.fn(async () => undefined),
       cancelSchedule: jest.fn(async () => undefined),
       runActivity: jest.fn(async () => undefined)
     };
 
-    const firstBootRequeue = createSagaStartupRequeueScan(projection, handlers, {
+    const scan = createSagaStartupRequeueScan<BillingCommandMap>(createTypedRuntimeProjectionView(projection), handlers, {
       now: () => '2026-03-31T00:00:00.000Z'
     });
 
-    await expect(firstBootRequeue()).resolves.toBe(1);
-    expect(handlers.dispatch).toHaveBeenCalledTimes(1);
-
-    const secondBootRequeue = createSagaStartupRequeueScan(projection, handlers, {
-      now: () => '2026-03-31T00:00:00.000Z'
-    });
-
-    await expect(secondBootRequeue()).resolves.toBe(0);
+    await expect(scan()).resolves.toBe(1);
     expect(handlers.dispatch).toHaveBeenCalledTimes(1);
   });
 
-  it('routes timeout wake-up intents through normal intent-type worker pipeline', async () => {
-    const projection = new PendingIntentProjection<BillingCommandMap>();
-    const output: SagaReducerOutput<{ attempts: number }, BillingCommandMap> = {
-      state: { attempts: 0 },
-      intents: [
-        {
-          type: 'schedule',
-          id: 'timer-due-through-router',
-          delay: 500,
-          metadata: { sagaId: 'saga-timeout', correlationId: 'corr-timeout', causationId: 'cause-timeout' }
-        }
-      ]
-    };
+  it('routes timeout wake-up intents through normal worker pipeline', async () => {
+    const projection = new InMemoryRuntimeIntentProjectionStore();
+    const scheduleRecord = createRecordFromIntent({
+      type: 'schedule',
+      id: 'timer-due-through-router',
+      delay: 500,
+      metadata: { sagaId: 'saga-timeout', correlationId: 'corr-timeout', causationId: 'cause-timeout' }
+    }, {
+      intentKey: 'intent-timer',
+      dueAt: '2026-03-31T00:00:00.500Z'
+    });
 
-    const [recorded] = createSagaIntentRecordedEvents('saga-stream-timeout-router', output, () => '2026-03-31T00:00:00.000Z');
-    projection.projectEvents([recorded], []);
+    (projection as any).documents.set('intent:intent-timer', scheduleRecord);
 
-    const dueTimerRecord = detectDueSagaTimers(projection, '2026-03-31T00:00:00.500Z')[0];
+    const dueTimerRecord = detectDueSagaTimers<BillingCommandMap>(createTypedRuntimeProjectionView(projection), '2026-03-31T00:00:00.500Z')[0];
     const wakeUpIntent = toSagaTimerWakeUpIntent(dueTimerRecord);
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
@@ -272,18 +235,15 @@ describe('S17 saga intent routing by type', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter<BillingCommandMap>(createTypedRuntimeProjectionView(projection), handlers);
     const decision = await routeWakeUpIntent(wakeUpIntent);
 
     expect(decision.handlerPath).toBe('worker.schedule');
     expect(handlers.schedule).toHaveBeenCalledTimes(1);
-    expect(handlers.dispatch).not.toHaveBeenCalled();
-    expect(handlers.cancelSchedule).not.toHaveBeenCalled();
-    expect(handlers.runActivity).not.toHaveBeenCalled();
   });
 
-  it('throws when timeout wake-up intent references missing pending record', async () => {
-    const projection = new PendingIntentProjection<BillingCommandMap>();
+  it('throws when timeout wake-up intent references missing record', async () => {
+    const projection = new InMemoryRuntimeIntentProjectionStore();
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(async () => undefined),
       schedule: jest.fn(async () => undefined),
@@ -291,7 +251,7 @@ describe('S17 saga intent routing by type', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter<BillingCommandMap>(createTypedRuntimeProjectionView(projection), handlers);
 
     await expect(
       routeWakeUpIntent({

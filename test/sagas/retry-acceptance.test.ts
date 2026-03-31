@@ -3,11 +3,10 @@ import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
 import type { SagaReducerOutput } from '../../src/sagas';
 import {
-  PendingIntentProjection,
-  createSagaIntentRecordedEvents,
   decideDueSagaIntentExecution,
   executeSagaIntentExecutionTicket,
   persistSagaReducerOutputThroughRuntimeAggregate,
+  type RuntimeIntentProjectionRecordFor,
   type SagaRuntimeDepotLike,
   type SagaRunActivityIntent,
   type SagaIntentWorkerHandlers
@@ -42,7 +41,6 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
   it('retries a failing activity three times, then succeeds on the fourth attempt', async () => {
     const store = new InMemoryEventStore();
     const runtimeDepot = createDepot(SagaRuntimeAggregate, store) as unknown as SagaRuntimeDepotLike;
-    const projection = new PendingIntentProjection<BillingCommandMap>();
 
     const retryPolicy = {
       maxAttempts: 4,
@@ -75,22 +73,38 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
     };
 
     const sagaStreamId = 'saga-stream-1';
-    const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => '2026-03-31T00:00:00.000Z');
-    if (recorded.intent.type !== 'run-activity') {
+    const intent = output.intents[0];
+    if (intent.type !== 'run-activity') {
       throw new Error('Expected run-activity intent for S29 acceptance test setup.');
     }
 
-    projection.projectEvents([recorded], []);
-
     await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
       sagaStreamId,
-      createQueuedAt: () => recorded.recordedAt
+      createQueuedAt: () => '2026-03-31T00:00:00.000Z'
     });
 
-    const record = projection.getByIntentKey(recorded.idempotencyKey);
-    if (!record) {
-      throw new Error('Expected pending intent record for retry acceptance setup.');
+    const queuedEvent = store.getStream(sagaStreamId)[0];
+    const intentKey = (queuedEvent?.payload as { intentKey?: string } | undefined)?.intentKey;
+    if (!intentKey) {
+      throw new Error('Expected queued runtime event with intentKey for retry acceptance setup.');
     }
+
+    const record: RuntimeIntentProjectionRecordFor<BillingCommandMap> = {
+      intentKey,
+      sagaStreamId,
+      intentType: intent.type,
+      intent,
+      status: 'queued' as const,
+      attempts: 0,
+      queuedAt: '2026-03-31T00:00:00.000Z',
+      dueAt: '2026-03-31T00:00:00.000Z',
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastErrorMessage: null
+    };
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(async () => undefined),
@@ -99,7 +113,7 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
       runActivity: jest.fn(async intent => (intent as SagaRunActivityIntent).closure())
     };
 
-    const firstTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const firstTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.000Z'
     });
     await expect(executeSagaIntentExecutionTicket(firstTicket, runtimeDepot, handlers, {
@@ -107,7 +121,7 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
       retryJitter: 0.5
     })).resolves.toMatchObject({ executed: true, outcome: 'retry-scheduled' });
 
-    const beforeSecondDue = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const beforeSecondDue = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.109Z'
     });
     await expect(executeSagaIntentExecutionTicket(beforeSecondDue, runtimeDepot, handlers)).resolves.toMatchObject({
@@ -116,7 +130,7 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
       reason: 'skip-not-due'
     });
 
-    const secondTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const secondTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.110Z'
     });
     await expect(executeSagaIntentExecutionTicket(secondTicket, runtimeDepot, handlers, {
@@ -124,7 +138,7 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
       retryJitter: 0.5
     })).resolves.toMatchObject({ executed: true, outcome: 'retry-scheduled' });
 
-    const thirdTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const thirdTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.320Z'
     });
     await expect(executeSagaIntentExecutionTicket(thirdTicket, runtimeDepot, handlers, {
@@ -132,7 +146,7 @@ describe('S29 acceptance: transient failures eventually succeed with configured 
       retryJitter: 0.5
     })).resolves.toMatchObject({ executed: true, outcome: 'retry-scheduled' });
 
-    const fourthTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const fourthTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.730Z'
     });
     await expect(executeSagaIntentExecutionTicket(fourthTicket, runtimeDepot, handlers, {

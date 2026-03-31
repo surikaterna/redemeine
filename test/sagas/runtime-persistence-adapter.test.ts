@@ -145,6 +145,7 @@ describe('R3 runtime aggregate persistence adapter', () => {
     expect(events[0].type).toBe('sagaRuntimeBridge.intent.queued.event');
     expect(events[0].payload).toMatchObject({
       intentType: 'dispatch',
+      intent: output.intents[0],
       metadata: {
         sagaId: 'saga-1',
         correlationId: 'corr-1',

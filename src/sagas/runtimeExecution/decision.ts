@@ -1,5 +1,5 @@
 import { decidePendingIntentRoute } from '../SagaIntentRouter';
-import type { PendingIntentRecord } from '../PendingIntentProjection';
+import type { RuntimeIntentProjectionRecordFor } from '../RuntimeIntentProjection';
 import type { SagaRuntimeIntentState } from '../SagaRuntimeAggregate';
 import type { SagaIntentRouteDecision } from '../SagaIntentRouter';
 import type { SagaCommandMap } from '../createSaga';
@@ -15,7 +15,7 @@ function toIsoString(value: string | Date): string {
 }
 
 function decideFromRuntimeIntentState<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap>,
+  record: RuntimeIntentProjectionRecordFor<TCommandMap>,
   routeDecision: SagaIntentRouteDecision,
   runtimeIntentState: SagaRuntimeIntentState | undefined,
   now: string
@@ -82,14 +82,8 @@ function decideFromRuntimeIntentState<TCommandMap extends SagaCommandMap>(
   };
 }
 
-/**
- * Decision phase for due intent execution.
- *
- * Loads runtime state through Depot and decides if execution should proceed,
- * without invoking worker side-effects.
- */
 export async function decideDueSagaIntentExecution<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap>,
+  record: RuntimeIntentProjectionRecordFor<TCommandMap>,
   runtimeDepot: SagaRuntimeDepotLike,
   options: DecideDueSagaIntentExecutionOptions = {}
 ): Promise<SagaIntentExecutionTicket<TCommandMap>> {

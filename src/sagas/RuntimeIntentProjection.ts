@@ -4,6 +4,7 @@ import {
   type IProjectionStore,
   type ProjectionDefinition
 } from '../projections';
+import type { SagaCommandMap, SagaIntent } from './createSaga';
 import {
   SagaRuntimeAggregate,
   type SagaRuntimeDeadLetterIntentPayload,
@@ -25,6 +26,7 @@ export interface RuntimeIntentProjectionDocument {
   intentKey: string | null;
   sagaStreamId: string | null;
   intentType: string | null;
+  intent: SagaIntent<SagaCommandMap> | null;
   status: RuntimeIntentProjectionStatus | null;
   attempts: number;
   queuedAt: string | null;
@@ -41,6 +43,7 @@ export interface RuntimeIntentProjectionRecord {
   readonly intentKey: string;
   readonly sagaStreamId: string;
   readonly intentType: string;
+  readonly intent: SagaIntent<SagaCommandMap>;
   readonly status: RuntimeIntentProjectionStatus;
   readonly attempts: number;
   readonly queuedAt: string;
@@ -52,6 +55,10 @@ export interface RuntimeIntentProjectionRecord {
   readonly deadLetteredAt: string | null;
   readonly lastErrorMessage: string | null;
 }
+
+export type RuntimeIntentProjectionRecordFor<TCommandMap extends SagaCommandMap> = Omit<RuntimeIntentProjectionRecord, 'intent'> & {
+  readonly intent: SagaIntent<TCommandMap>;
+};
 
 export interface RuntimeIntentProjectionQuery {
   readonly statuses?: readonly RuntimeIntentProjectionStatus[];
@@ -70,6 +77,7 @@ const INITIAL_RUNTIME_INTENT_DOCUMENT: RuntimeIntentProjectionDocument = {
   intentKey: null,
   sagaStreamId: null,
   intentType: null,
+  intent: null,
   status: null,
   attempts: 0,
   queuedAt: null,
@@ -89,7 +97,7 @@ function toIsoString(value: string | Date): string {
 function toRuntimeIntentProjectionRecord(
   state: RuntimeIntentProjectionDocument
 ): RuntimeIntentProjectionRecord | null {
-  if (!state.intentKey || !state.sagaStreamId || !state.intentType || !state.status || !state.queuedAt || !state.dueAt) {
+  if (!state.intentKey || !state.sagaStreamId || !state.intentType || !state.intent || !state.status || !state.queuedAt || !state.dueAt) {
     return null;
   }
 
@@ -97,6 +105,7 @@ function toRuntimeIntentProjectionRecord(
     intentKey: state.intentKey,
     sagaStreamId: state.sagaStreamId,
     intentType: state.intentType,
+    intent: state.intent,
     status: state.status,
     attempts: state.attempts,
     queuedAt: state.queuedAt,
@@ -218,6 +227,7 @@ export function createRuntimeIntentProjection(): ProjectionDefinition<RuntimeInt
         state.intentKey = payload.intentKey;
         state.sagaStreamId = event.aggregateId;
         state.intentType = payload.intentType;
+        state.intent = payload.intent;
         state.status = 'queued';
         state.attempts = 0;
         state.queuedAt = payload.queuedAt;

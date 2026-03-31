@@ -1,8 +1,6 @@
 export {
-  MissingPendingIntentRecordForRuntimeIntentError,
   type DecideDueSagaIntentExecutionOptions,
   type ExecuteSagaIntentExecutionTicketOptions,
-  type PendingIntentRecordLookup,
   type RouteDueRuntimeIntentOptions,
   type RuntimeIntentProjectionDueReader,
   type SagaIntentExecutionDecision,

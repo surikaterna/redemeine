@@ -67,6 +67,7 @@ export function translateSagaReducerOutputToRuntimeCommands<TState, TCommandMap 
         idempotencyKey,
         metadata: intent.metadata,
         intentType: intent.type,
+        intent,
         queuedAt: options.createQueuedAt?.() ?? new Date().toISOString()
       }
     };

@@ -1,5 +1,5 @@
 import type { SagaCommandMap, SagaScheduleIntent } from './createSaga';
-import type { PendingIntentProjection, PendingIntentRecord } from './PendingIntentProjection';
+import type { RuntimeIntentProjectionRecordFor } from './RuntimeIntentProjection';
 
 export interface SagaTimerWakeUpIntent {
   readonly type: 'saga.timer-wake-up';
@@ -21,20 +21,21 @@ export interface SagaTimeoutCronScannerOptions {
 }
 
 function isPendingScheduleIntent<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap>
-): record is PendingIntentRecord<TCommandMap> & { readonly intent: SagaScheduleIntent } {
-  return record.intent.type === 'schedule';
+  record: RuntimeIntentProjectionRecordFor<TCommandMap>
+): record is RuntimeIntentProjectionRecordFor<TCommandMap> & { readonly intent: SagaScheduleIntent } {
+  return (record.status === 'queued' || record.status === 'retry_scheduled')
+    && record.intent.type === 'schedule';
 }
 
 export function detectDueSagaTimers<TCommandMap extends SagaCommandMap>(
-  projection: PendingIntentProjection<TCommandMap>,
+  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
   now: string | Date = new Date()
-): Array<PendingIntentRecord<TCommandMap> & { readonly intent: SagaScheduleIntent }> {
-  return projection.getExecutablePendingIntents(now).filter(isPendingScheduleIntent);
+): Array<RuntimeIntentProjectionRecordFor<TCommandMap> & { readonly intent: SagaScheduleIntent }> {
+  return projection.getDueIntents(now).filter(isPendingScheduleIntent);
 }
 
 export function toSagaTimerWakeUpIntent<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap> & { readonly intent: SagaScheduleIntent }
+  record: RuntimeIntentProjectionRecordFor<TCommandMap> & { readonly intent: SagaScheduleIntent }
 ): SagaTimerWakeUpIntent {
   return {
     type: 'saga.timer-wake-up',
@@ -47,7 +48,7 @@ export function toSagaTimerWakeUpIntent<TCommandMap extends SagaCommandMap>(
 }
 
 export function createSagaTimeoutCronScanner<TCommandMap extends SagaCommandMap>(
-  projection: PendingIntentProjection<TCommandMap>,
+  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
   emitWakeUpIntent: SagaTimerWakeUpEmitter,
   options: SagaTimeoutCronScannerOptions = {}
 ): () => Promise<number> {

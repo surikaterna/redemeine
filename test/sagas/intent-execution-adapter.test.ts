@@ -3,9 +3,7 @@ import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
 import {
   InMemoryRuntimeIntentProjectionStore,
-  PendingIntentProjection,
   createRuntimeIntentProjection,
-  createSagaIntentRecordedEvents,
   createRuntimeIntentProcessTick,
   createRuntimeStartupRecoveryScan,
   decideDueSagaIntentExecution,
@@ -14,7 +12,8 @@ import {
   type SagaRuntimeDepotLike,
   type SagaRunActivityIntent,
   type SagaIntentWorkerHandlers,
-  type SagaReducerOutput
+  type SagaReducerOutput,
+  type RuntimeIntentProjectionRecordFor
 } from '../../src/sagas';
 import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
 import { ProjectionDaemon, type IEventSubscription, type ProjectionEvent } from '../../src/projections';
@@ -39,15 +38,30 @@ class InMemoryEventStore implements EventStore {
   }
 }
 
-function createPendingProjection(
+function createRuntimeRecordFromOutput(
   output: SagaReducerOutput<{ attempts: number }, BillingCommandMap>,
   sagaStreamId: string,
   recordedAt = '2026-03-31T00:00:00.000Z'
-): PendingIntentProjection<BillingCommandMap> {
-  const projection = new PendingIntentProjection<BillingCommandMap>();
-  const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => recordedAt);
-  projection.projectEvents([recorded], []);
-  return projection;
+): RuntimeIntentProjectionRecordFor<BillingCommandMap> {
+  const intent = output.intents[0];
+  const intentKey = `${sagaStreamId}:0:test-hash`;
+
+  return {
+    intentKey,
+    sagaStreamId,
+    intentType: intent.type,
+    intent,
+    status: 'queued',
+    attempts: 0,
+    queuedAt: recordedAt,
+    dueAt: recordedAt,
+    startedAt: null,
+    completedAt: null,
+    failedAt: null,
+    nextAttemptAt: null,
+    deadLetteredAt: null,
+    lastErrorMessage: null
+  };
 }
 
 function createSubscription(events: ProjectionEvent[]): IEventSubscription {
@@ -91,16 +105,16 @@ describe('R7 intent decision/execution split adapters', () => {
     };
 
     const sagaStreamId = 'saga-runtime-dup';
-    const projection = createPendingProjection(output, sagaStreamId);
-    const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => '2026-03-31T00:00:00.000Z');
+    const record = createRuntimeRecordFromOutput(output, sagaStreamId);
 
     const runtime = await runtimeDepot.get(sagaStreamId);
     runtime.dispatch(SagaRuntimeAggregate.commandCreators.queueIntent({
-      intentKey: recorded.idempotencyKey,
-      idempotencyKey: recorded.idempotencyKey,
-      metadata: recorded.intent.metadata,
-      intentType: recorded.intent.type,
-      queuedAt: recorded.recordedAt
+      intentKey: record.intentKey,
+      idempotencyKey: record.intentKey,
+      metadata: record.intent.metadata,
+      intentType: record.intent.type,
+      intent: record.intent,
+      queuedAt: record.queuedAt
     }));
     await runtimeDepot.save(runtime);
 
@@ -110,11 +124,6 @@ describe('R7 intent decision/execution split adapters', () => {
       cancelSchedule: jest.fn(async () => undefined),
       runActivity: jest.fn(async () => undefined)
     };
-
-    const record = projection.getByIntentKey(recorded.idempotencyKey);
-    if (!record) {
-      throw new Error('Expected pending record for duplicate execution test setup.');
-    }
 
     const firstTicket = await decideDueSagaIntentExecution(record, runtimeDepot);
     await expect(executeSagaIntentExecutionTicket(firstTicket, runtimeDepot, handlers, {
@@ -158,16 +167,16 @@ describe('R7 intent decision/execution split adapters', () => {
     };
 
     const sagaStreamId = 'saga-runtime-retry';
-    const projection = createPendingProjection(output, sagaStreamId);
-    const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => '2026-03-31T00:00:00.000Z');
+    const record = createRuntimeRecordFromOutput(output, sagaStreamId);
 
     const runtime = await runtimeDepot.get(sagaStreamId);
     runtime.dispatch(SagaRuntimeAggregate.commandCreators.queueIntent({
-      intentKey: recorded.idempotencyKey,
-      idempotencyKey: recorded.idempotencyKey,
-      metadata: recorded.intent.metadata,
-      intentType: recorded.intent.type,
-      queuedAt: recorded.recordedAt
+      intentKey: record.intentKey,
+      idempotencyKey: record.intentKey,
+      metadata: record.intent.metadata,
+      intentType: record.intent.type,
+      intent: record.intent,
+      queuedAt: record.queuedAt
     }));
     await runtimeDepot.save(runtime);
 
@@ -177,11 +186,6 @@ describe('R7 intent decision/execution split adapters', () => {
       cancelSchedule: jest.fn(async () => undefined),
       runActivity: jest.fn(async intent => (intent as SagaRunActivityIntent).closure())
     };
-
-    const record = projection.getByIntentKey(recorded.idempotencyKey);
-    if (!record) {
-      throw new Error('Expected pending record for retry execution test setup.');
-    }
 
     const firstTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.000Z'
@@ -236,7 +240,6 @@ describe('R7 intent decision/execution split adapters', () => {
       ]
     };
 
-    const pendingProjection = createPendingProjection(output, sagaStreamId);
     const runtimeQueuedAt = '2026-03-31T00:00:00.000Z';
     await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
       sagaStreamId,
@@ -268,9 +271,8 @@ describe('R7 intent decision/execution split adapters', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const startupScan = createRuntimeStartupRecoveryScan(
+    const startupScan = createRuntimeStartupRecoveryScan<BillingCommandMap>(
       runtimeProjectionStore,
-      pendingProjection,
       runtimeDepot,
       handlers,
       {
@@ -301,7 +303,6 @@ describe('R7 intent decision/execution split adapters', () => {
       ]
     };
 
-    const pendingProjection = createPendingProjection(output, sagaStreamId);
     const runtimeQueuedAt = '2026-03-31T01:00:00.000Z';
     await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
       sagaStreamId,
@@ -333,9 +334,8 @@ describe('R7 intent decision/execution split adapters', () => {
       runActivity: jest.fn(async () => undefined)
     };
 
-    const processTick = createRuntimeIntentProcessTick(
+    const processTick = createRuntimeIntentProcessTick<BillingCommandMap>(
       runtimeProjectionStore,
-      pendingProjection,
       runtimeDepot,
       handlers,
       {

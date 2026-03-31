@@ -3,12 +3,11 @@ import type { Event } from '../../src/types';
 import { createDepot, type EventStore } from '../../src/Depot';
 import type { SagaReducerOutput, SagaIntentWorkerHandlers, SagaRuntimeDepotLike } from '../../src/sagas';
 import {
-  PendingIntentProjection,
-  createSagaIntentRecordedEvents,
   decideDueSagaIntentExecution,
   executeSagaIntentExecutionTicket,
   executeSagaReducerOutputInReplay,
-  persistSagaReducerOutputThroughRuntimeAggregate
+  persistSagaReducerOutputThroughRuntimeAggregate,
+  type RuntimeIntentProjectionRecordFor
 } from '../../src/sagas';
 import { SagaRuntimeAggregate } from '../../src/sagas/SagaRuntimeAggregate';
 
@@ -55,23 +54,39 @@ describe('S28 acceptance: replay does not re-run external side effects', () => {
     };
 
     const sagaStreamId = 'saga-stream-1';
-    const [recorded] = createSagaIntentRecordedEvents(sagaStreamId, output, () => '2026-03-31T00:00:00.000Z');
-    const pendingProjection = new PendingIntentProjection<BillingCommandMap>();
-    pendingProjection.projectEvents([recorded], []);
+    const intent = output.intents[0];
 
     await persistSagaReducerOutputThroughRuntimeAggregate(output, runtimeDepot, {
       sagaStreamId,
-      createQueuedAt: () => recorded.recordedAt
+      createQueuedAt: () => '2026-03-31T00:00:00.000Z'
     });
 
-    if (recorded.intent.type !== 'run-activity') {
+    const queuedEvent = (store as unknown as { streams: Map<string, Event[]> }).streams.get(sagaStreamId)?.[0];
+    const intentKey = (queuedEvent?.payload as { intentKey?: string } | undefined)?.intentKey;
+    if (!intentKey) {
+      throw new Error('Expected queued runtime event with intentKey for replay acceptance setup.');
+    }
+
+    if (intent.type !== 'run-activity') {
       throw new Error('Expected run-activity intent for S28 acceptance test setup.');
     }
 
-    const record = pendingProjection.getByIntentKey(recorded.idempotencyKey);
-    if (!record) {
-      throw new Error('Expected pending record for replay acceptance setup.');
-    }
+    const record: RuntimeIntentProjectionRecordFor<BillingCommandMap> = {
+      intentKey,
+      sagaStreamId,
+      intentType: intent.type,
+      intent,
+      status: 'queued',
+      attempts: 0,
+      queuedAt: '2026-03-31T00:00:00.000Z',
+      dueAt: '2026-03-31T00:00:00.000Z',
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastErrorMessage: null
+    };
 
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(async () => undefined),
@@ -80,14 +95,14 @@ describe('S28 acceptance: replay does not re-run external side effects', () => {
       runActivity: jest.fn(async () => activity())
     };
 
-    const firstTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const firstTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.000Z'
     });
     await expect(executeSagaIntentExecutionTicket(firstTicket, runtimeDepot, handlers, {
       createTimestamp: () => '2026-03-31T00:00:00.010Z'
     })).resolves.toMatchObject({ executed: true, outcome: 'completed' });
 
-    const replayTicket = await decideDueSagaIntentExecution(record, runtimeDepot, {
+    const replayTicket = await decideDueSagaIntentExecution<BillingCommandMap>(record, runtimeDepot, {
       now: () => '2026-03-31T00:00:00.020Z'
     });
     await expect(executeSagaIntentExecutionTicket(replayTicket, runtimeDepot, handlers)).resolves.toMatchObject({

@@ -1,30 +1,29 @@
 import { decideDueSagaIntentExecution } from './decision';
 import { executeSagaIntentExecutionTicket } from './execute';
-import {
-  MissingPendingIntentRecordForRuntimeIntentError,
-  type PendingIntentRecordLookup,
-  type RouteDueRuntimeIntentOptions,
-  type RuntimeIntentProjectionDueReader,
-  type RuntimeIntentProjectionRecord,
-  type SagaCommandMap,
-  type SagaIntentExecutionResult,
-  type SagaIntentWorkerHandlers,
-  type SagaRuntimeDepotLike
+import type {
+  RouteDueRuntimeIntentOptions,
+  RuntimeIntentProjectionDueReader,
+  RuntimeIntentProjectionRecord,
+  RuntimeIntentProjectionRecordFor,
+  SagaCommandMap,
+  SagaIntentExecutionResult,
+  SagaIntentWorkerHandlers,
+  SagaRuntimeDepotLike
 } from './contracts';
 
+function asTypedRuntimeRecord<TCommandMap extends SagaCommandMap>(
+  record: RuntimeIntentProjectionRecord
+): RuntimeIntentProjectionRecordFor<TCommandMap> {
+  return record as RuntimeIntentProjectionRecordFor<TCommandMap>;
+}
+
 export async function routeDueRuntimeIntentRecord<TCommandMap extends SagaCommandMap>(
-  runtimeRecord: RuntimeIntentProjectionRecord,
-  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
+  runtimeRecord: RuntimeIntentProjectionRecordFor<TCommandMap>,
   runtimeDepot: SagaRuntimeDepotLike,
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: RouteDueRuntimeIntentOptions = {}
 ): Promise<SagaIntentExecutionResult> {
-  const pendingRecord = pendingIntentLookup.getByIntentKey(runtimeRecord.intentKey);
-  if (!pendingRecord) {
-    throw new MissingPendingIntentRecordForRuntimeIntentError(runtimeRecord);
-  }
-
-  const ticket = await decideDueSagaIntentExecution(pendingRecord, runtimeDepot, {
+  const ticket = await decideDueSagaIntentExecution(runtimeRecord, runtimeDepot, {
     now: options.now
   });
 
@@ -39,7 +38,6 @@ export async function routeDueRuntimeIntentRecord<TCommandMap extends SagaComman
 
 export function createRuntimeIntentProcessTick<TCommandMap extends SagaCommandMap>(
   runtimeProjection: RuntimeIntentProjectionDueReader,
-  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
   runtimeDepot: SagaRuntimeDepotLike,
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: RouteDueRuntimeIntentOptions = {}
@@ -51,7 +49,7 @@ export function createRuntimeIntentProcessTick<TCommandMap extends SagaCommandMa
     let executedCount = 0;
 
     for (const dueIntent of dueIntents) {
-      const result = await routeDueRuntimeIntentRecord(dueIntent, pendingIntentLookup, runtimeDepot, handlers, {
+      const result = await routeDueRuntimeIntentRecord(asTypedRuntimeRecord<TCommandMap>(dueIntent), runtimeDepot, handlers, {
         ...options,
         now
       });
@@ -66,10 +64,9 @@ export function createRuntimeIntentProcessTick<TCommandMap extends SagaCommandMa
 
 export function createRuntimeStartupRecoveryScan<TCommandMap extends SagaCommandMap>(
   runtimeProjection: RuntimeIntentProjectionDueReader,
-  pendingIntentLookup: PendingIntentRecordLookup<TCommandMap>,
   runtimeDepot: SagaRuntimeDepotLike,
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: RouteDueRuntimeIntentOptions = {}
 ): () => Promise<number> {
-  return createRuntimeIntentProcessTick(runtimeProjection, pendingIntentLookup, runtimeDepot, handlers, options);
+  return createRuntimeIntentProcessTick(runtimeProjection, runtimeDepot, handlers, options);
 }

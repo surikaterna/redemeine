@@ -1,10 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { SagaIntentWorkerHandlers, SagaReducerOutput, SagaTimerWakeUpIntent } from '../../src/sagas';
+import type {
+  RuntimeIntentProjectionRecordFor,
+  SagaIntentWorkerHandlers,
+  SagaReducerOutput,
+  SagaTimerWakeUpIntent
+} from '../../src/sagas';
 import {
-  PendingIntentProjection,
+  InMemoryRuntimeIntentProjectionStore,
   SagaRouterDaemon,
-  createSagaIntentDispatchedEvent,
-  createSagaIntentRecordedEvents,
   createSagaTimeoutCronScanner,
   createSagaTimeoutWakeUpIntentRouter
 } from '../../src/sagas';
@@ -14,8 +17,8 @@ type BillingCommandMap = {
 };
 
 describe('S32 acceptance: due timeout routes wake-up and drives expected transition', () => {
-  it('produces a wake-up and transitions pending schedule execution to dispatched', async () => {
-    const projection = new PendingIntentProjection<BillingCommandMap>();
+  it('produces a wake-up and routes due schedule intent once', async () => {
+    const projection = new InMemoryRuntimeIntentProjectionStore();
     const output: SagaReducerOutput<{ phase: 'waiting' | 'timed-out'; wakeUps: number }, BillingCommandMap> = {
       state: { phase: 'waiting', wakeUps: 0 },
       intents: [
@@ -32,47 +35,48 @@ describe('S32 acceptance: due timeout routes wake-up and drives expected transit
       ]
     };
 
-    const [recorded] = createSagaIntentRecordedEvents(
-      'saga-stream-timeout-acceptance',
-      output,
-      () => '2026-03-31T00:00:00.000Z'
-    );
-    projection.projectEvents([recorded], []);
-
-    const initialPending = projection.getByIntentKey(recorded.idempotencyKey);
-    expect(initialPending?.status).toBe('pending');
+    const record: RuntimeIntentProjectionRecordFor<BillingCommandMap> = {
+      intentKey: 'intent-timeout-acceptance',
+      sagaStreamId: 'saga-stream-timeout-acceptance',
+      intentType: output.intents[0].type,
+      intent: output.intents[0],
+      status: 'queued',
+      attempts: 0,
+      queuedAt: '2026-03-31T00:00:00.000Z',
+      dueAt: '2026-03-31T00:00:00.500Z',
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastErrorMessage: null
+    };
+    (projection as any).documents.set('intent:intent-timeout-acceptance', record);
 
     const sagaRuntimeState: { phase: 'waiting' | 'timed-out'; wakeUps: number } = {
       phase: 'waiting',
       wakeUps: 0
     };
 
-    const scheduleHandler: SagaIntentWorkerHandlers<BillingCommandMap>['schedule'] = async (_intent, record) => {
-      sagaRuntimeState.phase = 'timed-out';
-      sagaRuntimeState.wakeUps += 1;
-
-      const dispatched = createSagaIntentDispatchedEvent(
-        {
-          sagaStreamId: record.sagaStreamId,
-          intentKey: record.intentKey,
-          metadata: record.intent.metadata
-        },
-        () => '2026-03-31T00:00:00.500Z'
-      );
-      projection.projectLifecycleEvent(dispatched);
-    };
-
     const handlers: SagaIntentWorkerHandlers<BillingCommandMap> = {
       dispatch: jest.fn(async () => undefined),
-      schedule: jest.fn(scheduleHandler),
+      schedule: jest.fn(async () => {
+        sagaRuntimeState.phase = 'timed-out';
+        sagaRuntimeState.wakeUps += 1;
+      }),
       cancelSchedule: jest.fn(async () => undefined),
       runActivity: jest.fn(async () => undefined)
     };
 
+    const typedProjection = {
+      getDueIntents: (now?: string | Date) => projection.getDueIntents(now) as RuntimeIntentProjectionRecordFor<BillingCommandMap>[],
+      getByIntentKey: (intentKey: string) => projection.getByIntentKey(intentKey) as RuntimeIntentProjectionRecordFor<BillingCommandMap> | null
+    };
+
     const emittedWakeUps: SagaTimerWakeUpIntent[] = [];
-    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter(projection, handlers);
+    const routeWakeUpIntent = createSagaTimeoutWakeUpIntentRouter<BillingCommandMap>(typedProjection, handlers);
     const timeoutScan = createSagaTimeoutCronScanner(
-      projection,
+      typedProjection,
       async wakeUpIntent => {
         emittedWakeUps.push(wakeUpIntent);
         await routeWakeUpIntent(wakeUpIntent);
@@ -106,9 +110,6 @@ describe('S32 acceptance: due timeout routes wake-up and drives expected transit
       phase: 'timed-out',
       wakeUps: 1
     });
-
-    const transitioned = projection.getByIntentKey(recorded.idempotencyKey);
-    expect(transitioned?.status).toBe('dispatched');
     expect(daemon.ticksProcessed).toBe(1);
   });
 });

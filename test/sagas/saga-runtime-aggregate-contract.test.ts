@@ -137,6 +137,16 @@ describe('R1 SagaRuntimeAggregate contract', () => {
         causationId: 'cause-1'
       },
       intentType: 'dispatch',
+      intent: {
+        type: 'dispatch',
+        command: 'billing.charge',
+        payload: { invoiceId: 'inv-1', amount: 100 },
+        metadata: {
+          sagaId: 'saga-1',
+          correlationId: 'corr-1',
+          causationId: 'cause-1'
+        }
+      },
       queuedAt
     };
 
@@ -189,6 +199,16 @@ describe('R1 SagaRuntimeAggregate contract', () => {
           causationId: 'cause-1'
         },
         intentType: 'dispatch',
+        intent: {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-2', amount: 200 },
+          metadata: {
+            sagaId: 'saga-1',
+            correlationId: 'corr-1',
+            causationId: 'cause-1'
+          }
+        },
         queuedAt: '2026-03-31T10:00:00.000Z'
       }),
       SagaRuntimeAggregate.commandCreators.startIntent({
@@ -235,6 +255,16 @@ describe('R1 SagaRuntimeAggregate contract', () => {
           causationId: 'cause-1'
         },
         intentType: 'dispatch',
+        intent: {
+          type: 'dispatch',
+          command: 'billing.charge',
+          payload: { invoiceId: 'inv-3', amount: 300 },
+          metadata: {
+            sagaId: 'saga-1',
+            correlationId: 'corr-1',
+            causationId: 'cause-1'
+          }
+        },
         queuedAt: '2026-03-31T11:00:00.000Z'
       }),
       SagaRuntimeAggregate.commandCreators.startIntent({

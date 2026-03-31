@@ -45,6 +45,16 @@ describe('R8 runtime pending/due projection', () => {
         payload: {
           intentKey: 'intent-1',
           intentType: 'dispatch',
+          intent: {
+            type: 'dispatch',
+            command: 'billing.charge',
+            payload: { invoiceId: 'inv-1', amount: 250 },
+            metadata: {
+              sagaId: 'saga-1',
+              correlationId: 'corr-1',
+              causationId: 'cause-1'
+            }
+          },
           queuedAt: '2026-03-31T10:00:00.000Z'
         }
       },
@@ -93,6 +103,16 @@ describe('R8 runtime pending/due projection', () => {
         payload: {
           intentKey: 'intent-2',
           intentType: 'schedule',
+          intent: {
+            type: 'schedule',
+            id: 'timer-1',
+            delay: 500,
+            metadata: {
+              sagaId: 'saga-1',
+              correlationId: 'corr-1',
+              causationId: 'cause-2'
+            }
+          },
           queuedAt: '2026-03-31T10:00:04.000Z'
         }
       },
@@ -147,6 +167,16 @@ describe('R8 runtime pending/due projection', () => {
         payload: {
           intentKey: 'intent-dead',
           intentType: 'dispatch',
+          intent: {
+            type: 'dispatch',
+            command: 'billing.charge',
+            payload: { invoiceId: 'inv-dead', amount: 111 },
+            metadata: {
+              sagaId: 'saga-2',
+              correlationId: 'corr-2',
+              causationId: 'cause-2'
+            }
+          },
           queuedAt: '2026-03-31T11:00:00.000Z'
         }
       },

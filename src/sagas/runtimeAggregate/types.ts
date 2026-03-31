@@ -1,3 +1,7 @@
+import type { SagaCommandMap, SagaIntent } from '../createSaga';
+
+export type SagaRuntimePersistedIntent = SagaIntent<SagaCommandMap>;
+
 export interface SagaRuntimeState {
   lifecycle: 'idle' | 'active';
   sagaInstanceKey: string | null;
@@ -20,6 +24,7 @@ export interface SagaRuntimeIntentState {
     readonly causationId: string;
   } | null;
   readonly intentType: string;
+  readonly intent: SagaRuntimePersistedIntent | null;
   readonly status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'retry_scheduled' | 'dead_lettered';
   readonly attempts: number;
   readonly queuedAt: string;
@@ -67,6 +72,7 @@ export interface SagaRuntimeQueueIntentPayload {
     readonly causationId: string;
   };
   readonly intentType: string;
+  readonly intent: SagaRuntimePersistedIntent;
   readonly queuedAt: string;
 }
 

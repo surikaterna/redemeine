@@ -6,8 +6,7 @@ import type {
   SagaRunActivityIntent,
   SagaScheduleIntent
 } from './createSaga';
-import { decideIntentExecutionFromProjection } from './DedupeGuard';
-import type { PendingIntentProjection, PendingIntentRecord } from './PendingIntentProjection';
+import type { RuntimeIntentProjectionRecordFor } from './RuntimeIntentProjection';
 import type { SagaTimerWakeUpIntent } from './SagaTimeoutCronScanner';
 
 export const SAGA_WORKER_HANDLER_PATHS = {
@@ -28,23 +27,23 @@ export interface SagaIntentRouteDecision {
 }
 
 export interface SagaIntentRouteExecutionInput<TCommandMap extends SagaCommandMap> {
-  readonly record: PendingIntentRecord<TCommandMap>;
+  readonly record: RuntimeIntentProjectionRecordFor<TCommandMap>;
   readonly decision: SagaIntentRouteDecision;
 }
 
 export interface SagaIntentWorkerHandlers<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly dispatch: (
     intent: SagaDispatchIntent<TCommandMap>,
-    record: PendingIntentRecord<TCommandMap>
+    record: RuntimeIntentProjectionRecordFor<TCommandMap>
   ) => unknown | Promise<unknown>;
-  readonly schedule: (intent: SagaScheduleIntent, record: PendingIntentRecord<TCommandMap>) => unknown | Promise<unknown>;
+  readonly schedule: (intent: SagaScheduleIntent, record: RuntimeIntentProjectionRecordFor<TCommandMap>) => unknown | Promise<unknown>;
   readonly cancelSchedule: (
     intent: SagaCancelScheduleIntent,
-    record: PendingIntentRecord<TCommandMap>
+    record: RuntimeIntentProjectionRecordFor<TCommandMap>
   ) => unknown | Promise<unknown>;
   readonly runActivity: (
     intent: SagaRunActivityIntent,
-    record: PendingIntentRecord<TCommandMap>
+    record: RuntimeIntentProjectionRecordFor<TCommandMap>
   ) => unknown | Promise<unknown>;
 }
 
@@ -79,7 +78,7 @@ export function resolveSagaWorkerHandlerPath(intentType: string, intentKey: stri
 }
 
 export async function routePendingIntentByType<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap>,
+  record: RuntimeIntentProjectionRecordFor<TCommandMap>,
   handlers: SagaIntentWorkerHandlers<TCommandMap>
 ): Promise<SagaIntentRouteDecision> {
   const decision = decidePendingIntentRoute(record);
@@ -91,7 +90,7 @@ export async function routePendingIntentByType<TCommandMap extends SagaCommandMa
  * Decision phase: resolve handler path and routing metadata without side-effects.
  */
 export function decidePendingIntentRoute<TCommandMap extends SagaCommandMap>(
-  record: PendingIntentRecord<TCommandMap>
+  record: RuntimeIntentProjectionRecordFor<TCommandMap>
 ): SagaIntentRouteDecision {
   const { intent } = record;
 
@@ -155,14 +154,14 @@ export class MissingSagaWakeUpIntentRecordError extends Error {
 }
 
 export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
-  projection: PendingIntentProjection<TCommandMap>,
+  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: SagaRouterProcessTickOptions = {}
 ): () => Promise<number> {
   const now = options.now ?? (() => new Date());
 
   return async () => {
-    const pendingIntents = projection.getExecutablePendingIntents(now());
+    const pendingIntents = projection.getDueIntents(now());
 
     for (const pending of pendingIntents) {
       const decision = await routePendingIntentByType(pending, handlers);
@@ -177,7 +176,7 @@ export function createSagaRouterProcessTick<TCommandMap extends SagaCommandMap>(
  * S19 bridge for routing timeout wake-up intents through normal intent routing.
  */
 export function createSagaTimeoutWakeUpIntentRouter<TCommandMap extends SagaCommandMap>(
-  projection: PendingIntentProjection<TCommandMap>,
+  projection: { getByIntentKey(intentKey: string): RuntimeIntentProjectionRecordFor<TCommandMap> | null },
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: SagaTimeoutWakeUpRoutingOptions = {}
 ): (wakeUpIntent: SagaTimerWakeUpIntent) => Promise<SagaIntentRouteDecision> {
@@ -201,21 +200,16 @@ export type SagaStartupRequeueOptions = SagaRouterProcessTickOptions;
  * Requeues executable pending intents once per process start.
  */
 export function createSagaStartupRequeueScan<TCommandMap extends SagaCommandMap>(
-  projection: PendingIntentProjection<TCommandMap>,
+  projection: { getDueIntents(now?: string | Date): RuntimeIntentProjectionRecordFor<TCommandMap>[] },
   handlers: SagaIntentWorkerHandlers<TCommandMap>,
   options: SagaStartupRequeueOptions = {}
 ): () => Promise<number> {
   const now = options.now ?? (() => new Date());
 
   return async () => {
-    const pendingIntents = projection.getExecutablePendingIntents(now());
+    const pendingIntents = projection.getDueIntents(now());
 
     for (const pending of pendingIntents) {
-      const executionDecision = decideIntentExecutionFromProjection(projection, pending.intentKey);
-      if (!executionDecision.shouldExecute) {
-        continue;
-      }
-
       const decision = await routePendingIntentByType(pending, handlers);
       options.onRouted?.(decision);
     }
