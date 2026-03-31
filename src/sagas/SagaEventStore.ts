@@ -1,5 +1,12 @@
 import type { SagaCommandMap, SagaIntent, SagaReducerOutput } from './createSaga';
-import { computeNextAttemptAt, type RetrySchedulingNow, type SagaRetryPolicy } from './RetryPolicy';
+import {
+  classifyRetryableError,
+  computeNextAttemptAt,
+  type RetrySchedulingNow,
+  type RetryableErrorClassification,
+  type RetryableErrorClassificationOptions,
+  type SagaRetryPolicy
+} from './RetryPolicy';
 
 export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly type: 'saga.intent-recorded';
@@ -57,12 +64,44 @@ export interface SagaIntentRetryScheduledEvent {
   readonly scheduledAt: string;
 }
 
+export interface SagaIntentDeadLetteredEvent {
+  readonly type: 'saga.intent-dead-lettered';
+  readonly sagaStreamId: string;
+  readonly lifecycle: SagaIntentLifecycleContext;
+  readonly deadLetter: {
+    readonly attempt: number;
+    readonly classification: RetryableErrorClassification;
+    readonly reason: 'non-retryable' | 'max-attempts-exhausted';
+    readonly error: {
+      readonly name?: string;
+      readonly message: string;
+      readonly code?: string;
+      readonly status?: number;
+    };
+  };
+  readonly deadLetteredAt: string;
+}
+
 export type SagaLifecycleEvent =
   | SagaIntentStartedEvent
   | SagaIntentDispatchedEvent
   | SagaIntentSucceededEvent
   | SagaIntentFailedEvent
-  | SagaIntentRetryScheduledEvent;
+  | SagaIntentRetryScheduledEvent
+  | SagaIntentDeadLetteredEvent;
+
+export type SagaIntentFailureDecision =
+  | {
+    readonly action: 'retry';
+    readonly classification: 'retryable';
+  }
+  | {
+    readonly action: 'dead-letter';
+    readonly classification: RetryableErrorClassification;
+    readonly reason: 'non-retryable' | 'max-attempts-exhausted';
+  };
+
+type SagaIntentDeadLetterDecision = Extract<SagaIntentFailureDecision, { action: 'dead-letter' }>;
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -171,6 +210,88 @@ export interface SagaIntentRetryFromPolicyAppendInput extends SagaIntentLifecycl
   readonly jitter?: number;
 }
 
+export interface SagaIntentDeadLetteredAppendInput extends SagaIntentLifecycleAppendInput {
+  readonly attempt: number;
+  readonly classification: RetryableErrorClassification;
+  readonly reason: 'non-retryable' | 'max-attempts-exhausted';
+  readonly error: unknown;
+}
+
+export interface SagaIntentFailureOutcomeAppendInput extends SagaIntentLifecycleAppendInput {
+  readonly error: unknown;
+  readonly attempt: number;
+  readonly policy?: SagaRetryPolicy;
+  readonly now: RetrySchedulingNow;
+  readonly jitter?: number;
+  readonly classificationOptions?: RetryableErrorClassificationOptions;
+}
+
+function readErrorProperty(error: unknown, key: string): unknown {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+
+  return (error as Record<string, unknown>)[key];
+}
+
+function extractDeadLetterErrorDetails(error: unknown): SagaIntentDeadLetteredEvent['deadLetter']['error'] {
+  const message = error instanceof Error
+    ? error.message
+    : typeof readErrorProperty(error, 'message') === 'string'
+      ? (readErrorProperty(error, 'message') as string)
+      : String(error);
+
+  const name = error instanceof Error
+    ? error.name
+    : typeof readErrorProperty(error, 'name') === 'string'
+      ? (readErrorProperty(error, 'name') as string)
+      : undefined;
+
+  const code = typeof readErrorProperty(error, 'code') === 'string'
+    ? (readErrorProperty(error, 'code') as string)
+    : undefined;
+
+  const statusValue = readErrorProperty(error, 'status') ?? readErrorProperty(error, 'statusCode');
+  const status = typeof statusValue === 'number' ? statusValue : undefined;
+
+  return {
+    name,
+    message,
+    code,
+    status
+  };
+}
+
+export function decideSagaIntentFailure(
+  error: unknown,
+  attempt: number,
+  retryPolicy?: SagaRetryPolicy,
+  options?: RetryableErrorClassificationOptions
+): SagaIntentFailureDecision {
+  const classification = classifyRetryableError(error, options);
+
+  if (classification === 'non-retryable') {
+    return {
+      action: 'dead-letter',
+      classification,
+      reason: 'non-retryable'
+    };
+  }
+
+  if (!retryPolicy || attempt >= retryPolicy.maxAttempts) {
+    return {
+      action: 'dead-letter',
+      classification,
+      reason: 'max-attempts-exhausted'
+    };
+  }
+
+  return {
+    action: 'retry',
+    classification: 'retryable'
+  };
+}
+
 export function createSagaIntentStartedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -266,6 +387,27 @@ export function createSagaIntentRetryScheduledEventFromPolicy(
   );
 }
 
+export function createSagaIntentDeadLetteredEvent(
+  input: SagaIntentDeadLetteredAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): SagaIntentDeadLetteredEvent {
+  return {
+    type: 'saga.intent-dead-lettered',
+    sagaStreamId: input.sagaStreamId,
+    lifecycle: {
+      intentKey: input.intentKey,
+      metadata: input.metadata
+    },
+    deadLetter: {
+      attempt: input.attempt,
+      classification: input.classification,
+      reason: input.reason,
+      error: extractDeadLetterErrorDetails(input.error)
+    },
+    deadLetteredAt: createTimestamp()
+  };
+}
+
 export async function appendSagaIntentStartedEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -324,6 +466,61 @@ export async function appendSagaIntentRetryScheduledEventFromPolicy(
   const event = createSagaIntentRetryScheduledEventFromPolicy(input, createTimestamp);
   await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
   return event;
+}
+
+export async function appendSagaIntentDeadLetteredEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentDeadLetteredAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentDeadLetteredEvent> {
+  const event = createSagaIntentDeadLetteredEvent(input, createTimestamp);
+  await eventStore.appendLifecycleEvent(input.sagaStreamId, event);
+  return event;
+}
+
+export async function appendSagaIntentFailureOutcomeEvent(
+  eventStore: SagaLifecycleEventWriter,
+  input: SagaIntentFailureOutcomeAppendInput,
+  createTimestamp: () => string = () => new Date().toISOString()
+): Promise<SagaIntentRetryScheduledEvent | SagaIntentDeadLetteredEvent> {
+  const decision = decideSagaIntentFailure(
+    input.error,
+    input.attempt,
+    input.policy,
+    input.classificationOptions
+  );
+
+  if (decision.action === 'retry' && input.policy) {
+    return appendSagaIntentRetryScheduledEventFromPolicy(
+      eventStore,
+      {
+        sagaStreamId: input.sagaStreamId,
+        intentKey: input.intentKey,
+        metadata: input.metadata,
+        policy: input.policy,
+        attempt: input.attempt,
+        now: input.now,
+        jitter: input.jitter
+      },
+      createTimestamp
+    );
+  }
+
+  const deadLetterDecision = decision as SagaIntentDeadLetterDecision;
+
+  return appendSagaIntentDeadLetteredEvent(
+    eventStore,
+    {
+      sagaStreamId: input.sagaStreamId,
+      intentKey: input.intentKey,
+      metadata: input.metadata,
+      attempt: input.attempt,
+      classification: deadLetterDecision.classification,
+      reason: deadLetterDecision.reason,
+      error: input.error
+    },
+    createTimestamp
+  );
 }
 
 export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaCommandMap>(
