@@ -7,3 +7,4 @@ export * from './PendingIntentProjection';
 export * from './DedupeGuard';
 export * from './replayExecution';
 export * from './SagaRouterDaemon';
+export * from './SagaIntentRouter';
