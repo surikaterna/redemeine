@@ -38,8 +38,96 @@ export type SagaDispatchIntentForCommand<
   readonly type: 'dispatch';
   readonly command: TCommandName;
   readonly payload: SagaCommandPayload<TCommandMap, TCommandName>;
+  readonly aggregateId?: string;
   readonly metadata: SagaIntentMetadata;
 };
+
+/** Command envelope shape emitted by aggregate command creators. */
+export interface SagaAggregateCommandEnvelope {
+  readonly type: string;
+  readonly payload: unknown;
+}
+
+/** Aggregate-like input accepted by `ctx.commandsFor(...)`. */
+export type SagaCommandCreators = Record<string, (...args: any[]) => SagaAggregateCommandEnvelope>;
+
+/** Aggregate-like input accepted by `ctx.commandsFor(...)`. */
+export interface SagaAggregateWithCommandCreators<TCommandCreators extends SagaCommandCreators = SagaCommandCreators> {
+  readonly commandCreators: TCommandCreators;
+}
+
+type SagaCommandIntentFactoryFromCreator<
+  TCreator,
+  TCommandMap extends SagaCommandMap,
+  TCommandName extends SagaCommandName<TCommandMap>
+> = TCreator extends (...args: infer TArgs) => infer TEnvelope
+  ? TEnvelope extends { payload: infer TPayload }
+    ? TPayload extends SagaCommandPayload<TCommandMap, TCommandName>
+      ? (
+          ...args: TArgs
+        ) => SagaDispatchIntentForCommand<TCommandMap, TCommandName> & { readonly aggregateId: string }
+      : never
+    : never
+  : never;
+
+/** Typed command-intent creators derived from aggregate command creators. */
+export type SagaCommandsFor<
+  TCommandCreators extends SagaCommandCreators,
+  TCommandMap extends SagaCommandMap
+> = {
+  [TCommandName in Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>]: SagaCommandIntentFactoryFromCreator<
+    TCommandCreators[TCommandName],
+    TCommandMap,
+    TCommandName
+  >;
+};
+
+function mergeSagaIntentMetadata(
+  base: SagaIntentMetadata,
+  override?: Partial<SagaIntentMetadata>
+): SagaIntentMetadata {
+  return {
+    sagaId: override?.sagaId ?? base.sagaId,
+    correlationId: override?.correlationId ?? base.correlationId,
+    causationId: override?.causationId ?? base.causationId
+  };
+}
+
+/**
+ * Creates typed aggregate-driven command intent emitters for saga reducers.
+ *
+ * Returned methods wrap aggregate command creators and emit dispatch intents
+ * without executing commands immediately.
+ */
+export function createSagaCommandsFor<
+  TCommandCreators extends SagaCommandCreators,
+  TCommandMap extends SagaCommandMap
+>(
+  aggregateDef: SagaAggregateWithCommandCreators<TCommandCreators>,
+  aggregateId: string,
+  metadata: SagaIntentMetadata,
+  metadataOverride?: Partial<SagaIntentMetadata>
+): SagaCommandsFor<TCommandCreators, TCommandMap> {
+  const commandIntents = {} as SagaCommandsFor<TCommandCreators, TCommandMap>;
+
+  for (const commandName of Object.keys(aggregateDef.commandCreators)) {
+    const createCommand = aggregateDef.commandCreators[commandName];
+
+    (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
+      const command = createCommand(...args);
+
+      return {
+        type: 'dispatch',
+        command: commandName,
+        payload: command.payload,
+        aggregateId,
+        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+      };
+    };
+  }
+
+  return commandIntents;
+}
 
 /** Union of all typed dispatch intents for the command map. */
 export type SagaDispatchIntent<TCommandMap extends SagaCommandMap> = {
@@ -106,6 +194,11 @@ export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap>
   readonly state: TState;
   readonly metadata: SagaIntentMetadata;
   dispatch: SagaDispatch<TCommandMap>;
+  commandsFor: <TCommandCreators extends SagaCommandCreators>(
+    aggregateDef: SagaAggregateWithCommandCreators<TCommandCreators>,
+    aggregateId: string,
+    metadata?: Partial<SagaIntentMetadata>
+  ) => SagaCommandsFor<TCommandCreators, TCommandMap>;
   schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaScheduleIntent;
   cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaCancelScheduleIntent;
   runActivity: SagaRunActivity;
