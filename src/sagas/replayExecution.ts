@@ -14,12 +14,14 @@ export interface SagaIntentExecutors<TCommandMap extends SagaCommandMap> {
   runActivity?: (intent: SagaRunActivityIntent) => unknown | Promise<unknown>;
 }
 
+/** Outcome emitted per intent during replay-mode suppression. */
 export interface SagaReplayIntentOutcome {
   readonly intentType: 'dispatch' | 'schedule' | 'cancel-schedule' | 'run-activity';
   readonly executed: false;
   readonly reason: 'replay-mode-suppressed';
 }
 
+/** Replay-mode result preserving state and suppressed intent outcomes. */
 export interface SagaReplayExecutionResult<TState> {
   readonly state: TState;
   readonly outcomes: readonly SagaReplayIntentOutcome[];

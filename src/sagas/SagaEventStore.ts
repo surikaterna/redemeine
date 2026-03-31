@@ -8,6 +8,7 @@ import {
   type SagaRetryPolicy
 } from './RetryPolicy';
 
+/** Persisted event recording a reducer-emitted intent. */
 export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly type: 'saga.intent-recorded';
   readonly sagaStreamId: string;
@@ -16,6 +17,7 @@ export interface SagaIntentRecordedEvent<TCommandMap extends SagaCommandMap = Sa
   readonly recordedAt: string;
 }
 
+/** Common lifecycle envelope for intent execution events. */
 export interface SagaIntentLifecycleContext {
   readonly intentKey: string;
   readonly metadata: {
@@ -25,6 +27,7 @@ export interface SagaIntentLifecycleContext {
   };
 }
 
+/** Lifecycle event marking when an intent starts processing. */
 export interface SagaIntentStartedEvent {
   readonly type: 'saga.intent-started';
   readonly sagaStreamId: string;
@@ -32,6 +35,7 @@ export interface SagaIntentStartedEvent {
   readonly startedAt: string;
 }
 
+/** Lifecycle event marking successful intent completion. */
 export interface SagaIntentSucceededEvent {
   readonly type: 'saga.intent-succeeded';
   readonly sagaStreamId: string;
@@ -39,6 +43,7 @@ export interface SagaIntentSucceededEvent {
   readonly succeededAt: string;
 }
 
+/** Lifecycle event marking dispatch of a recorded intent. */
 export interface SagaIntentDispatchedEvent {
   readonly type: 'saga.intent-dispatched';
   readonly sagaStreamId: string;
@@ -46,6 +51,7 @@ export interface SagaIntentDispatchedEvent {
   readonly dispatchedAt: string;
 }
 
+/** Lifecycle event marking failed intent execution. */
 export interface SagaIntentFailedEvent {
   readonly type: 'saga.intent-failed';
   readonly sagaStreamId: string;
@@ -53,6 +59,7 @@ export interface SagaIntentFailedEvent {
   readonly failedAt: string;
 }
 
+/** Lifecycle event recording retry scheduling metadata. */
 export interface SagaIntentRetryScheduledEvent {
   readonly type: 'saga.intent-retry-scheduled';
   readonly sagaStreamId: string;
@@ -64,6 +71,7 @@ export interface SagaIntentRetryScheduledEvent {
   readonly scheduledAt: string;
 }
 
+/** Lifecycle event recording terminal dead-letter outcome. */
 export interface SagaIntentDeadLetteredEvent {
   readonly type: 'saga.intent-dead-lettered';
   readonly sagaStreamId: string;
@@ -82,11 +90,13 @@ export interface SagaIntentDeadLetteredEvent {
   readonly deadLetteredAt: string;
 }
 
+/** Query filters for dead-letter intent events. */
 export interface SagaDeadLetterQuery {
   readonly sagaId?: string;
   readonly intentKey?: string;
 }
 
+/** Union for all persisted intent lifecycle events. */
 export type SagaLifecycleEvent =
   | SagaIntentStartedEvent
   | SagaIntentDispatchedEvent
@@ -166,6 +176,11 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+/**
+ * Creates a deterministic idempotency key for one intent in a saga stream.
+ *
+ * Keys are stable across object key ordering differences in payload metadata.
+ */
 export function createSagaIntentIdempotencyKey<TCommandMap extends SagaCommandMap>(
   sagaStreamId: string,
   intentOrdinal: number,
@@ -174,6 +189,7 @@ export function createSagaIntentIdempotencyKey<TCommandMap extends SagaCommandMa
   const intentHash = hashString(stableSerialize(intent));
   return `${sagaStreamId}:${intentOrdinal}:${intentHash}`;
 }
+
 export interface SagaEventStore {
   appendIntentRecordedBatch<TCommandMap extends SagaCommandMap>(
     sagaStreamId: string,
@@ -185,6 +201,7 @@ export interface SagaEventStore {
 export type SagaIntentRecordedWriter = Pick<SagaEventStore, 'appendIntentRecordedBatch'>;
 export type SagaLifecycleEventWriter = Pick<SagaEventStore, 'appendLifecycleEvent'>;
 
+/** In-memory event store implementation for tests and local orchestration. */
 export class InMemorySagaEventStore implements SagaEventStore {
   private readonly streams = new Map<string, SagaIntentRecordedEvent[]>();
   private readonly lifecycleStreams = new Map<string, SagaLifecycleEvent[]>();
@@ -229,6 +246,7 @@ export class InMemorySagaEventStore implements SagaEventStore {
   }
 }
 
+/** Shared input shape for creating lifecycle append events. */
 export interface SagaIntentLifecycleAppendInput {
   readonly sagaStreamId: string;
   readonly intentKey: string;
@@ -239,11 +257,13 @@ export interface SagaIntentLifecycleAppendInput {
   };
 }
 
+/** Input for explicitly scheduled retry lifecycle events. */
 export interface SagaIntentRetryScheduledAppendInput extends SagaIntentLifecycleAppendInput {
   readonly attempt: number;
   readonly nextAttemptAt: string;
 }
 
+/** Input for retry scheduling derived from retry policy + attempt metadata. */
 export interface SagaIntentRetryFromPolicyAppendInput extends SagaIntentLifecycleAppendInput {
   readonly policy: SagaRetryPolicy;
   readonly attempt: number;
@@ -251,6 +271,7 @@ export interface SagaIntentRetryFromPolicyAppendInput extends SagaIntentLifecycl
   readonly jitter?: number;
 }
 
+/** Input for appending a terminal dead-letter lifecycle event. */
 export interface SagaIntentDeadLetteredAppendInput extends SagaIntentLifecycleAppendInput {
   readonly attempt: number;
   readonly classification: RetryableErrorClassification;
@@ -258,6 +279,7 @@ export interface SagaIntentDeadLetteredAppendInput extends SagaIntentLifecycleAp
   readonly error: unknown;
 }
 
+/** Input for append helper that decides retry vs dead-letter. */
 export interface SagaIntentFailureOutcomeAppendInput extends SagaIntentLifecycleAppendInput {
   readonly error: unknown;
   readonly attempt: number;
@@ -333,6 +355,7 @@ export function decideSagaIntentFailure(
   };
 }
 
+/** Creates an in-memory `saga.intent-started` event object. */
 export function createSagaIntentStartedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -348,6 +371,7 @@ export function createSagaIntentStartedEvent(
   };
 }
 
+/** Creates an in-memory `saga.intent-succeeded` event object. */
 export function createSagaIntentSucceededEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -363,6 +387,7 @@ export function createSagaIntentSucceededEvent(
   };
 }
 
+/** Creates an in-memory `saga.intent-dispatched` event object. */
 export function createSagaIntentDispatchedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -378,6 +403,7 @@ export function createSagaIntentDispatchedEvent(
   };
 }
 
+/** Creates an in-memory `saga.intent-failed` event object. */
 export function createSagaIntentFailedEvent(
   input: SagaIntentLifecycleAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -393,6 +419,7 @@ export function createSagaIntentFailedEvent(
   };
 }
 
+/** Creates an in-memory `saga.intent-retry-scheduled` event object. */
 export function createSagaIntentRetryScheduledEvent(
   input: SagaIntentRetryScheduledAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -412,6 +439,7 @@ export function createSagaIntentRetryScheduledEvent(
   };
 }
 
+/** Creates retry-scheduled event metadata by evaluating retry policy timing. */
 export function createSagaIntentRetryScheduledEventFromPolicy(
   input: SagaIntentRetryFromPolicyAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -428,6 +456,7 @@ export function createSagaIntentRetryScheduledEventFromPolicy(
   );
 }
 
+/** Creates an in-memory `saga.intent-dead-lettered` event object. */
 export function createSagaIntentDeadLetteredEvent(
   input: SagaIntentDeadLetteredAppendInput,
   createTimestamp: () => string = () => new Date().toISOString()
@@ -449,6 +478,7 @@ export function createSagaIntentDeadLetteredEvent(
   };
 }
 
+/** Appends a started lifecycle event and returns the persisted shape. */
 export async function appendSagaIntentStartedEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -459,6 +489,7 @@ export async function appendSagaIntentStartedEvent(
   return event;
 }
 
+/** Appends a succeeded lifecycle event and returns the persisted shape. */
 export async function appendSagaIntentSucceededEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -469,6 +500,7 @@ export async function appendSagaIntentSucceededEvent(
   return event;
 }
 
+/** Appends a dispatched lifecycle event and returns the persisted shape. */
 export async function appendSagaIntentDispatchedEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -479,6 +511,7 @@ export async function appendSagaIntentDispatchedEvent(
   return event;
 }
 
+/** Appends a failed lifecycle event and returns the persisted shape. */
 export async function appendSagaIntentFailedEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentLifecycleAppendInput,
@@ -489,6 +522,7 @@ export async function appendSagaIntentFailedEvent(
   return event;
 }
 
+/** Appends an explicit retry-scheduled lifecycle event. */
 export async function appendSagaIntentRetryScheduledEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentRetryScheduledAppendInput,
@@ -499,6 +533,7 @@ export async function appendSagaIntentRetryScheduledEvent(
   return event;
 }
 
+/** Appends retry scheduling derived from retry policy classification inputs. */
 export async function appendSagaIntentRetryScheduledEventFromPolicy(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentRetryFromPolicyAppendInput,
@@ -509,6 +544,7 @@ export async function appendSagaIntentRetryScheduledEventFromPolicy(
   return event;
 }
 
+/** Appends a dead-letter lifecycle event and returns the persisted shape. */
 export async function appendSagaIntentDeadLetteredEvent(
   eventStore: SagaLifecycleEventWriter,
   input: SagaIntentDeadLetteredAppendInput,
@@ -564,6 +600,7 @@ export async function appendSagaIntentFailureOutcomeEvent(
   );
 }
 
+/** Maps reducer output intents to persisted `saga.intent-recorded` events. */
 export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaCommandMap>(
   sagaStreamId: string,
   output: SagaReducerOutput<TState, TCommandMap>,
@@ -578,6 +615,12 @@ export function createSagaIntentRecordedEvents<TState, TCommandMap extends SagaC
   }));
 }
 
+/**
+ * Persists all reducer intents as one atomic recorded-intent batch.
+ *
+ * Returns the same persisted events so callers can continue execution flow
+ * without reloading the stream.
+ */
 export async function persistSagaReducerOutputIntents<TState, TCommandMap extends SagaCommandMap>(
   sagaStreamId: string,
   output: SagaReducerOutput<TState, TCommandMap>,

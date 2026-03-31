@@ -1,5 +1,6 @@
 import type { SagaCommandMap, SagaDefinition } from './createSaga';
 
+/** Named saga registration entry used by runtime discovery. */
 export interface RegisteredSagaDefinition<
   TState = unknown,
   TCommandMap extends SagaCommandMap = SagaCommandMap
@@ -8,6 +9,7 @@ export interface RegisteredSagaDefinition<
   definition: SagaDefinition<TState, TCommandMap>;
 }
 
+/** Registry contract for saga discovery and lookup. */
 export interface SagaRegistry {
   register<TState, TCommandMap extends SagaCommandMap>(
     saga: RegisteredSagaDefinition<TState, TCommandMap>
@@ -40,10 +42,12 @@ export function createSagaRegistry(): SagaRegistry {
 
 const runtimeSagaRegistry = createSagaRegistry();
 
+/** Returns the shared in-process saga registry instance. */
 export function getSagaRegistry(): SagaRegistry {
   return runtimeSagaRegistry;
 }
 
+/** Registers a named saga in the provided or shared runtime registry. */
 export function registerSaga<TState, TCommandMap extends SagaCommandMap>(
   saga: RegisteredSagaDefinition<TState, TCommandMap>,
   registry: SagaRegistry = runtimeSagaRegistry

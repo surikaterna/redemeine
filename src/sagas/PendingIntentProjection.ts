@@ -12,6 +12,7 @@ import type {
 
 export type PendingIntentStatus = 'pending' | 'started' | 'dispatched' | 'succeeded' | 'failed';
 
+/** Queryable read-model record representing a persisted saga intent. */
 export interface PendingIntentRecord<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   readonly intentKey: string;
   readonly sagaStreamId: string;
@@ -25,6 +26,7 @@ export interface PendingIntentRecord<TCommandMap extends SagaCommandMap = SagaCo
   readonly failedAt?: string;
 }
 
+/** Filters for querying pending-intent projection records. */
 export interface PendingIntentQuery {
   readonly statuses?: readonly PendingIntentStatus[];
   readonly dueAtBeforeOrEqual?: string | Date;

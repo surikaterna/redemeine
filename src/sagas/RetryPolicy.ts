@@ -1,3 +1,4 @@
+/** Retry backoff policy used by saga activity intents. */
 export interface SagaRetryPolicy {
   maxAttempts: number;
   initialBackoffMs: number;
@@ -8,13 +9,20 @@ export interface SagaRetryPolicy {
 
 export type RetryableErrorClassification = 'retryable' | 'non-retryable';
 
+/**
+ * Optional predicate to override retry classification per error.
+ *
+ * Return `undefined` to fall through to default classification rules.
+ */
 export type RetryableErrorPredicate = (error: unknown) => boolean | undefined;
 
+/** Options controlling retryable error classification behavior. */
 export interface RetryableErrorClassificationOptions {
   predicate?: RetryableErrorPredicate;
   useDefaults?: boolean;
 }
 
+/** Accepted time input for retry scheduling calculations. */
 export type RetrySchedulingNow = string | number | Date;
 
 const DEFAULT_RETRYABLE_ERROR_CODES = new Set([
@@ -209,6 +217,7 @@ export function isRetryableError(
   return false;
 }
 
+/** Classifies an error as retryable or non-retryable. */
 export function classifyRetryableError(
   error: unknown,
   options?: RetryableErrorClassificationOptions

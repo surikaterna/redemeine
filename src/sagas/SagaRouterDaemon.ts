@@ -1,9 +1,11 @@
+/** Health event emitted when the daemon starts polling. */
 export interface SagaRouterDaemonStartedHealthEvent {
   readonly type: 'started';
   readonly pollIntervalMs: number;
   readonly startedAt: string;
 }
 
+/** Health event emitted after each poll tick is processed. */
 export interface SagaRouterDaemonTickHealthEvent {
   readonly type: 'tick';
   readonly tickCount: number;
@@ -11,17 +13,20 @@ export interface SagaRouterDaemonTickHealthEvent {
   readonly processedAt: string;
 }
 
+/** Health event emitted when the daemon loop exits. */
 export interface SagaRouterDaemonStoppedHealthEvent {
   readonly type: 'stopped';
   readonly tickCount: number;
   readonly stoppedAt: string;
 }
 
+/** Union of observable daemon health events. */
 export type SagaRouterDaemonHealthEvent =
   | SagaRouterDaemonStartedHealthEvent
   | SagaRouterDaemonTickHealthEvent
   | SagaRouterDaemonStoppedHealthEvent;
 
+/** Optional structured logger hooks for daemon health event fan-out. */
 export interface SagaRouterDaemonLoggerHooks {
   readonly started?: (event: SagaRouterDaemonStartedHealthEvent) => void;
   readonly tick?: (event: SagaRouterDaemonTickHealthEvent) => void;
@@ -50,6 +55,11 @@ export interface SagaRouterDaemonOptions {
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
+/**
+ * Polling daemon seam for routing pending saga intents to worker handlers.
+ *
+ * Current implementation focuses on lifecycle orchestration and observability.
+ */
 export class SagaRouterDaemon {
   private readonly pollIntervalMs: number;
   private readonly logger?: SagaRouterDaemonLoggerHooks;

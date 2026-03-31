@@ -1,3 +1,4 @@
+/** Canonical saga event names used by runtime and docs taxonomy. */
 export const SAGA_EVENT_NAMES = [
   'saga.event-observed',
   'saga.intent-recorded',
@@ -15,4 +16,5 @@ export const SAGA_EVENT_NAMES = [
   'saga.failed'
 ] as const;
 
+/** Union type of canonical saga event names. */
 export type SagaEventName = (typeof SAGA_EVENT_NAMES)[number];

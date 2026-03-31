@@ -114,28 +114,33 @@ Saga intents are persisted as explicit execution requests and grouped by categor
 
 ### Module Placement and Structure
 
-Saga modules live under `src/sagas/` and mirror projection layout conventions under `src/projections/` (feature-first folders, consistent naming, and collocated wiring/types).
+Saga runtime modules currently live under `src/sagas/` as shared building blocks for definition, persistence, projection, replay, retry policy, dedupe, and daemon seams.
 
-Canonical placement:
+Current baseline placement:
 
 ```text
 src/
   sagas/
-    <saga-name>/
-      index.ts
-      intents.ts
-      events.ts
-      reducer.ts
-      workers.ts
+    index.ts
+    createSaga.ts
+    events.ts
+    SagaEventStore.ts
+    PendingIntentProjection.ts
+    DedupeGuard.ts
+    RetryPolicy.ts
+    replayExecution.ts
+    SagaRouterDaemon.ts
+    SagaRegistry.ts
 ```
 
 Notes:
 
-- S01 baseline implementation references live in `src/sagas/events.ts` and are re-exported by `src/sagas/index.ts`.
-- `events.ts` defines the canonical saga event taxonomy used by that saga.
-- `intents.ts` defines typed intent contracts and payloads.
-- `reducer.ts` applies saga events to saga state (event-sourced progression).
-- `workers.ts` executes intents and emits subsequent saga events.
-- `index.ts` is the saga module entrypoint, analogous to projection module entrypoints.
+- `events.ts` defines the canonical saga taxonomy exported via `SAGA_EVENT_NAMES`.
+- `createSaga.ts` defines typed saga reducers and intent contracts.
+- `SagaEventStore.ts` persists intent-recorded and lifecycle events.
+- `PendingIntentProjection.ts` builds queryable pending-intent state.
+- `DedupeGuard.ts` provides replay/recovery no-op decisions.
+- `replayExecution.ts` guarantees replay-mode side-effect suppression.
+- `SagaRouterDaemon.ts` exposes the worker polling/orchestration seam.
 
-This keeps saga architecture discoverable, aligns mental models with existing projection conventions, and avoids introducing a parallel folder taxonomy.
+As saga feature slices progress, these shared modules can be complemented by feature-first saga folders where appropriate.

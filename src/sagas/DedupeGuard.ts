@@ -8,11 +8,13 @@ export type SagaExecutionDecisionReason =
   | 'no-op-already-succeeded'
   | 'skip-intent-not-found';
 
+/** Decision returned by dedupe checks before executing an intent. */
 export interface SagaExecutionDecision {
   readonly shouldExecute: boolean;
   readonly reason: SagaExecutionDecisionReason;
 }
 
+/** Event-store capability required for projection-based dedupe checks. */
 export interface SagaEventStoreIntentReader<TCommandMap extends SagaCommandMap = SagaCommandMap> {
   loadIntentRecordedEvents(sagaStreamId: string): Promise<readonly SagaIntentRecordedEvent<TCommandMap>[]>;
   loadLifecycleEvents(sagaStreamId: string): Promise<readonly SagaLifecycleEvent[]>;
@@ -55,6 +57,10 @@ export function decideIntentExecutionFromProjection<TCommandMap extends SagaComm
   return decideFromIntentRecord(projection.getByIntentKey(intentKey));
 }
 
+/**
+ * Rehydrates pending intent state from the event store and decides if an intent
+ * should execute or be skipped as a no-op.
+ */
 export async function decideIntentExecutionFromEventStore<TCommandMap extends SagaCommandMap>(
   eventStore: SagaEventStoreIntentReader<TCommandMap>,
   sagaStreamId: string,
