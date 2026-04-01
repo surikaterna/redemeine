@@ -121,4 +121,31 @@ describe('saga trigger builder DSL (definition-only)', () => {
         return true;
       });
   });
+
+  it('preserves chained when order and mapped payload for metadata checks', () => {
+    const triggers = createSagaTriggerBuilder<{ sagaId: string; shouldStart: boolean }>();
+
+    const firstWhen = (source: { orderId: string; amount: number }, startInput: { sagaId: string; shouldStart: boolean }) => (
+      source.orderId === startInput.sagaId
+    );
+    const secondWhen = (_source: { orderId: string; amount: number }, startInput: { sagaId: string; shouldStart: boolean }) => (
+      startInput.shouldStart
+    );
+
+    const trigger = triggers
+      .event<{ orderId: string; amount: number }>({
+        event: 'orders.created',
+        toStartInput: (source) => ({ sagaId: source.orderId, shouldStart: source.amount > 0 })
+      })
+      .when(firstWhen)
+      .when(secondWhen)
+      .build();
+
+    const mapped = trigger.toStartInput({ orderId: 'order-123', amount: 42 });
+
+    expect(mapped).toEqual({ sagaId: 'order-123', shouldStart: true });
+    expect(trigger.when).toEqual([firstWhen, secondWhen]);
+    expect(trigger.when[0]({ orderId: 'order-123', amount: 42 }, mapped)).toBe(true);
+    expect(trigger.when[1]({ orderId: 'order-123', amount: 42 }, mapped)).toBe(true);
+  });
 });
