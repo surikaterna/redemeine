@@ -144,32 +144,14 @@ _Builder interface for creating projections fluently_
 - `.join()` (Returns `this`) - Add a joined stream for correlating related aggregates
 - `.build()` - Build the final projection definition
 
-### `createSaga`
-_Public saga definition entrypoint for composing saga behavior._
+### `SagaBuilder`
+_Fluent builder for composing a saga definition._
 
-Use `createSaga<TCommandMap>()` and typed saga context helpers (`ctx.dispatch`, `ctx.schedule`, `ctx.runActivity`) to define saga workflows.
-
-### `Saga Registry Helpers`
-_Public saga registration/discovery helpers._
-
-- `createSagaRegistry()`
-- `registerSaga(...)`
-- `getSagaRegistry()`
-
-### `Saga Retry Helpers`
-_Public retry policy validation/scheduling helpers._
-
-- `validateRetryPolicy(...)`
-- `computeNextAttemptAt(...)`
-- `isRetryableError(...)`
-- `classifyRetryableError(...)`
-
-### `SAGA_EVENT_NAMES`
-_Canonical public saga event taxonomy constants._
-
-### Saga API boundary
-- Treat runtime execution/persistence modules as internal implementation detail.
-- Use only the documented public saga exports above.
+**Methods:**
+- `.initialState()` (Returns `this`)
+- `.correlate()` (Returns `this`)
+- `.on()` (Returns `this`)
+- `.build()`
 
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
