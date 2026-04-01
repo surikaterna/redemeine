@@ -17,6 +17,8 @@ Public export barrel (`src/sagas/index.ts`):
 - `createSaga`
 - `SagaRetryPolicy` + retry helpers
 - `createSagaAggregate`
+- `startPolicy` typed helper API
+- trigger start contracts (`SagaTriggerStartContract`)
 
 Usage note:
 
@@ -96,6 +98,28 @@ Policy shape: `SagaRetryPolicy` (`maxAttempts`, `initialBackoffMs`, `backoffCoef
 - `commandsFor(Aggregate, aggregateId, metadataOverride?)` returns typed command factories derived from aggregate command creators.
 - `dispatchTo` is the common variable name for that typed command factory.
 - Prefer aggregate command creators over string command names for dispatch typing.
+
+## Start policy helpers (typed, no magic strings)
+
+Use `startPolicy` helpers instead of raw string literals when defining trigger start behavior.
+
+```ts
+import { startPolicy, type SagaTriggerStartContract } from 'redemeine';
+
+const triggerConfig: SagaTriggerStartContract = {
+  startPolicy: startPolicy.ifIdle()
+};
+
+const joinConfig: SagaTriggerStartContract = {
+  startPolicy: startPolicy.joinExisting()
+};
+
+const restartConfig: SagaTriggerStartContract = {
+  startPolicy: startPolicy.restart({ mode: 'graceful', reason: 'manual replay' })
+};
+```
+
+Accepted restart modes are `'graceful' | 'force'`.
 
 ## SagaAggregate structure-only model
 
