@@ -22,7 +22,7 @@ const BillingAggregate = {
 
 describe('R5 acceptance: ctx.commandsFor aggregate wrapper typing', () => {
   it('infers command methods and payload shape from aggregate command creators', () => {
-    createSaga<{ attempts: number }>('billing-saga')
+    createSaga<{ attempts: number }>({ name: 'billing-saga' })
       .initialState(() => ({ attempts: 0 }))
       .on(BillingAggregate, {
         started: (state, event, ctx) => {

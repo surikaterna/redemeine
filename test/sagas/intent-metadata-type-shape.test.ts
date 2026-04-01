@@ -18,7 +18,7 @@ const InvoiceAggregate = {
 
 describe('S07 acceptance: intent metadata type shape', () => {
   it('ctx exposes saga metadata and all intent helpers return metadata fields', () => {
-    createSaga<{ attempted: number }>('invoice-saga')
+    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (state, _event, ctx) => {
@@ -65,7 +65,7 @@ describe('S07 acceptance: intent metadata type shape', () => {
   });
 
   it('rejects invalid metadata shapes at compile time', () => {
-    createSaga<{ attempted: number }>()
+    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
