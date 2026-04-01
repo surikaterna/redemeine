@@ -3,7 +3,7 @@ import {
   createSaga,
   type SagaIntent,
   type SagaReducerOutput
-} from '../../src/sagas/internal/runtime';
+} from '../../src/sagas';
 
 type BillingCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };

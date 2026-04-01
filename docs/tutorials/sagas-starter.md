@@ -2,32 +2,31 @@
 
 This starter walks through the minimum moving parts for building an event-sourced saga in Redemeine.
 
-> ⚠️ **Breaking change:** this tutorial now focuses on the stable public API (`createSaga`, retry helpers, registry, event taxonomy). Runtime execution/persistence modules are internal and no longer public imports.
+> ⚠️ **Breaking change:** this tutorial now focuses on the minimal public API (`createSaga` + retry helpers).
 
 You will:
 
-1. Define a typed command map.
+1. Define typed command contracts.
 2. Build a saga with `createSaga`.
 3. Attach retry policy where needed.
-4. Register saga definitions for runtime discovery.
 
 ## 1) Define command contracts
 
 ```ts
-type SagaCommandMap = {
+type SagaCommands = {
   'billing.charge': { invoiceId: string; amount: number };
   'billing.notify': { invoiceId: string; channel: 'email' | 'sms' };
 };
 ```
 
-`createSaga<SagaCommandMap>()` uses this map to type-check every `ctx.dispatch(...)` call.
+`createSaga<SagaCommands>()` uses this command map to type-check every `ctx.dispatch(...)` call.
 
 ## 2) Build the saga definition
 
 ```ts
 import { createSaga } from 'redemeine';
 
-export const BillingSaga = createSaga<SagaCommandMap>()
+export const BillingSaga = createSaga<SagaCommands>()
   .initialState(() => ({ attempts: 0, settled: false }))
   .correlate('invoice', event => event)
   .on('invoice', {
@@ -74,7 +73,7 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<SagaCommandMap>()
+const sagaWithActivity = createSaga<SagaCommands>()
   .initialState(() => ({ attempts: 0, settled: false }))
   .on('invoice', {
     created: ctx => ({
@@ -91,47 +90,18 @@ const sagaWithActivity = createSaga<SagaCommandMap>()
 
 `ctx.runActivity(...)` keeps retries explicit and typed while the runtime handles scheduling/execution internally.
 
-## 4) Register sagas for runtime discovery
+## 4) Keep integration boundaries explicit
 
-```ts
-import {
-  createSagaRegistry,
-  registerSaga,
-  getSagaRegistry
-} from 'redemeine';
-
-const registry = createSagaRegistry();
-
-registerSaga({
-  name: 'billing',
-  definition: BillingSaga
-}, registry);
-
-const discovered = registry.get('billing');
-
-// shared process-level registry is also available
-registerSaga({
-  name: 'billing-shared',
-  definition: BillingSaga
-});
-
-const shared = getSagaRegistry().list();
-```
-
-## Runtime architecture (internal-only)
-
-Redemeine persists and executes saga intents through an internal runtime system. Those modules are intentionally not part of the stable public API.
+Saga definitions are pure contracts: they describe state transitions and emitted intents.
 
 In practice:
 
 - Keep consumer code on exported saga definition APIs.
-- Avoid importing runtime execution/persistence helpers directly from internal paths.
-- Treat internal runtime placement as implementation detail.
+- Avoid importing runtime execution/persistence helpers from internal paths.
+- Treat runtime wiring as application-level integration detail.
 
 ## Optional public seams
 
-- `createSagaRegistry`, `registerSaga`, `getSagaRegistry`: register and discover saga definitions.
 - `validateRetryPolicy`, `computeNextAttemptAt`, `isRetryableError`, `classifyRetryableError`: retry behavior helpers.
-- `SAGA_EVENT_NAMES`: canonical saga taxonomy constants.
 
 For full API details, see `/docs/reference/sagas-reference` and `/docs/api/`.

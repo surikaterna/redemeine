@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../../src/sagas/internal/runtime';
+import { createSaga } from '../../src/sagas';
 
 type InvoiceCommandMap = {
   'invoice.create': { invoiceId: string; amount: number };
