@@ -30,8 +30,8 @@ export class SagaIdentityValidationError extends Error {
   }
 }
 
-const SAGA_NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
-const SAGA_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+const SAGA_NAMESPACE_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9]+)*$/;
+const SAGA_NAME_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 
 export function validateSagaNamespace(namespace: string): string {
   if (!SAGA_NAMESPACE_PATTERN.test(namespace)) {
@@ -40,7 +40,7 @@ export function validateSagaNamespace(namespace: string): string {
       field: 'namespace',
       value: namespace,
       message:
-        'Saga identity namespace must start with a lowercase letter and contain only lowercase letters, numbers, dots, or dashes.'
+        'Saga identity namespace must be lowercase dot-delimited segments containing only letters and numbers.'
     });
   }
 
@@ -54,7 +54,7 @@ export function validateSagaName(name: string): string {
       field: 'name',
       value: name,
       message:
-        'Saga identity name must start with a lowercase letter and contain only lowercase letters, numbers, or dashes.'
+        'Saga identity name must be lowercase and may use ., _, or - as separators between alphanumeric tokens.'
     });
   }
 
@@ -98,7 +98,7 @@ export function parseSagaIdentityUrn(urn: string): SagaIdentity {
   }
 
   const [, , , namespace, name, versionToken] = parts;
-  const versionMatch = /^v(\d+)$/.exec(versionToken);
+  const versionMatch = /^v([1-9][0-9]*)$/.exec(versionToken);
   if (!versionMatch) {
     throw new SagaIdentityValidationError({
       code: 'SAGA_IDENTITY_MALFORMED_URN',

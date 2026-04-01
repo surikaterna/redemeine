@@ -38,15 +38,15 @@ These three fields are authoritative. Persisted or transmitted identity strings 
 
 ### Validation regex
 
-- `namespace`: `^[a-z](?:[a-z0-9_]*(?:\.[a-z0-9_]+)*)$`
-  - Lowercase segments separated by `.`
-  - Each segment starts with `[a-z]`
-  - Segment characters allowed: `[a-z0-9_]`
-- `name`: `^[a-z](?:[a-z0-9_]*(?:-[a-z0-9_]+)*)$`
-  - Lowercase tokens optionally separated by `-`
-  - Must start with `[a-z]`
-  - Token characters allowed: `[a-z0-9_]`
-- `version`: `^[1-9][0-9]*$` (string form) and must parse to a safe integer in numeric form
+- `namespace`: `^[a-z0-9]+(?:\.[a-z0-9]+)*$`
+  - Lowercase alphanumeric segments separated by `.`
+  - Segment characters allowed: `[a-z0-9]`
+- `name`: `^[a-z0-9]+(?:[._-][a-z0-9]+)*$`
+  - Lowercase alphanumeric tokens
+  - Optional separators between tokens: `.`, `_`, `-`
+- `version`:
+  - Number form: must satisfy `Number.isSafeInteger(version) && version >= 1`
+  - String form: must match `^[1-9][0-9]*$` exactly (no prefixes/suffixes/decimals)
 
 ### Normalization rules
 
@@ -54,9 +54,9 @@ Apply normalization before validation and derivation:
 
 1. Trim leading/trailing whitespace from `namespace` and `name`.
 2. Lowercase `namespace` and `name`.
-3. Collapse internal whitespace sequences to `-` for `name` and to `.` for `namespace` only when explicitly converting user-entered free text; otherwise preserve separators and fail validation if illegal characters remain.
+3. Do not rewrite or infer separators beyond trimming/lowercasing; invalid separator or whitespace usage fails validation.
 4. `version` must be an integer (`Number.isSafeInteger(version)`) and `version >= 1`.
-5. Do not silently coerce non-numeric version strings (for example, `"01"`, `"v2"`, `"2.0"`) at runtime integration boundaries.
+5. Do not silently coerce non-canonical version strings (for example, `"01"`, `"v2"`, `"2.0"`) at runtime integration boundaries.
 
 ### Derived identity fields
 

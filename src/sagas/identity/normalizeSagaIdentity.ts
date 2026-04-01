@@ -6,6 +6,7 @@ import {
 
 const NAMESPACE_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9]+)*$/;
 const NAME_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+const VERSION_STRING_PATTERN = /^[1-9][0-9]*$/;
 
 const normalizeNamespace = (namespace: string): string => namespace.trim().toLowerCase();
 
@@ -13,10 +14,17 @@ const normalizeName = (name: string): string => name.trim().toLowerCase();
 
 const normalizeVersion = (version: SagaIdentityInput['version']): number => {
   const parsed = typeof version === 'string'
-    ? Number.parseInt(version.trim(), 10)
+    ? (() => {
+        const trimmed = version.trim();
+        if (!VERSION_STRING_PATTERN.test(trimmed)) {
+          return Number.NaN;
+        }
+
+        return Number(trimmed);
+      })()
     : version;
 
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new SagaIdentityNormalizationError(
       'invalid_version',
       'Saga identity version must be a positive integer.'

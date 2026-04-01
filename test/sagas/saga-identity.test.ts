@@ -26,6 +26,16 @@ describe('saga identity validation and error mapping', () => {
     expect(toSagaIdentityUrn(identity)).toBe('urn:redemeine:saga:commerce.billing:invoice-reminder:v2');
   });
 
+  it('accepts canonical separators used by normalization contract', () => {
+    const identity = validateSagaIdentity({
+      namespace: '1commerce.billing2',
+      name: 'invoice.reminder_v2',
+      version: 3
+    });
+
+    expect(toSagaIdentityUrn(identity)).toBe('urn:redemeine:saga:1commerce.billing2:invoice.reminder_v2:v3');
+  });
+
   it('maps malformed namespace to deterministic typed error', () => {
     try {
       validateSagaNamespace('Commerce/Billing');
@@ -65,6 +75,8 @@ describe('saga identity validation and error mapping', () => {
     const malformedUrns = [
       'urn:redemeine:saga:commerce.billing:invoice-reminder',
       'urn:redemeine:saga:commerce.billing:invoice-reminder:version2',
+      'urn:redemeine:saga:commerce.billing:invoice-reminder:v01',
+      'urn:redemeine:saga:commerce.billing:invoice-reminder:v2.0',
       'urn:other:saga:commerce.billing:invoice-reminder:v2'
     ];
 

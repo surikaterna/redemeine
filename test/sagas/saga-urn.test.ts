@@ -15,7 +15,7 @@ describe('saga URN derivation', () => {
 
   it('derives canonical saga instance URN with explicit instance id', () => {
     expect(deriveSagaInstanceUrn(identity, 'instance-42')).toBe(
-      'urn:redemeine:saga-instance:commerce:checkout:v3:instance-42'
+      'urn:redemeine:saga:commerce:checkout:v3:instance:instance-42'
     );
   });
 

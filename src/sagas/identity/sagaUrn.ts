@@ -34,7 +34,7 @@ export function deriveSagaUrn(identity: SagaStructuredIdentity): string {
 /**
  * Derive canonical saga instance URN from identity and explicit instance id.
  *
- * Format: `urn:redemeine:saga-instance:<namespace>:<name>:v<version>:<instanceId>`
+ * Format: `urn:redemeine:saga:<namespace>:<name>:v<version>:instance:<instanceId>`
  */
 export function deriveSagaInstanceUrn(identity: SagaStructuredIdentity, instanceId: string): string {
   assertNonEmptyString(instanceId, 'instanceId');
@@ -45,5 +45,5 @@ export function deriveSagaInstanceUrn(identity: SagaStructuredIdentity, instance
   assertNonEmptyString(name, 'name');
   assertVersion(version);
 
-  return `urn:redemeine:saga-instance:${namespace}:${name}:v${version}:${instanceId}`;
+  return `${deriveSagaUrn(identity)}:instance:${instanceId}`;
 }

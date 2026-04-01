@@ -69,6 +69,24 @@ describe('saga identity normalization', () => {
     expect(() => normalizeSagaIdentity({
       namespace: 'billing.invoice',
       name: 'payment-flow',
+      version: '2.0'
+    })).toThrow(SagaIdentityNormalizationError);
+
+    expect(() => normalizeSagaIdentity({
+      namespace: 'billing.invoice',
+      name: 'payment-flow',
+      version: 'v2'
+    })).toThrow(SagaIdentityNormalizationError);
+
+    expect(() => normalizeSagaIdentity({
+      namespace: 'billing.invoice',
+      name: 'payment-flow',
+      version: '01'
+    })).toThrow(SagaIdentityNormalizationError);
+
+    expect(() => normalizeSagaIdentity({
+      namespace: 'billing.invoice',
+      name: 'payment-flow',
       version: 0
     })).toThrow(SagaIdentityNormalizationError);
 
