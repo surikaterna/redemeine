@@ -22,10 +22,10 @@ describe('createSaga ctx schedule/retry helper typing', () => {
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: async (state, _event, ctx) => {
-          ctx.schedule('invoice-reminder', 5_000);
-          ctx.cancelSchedule('invoice-reminder');
+          ctx.actions.core.schedule('invoice-reminder', 5_000);
+          ctx.actions.core.cancelSchedule('invoice-reminder');
 
-          await ctx.runActivity(
+          await ctx.actions.core.runActivity(
             'send-reminder',
             () => Promise.resolve('ok'),
             {
@@ -50,15 +50,15 @@ describe('createSaga ctx schedule/retry helper typing', () => {
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
           // @ts-expect-error delay must be a number
-          ctx.schedule('invoice-reminder', '5000');
+          ctx.actions.core.schedule('invoice-reminder', '5000');
 
           // @ts-expect-error id must be a string
-          ctx.cancelSchedule(123);
+          ctx.actions.core.cancelSchedule(123);
 
           // @ts-expect-error closure must be a function
-          ctx.runActivity('send-reminder', 'not-a-function');
+          ctx.actions.core.runActivity('send-reminder', 'not-a-function');
 
-          ctx.runActivity('send-reminder', () => undefined, {
+          ctx.actions.core.runActivity('send-reminder', () => undefined, {
             // @ts-expect-error retry policy must include numeric maxAttempts
             maxAttempts: '3',
             initialBackoffMs: 250,
@@ -66,7 +66,7 @@ describe('createSaga ctx schedule/retry helper typing', () => {
           });
 
           // @ts-expect-error retry policy requires backoffCoefficient
-          ctx.runActivity('send-reminder', () => undefined, {
+          ctx.actions.core.runActivity('send-reminder', () => undefined, {
             maxAttempts: 3,
             initialBackoffMs: 250
           });
