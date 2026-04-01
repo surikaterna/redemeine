@@ -332,6 +332,55 @@ export type SagaHandlers<
   [TEventName in SagaAggregateEventName<TAggregate>]?: SagaHandler<TState, TAggregate, TEventName, TContextExtensions>;
 };
 
+/** Handler used by trigger-based saga starts before any aggregate events. */
+export type SagaStartHandler<
+  TStartInput,
+  TState,
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
+> = (
+  start: TStartInput,
+  ctx: SagaIntentContext<TContextExtensions>
+) => SagaHandlerResult;
+
+/** Resolver that maps normalized start input to a correlation key. */
+export type SagaStartCorrelationResolver<TStartInput, TCorrelationId = unknown> = (
+  start: TStartInput
+) => TCorrelationId;
+
+/** Normalized trigger contract shape retained in saga definition metadata. */
+export interface SagaTriggerContract<
+  TStartInput,
+  TTriggerInput = unknown,
+  TKind extends string = string
+> {
+  readonly kind: TKind;
+  readonly toStartInput: (trigger: TTriggerInput) => TStartInput;
+  readonly when?: (trigger: TTriggerInput) => boolean;
+  readonly hasWhen: boolean;
+}
+
+/** Trigger definition accepted by `.triggeredBy(...)`. */
+export interface SagaTriggerDefinition<
+  TStartInput,
+  TTriggerInput = unknown,
+  TKind extends string = string
+> {
+  readonly kind: TKind;
+  readonly toStartInput: (trigger: TTriggerInput) => TStartInput;
+  readonly when?: (trigger: TTriggerInput) => boolean;
+}
+
+/** Normalized start/correlation/trigger metadata exported on saga definitions. */
+export interface SagaStartDslContracts<TStartInput = unknown, TCorrelationId = unknown> {
+  readonly start?: {
+    readonly kind: 'definition-only';
+  };
+  readonly correlation?: {
+    readonly correlateBy: SagaStartCorrelationResolver<TStartInput, TCorrelationId>;
+  };
+  readonly triggers: readonly SagaTriggerContract<TStartInput, unknown, string>[];
+}
+
 /** Built saga definition consumed by runtime execution layers. */
 export interface SagaDefinition<
   TState = unknown,
@@ -339,6 +388,8 @@ export interface SagaDefinition<
 > {
   name: string;
   initialState: SagaInitialStateFactory<TState>;
+  start?: SagaStartHandler<unknown, TState, TContextExtensions>;
+  startContracts: SagaStartDslContracts<unknown, unknown>;
   correlations: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
@@ -359,6 +410,42 @@ export interface SagaBuilder<
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TContextExtensions>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState, TContextExtensions>;
   on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate, TContextExtensions>): SagaBuilder<TState, TContextExtensions>;
+  start<TStartInput>(
+    handler: SagaStartHandler<TStartInput, TState, TContextExtensions>
+  ): SagaBuilderAwaitingCorrelation<TState, TContextExtensions, TStartInput>;
+  build(): SagaDefinition<TState, TContextExtensions>;
+}
+
+/** Builder phase after `start(...)` and before required `correlateBy(...)`. */
+export interface SagaBuilderAwaitingCorrelation<
+  TState,
+  TContextExtensions extends SagaPluginContextExtensions,
+  TStartInput
+> {
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderAwaitingCorrelation<TNextState, TContextExtensions, TStartInput>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderAwaitingCorrelation<TState, TContextExtensions, TStartInput>;
+  on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate, TContextExtensions>): SagaBuilderAwaitingCorrelation<TState, TContextExtensions, TStartInput>;
+  correlateBy<TCorrelationId>(
+    correlate: SagaStartCorrelationResolver<TStartInput, TCorrelationId>
+  ): SagaBuilderCorrelated<TState, TContextExtensions, TStartInput, TCorrelationId>;
+}
+
+/** Builder phase after `correlateBy(...)`, where triggers and build are available. */
+export interface SagaBuilderCorrelated<
+  TState,
+  TContextExtensions extends SagaPluginContextExtensions,
+  TStartInput,
+  TCorrelationId
+> {
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderCorrelated<TNextState, TContextExtensions, TStartInput, TCorrelationId>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderCorrelated<TState, TContextExtensions, TStartInput, TCorrelationId>;
+  on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate, TContextExtensions>): SagaBuilderCorrelated<TState, TContextExtensions, TStartInput, TCorrelationId>;
+  correlateBy<TNextCorrelationId>(
+    correlate: SagaStartCorrelationResolver<TStartInput, TNextCorrelationId>
+  ): SagaBuilderCorrelated<TState, TContextExtensions, TStartInput, TNextCorrelationId>;
+  triggeredBy<TTriggerInput, TKind extends string = string>(
+    trigger: SagaTriggerDefinition<TStartInput, TTriggerInput, TKind>
+  ): SagaBuilderCorrelated<TState, TContextExtensions, TStartInput, TCorrelationId>;
   build(): SagaDefinition<TState, TContextExtensions>;
 }
 
@@ -369,6 +456,8 @@ export interface CreateSagaOptions {
 interface SagaDefinitionDraft {
   name: string;
   initialState: SagaInitialStateFactory<unknown>;
+  start?: SagaStartHandler<unknown, unknown>;
+  startContracts: SagaStartDslContracts<unknown, unknown>;
   correlations: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
@@ -415,26 +504,121 @@ function createSagaBuilder<
   TState,
   TContextExtensions extends SagaPluginContextExtensions
 >(state: SagaDefinitionDraft): SagaBuilder<TState, TContextExtensions> {
+  const addCorrelation = (aggregate: SagaAggregateDefinition, correlate: SagaCorrelationFactory) => {
+    state.correlations.push({
+      aggregate,
+      aggregateType: getAggregateType(aggregate),
+      correlate
+    });
+  };
+
+  const addHandlers = (
+    aggregate: SagaAggregateDefinition,
+    handlers: Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>
+  ) => {
+    state.handlers.push({
+      aggregate,
+      aggregateType: getAggregateType(aggregate),
+      handlers: handlers as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>
+    });
+  };
+
+  const createAwaitingCorrelationBuilder = <TLocalState, TStartInput>(): SagaBuilderAwaitingCorrelation<
+    TLocalState,
+    TContextExtensions,
+    TStartInput
+  > => ({
+    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+      state.initialState = factory as SagaInitialStateFactory<unknown>;
+      return createAwaitingCorrelationBuilder<TNextState, TStartInput>();
+    },
+    correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
+      addCorrelation(aggregate, correlate);
+      return createAwaitingCorrelationBuilder<TLocalState, TStartInput>();
+    },
+    on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TLocalState, TAggregate, TContextExtensions>) {
+      addHandlers(aggregate, handlers as unknown as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>);
+      return createAwaitingCorrelationBuilder<TLocalState, TStartInput>();
+    },
+    correlateBy<TCorrelationId>(correlate: SagaStartCorrelationResolver<TStartInput, TCorrelationId>) {
+      state.startContracts = {
+        ...state.startContracts,
+        correlation: {
+          correlateBy: correlate as SagaStartCorrelationResolver<unknown, unknown>
+        }
+      };
+      return createCorrelatedBuilder<TLocalState, TStartInput, TCorrelationId>();
+    }
+  });
+
+  const createCorrelatedBuilder = <
+    TLocalState,
+    TStartInput,
+    TCorrelationId
+  >(): SagaBuilderCorrelated<TLocalState, TContextExtensions, TStartInput, TCorrelationId> => ({
+    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+      state.initialState = factory as SagaInitialStateFactory<unknown>;
+      return createCorrelatedBuilder<TNextState, TStartInput, TCorrelationId>();
+    },
+    correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
+      addCorrelation(aggregate, correlate);
+      return createCorrelatedBuilder<TLocalState, TStartInput, TCorrelationId>();
+    },
+    on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TLocalState, TAggregate, TContextExtensions>) {
+      addHandlers(aggregate, handlers as unknown as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>);
+      return createCorrelatedBuilder<TLocalState, TStartInput, TCorrelationId>();
+    },
+    correlateBy<TNextCorrelationId>(correlate: SagaStartCorrelationResolver<TStartInput, TNextCorrelationId>) {
+      state.startContracts = {
+        ...state.startContracts,
+        correlation: {
+          correlateBy: correlate as SagaStartCorrelationResolver<unknown, unknown>
+        }
+      };
+      return createCorrelatedBuilder<TLocalState, TStartInput, TNextCorrelationId>();
+    },
+    triggeredBy<TTriggerInput, TKind extends string = string>(
+      trigger: SagaTriggerDefinition<TStartInput, TTriggerInput, TKind>
+    ) {
+      const normalizedTrigger: SagaTriggerContract<unknown, unknown, string> = {
+        kind: trigger.kind,
+        toStartInput: trigger.toStartInput as (trigger: unknown) => unknown,
+        when: trigger.when as ((trigger: unknown) => boolean) | undefined,
+        hasWhen: typeof trigger.when === 'function'
+      };
+      state.startContracts = {
+        ...state.startContracts,
+        triggers: [...state.startContracts.triggers, normalizedTrigger]
+      };
+      return createCorrelatedBuilder<TLocalState, TStartInput, TCorrelationId>();
+    },
+    build() {
+      return state as SagaDefinition<TLocalState, TContextExtensions>;
+    }
+  });
+
   return {
     initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createSagaBuilder<TNextState, TContextExtensions>(state);
     },
-    correlate(aggregate, correlate) {
-      state.correlations.push({
-        aggregate,
-        aggregateType: getAggregateType(aggregate),
-        correlate
-      });
+    correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
+      addCorrelation(aggregate, correlate);
       return createSagaBuilder<TState, TContextExtensions>(state);
     },
-    on(aggregate, handlers) {
-      state.handlers.push({
-        aggregate,
-        aggregateType: getAggregateType(aggregate),
-        handlers: handlers as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>
-      });
+    on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate, TContextExtensions>) {
+      addHandlers(aggregate, handlers as unknown as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>);
       return createSagaBuilder<TState, TContextExtensions>(state);
+    },
+    start<TStartInput>(handler: SagaStartHandler<TStartInput, TState, TContextExtensions>) {
+      state.start = handler as SagaStartHandler<unknown, unknown>;
+      state.startContracts = {
+        ...state.startContracts,
+        start: {
+          kind: 'definition-only'
+        }
+      };
+      return createAwaitingCorrelationBuilder<TState, TStartInput>();
     },
     build() {
       return state as SagaDefinition<TState, TContextExtensions>;
@@ -457,6 +641,12 @@ export function createSaga<
   const state: SagaDefinitionDraft = {
     name,
     initialState: () => undefined,
+    start: undefined,
+    startContracts: {
+      start: undefined,
+      correlation: undefined,
+      triggers: []
+    },
     correlations: [],
     handlers: []
   };
