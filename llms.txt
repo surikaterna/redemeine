@@ -53,6 +53,92 @@ export const UserAggregate = new AggregateBuilder<UserState>()
   })
   .build();
 
+## 🧭 Saga Definition Guidance (Manifest-First)
+
+Use the saga API as a **definition contract**, not a plugin runtime executor.
+
+- Prefer `createSaga({ name, plugins? })`.
+- Define plugin manifests with `defineSagaPlugin({ plugin_key, actions })`.
+- Call plugin actions with `ctx.actions.<plugin_key>.<action>(...)`.
+- For `request_response` actions, route with:
+  - `.withData(...)`
+  - `.onResponse(token)`
+  - `.onError(token)`
+- Use durable named token routing only. Persisted routing metadata uses handler keys/data (`response_handler_key`, `error_handler_key`, `handler_data`) — do not rely on inline callback persistence.
+- Naming convention: camelCase code keys, snake_case wire/persisted metadata fields.
+
+Canonical mixed-action example:
+
+```ts
+import { createSaga, defineSagaPlugin } from 'redemeine';
+
+type BillingSagaState = { attempts: number; settled: boolean };
+
+const InfraPlugin = defineSagaPlugin({
+  plugin_key: 'infra',
+  actions: {
+    scheduleCommand: {
+      action_kind: 'void',
+      build: (name: 'billing.retry', delayMs: number) => ({ name, delayMs })
+    }
+  }
+});
+
+const HttpPlugin = defineSagaPlugin({
+  plugin_key: 'http',
+  actions: {
+    get: {
+      action_kind: 'request_response',
+      build: (url: string) => ({ url })
+    }
+  }
+});
+
+const BillingAggregate = {
+  __aggregateType: 'billing',
+  pure: {
+    eventProjectors: {
+      created: (_state: unknown, _event: { payload: { invoiceId: string } }) => undefined
+    }
+  },
+  commandCreators: {
+    charge: (invoiceId: string, amount: number) => ({
+      type: 'billing.charge',
+      payload: { invoiceId, amount }
+    })
+  }
+} as const;
+
+createSaga<BillingSagaState>({
+  name: 'billing-saga',
+  plugins: [InfraPlugin, HttpPlugin] as const
+})
+  .responseHandlers({
+    billingFetchSucceeded: { plugin_key: 'http', action_name: 'get', phase: 'response' },
+    billingFetchFailed: { plugin_key: 'http', action_name: 'get', phase: 'error' }
+  })
+  .initialState(() => ({ attempts: 0, settled: false }))
+  .on(BillingAggregate, {
+    created: (state, event, ctx) => {
+      state.attempts += 1;
+
+      // void action
+      ctx.actions.infra.scheduleCommand('billing.retry', 5_000);
+
+      // request_response chain
+      ctx.actions.http
+        .get(`https://api.example.com/billing/${event.payload.invoiceId}`)
+        .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempts })
+        .onResponse(ctx.onResponse.billingFetchSucceeded)
+        .onError(ctx.onError.billingFetchFailed);
+
+      // core action namespace also available
+      ctx.actions.core.dispatch(BillingAggregate, event.payload.invoiceId).charge(event.payload.invoiceId, 250);
+    }
+  })
+  .build();
+```
+
 ## 🛠️ API Reference (Builders)
 
 ### `AggregateBuilder`
@@ -144,10 +230,19 @@ _Builder interface for creating projections fluently_
 - `.join()` (Returns `this`) - Add a joined stream for correlating related aggregates
 - `.build()` - Build the final projection definition
 
+### `SagaBuilder`
+_Fluent builder for composing a saga definition._
+
+**Methods:**
+- `.initialState()` (Returns `this`)
+- `.correlate()` (Returns `this`)
+- `.on()` (Returns `this`)
+- `.build()`
+
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
 - `command` (Auto-formatted path component)
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 37 Interfaces, 49 Types, 6 Public Functions.
+**Metadata:** 66 Interfaces, 70 Types, 6 Public Functions.

@@ -153,7 +153,7 @@ it('should throw an error when processing an unknown command', () => {
     const cmd2 = aggregate.commandCreators.changeStatus('active');
 
     expect(cmd1.type).toBe('legacy.counter.increment.command');
-    expect(cmd2.type).toBe('test.changeStatus.command');
+    expect(cmd2.type).toBe('test.change_status.command');
   });
 
   it('should support entities, nested entities, arrays and targeted events', () => {
@@ -186,11 +186,11 @@ it('should throw an error when processing an unknown command', () => {
 
     // 1. Check generated event types
     // Using process to invoke command
-    const events1 = aggregate.process(orderState, { type: 'order.updateLine.command', payload: { id: '123', qty: 5 } });
+    const events1 = aggregate.process(orderState, { type: 'order.update_line.command', payload: { id: '123', qty: 5 } });
     expect(events1[0].type).toBe('order.line.updated.event');
     expect(events1[0].payload).toEqual({ lineId: '123', qty: 5 });
 
-    const events2 = aggregate.process(orderState, { type: 'order.updateSubLine.command', payload: { lineId: '123', subId: 456, metadata: 'new' } });
+    const events2 = aggregate.process(orderState, { type: 'order.update_sub_line.command', payload: { lineId: '123', subId: 456, metadata: 'new' } });
     expect(events2[0].type).toBe('order.line.subitems.updated.event');
     expect(events2[0].payload).toEqual({ lineId: '123', subitemsId: 456, metadata: 'new' });
     const newState1 = aggregate.apply(orderState, events1[0]);
@@ -218,7 +218,7 @@ it('should throw an error when processing an unknown command', () => {
       .build();
 
     const cmd = aggregate.commandCreators.packStatus('active', 200);
-    expect(cmd.type).toBe('test.packStatus.command');
+    expect(cmd.type).toBe('test.pack_status.command');
     expect(cmd.payload).toEqual({ status: 'active', code: 200 });
 
     const events = aggregate.process(initialState, cmd);

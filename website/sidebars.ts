@@ -11,7 +11,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Tutorials',
-      items: ['tutorials/essentials'],
+      items: ['tutorials/essentials', 'tutorials/sagas-starter'],
     },
     {
       type: 'category',
@@ -30,8 +30,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Reference',
+      items: ['reference/sagas-reference'],
+    },
+    {
+      type: 'category',
       label: 'Recipes',
-      items: ['recipes/testing-aggregates'],
+      items: ['recipes/testing-aggregates', 'recipes/testing-projections'],
     },
   ],
 
