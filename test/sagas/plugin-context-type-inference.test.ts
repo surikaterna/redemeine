@@ -16,12 +16,25 @@ const InvoiceAggregate = {
   }
 } as const;
 
-type SagaPluginHelpers = {
-  scheduleCommand: (name: 'invoice.retry', delayMs: number) => { jobId: string };
-  https: {
-    get: (url: string, headers?: Record<string, string>) => Promise<{ status: number }>;
-  };
-};
+const InfraPlugin = defineSagaPlugin({
+  plugin_key: 'infra',
+  actions: {
+    scheduleCommand: {
+      action_kind: 'void',
+      build: (name: 'invoice.retry', delayMs: number) => ({ name, delayMs })
+    }
+  }
+});
+
+const HttpPlugin = defineSagaPlugin({
+  plugin_key: 'http',
+  actions: {
+    get: {
+      action_kind: 'request_response',
+      build: (url: string, headers?: Record<string, string>) => ({ url, headers })
+    }
+  }
+});
 
 describe('createSaga plugin-capable ctx typing', () => {
   it('infers plugin manifest literals with action-kind distinctions', () => {
@@ -66,22 +79,25 @@ describe('createSaga plugin-capable ctx typing', () => {
   });
 
   it('infers plugin helper extensions alongside base ctx methods', () => {
-    createSaga<{ retries: number }, SagaPluginHelpers>('plugin-saga')
+    createSaga<{ retries: number }>({
+      name: 'plugin-saga',
+      plugins: [InfraPlugin, HttpPlugin] as const
+    })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
         created: async (state, event, ctx) => {
-          const scheduled = ctx.scheduleCommand('invoice.retry', 5000);
-          const response = await ctx.https.get(`https://api.example.com/invoices/${event.payload.invoiceId}`);
+          const scheduled = ctx.actions.infra.scheduleCommand('invoice.retry', 5000);
+          const response = await ctx.actions.http.get(`https://api.example.com/invoices/${event.payload.invoiceId}`);
 
-          const jobId: string = scheduled.jobId;
-          const statusCode: number = response.status;
+          const jobName: 'invoice.retry' = scheduled.name;
+          const statusHeaders: Record<string, string> | undefined = response.headers;
 
           ctx.schedule('invoice-reminder', 1_000);
           ctx.cancelSchedule('invoice-reminder');
           ctx.runActivity('audit', () => ({ invoiceId: event.payload.invoiceId }));
 
-          expect(jobId).toBeDefined();
-          expect(statusCode).toBeGreaterThanOrEqual(100);
+          expect(jobName).toBe('invoice.retry');
+          expect(statusHeaders).toBeDefined();
           state.retries += 1;
         }
       })
@@ -89,15 +105,18 @@ describe('createSaga plugin-capable ctx typing', () => {
   });
 
   it('rejects invalid plugin helper usage at compile time', () => {
-    createSaga<{ retries: number }, SagaPluginHelpers>()
+    createSaga<{ retries: number }>({
+      name: 'plugin-saga',
+      plugins: [InfraPlugin, HttpPlugin] as const
+    })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
           // @ts-expect-error scheduleCommand requires number delay
-          ctx.scheduleCommand('invoice.retry', '5000');
+          ctx.actions.infra.scheduleCommand('invoice.retry', '5000');
 
           // @ts-expect-error unknown plugin helper name
-          ctx.http.get('https://api.example.com/health');
+          ctx.actions.web.get('https://api.example.com/health');
 
           // @ts-expect-error base ctx still enforces schedule signature
           ctx.schedule(123, 1000);

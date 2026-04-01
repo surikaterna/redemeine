@@ -22,7 +22,7 @@ const InvoiceAggregate = {
 
 describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
   it('valid command creator calls compile for known aggregate command keys', () => {
-    const saga = createSaga<{ dispatched: number }>('invoice-saga')
+    const saga = createSaga<{ dispatched: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (state, _event, ctx) => {
@@ -38,7 +38,7 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
   });
 
   it('invalid payload fails at compile time', () => {
-    createSaga<{ dispatched: number }>()
+    createSaga<{ dispatched: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {

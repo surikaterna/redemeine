@@ -26,7 +26,7 @@ const BillingAggregate = {
 
 describe('S08 reducer output contract typing', () => {
   it('accepts deterministic state transition output with typed intents', () => {
-    const saga = createSaga<{ attempts: number; invoiceId: string }>('billing-saga')
+    const saga = createSaga<{ attempts: number; invoiceId: string }>({ name: 'billing-saga' })
       .initialState(() => ({ attempts: 0 as number, invoiceId: 'inv-1' as string }))
       .on(BillingAggregate, {
         started: (state, _event, ctx) => {

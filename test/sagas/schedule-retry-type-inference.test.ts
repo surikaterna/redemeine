@@ -18,7 +18,7 @@ const InvoiceAggregate = {
 
 describe('createSaga ctx schedule/retry helper typing', () => {
   it('accepts valid schedule, cancelSchedule, and runActivity calls', () => {
-    createSaga<{ attempted: number }>()
+    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: async (state, _event, ctx) => {
@@ -45,7 +45,7 @@ describe('createSaga ctx schedule/retry helper typing', () => {
   });
 
   it('rejects invalid schedule and retry policy usage at compile time', () => {
-    createSaga<{ attempted: number }>()
+    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
