@@ -62,7 +62,7 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const command = aggregate.commandCreators.lineUpdate({ id: 'l1', qty: 9 });
-    expect(command.type).toBe('order.lineUpdate.command');
+    expect(command.type).toBe('order.line_update.command');
 
     const events = aggregate.process(initial, command as any);
     expect(events[0].type).toBe('order.line.line_updated.event');
