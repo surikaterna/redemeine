@@ -817,16 +817,23 @@ export interface SagaDefinition<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
   name: string;
+  identity: SagaIdentityMetadata;
+  sagaType: string;
+  sagaUrn: string;
   plugins: SagaPluginRegistryFromManifests<TPlugins>;
   initialState: SagaInitialStateFactory<TState>;
   response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
+    sagaType: string;
+    sagaUrn: string;
     aggregate: SagaAggregateDefinition;
     correlate: SagaCorrelationFactory;
   }>;
   handlers: Array<{
     aggregateType: string;
+    sagaType: string;
+    sagaUrn: string;
     aggregate: SagaAggregateDefinition;
     handlers: Record<string, SagaHandler<TState, SagaAggregateDefinition, string, TPlugins, TResponseHandlerBindings>>;
   }>;
@@ -852,7 +859,26 @@ export interface SagaBuilder<
 
 export interface CreateSagaOptions<TPlugins extends SagaPluginManifestList = readonly []> {
   name: string;
+  identity?: SagaIdentityInput;
   plugins?: TPlugins;
+}
+
+export interface SagaIdentityInput {
+  namespace?: string;
+  name?: string;
+  version?: number;
+}
+
+export interface SagaIdentityFields {
+  namespace: string;
+  name: string;
+  version: number;
+}
+
+export interface SagaIdentityMetadata extends SagaIdentityFields {
+  legacyName: string;
+  sagaType: string;
+  sagaUrn: string;
 }
 
 type SagaPluginsFromOptions<TOptions extends CreateSagaOptions<SagaPluginManifestList>> =
@@ -865,16 +891,23 @@ interface SagaDefinitionDraft<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = SagaResponseHandlerTokenBindings
 > {
   name: string;
+  identity: SagaIdentityMetadata;
+  sagaType: string;
+  sagaUrn: string;
   plugins: TPlugins;
   initialState: SagaInitialStateFactory<unknown>;
   response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
+    sagaType: string;
+    sagaUrn: string;
     aggregate: SagaAggregateDefinition;
     correlate: SagaCorrelationFactory;
   }>;
   handlers: Array<{
     aggregateType: string;
+    sagaType: string;
+    sagaUrn: string;
     aggregate: SagaAggregateDefinition;
     handlers: Record<
       string,
@@ -885,6 +918,55 @@ interface SagaDefinitionDraft<
 
 function getAggregateType(aggregate: SagaAggregateDefinition): string {
   return aggregate.__aggregateType ?? 'unknown';
+}
+
+function normalizeIdentitySegment(value: string, fallback: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function normalizeIdentityVersion(version: number | undefined): number {
+  if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0) {
+    return 1;
+  }
+
+  return version;
+}
+
+function deriveSagaType(identity: SagaIdentityFields): string {
+  return `${identity.namespace}.${identity.name}.v${identity.version}`;
+}
+
+function deriveSagaUrn(identity: SagaIdentityFields): string {
+  return `urn:redemeine:saga:${identity.namespace}:${identity.name}:v${identity.version}`;
+}
+
+function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>): SagaIdentityMetadata {
+  const legacyName = options.name;
+  const namespace = normalizeIdentitySegment(options.identity?.namespace ?? 'legacy', 'legacy');
+  const name = normalizeIdentitySegment(options.identity?.name ?? legacyName, 'saga');
+  const version = normalizeIdentityVersion(options.identity?.version);
+  const base: SagaIdentityFields = {
+    namespace,
+    name,
+    version
+  };
+
+  const sagaType = deriveSagaType(base);
+  const sagaUrn = deriveSagaUrn(base);
+
+  return {
+    ...base,
+    legacyName,
+    sagaType,
+    sagaUrn
+  };
 }
 
 function createSagaPluginRegistry<TPlugins extends SagaPluginManifestList>(
@@ -960,6 +1042,8 @@ function createSagaBuilder<
       state.correlations.push({
         aggregate,
         aggregateType: getAggregateType(aggregate),
+        sagaType: state.sagaType,
+        sagaUrn: state.sagaUrn,
         correlate
       });
       return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
@@ -968,6 +1052,8 @@ function createSagaBuilder<
       state.handlers.push({
         aggregate,
         aggregateType: getAggregateType(aggregate),
+        sagaType: state.sagaType,
+        sagaUrn: state.sagaUrn,
         handlers: handlers as Record<
           string,
           SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
@@ -995,12 +1081,16 @@ export function createSaga<
 >(options: TOptions): SagaBuilder<TState, SagaPluginsFromOptions<TOptions>, Record<never, never>> {
   const pluginManifests = (options.plugins ?? []) as SagaPluginsFromOptions<TOptions>;
   const pluginRegistry = createSagaPluginRegistry(pluginManifests);
+  const identity = resolveSagaIdentity(options as CreateSagaOptions<SagaPluginManifestList>);
 
   const state: SagaDefinitionDraft<
     SagaPluginRegistryFromManifests<SagaPluginsFromOptions<TOptions>>,
     Record<never, never>
   > = {
     name: options.name,
+    identity,
+    sagaType: identity.sagaType,
+    sagaUrn: identity.sagaUrn,
     plugins: pluginRegistry,
     initialState: () => undefined,
     response_handlers: {},
