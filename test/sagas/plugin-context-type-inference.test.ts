@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga, defineSagaPlugin } from '../../src/sagas';
+import {
+  createSaga,
+  defineSagaPlugin,
+  type SagaPluginRequestIntent
+} from '../../src/sagas';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -172,5 +176,49 @@ describe('createSaga plugin-capable ctx typing', () => {
       .build();
 
     expect(true).toBe(true);
+  });
+
+  it('types request-response plugin intent with separated payload and routing metadata', () => {
+    const intent: SagaPluginRequestIntent<
+      'http',
+      'get',
+      { url: string; headers?: Record<string, string> },
+      {
+        response_handler_key: 'http.get.success';
+        error_handler_key: 'http.get.failure';
+        handler_data: { invoiceId: string };
+      }
+    > = {
+      type: 'plugin-request',
+      plugin_key: 'http',
+      action_name: 'get',
+      action_kind: 'request_response',
+      execution_payload: {
+        url: 'https://api.example.com/invoices/inv-1',
+        headers: { authorization: 'Bearer t' }
+      },
+      routing_metadata: {
+        response_handler_key: 'http.get.success',
+        error_handler_key: 'http.get.failure',
+        handler_data: { invoiceId: 'inv-1' }
+      },
+      metadata: {
+        sagaId: 'saga-1',
+        correlationId: 'corr-1',
+        causationId: 'cause-1'
+      }
+    };
+
+    const url: string = intent.execution_payload.url;
+    const handlerInvoiceId: string = intent.routing_metadata.handler_data.invoiceId;
+
+    // @ts-expect-error routing metadata is distinct from execution payload
+    intent.execution_payload.response_handler_key;
+
+    // @ts-expect-error execution payload fields are not in routing metadata
+    intent.routing_metadata.url;
+
+    expect(url).toContain('https://api.example.com');
+    expect(handlerInvoiceId).toBe('inv-1');
   });
 });

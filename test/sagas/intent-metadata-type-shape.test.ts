@@ -1,5 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../../src/sagas';
+import {
+  createSaga,
+  type SagaIntent,
+  type SagaPluginRequestIntent,
+  type SagaPluginRequestRoutingMetadata
+} from '../../src/sagas';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -88,5 +93,52 @@ describe('S07 acceptance: intent metadata type shape', () => {
       .build();
 
     expect(true).toBe(true);
+  });
+
+  it('includes request-response plugin intent shape in SagaIntent union', () => {
+    const routing: SagaPluginRequestRoutingMetadata<
+      'http.get.success',
+      'http.get.failure',
+      { invoiceId: string }
+    > = {
+      response_handler_key: 'http.get.success',
+      error_handler_key: 'http.get.failure',
+      handler_data: { invoiceId: 'inv-2' }
+    };
+
+    const intent: SagaIntent = {
+      type: 'plugin-request',
+      plugin_key: 'http',
+      action_name: 'get',
+      action_kind: 'request_response',
+      execution_payload: {
+        url: 'https://api.example.com/invoices/inv-2'
+      },
+      routing_metadata: routing,
+      metadata: {
+        sagaId: 'saga-2',
+        correlationId: 'corr-2',
+        causationId: 'cause-2'
+      }
+    };
+
+    const pluginIntent = intent as SagaPluginRequestIntent;
+    expect(pluginIntent.routing_metadata.response_handler_key).toBe('http.get.success');
+
+    // @ts-expect-error routing_metadata is required for plugin request intents
+    const missingRouting: SagaPluginRequestIntent = {
+      type: 'plugin-request',
+      plugin_key: 'http',
+      action_name: 'get',
+      action_kind: 'request_response',
+      execution_payload: {},
+      metadata: {
+        sagaId: 'saga-3',
+        correlationId: 'corr-3',
+        causationId: 'cause-3'
+      }
+    };
+
+    expect(missingRouting).toBeDefined();
   });
 });

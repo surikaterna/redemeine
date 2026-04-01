@@ -173,12 +173,46 @@ export interface SagaRunActivityIntent<TResult = unknown> {
   readonly metadata: SagaIntentMetadata;
 }
 
+/** Routing metadata used by plugin request-response intents. */
+export interface SagaPluginRequestRoutingMetadata<
+  TResponseHandlerKey extends string = string,
+  TErrorHandlerKey extends string = string,
+  THandlerData = unknown
+> {
+  readonly response_handler_key: TResponseHandlerKey;
+  readonly error_handler_key: TErrorHandlerKey;
+  readonly handler_data: THandlerData;
+}
+
+/**
+ * Intent that requests plugin execution for request-response actions.
+ *
+ * `execution_payload` is plugin-owned and intentionally opaque to the saga
+ * framework. Routing keys and handler data are carried separately in
+ * `routing_metadata` for deterministic response/error dispatch.
+ */
+export interface SagaPluginRequestIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> {
+  readonly type: 'plugin-request';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly action_kind: 'request_response';
+  readonly execution_payload: TExecutionPayload;
+  readonly routing_metadata: TRoutingMetadata;
+  readonly metadata: SagaIntentMetadata;
+}
+
 /** Full intent union emitted by saga handlers. */
 export type SagaIntent =
   | SagaDispatchIntentForCommand<string, unknown>
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
-  | SagaRunActivityIntent;
+  | SagaRunActivityIntent
+  | SagaPluginRequestIntent;
 
 /** Command envelope shape emitted by aggregate command creators. */
 export interface SagaAggregateCommandEnvelope {
