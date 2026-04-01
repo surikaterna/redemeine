@@ -154,14 +154,116 @@ export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TRe
 
 export type SagaPluginManifestList = readonly SagaPluginManifest[];
 
-type SagaPluginActionsForManifest<TPlugin extends SagaPluginManifest> = {
-  [TActionName in keyof TPlugin['actions'] & string]: (
-    ...args: SagaPluginActionArguments<TPlugin['actions'][TActionName]>
-  ) => SagaPluginActionExecutionPayload<TPlugin['actions'][TActionName]>;
+type SagaResponseHandlerKeysByPhaseForAction<
+  TBindings extends SagaResponseHandlerTokenBindings,
+  TPhase extends SagaResponseHandlerPhase,
+  TPluginKey extends string,
+  TActionName extends string
+> = {
+  [THandlerKey in keyof TBindings & string]: TBindings[THandlerKey] extends {
+    phase: TPhase;
+    plugin_key: TPluginKey;
+    action_name: TActionName;
+  }
+    ? THandlerKey
+    : never;
+}[keyof TBindings & string];
+
+type SagaRequestActionChainWithDataStep<
+  TPluginKey extends string,
+  TActionName extends string,
+  TExecutionPayload,
+  TBindings extends SagaResponseHandlerTokenBindings
+> = {
+  withData: <THandlerData>(
+    data: THandlerData
+  ) => SagaRequestActionChainOnResponseStep<TPluginKey, TActionName, TExecutionPayload, TBindings, THandlerData>;
 };
 
-export type SagaPluginActionsContext<TPlugins extends SagaPluginManifestList = readonly []> = {
-  [TPlugin in TPlugins[number] as TPlugin['plugin_key']]: SagaPluginActionsForManifest<TPlugin>;
+type SagaRequestActionChainOnResponseStep<
+  TPluginKey extends string,
+  TActionName extends string,
+  TExecutionPayload,
+  TBindings extends SagaResponseHandlerTokenBindings,
+  THandlerData
+> = {
+  onResponse: <
+    TResponseHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+      TBindings,
+      'response',
+      TPluginKey,
+      TActionName
+    >
+  >(
+    token: TResponseHandlerKey
+  ) => SagaRequestActionChainOnErrorStep<
+    TPluginKey,
+    TActionName,
+    TExecutionPayload,
+    TBindings,
+    THandlerData,
+    TResponseHandlerKey
+  >;
+};
+
+type SagaRequestActionChainOnErrorStep<
+  TPluginKey extends string,
+  TActionName extends string,
+  TExecutionPayload,
+  TBindings extends SagaResponseHandlerTokenBindings,
+  THandlerData,
+  TResponseHandlerKey extends string
+> = {
+  onError: <
+    TErrorHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+      TBindings,
+      'error',
+      TPluginKey,
+      TActionName
+    >
+  >(
+    token: TErrorHandlerKey
+  ) => SagaPluginRequestIntent<
+    TPluginKey,
+    TActionName,
+    TExecutionPayload,
+    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData>
+  >;
+};
+
+type SagaPluginActionContextForManifestAction<
+  TPluginKey extends string,
+  TActionName extends string,
+  TAction extends SagaPluginActionDescriptor,
+  TBindings extends SagaResponseHandlerTokenBindings
+> = TAction['action_kind'] extends 'request_response'
+  ? (
+      ...args: SagaPluginActionArguments<TAction>
+    ) => SagaRequestActionChainWithDataStep<
+      TPluginKey,
+      TActionName,
+      SagaPluginActionExecutionPayload<TAction>,
+      TBindings
+    >
+  : (...args: SagaPluginActionArguments<TAction>) => SagaPluginActionExecutionPayload<TAction>;
+
+type SagaPluginActionsForManifest<
+  TPlugin extends SagaPluginManifest,
+  TBindings extends SagaResponseHandlerTokenBindings
+> = {
+  [TActionName in keyof TPlugin['actions'] & string]: SagaPluginActionContextForManifestAction<
+    TPlugin['plugin_key'],
+    TActionName,
+    TPlugin['actions'][TActionName],
+    TBindings
+  >;
+};
+
+export type SagaPluginActionsContext<
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+> = {
+  [TPlugin in TPlugins[number] as TPlugin['plugin_key']]: SagaPluginActionsForManifest<TPlugin, TBindings>;
 };
 
 /** Intent that delegates work to an activity function. */
@@ -386,8 +488,62 @@ export type SagaIntentContext<
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = SagaIntentContextBase & {
-  readonly actions: SagaPluginActionsContext<TPlugins>;
+  readonly actions: SagaPluginActionsContext<TPlugins, TResponseHandlerBindings>;
 } & SagaResponseHandlerTokenAccess<TResponseHandlerBindings>;
+
+function createPluginActionsContext(
+  plugins: SagaPluginManifestList,
+  metadata: SagaIntentMetadata,
+  emitIntent: (intent: SagaIntent) => void
+): Record<string, Record<string, (...args: any[]) => unknown>> {
+  const actionsContext: Record<string, Record<string, (...args: any[]) => unknown>> = Object.create(null);
+
+  for (const plugin of plugins) {
+    const pluginActions: Record<string, (...args: any[]) => unknown> = Object.create(null);
+
+    for (const actionName of Object.keys(plugin.actions)) {
+      const actionDescriptor = plugin.actions[actionName];
+
+      if (actionDescriptor.action_kind === 'request_response') {
+        pluginActions[actionName] = (...args: any[]) => {
+          const executionPayload = actionDescriptor.build(...args);
+
+          return {
+            withData: (handlerData: unknown) => ({
+              onResponse: (responseHandlerKey: string) => ({
+                onError: (errorHandlerKey: string) => {
+                  const intent: SagaPluginRequestIntent = {
+                    type: 'plugin-request',
+                    plugin_key: plugin.plugin_key,
+                    action_name: actionName,
+                    action_kind: 'request_response',
+                    execution_payload: executionPayload,
+                    routing_metadata: {
+                      response_handler_key: responseHandlerKey,
+                      error_handler_key: errorHandlerKey,
+                      handler_data: handlerData
+                    },
+                    metadata
+                  };
+
+                  emitIntent(intent);
+                  return intent;
+                }
+              })
+            })
+          };
+        };
+        continue;
+      }
+
+      pluginActions[actionName] = (...args: any[]) => actionDescriptor.build(...args);
+    }
+
+    actionsContext[plugin.plugin_key] = pluginActions;
+  }
+
+  return actionsContext;
+}
 
 function createResponseHandlerTokenNamespace<
   TBindings extends SagaResponseHandlerTokenBindings,
@@ -417,7 +573,8 @@ export function createSagaDispatchContext<
 >(
   metadata: SagaIntentMetadata,
   intents: SagaIntent[] = [],
-  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings
+  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
+  plugins: TPlugins = [] as unknown as TPlugins
 ): SagaIntentContext<TPlugins, TResponseHandlerBindings> {
   const emit = (intent: SagaIntent) => {
     intents.push(intent);
@@ -481,7 +638,10 @@ export function createSagaDispatchContext<
       emit(intent);
       return intent;
     },
-    actions: Object.create(null) as SagaPluginActionsContext<TPlugins>
+    actions: createPluginActionsContext(plugins, metadata, emit) as SagaPluginActionsContext<
+      TPlugins,
+      TResponseHandlerBindings
+    >
   };
 }
 
@@ -612,11 +772,17 @@ export async function runSagaHandler<
   event: SagaAggregateEventByName<TAggregate, TEventName>,
   handler: SagaHandler<TState, TAggregate, TEventName, TPlugins, TResponseHandlerBindings>,
   metadata: SagaIntentMetadata,
-  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings
+  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
+  plugins: TPlugins = [] as unknown as TPlugins
 ): Promise<SagaReducerOutput<TState>> {
   const draft = createDraft(state);
   const intentBuffer: SagaIntent[] = [];
-  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(metadata, intentBuffer, responseHandlers);
+  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
+    metadata,
+    intentBuffer,
+    responseHandlers,
+    plugins
+  );
 
   await handler(draft, event, ctx);
 

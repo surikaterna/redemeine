@@ -103,18 +103,24 @@ describe('createSaga plugin-capable ctx typing', () => {
       .on(InvoiceAggregate, {
         created: async (state, event, ctx) => {
           const scheduled = ctx.actions.infra.scheduleCommand('invoice.retry', 5000);
-          const response = await ctx.actions.http.get(`https://api.example.com/invoices/${event.payload.invoiceId}`);
+          const requestIntent = ctx.actions.http
+            .get(`https://api.example.com/invoices/${event.payload.invoiceId}`)
+            .withData({ invoiceId: event.payload.invoiceId })
+            .onResponse(ctx.onResponse['http.get.success'])
+            .onError(ctx.onError['http.get.failure']);
           const successToken: 'http.get.success' = ctx.onResponse['http.get.success'];
           const errorToken: 'http.get.failure' = ctx.onError['http.get.failure'];
 
           const jobName: 'invoice.retry' = scheduled.name;
-          const statusHeaders: Record<string, string> | undefined = response.headers;
+          const routedInvoiceId: string = requestIntent.routing_metadata.handler_data.invoiceId;
+          const statusHeaders: Record<string, string> | undefined = requestIntent.execution_payload.headers;
 
           ctx.schedule('invoice-reminder', 1_000);
           ctx.cancelSchedule('invoice-reminder');
           ctx.runActivity('audit', () => ({ invoiceId: event.payload.invoiceId }));
 
           expect(jobName).toBe('invoice.retry');
+          expect(routedInvoiceId).toBe(event.payload.invoiceId);
           expect(statusHeaders).toBeDefined();
           expect(successToken).toBe('http.get.success');
           expect(errorToken).toBe('http.get.failure');
@@ -149,6 +155,22 @@ describe('createSaga plugin-capable ctx typing', () => {
           // @ts-expect-error unknown plugin helper name
           ctx.actions.web.get('https://api.example.com/health');
 
+          // @ts-expect-error request-response actions require routing chain via withData
+          const directRequestPayload: { url: string; headers?: Record<string, string> } = ctx.actions.http.get('https://api.example.com/health');
+
+          // @ts-expect-error void actions do not expose request-response chain methods
+          ctx.actions.infra.scheduleCommand('invoice.retry', 5000).onResponse;
+
+          const builtRequest = ctx.actions.http.get('https://api.example.com/health').withData({ ok: true });
+
+          // @ts-expect-error onResponse only accepts response-phase token for plugin/action
+          builtRequest.onResponse(ctx.onError.okay);
+
+          const responseSelected = builtRequest.onResponse(ctx.onResponse.okay);
+
+          // @ts-expect-error onError only accepts error-phase token for plugin/action
+          responseSelected.onError(ctx.onResponse.okay);
+
           // @ts-expect-error response token keys are phase-specific
           ctx.onResponse.missing;
 
@@ -157,6 +179,9 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           // @ts-expect-error base ctx still enforces schedule signature
           ctx.schedule(123, 1000);
+
+          expect(responseSelected).toBeDefined();
+          expect(directRequestPayload).toBeDefined();
         }
       })
       .build();
@@ -220,5 +245,45 @@ describe('createSaga plugin-capable ctx typing', () => {
 
     expect(url).toContain('https://api.example.com');
     expect(handlerInvoiceId).toBe('inv-1');
+  });
+
+  it('propagates withData typing into routing metadata handler_data', () => {
+    createSaga({
+      name: 'plugin-saga-with-data',
+      plugins: [InfraPlugin, HttpPlugin] as const
+    })
+      .responseHandlers({
+        success: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        failure: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      .initialState(() => ({ retries: 0 }))
+      .on(InvoiceAggregate, {
+        created: (_state, _event, ctx) => {
+          const intent = ctx.actions.http
+            .get('https://api.example.com/invoices/inv-3')
+            .withData({ invoiceId: 'inv-3', attempt: 1 })
+            .onResponse(ctx.onResponse.success)
+            .onError(ctx.onError.failure);
+
+          const invoiceId: string = intent.routing_metadata.handler_data.invoiceId;
+          const attempt: number = intent.routing_metadata.handler_data.attempt;
+
+          // @ts-expect-error handler_data must preserve withData property types
+          const wrongAttempt: string = intent.routing_metadata.handler_data.attempt;
+
+          expect(invoiceId).toBe('inv-3');
+          expect(attempt).toBe(1);
+          expect(wrongAttempt).toBeDefined();
+        }
+      })
+      .build();
   });
 });

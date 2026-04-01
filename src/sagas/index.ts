@@ -37,6 +37,8 @@ export {
   type SagaPluginActionsContext,
   type SagaPluginManifest,
   type SagaPluginManifestList,
+  type SagaPluginRequestIntent,
+  type SagaPluginRequestRoutingMetadata,
   type SagaPluginRequestResponseActionDescriptor,
   type SagaPluginRequestResponseActionNames,
   type SagaPluginVoidActionDescriptor,
