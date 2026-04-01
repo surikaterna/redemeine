@@ -31,18 +31,18 @@ describe('S07 acceptance: intent metadata type shape', () => {
           const ctxCorrelationId: string = ctx.metadata.correlationId;
           const ctxCausationId: string = ctx.metadata.causationId;
 
-          const invoice = ctx.dispatchTo(InvoiceAggregate, 'inv-1', { causationId: 'custom-cause' });
+          const invoice = ctx.actions.core.dispatchTo(InvoiceAggregate, 'inv-1', { causationId: 'custom-cause' });
 
           const dispatchIntent = invoice['invoice.create'](
             'inv-1',
             100,
           );
 
-          const scheduleIntent = ctx.schedule('invoice-reminder', 5_000, {
+          const scheduleIntent = ctx.actions.core.schedule('invoice-reminder', 5_000, {
             correlationId: 'custom-correlation'
           });
 
-          const runActivityIntent = ctx.runActivity(
+          const runActivityIntent = ctx.actions.core.runActivity(
             'send-reminder',
             () => Promise.resolve('ok'),
             {
@@ -79,10 +79,10 @@ describe('S07 acceptance: intent metadata type shape', () => {
             sagaId: 123
           });
           // @ts-expect-error metadata values must be strings
-          ctx.schedule('invoice-reminder', 5_000, { correlationId: 99 });
+          ctx.actions.core.schedule('invoice-reminder', 5_000, { correlationId: 99 });
 
           // @ts-expect-error metadata values must be strings
-          ctx.runActivity('send-reminder', () => undefined, undefined, { causationId: false });
+          ctx.actions.core.runActivity('send-reminder', () => undefined, undefined, { causationId: false });
 
           // @ts-expect-error context metadata fields are required strings
           const invalid: number = ctx.metadata.sagaId;

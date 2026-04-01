@@ -192,9 +192,6 @@ describe('createSaga plugin-capable ctx typing', () => {
           // @ts-expect-error error token keys are phase-specific
           ctx.onError.okay;
 
-          // @ts-expect-error base ctx still enforces schedule signature
-          ctx.schedule(123, 1000);
-
           // @ts-expect-error core action manifest enforces schedule signature
           ctx.actions.core.schedule(123, 1000);
 
