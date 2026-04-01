@@ -68,6 +68,41 @@ export type SagaPluginVoidActionNames<TPlugin extends SagaPluginManifest> =
 export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
   SagaPluginActionNamesByKind<TPlugin, 'request_response'>;
 
+export type SagaResponseHandlerPhase = 'response' | 'error';
+
+export interface SagaResponseHandlerTokenBinding<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TPhase extends SagaResponseHandlerPhase = SagaResponseHandlerPhase
+> {
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly phase: TPhase;
+}
+
+export type SagaResponseHandlerTokenBindings = Record<string, SagaResponseHandlerTokenBinding>;
+
+type SagaResponseHandlerKeysByPhase<
+  TBindings extends SagaResponseHandlerTokenBindings,
+  TPhase extends SagaResponseHandlerPhase
+> = {
+  [THandlerKey in keyof TBindings & string]: TBindings[THandlerKey]['phase'] extends TPhase
+    ? THandlerKey
+    : never;
+}[keyof TBindings & string];
+
+export type SagaResponseHandlerTokenNamespace<
+  TBindings extends SagaResponseHandlerTokenBindings,
+  TPhase extends SagaResponseHandlerPhase
+> = {
+  readonly [THandlerKey in SagaResponseHandlerKeysByPhase<TBindings, TPhase>]: THandlerKey;
+};
+
+export type SagaResponseHandlerTokenAccess<TBindings extends SagaResponseHandlerTokenBindings> = {
+  readonly onResponse: SagaResponseHandlerTokenNamespace<TBindings, 'response'>;
+  readonly onError: SagaResponseHandlerTokenNamespace<TBindings, 'error'>;
+};
+
 /**
  * Helper for authoring plugin manifests with strong literal inference.
  */
@@ -288,6 +323,8 @@ export type SagaDispatchTo = <TAggregate extends SagaAggregateDefinition>(
 export interface SagaIntentContextBase {
   readonly metadata: SagaIntentMetadata;
   readonly intents: readonly SagaIntent[];
+  readonly onResponse: Record<string, string>;
+  readonly onError: Record<string, string>;
   emit: (intent: SagaIntent) => void;
   commandsFor: <TAggregate extends SagaAggregateDefinition>(
     aggregateDef: TAggregate,
@@ -306,25 +343,55 @@ export interface SagaIntentContextBase {
  * Plugin helpers are purely type-level and do not alter base runtime helpers.
  */
 export type SagaIntentContext<
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
-> = SagaIntentContextBase & TContextExtensions;
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+> = Omit<SagaIntentContextBase, 'onResponse' | 'onError'>
+  & SagaResponseHandlerTokenAccess<TResponseHandlerBindings>
+  & TContextExtensions;
+
+function createResponseHandlerTokenNamespace<
+  TBindings extends SagaResponseHandlerTokenBindings,
+  TPhase extends SagaResponseHandlerPhase
+>(
+  responseHandlers: TBindings,
+  phase: TPhase
+): SagaResponseHandlerTokenNamespace<TBindings, TPhase> {
+  const namespace: Record<string, string> = {};
+
+  for (const handlerKey of Object.keys(responseHandlers)) {
+    const binding = responseHandlers[handlerKey];
+    if (binding.phase === phase) {
+      namespace[handlerKey] = handlerKey;
+    }
+  }
+
+  return namespace as SagaResponseHandlerTokenNamespace<TBindings, TPhase>;
+}
 
 /**
  * Builds runtime saga intent helper implementations for handler execution.
  */
-export function createSagaDispatchContext(
+export function createSagaDispatchContext<
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+>(
   metadata: SagaIntentMetadata,
-  intents: SagaIntent[] = []
-): SagaIntentContextBase {
+  intents: SagaIntent[] = [],
+  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings
+): SagaIntentContext<Record<never, never>, TResponseHandlerBindings> {
   const emit = (intent: SagaIntent) => {
     intents.push(intent);
   };
+
+  const onResponse = createResponseHandlerTokenNamespace(responseHandlers, 'response');
+  const onError = createResponseHandlerTokenNamespace(responseHandlers, 'error');
 
   return {
     metadata,
     get intents() {
       return intents;
     },
+    onResponse,
+    onError,
     emit,
     commandsFor: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
       aggregateDef,
@@ -373,7 +440,7 @@ export function createSagaDispatchContext(
       emit(intent);
       return intent;
     }
-  };
+  } as SagaIntentContext<Record<never, never>, TResponseHandlerBindings>;
 }
 
 /** Deterministic state transition emitted by saga handlers. */
@@ -390,29 +457,39 @@ export type SagaHandler<
   TState,
   TAggregate extends SagaAggregateDefinition,
   TEventName extends SagaAggregateEventName<TAggregate>,
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = (
   state: Draft<TState>,
   event: SagaAggregateEventByName<TAggregate, TEventName>,
-  ctx: SagaIntentContext<TContextExtensions>
+  ctx: SagaIntentContext<TContextExtensions, TResponseHandlerBindings>
 ) => SagaHandlerResult;
 
 /** Map of handler names to saga reducer functions. */
 export type SagaHandlers<
   TState,
   TAggregate extends SagaAggregateDefinition,
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = {
-  [TEventName in SagaAggregateEventName<TAggregate>]?: SagaHandler<TState, TAggregate, TEventName, TContextExtensions>;
+  [TEventName in SagaAggregateEventName<TAggregate>]?: SagaHandler<
+    TState,
+    TAggregate,
+    TEventName,
+    TContextExtensions,
+    TResponseHandlerBindings
+  >;
 };
 
 /** Built saga definition consumed by runtime execution layers. */
 export interface SagaDefinition<
   TState = unknown,
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
   name: string;
   initialState: SagaInitialStateFactory<TState>;
+  response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
@@ -421,19 +498,26 @@ export interface SagaDefinition<
   handlers: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
-    handlers: Record<string, SagaHandler<TState, SagaAggregateDefinition, string, TContextExtensions>>;
+    handlers: Record<string, SagaHandler<TState, SagaAggregateDefinition, string, TContextExtensions, TResponseHandlerBindings>>;
   }>;
 }
 
 /** Fluent builder for composing a saga definition. */
 export interface SagaBuilder<
   TState = unknown,
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
-  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TContextExtensions>;
-  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState, TContextExtensions>;
-  on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate, TContextExtensions>): SagaBuilder<TState, TContextExtensions>;
-  build(): SagaDefinition<TState, TContextExtensions>;
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TContextExtensions, TResponseHandlerBindings>;
+  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+    handlers: TNextResponseHandlerBindings
+  ): SagaBuilder<TState, TContextExtensions, TNextResponseHandlerBindings>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState, TContextExtensions, TResponseHandlerBindings>;
+  on<TAggregate extends SagaAggregateDefinition>(
+    aggregate: TAggregate,
+    handlers: SagaHandlers<TState, TAggregate, TContextExtensions, TResponseHandlerBindings>
+  ): SagaBuilder<TState, TContextExtensions, TResponseHandlerBindings>;
+  build(): SagaDefinition<TState, TContextExtensions, TResponseHandlerBindings>;
 }
 
 export interface CreateSagaOptions {
@@ -443,6 +527,7 @@ export interface CreateSagaOptions {
 interface SagaDefinitionDraft {
   name: string;
   initialState: SagaInitialStateFactory<unknown>;
+  response_handlers: SagaResponseHandlerTokenBindings;
   correlations: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
@@ -466,16 +551,18 @@ function getAggregateType(aggregate: SagaAggregateDefinition): string {
 export async function runSagaHandler<
   TState,
   TAggregate extends SagaAggregateDefinition,
-  TEventName extends SagaAggregateEventName<TAggregate>
+  TEventName extends SagaAggregateEventName<TAggregate>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 >(
   state: TState,
   event: SagaAggregateEventByName<TAggregate, TEventName>,
-  handler: SagaHandler<TState, TAggregate, TEventName>,
-  metadata: SagaIntentMetadata
+  handler: SagaHandler<TState, TAggregate, TEventName, Record<never, never>, TResponseHandlerBindings>,
+  metadata: SagaIntentMetadata,
+  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings
 ): Promise<SagaReducerOutput<TState>> {
   const draft = createDraft(state);
   const intentBuffer: SagaIntent[] = [];
-  const ctx = createSagaDispatchContext(metadata, intentBuffer);
+  const ctx = createSagaDispatchContext(metadata, intentBuffer, responseHandlers);
 
   await handler(draft, event, ctx);
 
@@ -487,12 +574,17 @@ export async function runSagaHandler<
 
 function createSagaBuilder<
   TState,
-  TContextExtensions extends SagaPluginContextExtensions
->(state: SagaDefinitionDraft): SagaBuilder<TState, TContextExtensions> {
+  TContextExtensions extends SagaPluginContextExtensions,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings
+>(state: SagaDefinitionDraft): SagaBuilder<TState, TContextExtensions, TResponseHandlerBindings> {
   return {
     initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
-      return createSagaBuilder<TNextState, TContextExtensions>(state);
+      return createSagaBuilder<TNextState, TContextExtensions, TResponseHandlerBindings>(state);
+    },
+    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+      state.response_handlers = handlers;
+      return createSagaBuilder<TState, TContextExtensions, TNextResponseHandlerBindings>(state);
     },
     correlate(aggregate, correlate) {
       state.correlations.push({
@@ -500,7 +592,7 @@ function createSagaBuilder<
         aggregateType: getAggregateType(aggregate),
         correlate
       });
-      return createSagaBuilder<TState, TContextExtensions>(state);
+      return createSagaBuilder<TState, TContextExtensions, TResponseHandlerBindings>(state);
     },
     on(aggregate, handlers) {
       state.handlers.push({
@@ -508,10 +600,10 @@ function createSagaBuilder<
         aggregateType: getAggregateType(aggregate),
         handlers: handlers as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>
       });
-      return createSagaBuilder<TState, TContextExtensions>(state);
+      return createSagaBuilder<TState, TContextExtensions, TResponseHandlerBindings>(state);
     },
     build() {
-      return state as SagaDefinition<TState, TContextExtensions>;
+      return state as SagaDefinition<TState, TContextExtensions, TResponseHandlerBindings>;
     }
   };
 }
@@ -522,8 +614,9 @@ function createSagaBuilder<
  */
 export function createSaga<
   TState = unknown,
-  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>
->(nameOrOptions?: string | CreateSagaOptions): SagaBuilder<TState, TContextExtensions> {
+  TContextExtensions extends SagaPluginContextExtensions = Record<never, never>,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+>(nameOrOptions?: string | CreateSagaOptions): SagaBuilder<TState, TContextExtensions, TResponseHandlerBindings> {
   const name = typeof nameOrOptions === 'string'
     ? nameOrOptions
     : nameOrOptions?.name ?? 'unnamed-saga';
@@ -531,9 +624,10 @@ export function createSaga<
   const state: SagaDefinitionDraft = {
     name,
     initialState: () => undefined,
+    response_handlers: {},
     correlations: [],
     handlers: []
   };
 
-  return createSagaBuilder<TState, TContextExtensions>(state);
+  return createSagaBuilder<TState, TContextExtensions, TResponseHandlerBindings>(state);
 }

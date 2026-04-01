@@ -66,12 +66,26 @@ describe('createSaga plugin-capable ctx typing', () => {
   });
 
   it('infers plugin helper extensions alongside base ctx methods', () => {
-    createSaga<{ retries: number }, SagaPluginHelpers>('plugin-saga')
+    const saga = createSaga<{ retries: number }, SagaPluginHelpers>('plugin-saga')
+      .responseHandlers({
+        'http.get.success': {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        'http.get.failure': {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
         created: async (state, event, ctx) => {
           const scheduled = ctx.scheduleCommand('invoice.retry', 5000);
           const response = await ctx.https.get(`https://api.example.com/invoices/${event.payload.invoiceId}`);
+          const successToken: 'http.get.success' = ctx.onResponse['http.get.success'];
+          const errorToken: 'http.get.failure' = ctx.onError['http.get.failure'];
 
           const jobId: string = scheduled.jobId;
           const statusCode: number = response.status;
@@ -82,14 +96,27 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           expect(jobId).toBeDefined();
           expect(statusCode).toBeGreaterThanOrEqual(100);
+          expect(successToken).toBe('http.get.success');
+          expect(errorToken).toBe('http.get.failure');
           state.retries += 1;
         }
       })
       .build();
+
+    expect(saga.response_handlers['http.get.success'].plugin_key).toBe('http');
+    expect(saga.response_handlers['http.get.success'].action_name).toBe('get');
+    expect(saga.response_handlers['http.get.success'].phase).toBe('response');
   });
 
   it('rejects invalid plugin helper usage at compile time', () => {
     createSaga<{ retries: number }, SagaPluginHelpers>()
+      .responseHandlers({
+        okay: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        }
+      })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
@@ -99,8 +126,25 @@ describe('createSaga plugin-capable ctx typing', () => {
           // @ts-expect-error unknown plugin helper name
           ctx.http.get('https://api.example.com/health');
 
+          // @ts-expect-error response token keys are phase-specific
+          ctx.onResponse.missing;
+
+          // @ts-expect-error error token keys are phase-specific
+          ctx.onError.okay;
+
           // @ts-expect-error base ctx still enforces schedule signature
           ctx.schedule(123, 1000);
+        }
+      })
+      .build();
+
+    createSaga<{ retries: number }, SagaPluginHelpers>()
+      .responseHandlers({
+        broken: {
+          plugin_key: 'http',
+          action_name: 'get',
+          // @ts-expect-error phase must be response|error
+          phase: 'success'
         }
       })
       .build();
