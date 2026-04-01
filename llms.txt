@@ -151,7 +151,44 @@ _Fluent builder for composing a saga definition._
 - `.initialState()` (Returns `this`)
 - `.correlate()` (Returns `this`)
 - `.on()` (Returns `this`)
+- `.start()` (Returns `this`)
 - `.build()`
+
+### `SagaBuilderAwaitingCorrelation`
+_Builder phase after `start(...)` and before required `correlateBy(...)`._
+
+**Methods:**
+- `.initialState()` (Returns `this`)
+- `.correlate()` (Returns `this`)
+- `.on()` (Returns `this`)
+- `.correlateBy()` (Returns `this`)
+
+### `SagaBuilderCorrelated`
+_Builder phase after `correlateBy(...)`, where triggers and build are available._
+
+**Methods:**
+- `.initialState()` (Returns `this`)
+- `.correlate()` (Returns `this`)
+- `.on()` (Returns `this`)
+- `.correlateBy()` (Returns `this`)
+- `.triggeredBy()` (Returns `this`)
+- `.build()`
+
+### `SagaTriggerDefinitionBuilder`
+_Core library class._
+
+**Methods:**
+- `.when()` (Returns `this`)
+- `.build()`
+
+### `SagaTriggerBuilderFactory`
+_Core library class._
+
+**Methods:**
+- `.event()` (Returns `this`)
+- `.parent()` (Returns `this`)
+- `.direct()` (Returns `this`)
+- `.recovery()` (Returns `this`)
 
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
@@ -159,4 +196,4 @@ Methods map to paths using these conventions:
 - `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 66 Interfaces, 70 Types, 6 Public Functions.
+**Metadata:** 95 Interfaces, 80 Types, 7 Public Functions.
