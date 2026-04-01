@@ -20,7 +20,7 @@ Public export barrel (`src/sagas/index.ts`):
 - `SagaRetryPolicy` + retry helpers
 - `createSagaRegistry`, `registerSaga`, `getSagaRegistry`
 
-Anything else under `src/sagas/internal/**` is runtime implementation detail and may change without semver guarantees.
+Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
 ## Defining sagas
 
@@ -61,13 +61,13 @@ Core contracts:
 
 ## Runtime architecture note (internal-only)
 
-Redemeine still executes sagas using a runtime aggregate + projection model internally, but those runtime modules live under `src/sagas/internal/runtime/**` and are intentionally hidden from the package API.
+Redemeine still executes sagas using an internal runtime model, and those modules are intentionally hidden from the package API.
 
 This means:
 
 - You define sagas through `createSaga(...)`.
 - The framework/runtime integration layer handles persistence, projections, dedupe, replay behavior, and worker orchestration.
-- Consumer apps should not import runtime helpers directly from package internals.
+- Consumer apps should not import runtime helpers directly from internal package paths.
 
 ## Retry policy helpers
 
@@ -106,4 +106,4 @@ If you used older/expanded saga docs, migrate as follows:
 
 - **Keep using:** `createSaga`, saga event taxonomy, retry helpers, and saga registry helpers.
 - **Stop using as public imports:** runtime persistence adapters, runtime projections, event buffers, replay/daemon execution helpers.
-- **Assume internal runtime placement:** `src/sagas/internal/runtime/**` is implementation detail, not stable API.
+- **Assume internal runtime placement:** internal runtime modules are implementation detail, not stable API.
