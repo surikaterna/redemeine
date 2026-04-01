@@ -56,6 +56,17 @@ export {
   type SagaRunActivityIntent,
   type SagaScheduleIntent
 } from './createSaga';
+export {
+  parseSagaIdentityUrn,
+  toSagaIdentityUrn,
+  validateSagaIdentity,
+  validateSagaName,
+  validateSagaNamespace,
+  validateSagaVersion,
+  SagaIdentityValidationError,
+  type SagaIdentity,
+  type SagaIdentityErrorCode
+} from './SagaIdentity';
 export * from './RetryPolicy';
 export * from './createSagaAggregate';
 export * from './SagaIdentityContract';
