@@ -51,4 +51,31 @@ describe('createSaga start/correlateBy/triggeredBy definition DSL', () => {
 
     expect(true).toBe(true);
   });
+
+  it('requires trigger-to-start mappings and StartInput compatibility at compile time', () => {
+    const correlated = createSaga('mapped-trigger-saga')
+      .start<{ orderId: string; source: 'event' | 'direct' }>((_start, _ctx) => undefined)
+      .correlateBy((start) => start.orderId);
+
+    correlated.triggeredBy({
+      kind: 'event',
+      toStartInput: (trigger: { orderId: string }) => ({
+        orderId: trigger.orderId,
+        source: 'event' as const
+      })
+    });
+
+    correlated.triggeredBy({
+      kind: 'event',
+      // @ts-expect-error mapped StartInput is missing required `source`
+      toStartInput: (trigger: { orderId: string }) => ({ orderId: trigger.orderId })
+    });
+
+    // @ts-expect-error toStartInput mapping is required
+    correlated.triggeredBy({
+      kind: 'direct'
+    });
+
+    expect(true).toBe(true);
+  });
 });
