@@ -21,13 +21,13 @@ describe('createCommandProcessor', () => {
             {}
         );
 
-        const result = processor({ val: 10 }, { type: 'myAggregate.doSomething.command', payload: 5 } as Command);
+        const result = processor({ val: 10 }, { type: 'myAggregate.do_something.command', payload: 5 } as Command);
         
         expect(Array.isArray(result)).toBe(true);
         expect(result[0].id).toEqual(expect.any(String));
         expect(result[0].type).toBe('something.done.event');
         expect(result[0].payload).toBe(15);
-        expect(result[0].metadata.command.type).toBe('myAggregate.doSomething.command');
+        expect(result[0].metadata.command.type).toBe('myAggregate.do_something.command');
         expect(result[0].metadata.command.id).toEqual(expect.any(String));
         expect(result[0].metadata.command.summary).toBeUndefined();
     });
@@ -49,7 +49,7 @@ describe('createCommandProcessor', () => {
         );
 
         const command = {
-            type: 'myAggregate.doMany.command',
+            type: 'myAggregate.do_many.command',
             payload: 5,
             metadata: { requestId: 'req-1' }
         } as Command;
@@ -61,7 +61,7 @@ describe('createCommandProcessor', () => {
         expect(result[0].metadata).toEqual({
             command: {
                 id: expect.any(String),
-                type: 'myAggregate.doMany.command'
+                type: 'myAggregate.do_many.command'
             }
         });
         expect(result[1].id).toEqual(expect.any(String));
@@ -69,7 +69,7 @@ describe('createCommandProcessor', () => {
             source: 'handler',
             command: {
                 id: expect.any(String),
-                type: 'myAggregate.doMany.command'
+                type: 'myAggregate.do_many.command'
             }
         });
     });
@@ -84,7 +84,7 @@ describe('createCommandProcessor', () => {
             { val: 10 },
             {
                 id: 'cmd-1',
-                type: 'myAggregate.doSomething.command',
+                type: 'myAggregate.do_something.command',
                 payload: 5,
                 headers: {
                     commandSummary: { important: true, operation: 'doSomething' },
@@ -95,7 +95,7 @@ describe('createCommandProcessor', () => {
 
         expect(result[0].metadata.command).toEqual({
             id: 'cmd-1',
-            type: 'myAggregate.doSomething.command',
+            type: 'myAggregate.do_something.command',
             summary: { important: true, operation: 'doSomething' },
             storeRef: 'commands://master/cmd-1'
         });
@@ -111,7 +111,7 @@ describe('createCommandProcessor', () => {
         const processor = createCommandProcessor<{ val: number }>('myAggregate', mockMap, {});
         const result = processor(
             { val: 10 },
-            { id: 'existing-command-id', type: 'myAggregate.doSomething.command', payload: 5 } as Command
+            { id: 'existing-command-id', type: 'myAggregate.do_something.command', payload: 5 } as Command
         );
 
         expect(result[0].id).toBe('existing-event-id');
@@ -125,7 +125,7 @@ describe('createCommandProcessor', () => {
         };
         const processor = createCommandProcessor<{ val: number }>('myAggregate', mockMap, {});
 
-        const result = processor({ val: 10 }, { type: 'myAggregate.doSomething.command', payload: 5 } as Command);
+        const result = processor({ val: 10 }, { type: 'myAggregate.do_something.command', payload: 5 } as Command);
 
         expect(result[0].id).toBe('processor-fixed-id');
         expect(result[0].metadata.command.id).toBe('processor-fixed-id');
