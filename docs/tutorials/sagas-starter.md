@@ -11,6 +11,7 @@ You will:
 3. Wire aggregate-typed handlers with `.on(Aggregate, handlers)`.
 4. Dispatch typed commands with `commandsFor(...)` / `dispatchTo`.
 5. Attach retry policy where needed.
+6. Normalize trigger sources into one `StartInput` and use `correlateBy`.
 
 ## 1) Define saga state
 
@@ -71,6 +72,76 @@ export const BillingSaga = createSaga<BillingSagaState>('billing-saga')
 
 Handlers are mutation-style (Immer semantics): mutate `state`, then emit intents through `ctx` helpers.
 
+## 2b) Normalize `StartInput` + `correlateBy` across trigger families
+
+When startup can come from multiple sources (event, direct API invocation, schedule, recovery), map every source into one `StartInput` shape.
+
+```ts
+import { createSaga, createSagaTriggerBuilder } from 'redemeine';
+
+type BillingStartInput = {
+  invoiceId: string;
+  source: 'event' | 'direct' | 'schedule';
+};
+
+const trigger = createSagaTriggerBuilder<BillingStartInput>();
+
+const BillingSaga = createSaga<BillingSagaState>('billing-saga')
+  .initialState(() => ({ attempts: 0, settled: false }))
+  .start(async (start, ctx) => {
+    const commands = ctx.commandsFor(BillingAggregate, start.invoiceId);
+    commands.notify({ invoiceId: start.invoiceId, channel: 'email' });
+  })
+  .correlateBy(start => start.invoiceId)
+  .triggeredBy(
+    trigger.event({
+      event: 'billing.created',
+      toStartInput: source => ({
+        invoiceId: source.payload.invoiceId,
+        source: 'event'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.direct({
+      channel: 'api',
+      toStartInput: source => ({
+        invoiceId: source.invoiceId,
+        source: 'direct'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.schedule.cron({
+      cron: '0 9 * * *',
+      timezone: 'Europe/Stockholm',
+      toStartInput: source => ({
+        invoiceId: source.occurrenceId,
+        source: 'schedule'
+      })
+    }).build()
+  )
+  .build();
+```
+
+### `correlateBy` example checklist
+
+- Pick a stable business key (`invoiceId`, `orderId`) rather than transient metadata.
+- Use the same key regardless of trigger family.
+- Keep `toStartInput` small and deterministic so correlation remains predictable.
+
+You can also gate trigger activation with `.when(...)`:
+
+```ts
+const guardedTrigger = trigger
+  .event({
+    event: 'billing.created',
+    toStartInput: source => ({ invoiceId: source.payload.invoiceId, source: 'event' })
+  })
+  .when(source => source.payload.status === 'ready')
+  .build();
+```
+
 ## 3) Add retry policy to activity intents
 
 ```ts
@@ -128,5 +199,22 @@ In practice:
 ## Optional public seams
 
 - `validateRetryPolicy`, `computeNextAttemptAt`, `isRetryableError`, `classifyRetryableError`: retry behavior helpers.
+
+## Idempotent `order.link`-style startup guidance
+
+To avoid duplicate starts and command loops in link-style sagas:
+
+- Correlate by the link target key (`orderId`) and keep it consistent across all trigger mappings.
+- Add `.when(...)` guards so already-linked orders do not re-enter the start path.
+- Persist a saga-side marker (`linkRequested`, `linkCompletedAt`) before dispatching follow-up commands.
+- Emit idempotency keys in commands (`orderId:step`) so downstream handlers can de-duplicate.
+- Ignore self-originated echo events unless they represent the next intended state transition.
+
+## DST behavior quick matrix
+
+| Schedule entrypoint | Semantics | DST behavior |
+| --- | --- | --- |
+| `schedule.interval` / `schedule.isoInterval` | elapsed-time (DST-neutral) | uses elapsed duration, unaffected by wall-clock jumps |
+| `schedule.cron` / `schedule.rrule` | wall-clock + explicit IANA timezone | fall-back ambiguous -> first-occurrence-only, spring-forward nonexistent -> next-valid-time |
 
 For full API details, see `/docs/reference/sagas-reference` and `/docs/api/`.

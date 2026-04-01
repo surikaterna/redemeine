@@ -121,6 +121,115 @@ const restartConfig: SagaTriggerStartContract = {
 
 Accepted restart modes are `'graceful' | 'force'`.
 
+## Start DSL and trigger families
+
+Use the start DSL to normalize every trigger source into one `StartInput` contract:
+
+1. `start<StartInput>(handler)` defines the normalized startup input shape.
+2. `correlateBy(start => key)` is required before `.build()` / `.triggeredBy(...)`.
+3. `triggeredBy(...)` registers trigger families that each provide `toStartInput(source)`.
+
+```ts
+import { createSaga, createSagaTriggerBuilder } from 'redemeine';
+
+type OrderStartInput = {
+  orderId: string;
+  triggerFamily: 'event' | 'parent' | 'direct' | 'recovery' | 'schedule';
+};
+
+const trigger = createSagaTriggerBuilder<OrderStartInput>();
+
+const saga = createSaga<{ status: 'idle' | 'active' }>('order-link-saga')
+  .initialState(() => ({ status: 'idle' }))
+  .start(async (_start, _ctx) => {
+    // definition-only startup contract
+  })
+  .correlateBy(start => start.orderId)
+  .triggeredBy(
+    trigger.event({
+      event: 'order.created',
+      toStartInput: source => ({
+        orderId: source.payload.orderId,
+        triggerFamily: 'event'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.parent({
+      toStartInput: source => ({
+        orderId: source.childOrderId,
+        triggerFamily: 'parent'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.direct({
+      channel: 'api',
+      toStartInput: source => ({
+        orderId: source.orderId,
+        triggerFamily: 'direct'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.recovery({
+      reason: 'replay',
+      toStartInput: source => ({
+        orderId: source.orderId,
+        triggerFamily: 'recovery'
+      })
+    }).build()
+  )
+  .triggeredBy(
+    trigger.schedule.interval({
+      everyMs: 60_000,
+      toStartInput: source => ({
+        orderId: source.occurrenceId,
+        triggerFamily: 'schedule'
+      })
+    }).build()
+  )
+  .build();
+```
+
+### `.when(...)` usage (pre-mapping filter)
+
+Use `.when(...)` to ignore trigger invocations before startup mapping is applied.
+
+```ts
+const trigger = createSagaTriggerBuilder<{ orderId: string }>();
+
+const eventTrigger = trigger
+  .event({
+    event: 'order.link.requested',
+    toStartInput: source => ({ orderId: source.payload.orderId })
+  })
+  .when(source => source.payload.status === 'ready')
+  .build();
+```
+
+## Schedule/DST behavior matrix
+
+| Trigger kind | Time semantics | Timezone requirement | DST ambiguous (fall-back) | DST nonexistent (spring-forward) |
+| --- | --- | --- | --- | --- |
+| `schedule.interval`, `schedule.isoInterval` | elapsed-time (DST-neutral) | none | first-occurrence-only | next-valid-time |
+| `schedule.cron`, `schedule.rrule` | wall-clock | explicit IANA timezone required | first-occurrence-only | next-valid-time |
+
+Notes:
+
+- Interval-based schedules are elapsed duration between runs and do not follow wall-clock jumps.
+- Cron/RRule schedules are wall-clock and should always include an explicit IANA timezone such as `Europe/Stockholm`.
+
+## Idempotency and loop prevention (`order.link` pattern)
+
+For `order.link`-style sagas, ensure both trigger and command paths are idempotent:
+
+- Correlate strictly on the stable business key (`orderId`) using `correlateBy`.
+- Guard trigger activation with `.when(...)` to skip already-linked/already-processed states.
+- Emit commands only after checking saga state markers (for example `linkIssuedAt` / `linkCompletedAt`).
+- Include a deterministic idempotency key in emitted commands (for example `orderId + stepName`).
+- Prevent feedback loops by ignoring events produced by the saga itself unless they represent a new phase transition.
+
 ## SagaAggregate structure-only model
 
 `SagaAggregate` is a **persistence/contract shape** for saga state and emitted records.
