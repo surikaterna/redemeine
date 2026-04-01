@@ -116,7 +116,7 @@ Because of Redemeine's Type-Transparent architecture, **you do not need manual t
 
 Once you have built your aggregate and exported the live constructor, you will often need to pass the running aggregate instance into your UI components (like React) or inject it into your API routes.
 
-You can instantly infer the exact shape of your live aggregate (including all its dynamically generated command map methods) using TypeScript's `typeof`.
+You can instantly infer the exact shape of your live aggregate (including all its dynamically generated command methods) using TypeScript's `typeof`.
 
 ```ts
 // 1. Build the aggregate blueprint

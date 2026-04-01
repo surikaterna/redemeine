@@ -128,7 +128,7 @@ Flat root-level plugin keys are not accepted.
 
 Redemeine includes an event-sourced saga toolkit for long-running, cross-aggregate workflows.
 
-- Define saga behavior with `createSaga<TCommandMap>()` and typed `ctx.dispatch` / `ctx.schedule` / `ctx.runActivity` helpers.
+- Define saga behavior with `createSaga<TState>(nameOrOptions?)`, aggregate-typed `.on(Aggregate, handlers)`, and `commandsFor` / `dispatchTo` helpers.
 - Use saga runtime support through the documented saga API surface and events.
 - Runtime internals are implementation details and are not part of Redemeine's public API.
 

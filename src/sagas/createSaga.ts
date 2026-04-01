@@ -1,27 +1,13 @@
+import { createDraft, finishDraft, type Draft } from 'immer';
 import type { SagaRetryPolicy } from './RetryPolicy';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
 
-/**
- * Correlation resolver for routing domain events into saga instances.
- *
- * The function signature is intentionally open because event envelope shapes
- * vary between applications.
- */
+/** Correlation resolver for routing domain events into saga instances. */
 export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
-/** Map of command names to their expected payload types. */
-export type SagaCommandMap = Record<string, unknown>;
-
-/** Command key constrained to string keys from a saga command map. */
-export type SagaCommandName<TCommandMap extends SagaCommandMap> = keyof TCommandMap & string;
-
-/** Payload type for a specific command key in a saga command map. */
-export type SagaCommandPayload<
-  TCommandMap extends SagaCommandMap,
-  TCommandName extends SagaCommandName<TCommandMap>
-> = TCommandMap[TCommandName];
+type AnyFunction = (...args: any[]) => unknown;
 
 /** Required metadata attached to every emitted saga intent. */
 export interface SagaIntentMetadata {
@@ -31,127 +17,13 @@ export interface SagaIntentMetadata {
 }
 
 /** Typed dispatch intent for a single command entry. */
-export type SagaDispatchIntentForCommand<
-  TCommandMap extends SagaCommandMap,
-  TCommandName extends SagaCommandName<TCommandMap>
-> = {
+export type SagaDispatchIntentForCommand<TCommandName extends string = string, TPayload = unknown> = {
   readonly type: 'dispatch';
   readonly command: TCommandName;
-  readonly payload: SagaCommandPayload<TCommandMap, TCommandName>;
+  readonly payload: TPayload;
   readonly aggregateId?: string;
   readonly metadata: SagaIntentMetadata;
 };
-
-/** Command envelope shape emitted by aggregate command creators. */
-export interface SagaAggregateCommandEnvelope {
-  readonly type: string;
-  readonly payload: unknown;
-}
-
-/** Aggregate-like input accepted by `ctx.commandsFor(...)`. */
-export type SagaCommandCreators = Record<string, (...args: any[]) => SagaAggregateCommandEnvelope>;
-
-/** Aggregate-like input accepted by `ctx.commandsFor(...)`. */
-export interface SagaAggregateWithCommandCreators<TCommandCreators extends SagaCommandCreators = SagaCommandCreators> {
-  readonly commandCreators: TCommandCreators;
-}
-
-type SagaCommandIntentFactoryFromCreator<
-  TCreator,
-  TCommandMap extends SagaCommandMap,
-  TCommandName extends SagaCommandName<TCommandMap>
-> = TCreator extends (...args: infer TArgs) => infer TEnvelope
-  ? TEnvelope extends { payload: infer TPayload }
-    ? TPayload extends SagaCommandPayload<TCommandMap, TCommandName>
-      ? (
-          ...args: TArgs
-        ) => SagaDispatchIntentForCommand<TCommandMap, TCommandName> & { readonly aggregateId: string }
-      : never
-    : never
-  : never;
-
-/** Typed command-intent creators derived from aggregate command creators. */
-export type SagaCommandsFor<
-  TCommandCreators extends SagaCommandCreators,
-  TCommandMap extends SagaCommandMap
-> = {
-  [TCommandName in Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>]: SagaCommandIntentFactoryFromCreator<
-    TCommandCreators[TCommandName],
-    TCommandMap,
-    TCommandName
-  >;
-};
-
-function mergeSagaIntentMetadata(
-  base: SagaIntentMetadata,
-  override?: Partial<SagaIntentMetadata>
-): SagaIntentMetadata {
-  return {
-    sagaId: override?.sagaId ?? base.sagaId,
-    correlationId: override?.correlationId ?? base.correlationId,
-    causationId: override?.causationId ?? base.causationId
-  };
-}
-
-function createSagaDispatchIntentFromEnvelope<
-  TCommandMap extends SagaCommandMap,
-  TCommandName extends SagaCommandName<TCommandMap>
->(
-  command: TCommandName,
-  envelope: { payload: SagaCommandPayload<TCommandMap, TCommandName> },
-  metadata: SagaIntentMetadata,
-  metadataOverride?: Partial<SagaIntentMetadata>,
-  aggregateId?: string
-): SagaDispatchIntentForCommand<TCommandMap, TCommandName> {
-  return {
-    type: 'dispatch',
-    command,
-    payload: envelope.payload,
-    aggregateId,
-    metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-  };
-}
-
-/**
- * Creates typed aggregate-driven command intent emitters for saga reducers.
- *
- * Returned methods wrap aggregate command creators and emit dispatch intents
- * without executing commands immediately.
- */
-export function createSagaCommandsFor<
-  TCommandCreators extends SagaCommandCreators,
-  TCommandMap extends SagaCommandMap
->(
-  aggregateDef: SagaAggregateWithCommandCreators<TCommandCreators>,
-  aggregateId: string,
-  metadata: SagaIntentMetadata,
-  metadataOverride?: Partial<SagaIntentMetadata>
-): SagaCommandsFor<TCommandCreators, TCommandMap> {
-  const commandIntents = {} as SagaCommandsFor<TCommandCreators, TCommandMap>;
-
-  for (const commandName of Object.keys(aggregateDef.commandCreators)) {
-    const createCommand = aggregateDef.commandCreators[commandName];
-
-    (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
-      const command = createCommand(...args);
-
-      return createSagaDispatchIntentFromEnvelope(
-        commandName as Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>,
-        command as { payload: SagaCommandPayload<TCommandMap, Extract<keyof TCommandCreators, SagaCommandName<TCommandMap>>> },
-        metadata,
-        metadataOverride,
-        aggregateId
-      );
-    };
-  }
-
-  return commandIntents;
-}
-
-/** Union of all typed dispatch intents for the command map. */
-export type SagaDispatchIntent<TCommandMap extends SagaCommandMap> = {
-  [TCommandName in SagaCommandName<TCommandMap>]: SagaDispatchIntentForCommand<TCommandMap, TCommandName>;
-}[SagaCommandName<TCommandMap>];
 
 /** Intent that requests delayed saga wake-up scheduling. */
 export interface SagaScheduleIntent {
@@ -168,6 +40,9 @@ export interface SagaCancelScheduleIntent {
   readonly metadata: SagaIntentMetadata;
 }
 
+/** Function signature used for `run-activity` intent closures. */
+export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
+
 /** Intent that delegates work to an activity function. */
 export interface SagaRunActivityIntent<TResult = unknown> {
   readonly type: 'run-activity';
@@ -178,27 +53,144 @@ export interface SagaRunActivityIntent<TResult = unknown> {
 }
 
 /** Full intent union emitted by saga handlers. */
-export type SagaIntent<TCommandMap extends SagaCommandMap> =
-  | SagaDispatchIntent<TCommandMap>
+export type SagaIntent =
+  | SagaDispatchIntentForCommand<string, unknown>
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent;
 
-/**
- * Typed helper used by saga handlers to create dispatch intents.
- *
- * Metadata is optional at call-site and can be merged by runtime adapters.
- */
-export type SagaDispatch<TCommandMap extends SagaCommandMap> = <
-  TCommandName extends SagaCommandName<TCommandMap>
->(
-  command: TCommandName,
-  payload: SagaCommandPayload<TCommandMap, TCommandName>,
-  metadata?: Partial<SagaIntentMetadata>
-) => SagaDispatchIntentForCommand<TCommandMap, TCommandName>;
+/** Command envelope shape emitted by aggregate command creators. */
+export interface SagaAggregateCommandEnvelope {
+  readonly type: string;
+  readonly payload: unknown;
+}
 
-/** Function signature used for `run-activity` intent closures. */
-export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
+/** Command creators shape emitted by `createAggregate(...).build()`. */
+export type SagaCommandCreators = Record<string, (...args: any[]) => SagaAggregateCommandEnvelope>;
+
+/** Aggregate definition shape consumed by saga `.on(...)` and `ctx.commandsFor(...)`. */
+export interface SagaAggregateDefinition<
+  TEventProjectors extends Record<string, AnyFunction> = Record<string, AnyFunction>,
+  TCommandCreators extends SagaCommandCreators = SagaCommandCreators,
+  TAggregateType extends string = string
+> {
+  readonly __aggregateType?: TAggregateType;
+  readonly pure: {
+    readonly eventProjectors: TEventProjectors;
+  };
+  readonly commandCreators: TCommandCreators;
+}
+
+type CommandCreatorsOf<TAggregate extends SagaAggregateDefinition> = TAggregate['commandCreators'];
+type EventProjectorsOf<TAggregate extends SagaAggregateDefinition> = TAggregate['pure']['eventProjectors'];
+
+type AggregateTypeOf<TAggregate extends SagaAggregateDefinition> =
+  TAggregate extends { __aggregateType: infer TAggregateType extends string }
+    ? TAggregateType
+    : string;
+
+type ProjectorPayload<TProjector> =
+  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+    ? TEvent extends { payload: infer TPayload }
+      ? TPayload
+      : unknown
+    : unknown;
+
+export type SagaAggregateEventPayloadMap<TAggregate extends SagaAggregateDefinition> = {
+  [TEventName in keyof EventProjectorsOf<TAggregate> & string]: ProjectorPayload<EventProjectorsOf<TAggregate>[TEventName]>;
+};
+
+export type SagaAggregateEventName<TAggregate extends SagaAggregateDefinition> =
+  keyof SagaAggregateEventPayloadMap<TAggregate> & string;
+
+export type SagaAggregateEventByName<
+  TAggregate extends SagaAggregateDefinition,
+  TEventName extends SagaAggregateEventName<TAggregate>
+> = {
+  readonly type: TEventName | `${AggregateTypeOf<TAggregate>}.${TEventName}.event`;
+  readonly payload: SagaAggregateEventPayloadMap<TAggregate>[TEventName];
+  readonly aggregateType?: AggregateTypeOf<TAggregate>;
+  readonly aggregateId?: string;
+  readonly sequence?: number;
+  readonly metadata?: Record<string, unknown>;
+};
+
+type SagaCommandIntentFactoryFromCreator<TCreator, TCommandName extends string> =
+  TCreator extends (...args: infer TArgs) => infer TEnvelope
+    ? TEnvelope extends { payload: infer TPayload }
+      ? (...args: TArgs) => SagaDispatchIntentForCommand<TCommandName, TPayload> & { readonly aggregateId: string }
+      : never
+    : never;
+
+/** Typed command-intent creators derived from aggregate command creators. */
+export type SagaCommandsFor<TAggregate extends SagaAggregateDefinition> = {
+  [TCommandName in keyof CommandCreatorsOf<TAggregate> & string]: SagaCommandIntentFactoryFromCreator<
+    CommandCreatorsOf<TAggregate>[TCommandName],
+    TCommandName
+  >;
+};
+
+function mergeSagaIntentMetadata(
+  base: SagaIntentMetadata,
+  override?: Partial<SagaIntentMetadata>
+): SagaIntentMetadata {
+  return {
+    sagaId: override?.sagaId ?? base.sagaId,
+    correlationId: override?.correlationId ?? base.correlationId,
+    causationId: override?.causationId ?? base.causationId
+  };
+}
+
+function createSagaDispatchIntentFromEnvelope<TCommandName extends string, TPayload>(
+  command: TCommandName,
+  envelope: { payload: TPayload },
+  metadata: SagaIntentMetadata,
+  metadataOverride?: Partial<SagaIntentMetadata>,
+  aggregateId?: string
+): SagaDispatchIntentForCommand<TCommandName, TPayload> {
+  return {
+    type: 'dispatch',
+    command,
+    payload: envelope.payload,
+    aggregateId,
+    metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+  };
+}
+
+/**
+ * Typed helper used by saga handlers to target aggregate command creators.
+ *
+ * Each command call emits a deterministic `dispatch` intent.
+ */
+export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition>(
+  aggregateDef: TAggregate,
+  aggregateId: string,
+  metadata: SagaIntentMetadata,
+  emitIntent: (intent: SagaIntent) => void,
+  metadataOverride?: Partial<SagaIntentMetadata>
+): SagaCommandsFor<TAggregate> {
+  const commandIntents = {} as SagaCommandsFor<TAggregate>;
+
+  for (const commandName of Object.keys(aggregateDef.commandCreators)) {
+    const createCommand = aggregateDef.commandCreators[commandName];
+
+    (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
+      const command = createCommand(...args);
+      const intent = createSagaDispatchIntentFromEnvelope(
+        commandName as keyof CommandCreatorsOf<TAggregate> & string,
+        command,
+        metadata,
+        metadataOverride,
+        aggregateId
+      );
+
+      emitIntent(intent);
+      return intent;
+    };
+  }
+
+  return commandIntents;
+}
 
 /** Typed helper used by saga handlers to create activity intents. */
 export type SagaRunActivity = <TResult = unknown>(
@@ -208,162 +200,237 @@ export type SagaRunActivity = <TResult = unknown>(
   metadata?: Partial<SagaIntentMetadata>
 ) => SagaRunActivityIntent<TResult>;
 
-/** Handler context exposed to saga reducers. */
-export interface SagaDispatchContext<TState, TCommandMap extends SagaCommandMap> {
-  readonly state: TState;
+/** Alias for aggregate-driven command dispatch helper. */
+export type SagaDispatchTo = <TAggregate extends SagaAggregateDefinition>(
+  aggregateDef: TAggregate,
+  aggregateId: string,
+  metadata?: Partial<SagaIntentMetadata>
+) => SagaCommandsFor<TAggregate>;
+
+/** Context exposed to saga handlers for intent emissions. */
+export interface SagaIntentContext {
   readonly metadata: SagaIntentMetadata;
-  dispatch: SagaDispatch<TCommandMap>;
-  commandsFor: <TCommandCreators extends SagaCommandCreators>(
-    aggregateDef: SagaAggregateWithCommandCreators<TCommandCreators>,
+  readonly intents: readonly SagaIntent[];
+  emit: (intent: SagaIntent) => void;
+  commandsFor: <TAggregate extends SagaAggregateDefinition>(
+    aggregateDef: TAggregate,
     aggregateId: string,
     metadata?: Partial<SagaIntentMetadata>
-  ) => SagaCommandsFor<TCommandCreators, TCommandMap>;
+  ) => SagaCommandsFor<TAggregate>;
+  dispatchTo: SagaDispatchTo;
   schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaScheduleIntent;
   cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaCancelScheduleIntent;
   runActivity: SagaRunActivity;
 }
 
 /**
- * Builds runtime saga intent helper implementations for reducer execution.
- *
- * First-class public helpers (`dispatch`, `schedule`, `cancelSchedule`,
- * `runActivity`) share the same metadata merge semantics as `commandsFor`.
+ * Builds runtime saga intent helper implementations for handler execution.
  */
-export function createSagaDispatchContext<TState, TCommandMap extends SagaCommandMap>(
-  state: TState,
-  metadata: SagaIntentMetadata
-): SagaDispatchContext<TState, TCommandMap> {
+export function createSagaDispatchContext(
+  metadata: SagaIntentMetadata,
+  intents: SagaIntent[] = []
+): SagaIntentContext {
+  const emit = (intent: SagaIntent) => {
+    intents.push(intent);
+  };
+
   return {
-    state,
     metadata,
-    dispatch: (command, payload, metadataOverride) => createSagaDispatchIntentFromEnvelope(
-      command,
-      {
-        payload
-      },
-      metadata,
-      metadataOverride
-    ),
+    get intents() {
+      return intents;
+    },
+    emit,
     commandsFor: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
       aggregateDef,
       aggregateId,
       metadata,
+      emit,
       metadataOverride
     ),
-    schedule: (id, delay, metadataOverride) => ({
-      type: 'schedule',
-      id,
-      delay,
-      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-    }),
-    cancelSchedule: (id, metadataOverride) => ({
-      type: 'cancel-schedule',
-      id,
-      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-    }),
-    runActivity: (name, closure, retryPolicy, metadataOverride) => ({
-      type: 'run-activity',
-      name,
-      closure,
-      retryPolicy,
-      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-    })
+    dispatchTo: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
+      aggregateDef,
+      aggregateId,
+      metadata,
+      emit,
+      metadataOverride
+    ),
+    schedule: (id, delay, metadataOverride) => {
+      const intent: SagaScheduleIntent = {
+        type: 'schedule',
+        id,
+        delay,
+        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+      };
+
+      emit(intent);
+      return intent;
+    },
+    cancelSchedule: (id, metadataOverride) => {
+      const intent: SagaCancelScheduleIntent = {
+        type: 'cancel-schedule',
+        id,
+        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+      };
+
+      emit(intent);
+      return intent;
+    },
+    runActivity: <TResult = unknown>(name: string, closure: SagaActivityClosure<TResult>, retryPolicy?: SagaRetryPolicy, metadataOverride?: Partial<SagaIntentMetadata>) => {
+      const intent: SagaRunActivityIntent<TResult> = {
+        type: 'run-activity',
+        name,
+        closure,
+        retryPolicy,
+        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+      };
+
+      emit(intent);
+      return intent;
+    }
   };
 }
 
 /** Deterministic state transition emitted by saga handlers. */
-export interface SagaStateTransition<TState> {
+export interface SagaReducerOutput<TState> {
   readonly state: TState;
-}
-
-/**
- * Saga reducer contract.
- *
- * Every handler must return next state plus explicit side-effect intents.
- */
-export interface SagaReducerOutput<TState, TCommandMap extends SagaCommandMap> extends SagaStateTransition<TState> {
-  readonly intents: readonly SagaIntent<TCommandMap>[];
+  readonly intents: readonly SagaIntent[];
 }
 
 /** Sync or async saga handler result. */
-export type SagaHandlerResult<TState, TCommandMap extends SagaCommandMap> =
-  | SagaReducerOutput<TState, TCommandMap>
-  | Promise<SagaReducerOutput<TState, TCommandMap>>;
+export type SagaHandlerResult = void | Promise<void>;
 
 /** Saga handler keyed under `.on(<aggregate>, handlers)` entries. */
-export type SagaHandler<TState, TCommandMap extends SagaCommandMap> = (
-  ctx: SagaDispatchContext<TState, TCommandMap>,
-  ...args: unknown[]
-) => SagaHandlerResult<TState, TCommandMap>;
+export type SagaHandler<
+  TState,
+  TAggregate extends SagaAggregateDefinition,
+  TEventName extends SagaAggregateEventName<TAggregate>
+> = (
+  state: Draft<TState>,
+  event: SagaAggregateEventByName<TAggregate, TEventName>,
+  ctx: SagaIntentContext
+) => SagaHandlerResult;
 
 /** Map of handler names to saga reducer functions. */
-export type SagaHandlers<TState, TCommandMap extends SagaCommandMap> = Record<
-  string,
-  SagaHandler<TState, TCommandMap>
->;
+export type SagaHandlers<TState, TAggregate extends SagaAggregateDefinition> = {
+  [TEventName in SagaAggregateEventName<TAggregate>]?: SagaHandler<TState, TAggregate, TEventName>;
+};
 
 /** Built saga definition consumed by runtime execution layers. */
-export interface SagaDefinition<TState = unknown, TCommandMap extends SagaCommandMap = SagaCommandMap> {
+export interface SagaDefinition<TState = unknown> {
+  name: string;
   initialState: SagaInitialStateFactory<TState>;
-  correlations: Array<{ aggregate: string; correlate: SagaCorrelationFactory }>;
-  handlers: Array<{ aggregate: string; handlers: SagaHandlers<TState, TCommandMap> }>;
+  correlations: Array<{
+    aggregateType: string;
+    aggregate: SagaAggregateDefinition;
+    correlate: SagaCorrelationFactory;
+  }>;
+  handlers: Array<{
+    aggregateType: string;
+    aggregate: SagaAggregateDefinition;
+    handlers: Record<string, SagaHandler<TState, SagaAggregateDefinition, string>>;
+  }>;
 }
 
 /** Fluent builder for composing a saga definition. */
-export interface SagaBuilder<TState = unknown, TCommandMap extends SagaCommandMap = SagaCommandMap> {
-  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TCommandMap>;
-  correlate(aggregate: string, correlate: SagaCorrelationFactory): SagaBuilder<TState, TCommandMap>;
-  on(aggregate: string, handlers: SagaHandlers<TState, TCommandMap>): SagaBuilder<TState, TCommandMap>;
-  build(): SagaDefinition<TState, TCommandMap>;
+export interface SagaBuilder<TState = unknown> {
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState>;
+  on<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, handlers: SagaHandlers<TState, TAggregate>): SagaBuilder<TState>;
+  build(): SagaDefinition<TState>;
 }
 
-interface SagaDefinitionDraft<TCommandMap extends SagaCommandMap> {
+export interface CreateSagaOptions {
+  name: string;
+}
+
+interface SagaDefinitionDraft {
+  name: string;
   initialState: SagaInitialStateFactory<unknown>;
-  correlations: Array<{ aggregate: string; correlate: SagaCorrelationFactory }>;
-  handlers: Array<{ aggregate: string; handlers: SagaHandlers<unknown, TCommandMap> }>;
+  correlations: Array<{
+    aggregateType: string;
+    aggregate: SagaAggregateDefinition;
+    correlate: SagaCorrelationFactory;
+  }>;
+  handlers: Array<{
+    aggregateType: string;
+    aggregate: SagaAggregateDefinition;
+    handlers: Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>;
+  }>;
 }
 
-function createSagaBuilder<TState, TCommandMap extends SagaCommandMap>(
-  state: SagaDefinitionDraft<TCommandMap>
-): SagaBuilder<TState, TCommandMap> {
+function getAggregateType(aggregate: SagaAggregateDefinition): string {
+  return aggregate.__aggregateType ?? 'unknown';
+}
+
+/**
+ * Executes a single saga handler with mutation-first semantics and produces
+ * deterministic reducer output.
+ */
+export async function runSagaHandler<
+  TState,
+  TAggregate extends SagaAggregateDefinition,
+  TEventName extends SagaAggregateEventName<TAggregate>
+>(
+  state: TState,
+  event: SagaAggregateEventByName<TAggregate, TEventName>,
+  handler: SagaHandler<TState, TAggregate, TEventName>,
+  metadata: SagaIntentMetadata
+): Promise<SagaReducerOutput<TState>> {
+  const draft = createDraft(state);
+  const intentBuffer: SagaIntent[] = [];
+  const ctx = createSagaDispatchContext(metadata, intentBuffer);
+
+  await handler(draft, event, ctx);
+
+  return {
+    state: finishDraft(draft) as TState,
+    intents: intentBuffer
+  };
+}
+
+function createSagaBuilder<TState>(state: SagaDefinitionDraft): SagaBuilder<TState> {
   return {
     initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
-      return createSagaBuilder<TNextState, TCommandMap>(state);
+      return createSagaBuilder<TNextState>(state);
     },
     correlate(aggregate, correlate) {
-      state.correlations.push({ aggregate, correlate });
-      return createSagaBuilder<TState, TCommandMap>(state);
+      state.correlations.push({
+        aggregate,
+        aggregateType: getAggregateType(aggregate),
+        correlate
+      });
+      return createSagaBuilder<TState>(state);
     },
     on(aggregate, handlers) {
       state.handlers.push({
         aggregate,
-        handlers: handlers as SagaHandlers<unknown, TCommandMap>
+        aggregateType: getAggregateType(aggregate),
+        handlers: handlers as Record<string, SagaHandler<unknown, SagaAggregateDefinition, string>>
       });
-      return createSagaBuilder<TState, TCommandMap>(state);
+      return createSagaBuilder<TState>(state);
     },
     build() {
-      return state as SagaDefinition<TState, TCommandMap>;
+      return state as SagaDefinition<TState>;
     }
   };
 }
 
 /**
- * Creates a fluent saga builder with typed command-intent inference.
- *
- * `createSaga` defines state shape, correlation hooks, and handler contracts.
- * Execution, persistence, replay, and worker orchestration are provided by
- * companion saga modules exported from `src/sagas`.
+ * Creates a fluent saga builder with aggregate-driven typing and mutable
+ * handler draft semantics.
  */
-export function createSaga<TCommandMap extends SagaCommandMap = SagaCommandMap>(): SagaBuilder<
-  unknown,
-  TCommandMap
-> {
-  const state: SagaDefinitionDraft<TCommandMap> = {
+export function createSaga<TState = unknown>(nameOrOptions?: string | CreateSagaOptions): SagaBuilder<TState> {
+  const name = typeof nameOrOptions === 'string'
+    ? nameOrOptions
+    : nameOrOptions?.name ?? 'unnamed-saga';
+
+  const state: SagaDefinitionDraft = {
+    name,
     initialState: () => undefined,
     correlations: [],
     handlers: []
   };
 
-  return createSagaBuilder<unknown, TCommandMap>(state);
+  return createSagaBuilder<TState>(state);
 }

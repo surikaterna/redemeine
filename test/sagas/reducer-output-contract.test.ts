@@ -5,22 +5,36 @@ import {
   type SagaReducerOutput
 } from '../../src/sagas';
 
-type BillingCommandMap = {
-  'billing.charge': { invoiceId: string; amount: number };
-  'billing.notify': { invoiceId: string; channel: 'email' | 'sms' };
-};
+const BillingAggregate = {
+  __aggregateType: 'billing',
+  pure: {
+    eventProjectors: {
+      started: (_state: unknown, _event: { payload: { invoiceId: string } }) => undefined
+    }
+  },
+  commandCreators: {
+    'billing.charge': (invoiceId: string, amount: number) => ({
+      type: 'billing.charge',
+      payload: { invoiceId, amount }
+    }),
+    'billing.notify': (invoiceId: string, channel: 'email' | 'sms') => ({
+      type: 'billing.notify',
+      payload: { invoiceId, channel }
+    })
+  }
+} as const;
 
 describe('S08 reducer output contract typing', () => {
   it('accepts deterministic state transition output with typed intents', () => {
-    const saga = createSaga<BillingCommandMap>()
+    const saga = createSaga<{ attempts: number; invoiceId: string }>('billing-saga')
       .initialState(() => ({ attempts: 0 as number, invoiceId: 'inv-1' as string }))
-      .on('billing', {
-        started: ctx => {
-          const intents: readonly SagaIntent<BillingCommandMap>[] = [
+      .on(BillingAggregate, {
+        started: (state, _event, ctx) => {
+          const intents: readonly SagaIntent[] = [
             {
               type: 'dispatch',
               command: 'billing.charge',
-              payload: { invoiceId: ctx.state.invoiceId, amount: 250 },
+              payload: { invoiceId: state.invoiceId, amount: 250 },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
@@ -30,7 +44,7 @@ describe('S08 reducer output contract typing', () => {
             {
               type: 'dispatch',
               command: 'billing.notify',
-              payload: { invoiceId: ctx.state.invoiceId, channel: 'email' },
+              payload: { invoiceId: state.invoiceId, channel: 'email' },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
@@ -68,15 +82,16 @@ describe('S08 reducer output contract typing', () => {
             }
           ];
 
-          const output: SagaReducerOutput<typeof ctx.state, BillingCommandMap> = {
+          const output: SagaReducerOutput<typeof state> = {
             state: {
-              ...ctx.state,
-              attempts: ctx.state.attempts + 1
+              ...state,
+              attempts: state.attempts + 1
             },
             intents
           };
 
-          return output;
+          state.attempts = output.state.attempts;
+          output.intents.forEach(ctx.emit);
         }
       })
       .build();
@@ -85,19 +100,18 @@ describe('S08 reducer output contract typing', () => {
   });
 
   it('rejects invalid reducer output shapes at compile time', () => {
-    createSaga<BillingCommandMap>()
+    createSaga<{ attempts: number; invoiceId: string }>({ name: 'billing-saga' })
       .initialState(() => ({ attempts: 0, invoiceId: 'inv-1' }))
-      .on('billing', {
-        started: ctx => {
+      .on(BillingAggregate, {
+        started: (state, _event, _ctx) => {
           // @ts-expect-error reducer output requires intents array
-          const missingIntents: SagaReducerOutput<typeof ctx.state, BillingCommandMap> = {
-            state: ctx.state
+          const missingIntents: SagaReducerOutput<typeof state> = {
+            state
           };
 
-          const badDispatchIntent: SagaIntent<BillingCommandMap> = {
+          const badDispatchIntent: SagaIntent = {
             type: 'dispatch',
             command: 'billing.charge',
-            // @ts-expect-error dispatch payload must match mapped command payload
             payload: { invoiceId: 'inv-1', amount: '250' },
             metadata: {
               sagaId: 'saga-1',
@@ -106,7 +120,7 @@ describe('S08 reducer output contract typing', () => {
             }
           };
 
-          const badScheduleIntent: SagaIntent<BillingCommandMap> = {
+          const badScheduleIntent: SagaIntent = {
             type: 'schedule',
             id: 'billing-reminder',
             // @ts-expect-error schedule delay must be number
@@ -118,10 +132,9 @@ describe('S08 reducer output contract typing', () => {
             }
           };
 
-          return {
-            state: missingIntents.state,
-            intents: [badDispatchIntent, badScheduleIntent]
-          };
+          expect(missingIntents).toBeDefined();
+          expect(badDispatchIntent).toBeDefined();
+          expect(badScheduleIntent).toBeDefined();
         }
       })
       .build();

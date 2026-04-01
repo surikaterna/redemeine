@@ -6,56 +6,70 @@ This starter walks through the minimum moving parts for building an event-source
 
 You will:
 
-1. Define typed command contracts.
-2. Build a saga with `createSaga`.
-3. Attach retry policy where needed.
+1. Define saga state.
+2. Build a saga with `createSaga<TState>(nameOrOptions?)`.
+3. Wire aggregate-typed handlers with `.on(Aggregate, handlers)`.
+4. Dispatch typed commands with `commandsFor(...)` / `dispatchTo`.
+5. Attach retry policy where needed.
 
-## 1) Define command contracts
+## 1) Define saga state
 
 ```ts
-type SagaCommands = {
-  'billing.charge': { invoiceId: string; amount: number };
-  'billing.notify': { invoiceId: string; channel: 'email' | 'sms' };
+type BillingSagaState = {
+  attempts: number;
+  settled: boolean;
 };
 ```
 
-`createSaga<SagaCommands>()` uses this command map to type-check every `ctx.dispatch(...)` call.
+`createSaga<BillingSagaState>(...)` uses this type to keep handler state usage fully inferred.
 
 ## 2) Build the saga definition
 
 ```ts
 import { createSaga } from 'redemeine';
 
-export const BillingSaga = createSaga<SagaCommands>()
+const BillingAggregate = {
+  __aggregateType: 'billing',
+  pure: {
+    eventProjectors: {
+      created: (state: unknown, event: { payload: { invoiceId: string; amount: number } }) => state
+    }
+  },
+  commandCreators: {
+    charge: (input: { invoiceId: string; amount: number }) => ({
+      type: 'billing.charge',
+      payload: input
+    }),
+    notify: (input: { invoiceId: string; channel: 'email' | 'sms' }) => ({
+      type: 'billing.notify',
+      payload: input
+    })
+  }
+} as const;
+
+export const BillingSaga = createSaga<BillingSagaState>('billing-saga')
   .initialState(() => ({ attempts: 0, settled: false }))
-  .correlate('invoice', event => event)
-  .on('invoice', {
-    created: ctx => {
-      const chargeIntent = ctx.dispatch('billing.charge', {
-        invoiceId: 'inv-1',
+  .correlate(BillingAggregate, event => event.payload.invoiceId)
+  .on(BillingAggregate, {
+    created: (state, event, ctx) => {
+      state.attempts += 1;
+
+      const commands = ctx.commandsFor(BillingAggregate, event.payload.invoiceId);
+      commands.charge({
+        invoiceId: event.payload.invoiceId,
         amount: 250
       });
-
-      const notifyIntent = ctx.dispatch('billing.notify', {
-        invoiceId: 'inv-1',
+      commands.notify({
+        invoiceId: event.payload.invoiceId,
         channel: 'email'
       });
-
-      const timeoutIntent = ctx.schedule('invoice-timeout', 5_000);
-
-      return {
-        state: {
-          ...ctx.state,
-          attempts: ctx.state.attempts + 1
-        },
-        intents: [chargeIntent, notifyIntent, timeoutIntent]
-      };
+      ctx.schedule('invoice-timeout', 5_000);
     }
   })
   .build();
 ```
 
-Every handler returns `{ state, intents }`, which keeps state transitions deterministic and side effects explicit.
+Handlers are mutation-style (Immer semantics): mutate `state`, then emit intents through `ctx` helpers.
 
 ## 3) Add retry policy to activity intents
 
@@ -73,17 +87,14 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<SagaCommands>()
+const sagaWithActivity = createSaga<BillingSagaState>('billing-saga')
   .initialState(() => ({ attempts: 0, settled: false }))
-  .on('invoice', {
-    created: ctx => ({
-      state: ctx.state,
-      intents: [
-        ctx.runActivity('charge-card', async () => {
-          // external call
-        }, policy)
-      ]
-    })
+  .on(BillingAggregate, {
+    created: (state, event, ctx) => {
+      ctx.runActivity('charge-card', async () => {
+        // external call
+      }, policy);
+    }
   })
   .build();
 ```
@@ -97,6 +108,7 @@ Saga definitions are pure contracts: they describe state transitions and emitted
 In practice:
 
 - Keep consumer code on exported saga definition APIs.
+- Prefer aggregate command creators for typed dispatch (`commandsFor` / `dispatchTo`).
 - Avoid importing runtime execution/persistence helpers from internal paths.
 - Treat runtime wiring as application-level integration detail.
 

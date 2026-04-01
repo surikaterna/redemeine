@@ -1,16 +1,27 @@
 import { describe, expect, it } from '@jest/globals';
 import { createSaga } from '../../src/sagas';
 
-type InvoiceCommandMap = {
-  'invoice.create': { invoiceId: string; amount: number };
-};
+const InvoiceAggregate = {
+  __aggregateType: 'invoice',
+  pure: {
+    eventProjectors: {
+      created: (_state: unknown, _event: { payload: { invoiceId: string; amount: number } }) => undefined
+    }
+  },
+  commandCreators: {
+    'invoice.create': (invoiceId: string, amount: number) => ({
+      type: 'invoice.create',
+      payload: { invoiceId, amount }
+    })
+  }
+} as const;
 
 describe('createSaga ctx schedule/retry helper typing', () => {
   it('accepts valid schedule, cancelSchedule, and runActivity calls', () => {
-    createSaga<InvoiceCommandMap>()
+    createSaga<{ attempted: number }>()
       .initialState(() => ({ attempted: 0 }))
-      .on('invoice', {
-        created: async ctx => {
+      .on(InvoiceAggregate, {
+        created: async (state, _event, ctx) => {
           ctx.schedule('invoice-reminder', 5_000);
           ctx.cancelSchedule('invoice-reminder');
 
@@ -25,8 +36,7 @@ describe('createSaga ctx schedule/retry helper typing', () => {
               jitterCoefficient: 0.2
             }
           );
-
-          return { state: ctx.state, intents: [] };
+          state.attempted += 1;
         }
       })
       .build();
@@ -35,10 +45,10 @@ describe('createSaga ctx schedule/retry helper typing', () => {
   });
 
   it('rejects invalid schedule and retry policy usage at compile time', () => {
-    createSaga<InvoiceCommandMap>()
+    createSaga<{ attempted: number }>()
       .initialState(() => ({ attempted: 0 }))
-      .on('invoice', {
-        created: ctx => {
+      .on(InvoiceAggregate, {
+        created: (_state, _event, ctx) => {
           // @ts-expect-error delay must be a number
           ctx.schedule('invoice-reminder', '5000');
 
@@ -60,8 +70,6 @@ describe('createSaga ctx schedule/retry helper typing', () => {
             maxAttempts: 3,
             initialBackoffMs: 250
           });
-
-          return { state: ctx.state, intents: [] };
         }
       })
       .build();

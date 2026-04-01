@@ -20,30 +20,48 @@ Anything outside these documented exports is runtime implementation detail and m
 
 ## Defining sagas
 
-Use `createSaga<TCommands>()` to build a saga definition with compile-time command payload checks.
+Use `createSaga<TState>(nameOrOptions?)` to build a saga definition.
+
+- `TState` is your saga state shape.
+- `nameOrOptions?` is optional and lets you provide a saga name/config.
+- Handlers use mutation-style state updates (Immer draft semantics).
 
 ```ts
 import { createSaga } from 'redemeine';
 
-type InvoiceCommands = {
-  'invoice.create': { invoiceId: string; amount: number };
+type InvoiceSagaState = {
+  attempted: number;
+  settled: boolean;
 };
 
-const saga = createSaga<InvoiceCommands>()
-  .initialState(() => ({ attempted: 0 }))
-  .on('invoice', {
-    created: ctx => {
-      const dispatchIntent = ctx.dispatch('invoice.create', {
-        invoiceId: 'inv-1',
-        amount: 100
+const InvoiceAggregate = {
+  __aggregateType: 'invoice',
+  pure: {
+    eventProjectors: {
+      created: (state: unknown, event: { payload: { invoiceId: string; amount: number } }) => state
+    }
+  },
+  commandCreators: {
+    create: (input: { invoiceId: string; amount: number }) => ({
+      type: 'invoice.create',
+      payload: input
+    })
+  }
+} as const;
+
+const saga = createSaga<InvoiceSagaState>('invoice-saga')
+  .initialState(() => ({ attempted: 0, settled: false }))
+  .correlate(InvoiceAggregate, event => event.payload.invoiceId)
+  .on(InvoiceAggregate, {
+    created: (state, event, ctx) => {
+      state.attempted += 1;
+
+      const commands = ctx.commandsFor(InvoiceAggregate, event.payload.invoiceId);
+      commands.create({
+        invoiceId: event.payload.invoiceId,
+        amount: event.payload.amount
       });
-
-      const scheduleIntent = ctx.schedule('invoice-reminder', 5_000);
-
-      return {
-        state: { ...ctx.state, attempted: ctx.state.attempted + 1 },
-        intents: [dispatchIntent, scheduleIntent]
-      };
+      ctx.schedule('invoice-reminder', 5_000);
     }
   })
   .build();
@@ -51,8 +69,9 @@ const saga = createSaga<InvoiceCommands>()
 
 Core contracts:
 
-- `SagaReducerOutput<TState, TCommands>`: required handler output shape.
-- `SagaIntent<TCommands>`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
+- Handler signature: `(state, event, ctx)` mutation-style state updates.
+- Handlers emit intents via `ctx.commandsFor(...)`, `ctx.dispatchTo(...)`, `ctx.schedule(...)`, `ctx.cancelSchedule(...)`, and `ctx.runActivity(...)`.
+- `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
 ## Retry policy helpers
@@ -66,14 +85,20 @@ Retry helpers in `RetryPolicy.ts`:
 
 Policy shape: `SagaRetryPolicy` (`maxAttempts`, `initialBackoffMs`, `backoffCoefficient`, optional caps/jitter).
 
-## `commandsFor` note
+## Typed aggregate dispatch
 
-- `ctx.commandsFor(Aggregate, aggregateId, metadataOverride?)` creates typed command factories from aggregate definitions while preserving saga intent metadata defaults.
+- `commandsFor(Aggregate, aggregateId, metadataOverride?)` returns typed command factories derived from aggregate command creators.
+- `dispatchTo` is the common variable name for that typed command factory.
+- Prefer aggregate command creators over string command names for dispatch typing.
 
 ## Migration summary (breaking)
 
 If you used older/expanded saga docs, migrate as follows:
 
 - **Keep using:** `createSaga` and retry helpers.
+- **Use new builder form:** `createSaga<TState>(nameOrOptions?)`.
+- **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
+- **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
+- **Use typed dispatch factories:** `commandsFor(...)` / `dispatchTo.<commandCreator>(...)`.
 - **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
 - **Treat internals as unstable:** anything outside `src/sagas/index.ts` exports is implementation detail.

@@ -1,24 +1,36 @@
 import { describe, expect, it } from '@jest/globals';
 import { createSaga } from '../../src/sagas';
 
-type InvoiceCommandMap = {
-  'invoice.create': { invoiceId: string; amount: number };
-};
+const InvoiceAggregate = {
+  __aggregateType: 'invoice',
+  pure: {
+    eventProjectors: {
+      created: (_state: unknown, _event: { payload: { invoiceId: string; amount: number } }) => undefined
+    }
+  },
+  commandCreators: {
+    'invoice.create': (invoiceId: string, amount: number) => ({
+      type: 'invoice.create',
+      payload: { invoiceId, amount }
+    })
+  }
+} as const;
 
 describe('S07 acceptance: intent metadata type shape', () => {
   it('ctx exposes saga metadata and all intent helpers return metadata fields', () => {
-    createSaga<InvoiceCommandMap>()
+    createSaga<{ attempted: number }>('invoice-saga')
       .initialState(() => ({ attempted: 0 }))
-      .on('invoice', {
-        created: ctx => {
+      .on(InvoiceAggregate, {
+        created: (state, _event, ctx) => {
           const ctxSagaId: string = ctx.metadata.sagaId;
           const ctxCorrelationId: string = ctx.metadata.correlationId;
           const ctxCausationId: string = ctx.metadata.causationId;
 
-          const dispatchIntent = ctx.dispatch(
-            'invoice.create',
-            { invoiceId: 'inv-1', amount: 100 },
-            { causationId: 'custom-cause' }
+          const invoice = ctx.dispatchTo(InvoiceAggregate, 'inv-1', { causationId: 'custom-cause' });
+
+          const dispatchIntent = invoice['invoice.create'](
+            'inv-1',
+            100,
           );
 
           const scheduleIntent = ctx.schedule('invoice-reminder', 5_000, {
@@ -32,11 +44,9 @@ describe('S07 acceptance: intent metadata type shape', () => {
               maxAttempts: 3,
               initialBackoffMs: 250,
               backoffCoefficient: 2
-            },
-            {
-              sagaId: 'explicit-saga-id'
             }
           );
+          state.attempted += 1;
 
           const dispatchedSagaId: string = dispatchIntent.metadata.sagaId;
           const scheduledCorrelationId: string = scheduleIntent.metadata.correlationId;
@@ -49,23 +59,20 @@ describe('S07 acceptance: intent metadata type shape', () => {
           expect(scheduledCorrelationId).toBeDefined();
           expect(activityCausationId).toBeDefined();
 
-          return {
-            state: ctx.state,
-            intents: [dispatchIntent, scheduleIntent, runActivityIntent]
-          };
         }
       })
       .build();
   });
 
   it('rejects invalid metadata shapes at compile time', () => {
-    createSaga<InvoiceCommandMap>()
+    createSaga<{ attempted: number }>()
       .initialState(() => ({ attempted: 0 }))
-      .on('invoice', {
-        created: ctx => {
-          // @ts-expect-error metadata values must be strings
-          ctx.dispatch('invoice.create', { invoiceId: 'inv-1', amount: 100 }, { sagaId: 123 });
-
+      .on(InvoiceAggregate, {
+        created: (_state, _event, ctx) => {
+          const invoice = ctx.commandsFor(InvoiceAggregate, 'inv-1', {
+            // @ts-expect-error metadata values must be strings
+            sagaId: 123
+          });
           // @ts-expect-error metadata values must be strings
           ctx.schedule('invoice-reminder', 5_000, { correlationId: 99 });
 
@@ -76,10 +83,6 @@ describe('S07 acceptance: intent metadata type shape', () => {
           const invalid: number = ctx.metadata.sagaId;
           expect(invalid).toBeDefined();
 
-          return {
-            state: ctx.state,
-            intents: []
-          };
         }
       })
       .build();
