@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../../src/sagas';
+import { createSaga, defineSagaPlugin } from '../../src/sagas';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -24,6 +24,47 @@ type SagaPluginHelpers = {
 };
 
 describe('createSaga plugin-capable ctx typing', () => {
+  it('infers plugin manifest literals with action-kind distinctions', () => {
+    const httpPlugin = defineSagaPlugin({
+      plugin_key: 'http',
+      version: '1.0.0',
+      description: 'HTTP integration',
+      actions: {
+        ping: {
+          action_kind: 'void',
+          build: (url: string) => ({ url })
+        },
+        get: {
+          action_kind: 'request_response',
+          build: (url: string, headers?: Record<string, string>) => ({ url, headers })
+        }
+      }
+    });
+
+    const pluginKey: 'http' = httpPlugin.plugin_key;
+    const pingKind: 'void' = httpPlugin.actions.ping.action_kind;
+    const getKind: 'request_response' = httpPlugin.actions.get.action_kind;
+    const pingPayload = httpPlugin.actions.ping.build('https://example.com/ping');
+    const getPayload = httpPlugin.actions.get.build('https://example.com/items', { authorization: 'Bearer x' });
+
+    expect(pluginKey).toBe('http');
+    expect(pingKind).toBe('void');
+    expect(getKind).toBe('request_response');
+    expect(pingPayload.url).toBe('https://example.com/ping');
+    expect(getPayload.url).toBe('https://example.com/items');
+
+    defineSagaPlugin({
+      plugin_key: 'broken',
+      actions: {
+        execute: {
+          // @ts-expect-error action_kind must be one of the supported literals
+          action_kind: 'request',
+          build: () => ({})
+        }
+      }
+    });
+  });
+
   it('infers plugin helper extensions alongside base ctx methods', () => {
     createSaga<{ retries: number }, SagaPluginHelpers>('plugin-saga')
       .initialState(() => ({ retries: 0 }))

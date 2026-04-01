@@ -9,6 +9,80 @@ export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
 type AnyFunction = (...args: any[]) => unknown;
 
+export type SagaPluginActionKind = 'void' | 'request_response';
+
+export type SagaPluginVoidActionDescriptor<
+  TBuild extends AnyFunction = AnyFunction
+> = {
+  readonly action_kind: 'void';
+  readonly build: TBuild;
+  readonly description?: string;
+};
+
+export type SagaPluginRequestResponseActionDescriptor<
+  TBuild extends AnyFunction = AnyFunction
+> = {
+  readonly action_kind: 'request_response';
+  readonly build: TBuild;
+  readonly description?: string;
+};
+
+export type SagaPluginActionDescriptor<
+  TBuild extends AnyFunction = AnyFunction
+> =
+  | SagaPluginVoidActionDescriptor<TBuild>
+  | SagaPluginRequestResponseActionDescriptor<TBuild>;
+
+export type SagaPluginActions = Record<string, SagaPluginActionDescriptor>;
+
+export interface SagaPluginManifest<
+  TPluginKey extends string = string,
+  TActions extends SagaPluginActions = SagaPluginActions
+> {
+  readonly plugin_key: TPluginKey;
+  readonly actions: TActions;
+  readonly version?: string;
+  readonly description?: string;
+}
+
+export type SagaPluginActionBuild<TAction extends SagaPluginActionDescriptor> = TAction['build'];
+
+export type SagaPluginActionArguments<TAction extends SagaPluginActionDescriptor> =
+  Parameters<SagaPluginActionBuild<TAction>>;
+
+export type SagaPluginActionExecutionPayload<TAction extends SagaPluginActionDescriptor> =
+  ReturnType<SagaPluginActionBuild<TAction>>;
+
+export type SagaPluginActionNamesByKind<
+  TPlugin extends SagaPluginManifest,
+  TKind extends SagaPluginActionKind
+> = {
+  [TActionName in keyof TPlugin['actions'] & string]: TPlugin['actions'][TActionName]['action_kind'] extends TKind
+    ? TActionName
+    : never;
+}[keyof TPlugin['actions'] & string];
+
+export type SagaPluginVoidActionNames<TPlugin extends SagaPluginManifest> =
+  SagaPluginActionNamesByKind<TPlugin, 'void'>;
+
+export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
+  SagaPluginActionNamesByKind<TPlugin, 'request_response'>;
+
+/**
+ * Helper for authoring plugin manifests with strong literal inference.
+ */
+export function defineSagaPlugin<
+  const TPluginKey extends string,
+  const TActions extends SagaPluginActions
+>(manifest: {
+  readonly plugin_key: TPluginKey;
+  readonly actions: TActions;
+  readonly version?: string;
+  readonly description?: string;
+}): SagaPluginManifest<TPluginKey, TActions> {
+  return manifest;
+}
+
 /** Required metadata attached to every emitted saga intent. */
 export interface SagaIntentMetadata {
   sagaId: string;
