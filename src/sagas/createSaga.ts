@@ -489,6 +489,49 @@ export type SagaDispatchTo = <TAggregate extends SagaAggregateDefinition>(
   metadata?: Partial<SagaIntentMetadata>
 ) => SagaCommandsFor<TAggregate>;
 
+type SagaCoreDispatchBuild = <TAggregate extends SagaAggregateDefinition>(
+  aggregateDef: TAggregate,
+  aggregateId: string,
+  metadata?: Partial<SagaIntentMetadata>
+) => SagaCommandsFor<TAggregate>;
+
+type SagaCoreScheduleBuild = (
+  id: string,
+  delay: number,
+  metadata?: Partial<SagaIntentMetadata>
+) => SagaScheduleIntent;
+
+type SagaCoreCancelScheduleBuild = (
+  id: string,
+  metadata?: Partial<SagaIntentMetadata>
+) => SagaCancelScheduleIntent;
+
+type SagaCoreRunActivityBuild = <TResult = unknown>(
+  name: string,
+  closure: SagaActivityClosure<TResult>,
+  retryPolicy?: SagaRetryPolicy,
+  metadata?: Partial<SagaIntentMetadata>
+) => SagaRunActivityIntent<TResult>;
+
+export type SagaCorePluginManifest = SagaPluginManifest<
+  'core',
+  {
+    readonly dispatch: SagaPluginVoidActionDescriptor;
+    readonly dispatchTo: SagaPluginVoidActionDescriptor;
+    readonly schedule: SagaPluginVoidActionDescriptor;
+    readonly cancelSchedule: SagaPluginVoidActionDescriptor;
+    readonly runActivity: SagaPluginVoidActionDescriptor;
+  }
+>;
+
+type SagaCoreActionsContext = {
+  readonly dispatch: SagaDispatchTo;
+  readonly dispatchTo: SagaDispatchTo;
+  readonly schedule: SagaCoreScheduleBuild;
+  readonly cancelSchedule: SagaCoreCancelScheduleBuild;
+  readonly runActivity: SagaRunActivity;
+};
+
 /** Base context exposed to saga handlers for intent emissions. */
 export interface SagaIntentContextBase {
   readonly metadata: SagaIntentMetadata;
@@ -513,8 +556,92 @@ export type SagaIntentContext<
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = SagaIntentContextBase & {
-  readonly actions: SagaPluginActionsContext<TPlugins, TResponseHandlerBindings>;
+  readonly actions: SagaPluginActionsContext<TPlugins, TResponseHandlerBindings> & {
+    readonly core: SagaCoreActionsContext;
+  };
 } & SagaResponseHandlerTokenAccess<TResponseHandlerBindings>;
+
+function createSagaCorePluginManifest(
+  metadata: SagaIntentMetadata,
+  emitIntent: (intent: SagaIntent) => void
+): SagaCorePluginManifest {
+  const dispatchBuild: SagaCoreDispatchBuild = (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
+    aggregateDef,
+    aggregateId,
+    metadata,
+    emitIntent,
+    metadataOverride
+  );
+
+  const runActivityBuild: SagaRunActivity = <TResult = unknown>(
+    name: string,
+    closure: SagaActivityClosure<TResult>,
+    retryPolicy?: SagaRetryPolicy,
+    metadataOverride?: Partial<SagaIntentMetadata>
+  ) => {
+    const intent: SagaRunActivityIntent<TResult> = {
+      type: 'run-activity',
+      name,
+      closure,
+      retryPolicy,
+      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+    };
+
+    emitIntent(intent);
+    return intent;
+  };
+
+  return defineSagaPlugin({
+    plugin_key: 'core',
+    actions: {
+      dispatch: {
+        action_kind: 'void',
+        build: dispatchBuild,
+        description: 'Aggregate command dispatch helper'
+      },
+      dispatchTo: {
+        action_kind: 'void',
+        build: dispatchBuild,
+        description: 'Alias for aggregate command dispatch helper'
+      },
+      schedule: {
+        action_kind: 'void',
+        build: (id, delay, metadataOverride) => {
+          const intent: SagaScheduleIntent = {
+            type: 'schedule',
+            id,
+            delay,
+            metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+          };
+
+          emitIntent(intent);
+          return intent;
+        },
+        description: 'Schedule delayed saga wake-up'
+      },
+      cancelSchedule: {
+        action_kind: 'void',
+        build: (id, metadataOverride) => {
+          const intent: SagaCancelScheduleIntent = {
+            type: 'cancel-schedule',
+            id,
+            metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
+          };
+
+          emitIntent(intent);
+          return intent;
+        },
+        description: 'Cancel delayed saga wake-up'
+      },
+      runActivity: {
+        action_kind: 'void',
+        build: runActivityBuild,
+        description: 'Run saga activity closure'
+      }
+    },
+    description: 'Built-in saga side-effect action manifests'
+  });
+}
 
 function createPluginActionsContext(
   plugins: SagaPluginManifestList,
@@ -607,6 +734,13 @@ export function createSagaDispatchContext<
 
   const onResponse = createResponseHandlerTokenNamespace(responseHandlers, 'response');
   const onError = createResponseHandlerTokenNamespace(responseHandlers, 'error');
+  const corePlugin = createSagaCorePluginManifest(metadata, emit);
+  const actions = createPluginActionsContext([corePlugin, ...plugins], metadata, emit) as SagaPluginActionsContext<
+    TPlugins,
+    TResponseHandlerBindings
+  > & {
+    readonly core: SagaCoreActionsContext;
+  };
 
   return {
     metadata,
@@ -616,57 +750,25 @@ export function createSagaDispatchContext<
     onResponse,
     onError,
     emit,
-    commandsFor: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
+    commandsFor: (aggregateDef, aggregateId, metadataOverride) => actions.core.dispatch(
       aggregateDef,
       aggregateId,
-      metadata,
-      emit,
       metadataOverride
     ),
-    dispatchTo: (aggregateDef, aggregateId, metadataOverride) => createSagaCommandsFor(
+    dispatchTo: (aggregateDef, aggregateId, metadataOverride) => actions.core.dispatchTo(
       aggregateDef,
       aggregateId,
-      metadata,
-      emit,
       metadataOverride
     ),
-    schedule: (id, delay, metadataOverride) => {
-      const intent: SagaScheduleIntent = {
-        type: 'schedule',
-        id,
-        delay,
-        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-      };
-
-      emit(intent);
-      return intent;
-    },
-    cancelSchedule: (id, metadataOverride) => {
-      const intent: SagaCancelScheduleIntent = {
-        type: 'cancel-schedule',
-        id,
-        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-      };
-
-      emit(intent);
-      return intent;
-    },
-    runActivity: <TResult = unknown>(name: string, closure: SagaActivityClosure<TResult>, retryPolicy?: SagaRetryPolicy, metadataOverride?: Partial<SagaIntentMetadata>) => {
-      const intent: SagaRunActivityIntent<TResult> = {
-        type: 'run-activity',
-        name,
-        closure,
-        retryPolicy,
-        metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-      };
-
-      emit(intent);
-      return intent;
-    },
-    actions: createPluginActionsContext(plugins, metadata, emit) as SagaPluginActionsContext<
-      TPlugins,
-      TResponseHandlerBindings
-    >
+    schedule: (id, delay, metadataOverride) => actions.core.schedule(id, delay, metadataOverride),
+    cancelSchedule: (id, metadataOverride) => actions.core.cancelSchedule(id, metadataOverride),
+    runActivity: <TResult = unknown>(
+      name: string,
+      closure: SagaActivityClosure<TResult>,
+      retryPolicy?: SagaRetryPolicy,
+      metadataOverride?: Partial<SagaIntentMetadata>
+    ) => actions.core.runActivity(name, closure, retryPolicy, metadataOverride),
+    actions
   };
 }
 

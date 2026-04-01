@@ -115,9 +115,9 @@ describe('createSaga plugin-capable ctx typing', () => {
           const routedInvoiceId: string = requestIntent.routing_metadata.handler_data.invoiceId;
           const statusHeaders: Record<string, string> | undefined = requestIntent.execution_payload.headers;
 
-          ctx.schedule('invoice-reminder', 1_000);
-          ctx.cancelSchedule('invoice-reminder');
-          ctx.runActivity('audit', () => ({ invoiceId: event.payload.invoiceId }));
+          ctx.actions.core.schedule('invoice-reminder', 1_000);
+          ctx.actions.core.cancelSchedule('invoice-reminder');
+          ctx.actions.core.runActivity('audit', () => ({ invoiceId: event.payload.invoiceId }));
 
           expect(jobName).toBe('invoice.retry');
           expect(routedInvoiceId).toBe(event.payload.invoiceId);
@@ -194,6 +194,9 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           // @ts-expect-error base ctx still enforces schedule signature
           ctx.schedule(123, 1000);
+
+          // @ts-expect-error core action manifest enforces schedule signature
+          ctx.actions.core.schedule(123, 1000);
 
           expect(responseSelected).toBeDefined();
           expect(directRequestPayload).toBeDefined();

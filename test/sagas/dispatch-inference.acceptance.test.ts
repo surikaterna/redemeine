@@ -26,7 +26,7 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (state, _event, ctx) => {
-          const invoice = ctx.dispatchTo(InvoiceAggregate, 'inv-1');
+          const invoice = ctx.actions.core.dispatchTo(InvoiceAggregate, 'inv-1');
           invoice['invoice.create']('inv-1', 100);
           invoice['invoice.pay']('inv-1', '2026-03-30T00:00:00.000Z');
           state.dispatched += 1;
@@ -42,7 +42,7 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
-          const invoice = ctx.dispatchTo(InvoiceAggregate, 'inv-1');
+          const invoice = ctx.actions.core.dispatch(InvoiceAggregate, 'inv-1');
           // @ts-expect-error invoice.create signature requires (invoiceId: string, amount: number)
           invoice['invoice.create']({ invoiceId: 'inv-1' });
         }
