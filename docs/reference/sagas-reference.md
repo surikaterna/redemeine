@@ -10,11 +10,17 @@ For generated API signatures, use `/docs/api/`.
 
 - `createSaga.ts`: typed saga definition builder and intent types.
 - `RetryPolicy.ts`: retry validation, backoff scheduling, and classification helpers.
+- `createSagaAggregate.ts`: public constructor/export for the structure-only `SagaAggregate` contract.
 
 Public export barrel (`src/sagas/index.ts`):
 
 - `createSaga`
 - `SagaRetryPolicy` + retry helpers
+- `createSagaAggregate`
+
+Usage note:
+
+- `createSagaAggregate(nameOrOptions?)` exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
 
 Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
@@ -90,6 +96,50 @@ Policy shape: `SagaRetryPolicy` (`maxAttempts`, `initialBackoffMs`, `backoffCoef
 - `commandsFor(Aggregate, aggregateId, metadataOverride?)` returns typed command factories derived from aggregate command creators.
 - `dispatchTo` is the common variable name for that typed command factory.
 - Prefer aggregate command creators over string command names for dispatch typing.
+
+## SagaAggregate structure-only model
+
+`SagaAggregate` is a **persistence/contract shape** for saga state and emitted records.
+It is intentionally structure-only and does **not** define runtime worker behavior.
+
+### Naming and wire format conventions
+
+- Saga state uses **camelCase** keys (for example `createdAt`, `updatedAt`, `transitionVersion`).
+- Command and event `type` values on the wire use **snake_case** naming.
+- Temporal fields are serialized as **ISO8601** timestamps.
+- Recent transition/event/activity history is stored in **compact windows** (bounded arrays), with totals tracked separately.
+
+Example structural shape:
+
+```ts
+type SagaAggregateState = {
+  sagaId: string;
+  createdAt: string; // ISO8601
+  updatedAt: string; // ISO8601
+  transitionVersion: number;
+  recentTransitions: Array<{ type: string; at: string }>;
+  recentEvents: Array<{ type: string; at: string }>;
+  recentActivities: Array<{ name: string; at: string }>;
+  totalTransitions: number;
+  totalEvents: number;
+  totalActivities: number;
+};
+
+type SagaWireRecord = {
+  type: 'saga_transition_recorded' | 'saga_activity_scheduled' | 'saga_activity_completed';
+  at: string; // ISO8601
+  payload: Record<string, unknown>;
+};
+```
+
+### Intent vs activity (explicit terminology)
+
+- **Intent**: a deterministic instruction emitted by saga logic (for example: dispatch command, schedule timer, cancel timer, run activity).
+- **Activity**: the side-effecting execution unit that happens at runtime when a `runActivity` intent is executed.
+
+In other words, the saga definition emits intents; runtime infrastructure may later execute activities.
+
+> Out of scope for this reference: runtime worker/executor implementation details (queueing, polling, retries in workers, etc.).
 
 ## Migration summary (breaking)
 

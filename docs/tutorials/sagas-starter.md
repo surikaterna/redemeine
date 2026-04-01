@@ -105,6 +105,19 @@ const sagaWithActivity = createSaga<BillingSagaState>('billing-saga')
 
 Saga definitions are pure contracts: they describe state transitions and emitted intents.
 
+### SagaAggregate terminology (intent vs activity)
+
+When persisting saga progress as a structure-only `SagaAggregate` model, keep these terms distinct:
+
+- State keys remain camelCase.
+- Event/command `type` values on the wire are snake_case.
+- Timestamps are ISO8601 strings.
+- Recent transitions/events/activities are compact bounded windows with separate totals.
+- **Intent** means the declarative instruction produced by saga logic.
+- **Activity** means the runtime side effect that executes from a prior intent.
+
+Runtime worker/executor implementation is intentionally out of scope for this tutorial.
+
 In practice:
 
 - Keep consumer code on exported saga definition APIs.
