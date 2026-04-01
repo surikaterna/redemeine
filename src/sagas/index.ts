@@ -71,3 +71,4 @@ export * from './RetryPolicy';
 export * from './createSagaAggregate';
 export * from './SagaIdentityContract';
 export * from './identity';
+export * from './SagaIdentityAdapter';
