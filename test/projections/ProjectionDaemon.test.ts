@@ -308,6 +308,58 @@ describe('ProjectionDaemon', () => {
       expect(state).not.toBeNull();
       expect(state!.name).toBe('Order 2');
     });
+
+    it('should fan out a single .from event to multiple unique identities', async () => {
+      const orderAgg = {
+        __aggregateType: 'order',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+
+      const fanOutProjection = createProjection<TestState>('fanOutIdentity', () => ({
+        count: 0,
+        name: '',
+        events: []
+      }))
+        .identity((event) => ['doc-a', 'doc-b', 'doc-a'] as const)
+        .from(orderAgg, {
+          'order.created': (state, event: any) => {
+            state.name = event.payload.name;
+            state.count += 1;
+            state.events.push(event.type);
+          }
+        })
+        .build();
+
+      const daemon = new ProjectionDaemon({
+        ...options,
+        projection: fanOutProjection,
+        subscription: createMockSubscription([
+          {
+            aggregateType: 'order',
+            aggregateId: 'order-1',
+            type: 'order.created',
+            payload: { name: 'Fan Out' },
+            sequence: 1,
+            timestamp: '2024-01-01T00:00:00Z'
+          }
+        ])
+      });
+
+      const stats = await daemon.processBatch();
+
+      expect(stats.eventsProcessed).toBe(1);
+      expect(stats.documentsUpdated).toBe(2);
+
+      const stateA = await mockStore.load('doc-a');
+      const stateB = await mockStore.load('doc-b');
+      expect(stateA).not.toBeNull();
+      expect(stateB).not.toBeNull();
+      expect(stateA!.name).toBe('Fan Out');
+      expect(stateB!.name).toBe('Fan Out');
+      expect(stateA!.count).toBe(1);
+      expect(stateB!.count).toBe(1);
+    });
     
     it('should handle events from multiple aggregates with different document IDs', async () => {
       const events: ProjectionEvent[] = [
