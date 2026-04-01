@@ -14,20 +14,20 @@ You will:
 ## 1) Define command contracts
 
 ```ts
-type BillingCommandMap = {
+type SagaCommandMap = {
   'billing.charge': { invoiceId: string; amount: number };
   'billing.notify': { invoiceId: string; channel: 'email' | 'sms' };
 };
 ```
 
-`createSaga<BillingCommandMap>()` uses this map to type-check every `ctx.dispatch(...)` call.
+`createSaga<SagaCommandMap>()` uses this map to type-check every `ctx.dispatch(...)` call.
 
 ## 2) Build the saga definition
 
 ```ts
 import { createSaga } from 'redemeine';
 
-export const BillingSaga = createSaga<BillingCommandMap>()
+export const BillingSaga = createSaga<SagaCommandMap>()
   .initialState(() => ({ attempts: 0, settled: false }))
   .correlate('invoice', event => event)
   .on('invoice', {
@@ -74,7 +74,7 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<BillingCommandMap>()
+const sagaWithActivity = createSaga<SagaCommandMap>()
   .initialState(() => ({ attempts: 0, settled: false }))
   .on('invoice', {
     created: ctx => ({
@@ -120,12 +120,12 @@ const shared = getSagaRegistry().list();
 
 ## Runtime architecture (internal-only)
 
-Redemeine persists and executes saga intents through an internal runtime aggregate/projection system. Those runtime modules now live under internal paths and are intentionally not part of the stable public API.
+Redemeine persists and executes saga intents through an internal runtime system. Those modules are intentionally not part of the stable public API.
 
 In practice:
 
 - Keep consumer code on exported saga definition APIs.
-- Avoid importing runtime execution/persistence helpers directly.
+- Avoid importing runtime execution/persistence helpers directly from internal paths.
 - Treat internal runtime placement as implementation detail.
 
 ## Optional public seams
