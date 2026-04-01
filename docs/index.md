@@ -42,7 +42,7 @@ Once you've mastered the basics, explore task-oriented guides for solving common
 
 * [**Testing Aggregates**](/docs/recipes/testing-aggregates) — A "Given / When / Then" blueprint for testing pure business logic.
 * [**Testing Projections**](/docs/recipes/testing-projections) — Practical patterns for `.from()`/`.join()`, identity routing, and pure handler tests.
-* [**Saga Reference**](/docs/reference/sagas-reference) — API-focused reference for saga intents, persistence, retry helpers, replay, and worker-facing runtime seams.
+* [**Saga Reference**](/docs/reference/sagas-reference) — API-focused reference for defining saga intent maps, projecting pending intents, and integrating dispatch helpers.
 * [**Path Conventions Guide**](/docs/guides/path-conventions) — A quick cheat sheet for the default command and event naming paths.
 * [**Zod Integration**](/docs/guides/zod-integration) — How to integrate third-party schema validation libraries (like Zod) for advanced runtime checks within your command handlers.
 * [**Architecture Decision Log**](/docs/architecture/decision-log) — The historic record of why certain features and APIs exist in Redemeine.
