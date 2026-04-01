@@ -24,6 +24,62 @@ Usage note:
 
 Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
+## Saga identity contract (canonical)
+
+Saga identity is definition-first and has a canonical source of truth.
+
+### Structured source fields (required)
+
+- `namespace: string`
+- `name: string`
+- `version: number` (**integer**)
+
+These three fields are authoritative. Persisted or transmitted identity strings must be derived from these values after normalization.
+
+### Validation regex
+
+- `namespace`: `^[a-z](?:[a-z0-9_]*(?:\.[a-z0-9_]+)*)$`
+  - Lowercase segments separated by `.`
+  - Each segment starts with `[a-z]`
+  - Segment characters allowed: `[a-z0-9_]`
+- `name`: `^[a-z](?:[a-z0-9_]*(?:-[a-z0-9_]+)*)$`
+  - Lowercase tokens optionally separated by `-`
+  - Must start with `[a-z]`
+  - Token characters allowed: `[a-z0-9_]`
+- `version`: `^[1-9][0-9]*$` (string form) and must parse to a safe integer in numeric form
+
+### Normalization rules
+
+Apply normalization before validation and derivation:
+
+1. Trim leading/trailing whitespace from `namespace` and `name`.
+2. Lowercase `namespace` and `name`.
+3. Collapse internal whitespace sequences to `-` for `name` and to `.` for `namespace` only when explicitly converting user-entered free text; otherwise preserve separators and fail validation if illegal characters remain.
+4. `version` must be an integer (`Number.isSafeInteger(version)`) and `version >= 1`.
+5. Do not silently coerce non-numeric version strings (for example, `"01"`, `"v2"`, `"2.0"`) at runtime integration boundaries.
+
+### Derived identity fields
+
+From normalized structured fields:
+
+- `sagaType = <namespace>.<name>.v<version>`
+- `sagaUrn = urn:redemeine:saga:<namespace>:<name>:v<version>`
+- `instanceUrn` is optional and, when used, extends `sagaUrn`:
+  - `instanceUrn = <sagaUrn>:instance:<instanceId>`
+
+Notes:
+
+- `sagaType` and `sagaUrn` are **derived**, not independently authored.
+- `instanceUrn` is optional because not all definition-only surfaces carry an instance identifier.
+
+### Type contract
+
+The public `sagas` module exposes lightweight declaration types:
+
+- `SagaIdentityFields` (required structured source)
+- `SagaIdentityDerived` (derived values + optional `instanceUrn`)
+- `SagaIdentityContract` (combined view)
+
 ## Defining sagas (manifest-first)
 
 Use `createSaga({ name, plugins? })` to build saga definitions with typed plugin actions.
