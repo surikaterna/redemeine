@@ -10,3 +10,9 @@ export {
   type SagaIdentityParts,
   type NormalizedSagaIdentity
 } from './types';
+
+export {
+  deriveSagaInstanceUrn,
+  deriveSagaUrn,
+  type SagaStructuredIdentity
+} from './sagaUrn';
