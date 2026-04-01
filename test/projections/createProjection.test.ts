@@ -174,7 +174,7 @@ describe('createProjection Builder API', () => {
     expect(projection.name).toBe('composite-view');
     expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
     expect(projection.joinStreams).toHaveLength(1);
-    expect(projection.joinStreams[0].aggregate).toBe(orderAggDef);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
   });
 
   test('initialState(fn) overrides the initial state factory', () => {
@@ -215,13 +215,42 @@ describe('createProjection Builder API', () => {
       .identity((event) => `custom-${event.aggregateId}`)
       .build();
 
-    const event: ProjectionEvent<unknown> = {
+    const event: ProjectionEvent = {
       type: 'invoice.created.event',
       payload: {},
-      aggregateId: 'original-id'
+      aggregateType: 'invoice',
+      aggregateId: 'original-id',
+      sequence: 1,
+      timestamp: '2024-01-01T00:00:00Z'
     };
 
     expect(projection.identity(event)).toBe('custom-original-id');
+  });
+
+  test('identity(fn) supports fan-out identity arrays', () => {
+    const projection = createProjection<InvoiceState>('invoice-summary', () => ({
+      id: '',
+      amount: 0,
+      status: 'pending' as const
+    }))
+      .from(invoiceAggDef, {
+        created: (state, event) => {
+          state.amount = event.payload.amount;
+        }
+      })
+      .identity((event) => [`doc-${event.aggregateId}`, 'shared-doc'] as const)
+      .build();
+
+    const event: ProjectionEvent = {
+      type: 'invoice.created.event',
+      payload: {},
+      aggregateType: 'invoice',
+      aggregateId: 'original-id',
+      sequence: 1,
+      timestamp: '2024-01-01T00:00:00Z'
+    };
+
+    expect(projection.identity(event)).toEqual(['doc-original-id', 'shared-doc']);
   });
 
   test('throws error when build() is called without from()', () => {
@@ -320,7 +349,7 @@ describe('createProjection Type Inference', () => {
       .build();
 
     expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
-    expect(projection.joinStreams[0].aggregate).toBe(orderAggDef);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
   });
 });
 
@@ -383,7 +412,14 @@ describe('createProjection Builder Chaining', () => {
       .build();
 
     expect(projection.name).toBe('invoice-summary');
-    expect(projection.identity({ type: 'test', payload: {}, aggregateId: 'agg-1' })).toBe('id-agg-1');
+    expect(projection.identity({
+      aggregateType: 'invoice',
+      type: 'test',
+      payload: {},
+      aggregateId: 'agg-1',
+      sequence: 1,
+      timestamp: '2024-01-01T00:00:00Z'
+    })).toBe('id-agg-1');
   });
 
   test('creates isolated initial state instances per document id', () => {
@@ -465,9 +501,9 @@ describe('createProjection ProjectionDefinition Output', () => {
       .build();
 
     expect(projection.joinStreams).toHaveLength(1);
-    expect(projection.joinStreams[0].aggregate).toBe(orderAggDef);
-    expect(projection.joinStreams[0].handlers).toHaveProperty('shipped');
-    expect(projection.joinStreams[0].handlers).toHaveProperty('itemAdded');
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
+    expect(projection.joinStreams?.[0].handlers).toHaveProperty('shipped');
+    expect(projection.joinStreams?.[0].handlers).toHaveProperty('itemAdded');
   });
 
   test('subscriptions are captured from handlers', () => {
@@ -508,10 +544,13 @@ describe('createProjection Immer Integration', () => {
     
     // Call the handler to verify it works with Immer
     const initialState = { count: 0 };
-    const mockEvent: ProjectionEvent<InvoiceCreatedPayload> = {
+    const mockEvent: ProjectionEvent = {
       type: 'invoice.created.event',
       payload: { customerId: 'cust-1', amount: 100 },
-      aggregateId: 'inv-1'
+      aggregateType: 'invoice',
+      aggregateId: 'inv-1',
+      sequence: 1,
+      timestamp: '2024-01-01T00:00:00Z'
     };
     
     // The handler is wrapped with produce() - we need to check that produce returns a new state
