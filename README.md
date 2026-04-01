@@ -128,10 +128,9 @@ Flat root-level plugin keys are not accepted.
 
 Redemeine includes an event-sourced saga toolkit for long-running, cross-aggregate workflows.
 
-- Define saga behavior with `createSaga<TCommandMap>()` and typed `ctx.dispatch`/`ctx.schedule`/`ctx.runActivity` helpers.
-- Persist reducer intents as `saga.intent-recorded` events via `persistSagaReducerOutputIntents`.
-- Track execution lifecycle with `appendSagaIntent*` helpers and query pending work using `PendingIntentProjection`.
-- Enforce replay safety by suppressing side effects through `executeSagaReducerOutputInReplay`.
+- Define saga behavior with `createSaga<TCommandMap>()` and typed `ctx.dispatch` / `ctx.schedule` / `ctx.runActivity` helpers.
+- Use saga runtime support through the documented saga API surface and events.
+- Runtime internals are implementation details and are not part of Redemeine's public API.
 
 Start with the docs tutorial at `docs/tutorials/sagas-starter.md` and the reference at `docs/reference/sagas-reference.md`.
 
