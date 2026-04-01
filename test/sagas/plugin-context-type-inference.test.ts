@@ -36,6 +36,10 @@ const HttpPlugin = defineSagaPlugin({
     get: {
       action_kind: 'request_response',
       build: (url: string, headers?: Record<string, string>) => ({ url, headers })
+    },
+    post: {
+      action_kind: 'request_response',
+      build: (url: string, body: unknown) => ({ url, body })
     }
   }
 });
@@ -97,6 +101,16 @@ describe('createSaga plugin-capable ctx typing', () => {
           plugin_key: 'http',
           action_name: 'get',
           phase: 'error'
+        },
+        'http.post.success': {
+          plugin_key: 'http',
+          action_name: 'post',
+          phase: 'response'
+        },
+        'http.post.failure': {
+          plugin_key: 'http',
+          action_name: 'post',
+          phase: 'error'
         }
       })
       .initialState(() => ({ retries: 0 }))
@@ -141,7 +155,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       {
         plugin_key: 'http',
         plugin_kind: 'manifest',
-        action_names: ['get']
+        action_names: ['get', 'post']
       }
     ]);
 
@@ -159,6 +173,21 @@ describe('createSaga plugin-capable ctx typing', () => {
           plugin_key: 'http',
           action_name: 'get',
           phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        },
+        postOkay: {
+          plugin_key: 'http',
+          action_name: 'post',
+          phase: 'response'
+        },
+        postFail: {
+          plugin_key: 'http',
+          action_name: 'post',
+          phase: 'error'
         }
       })
       .initialState(() => ({ retries: 0 }))
@@ -178,13 +207,31 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           const builtRequest = ctx.actions.http.get('https://api.example.com/health').withData({ ok: true });
 
+          // @ts-expect-error request-response chain requires onResponse before onError
+          builtRequest.onError(ctx.onError.fail);
+
           // @ts-expect-error onResponse only accepts response-phase token for plugin/action
           builtRequest.onResponse(ctx.onError.okay);
 
           const responseSelected = builtRequest.onResponse(ctx.onResponse.okay);
 
+          // @ts-expect-error request-response chain requires onError before yielding an intent
+          const partialIntent: { routing_metadata: unknown } = responseSelected;
+
           // @ts-expect-error onError only accepts error-phase token for plugin/action
           responseSelected.onError(ctx.onResponse.okay);
+
+          // @ts-expect-error onResponse token must match originating plugin/action
+          builtRequest.onResponse(ctx.onResponse.postOkay);
+
+          // @ts-expect-error onError token must match originating plugin/action
+          responseSelected.onError(ctx.onError.postFail);
+
+          const chainedIntent = ctx.actions.http
+            .post('https://api.example.com/jobs', { id: 'job-1' })
+            .withData({ jobId: 'job-1' })
+            .onResponse(ctx.onResponse.postOkay)
+            .onError(ctx.onError.postFail);
 
           // @ts-expect-error response token keys are phase-specific
           ctx.onResponse.missing;
@@ -198,8 +245,11 @@ describe('createSaga plugin-capable ctx typing', () => {
           // @ts-expect-error core action manifest enforces schedule signature
           ctx.actions.core.schedule(123, 1000);
 
+          const chainedJobId: string = chainedIntent.routing_metadata.handler_data.jobId;
+
           expect(responseSelected).toBeDefined();
           expect(directRequestPayload).toBeDefined();
+          expect(chainedJobId).toBe('job-1');
         }
       })
       .build();
@@ -303,5 +353,26 @@ describe('createSaga plugin-capable ctx typing', () => {
         }
       })
       .build();
+  });
+
+  it('keeps optional plugin configuration valid when omitted', () => {
+    const saga = createSaga({
+      name: 'plugin-optional-saga'
+    })
+      .initialState(() => ({ retries: 0 }))
+      .on(InvoiceAggregate, {
+        created: (state, _event, ctx) => {
+          ctx.actions.core.schedule('invoice-reminder', 500);
+          ctx.actions.core.cancelSchedule('invoice-reminder');
+
+          // @ts-expect-error plugin helpers are unavailable when plugins are omitted
+          ctx.actions.http.get('https://api.example.com/invoices/inv-4');
+
+          state.retries += 1;
+        }
+      })
+      .build();
+
+    expect(saga.plugins).toEqual([]);
   });
 });
