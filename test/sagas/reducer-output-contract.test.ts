@@ -99,6 +99,19 @@ describe('S08 reducer output contract typing', () => {
     expect(saga.handlers).toHaveLength(1);
     expect(saga.plugins).toEqual([]);
     expect(saga.response_handlers).toEqual({});
+    expect(saga.identity).toEqual({
+      namespace: 'legacy',
+      name: 'billing-saga',
+      version: 1,
+      legacyName: 'billing-saga',
+      sagaType: 'legacy.billing-saga.v1',
+      sagaUrn: 'urn:redemeine:saga:legacy:billing-saga:v1'
+    });
+    expect(saga.sagaType).toBe('legacy.billing-saga.v1');
+    expect(saga.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
+    expect(saga.correlations).toEqual([]);
+    expect(saga.handlers[0]?.sagaType).toBe('legacy.billing-saga.v1');
+    expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
   });
 
   it('rejects invalid reducer output shapes at compile time', () => {
