@@ -154,6 +154,31 @@ export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TRe
 
 export type SagaPluginManifestList = readonly SagaPluginManifest[];
 
+export type SagaDefinitionPluginKind = 'manifest';
+
+export interface SagaPluginRegistryEntry<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TVersion extends string | undefined = string | undefined
+> {
+  readonly plugin_key: TPluginKey;
+  readonly plugin_kind: SagaDefinitionPluginKind;
+  readonly action_names: readonly TActionName[];
+  readonly version?: TVersion;
+}
+
+export type SagaPluginRegistryEntryFromManifest<TPlugin extends SagaPluginManifest> = SagaPluginRegistryEntry<
+  TPlugin['plugin_key'],
+  keyof TPlugin['actions'] & string,
+  TPlugin['version']
+>;
+
+export type SagaPluginRegistryFromManifests<TPlugins extends SagaPluginManifestList> = {
+  readonly [TIndex in keyof TPlugins]: TPlugins[TIndex] extends SagaPluginManifest
+    ? SagaPluginRegistryEntryFromManifest<TPlugins[TIndex]>
+    : never;
+};
+
 type SagaPluginActionsForManifest<TPlugin extends SagaPluginManifest> = {
   [TActionName in keyof TPlugin['actions'] & string]: (
     ...args: SagaPluginActionArguments<TPlugin['actions'][TActionName]>
@@ -530,7 +555,7 @@ export interface SagaDefinition<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
   name: string;
-  plugins: TPlugins;
+  plugins: SagaPluginRegistryFromManifests<TPlugins>;
   initialState: SagaInitialStateFactory<TState>;
   response_handlers: TResponseHandlerBindings;
   correlations: Array<{
@@ -573,11 +598,14 @@ type SagaPluginsFromOptions<TOptions extends CreateSagaOptions<SagaPluginManifes
     ? TPlugins
     : readonly [];
 
-interface SagaDefinitionDraft {
+interface SagaDefinitionDraft<
+  TPlugins extends readonly SagaPluginRegistryEntry[] = readonly SagaPluginRegistryEntry[],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = SagaResponseHandlerTokenBindings
+> {
   name: string;
-  plugins: SagaPluginManifestList;
+  plugins: TPlugins;
   initialState: SagaInitialStateFactory<unknown>;
-  response_handlers: SagaResponseHandlerTokenBindings;
+  response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
     aggregate: SagaAggregateDefinition;
@@ -595,6 +623,17 @@ interface SagaDefinitionDraft {
 
 function getAggregateType(aggregate: SagaAggregateDefinition): string {
   return aggregate.__aggregateType ?? 'unknown';
+}
+
+function createSagaPluginRegistry<TPlugins extends SagaPluginManifestList>(
+  plugins: TPlugins
+): SagaPluginRegistryFromManifests<TPlugins> {
+  return plugins.map((plugin) => ({
+    plugin_key: plugin.plugin_key,
+    plugin_kind: 'manifest',
+    action_names: Object.keys(plugin.actions),
+    ...(plugin.version === undefined ? {} : { version: plugin.version })
+  })) as SagaPluginRegistryFromManifests<TPlugins>;
 }
 
 /**
@@ -630,15 +669,24 @@ function createSagaBuilder<
   TState,
   TPlugins extends SagaPluginManifestList,
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings
->(state: SagaDefinitionDraft): SagaBuilder<TState, TPlugins, TResponseHandlerBindings> {
+>(
+  state: SagaDefinitionDraft<
+    SagaPluginRegistryFromManifests<TPlugins>,
+    TResponseHandlerBindings
+  >
+): SagaBuilder<TState, TPlugins, TResponseHandlerBindings> {
   return {
     initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createSagaBuilder<TNextState, TPlugins, TResponseHandlerBindings>(state);
     },
     responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
-      state.response_handlers = handlers;
-      return createSagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>(state);
+      const nextState = {
+        ...state,
+        response_handlers: handlers
+      } as SagaDefinitionDraft<SagaPluginRegistryFromManifests<TPlugins>, TNextResponseHandlerBindings>;
+
+      return createSagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>(nextState);
     },
     correlate(aggregate, correlate) {
       state.correlations.push({
@@ -660,7 +708,11 @@ function createSagaBuilder<
       return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
     },
     build() {
-      return state as SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
+      return ({
+        ...state,
+        plugins: [...state.plugins],
+        response_handlers: { ...state.response_handlers }
+      } as unknown) as SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
     }
   };
 }
@@ -673,11 +725,15 @@ export function createSaga<
   TState = unknown,
   const TOptions extends CreateSagaOptions<SagaPluginManifestList> = CreateSagaOptions<readonly []>
 >(options: TOptions): SagaBuilder<TState, SagaPluginsFromOptions<TOptions>, Record<never, never>> {
-  const plugins = (options.plugins ?? []) as SagaPluginsFromOptions<TOptions>;
+  const pluginManifests = (options.plugins ?? []) as SagaPluginsFromOptions<TOptions>;
+  const pluginRegistry = createSagaPluginRegistry(pluginManifests);
 
-  const state: SagaDefinitionDraft = {
+  const state: SagaDefinitionDraft<
+    SagaPluginRegistryFromManifests<SagaPluginsFromOptions<TOptions>>,
+    Record<never, never>
+  > = {
     name: options.name,
-    plugins,
+    plugins: pluginRegistry,
     initialState: () => undefined,
     response_handlers: {},
     correlations: [],

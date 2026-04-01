@@ -97,6 +97,8 @@ describe('S08 reducer output contract typing', () => {
       .build();
 
     expect(saga.handlers).toHaveLength(1);
+    expect(saga.plugins).toEqual([]);
+    expect(saga.response_handlers).toEqual({});
   });
 
   it('rejects invalid reducer output shapes at compile time', () => {

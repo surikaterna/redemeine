@@ -126,6 +126,21 @@ describe('createSaga plugin-capable ctx typing', () => {
     expect(saga.response_handlers['http.get.success'].plugin_key).toBe('http');
     expect(saga.response_handlers['http.get.success'].action_name).toBe('get');
     expect(saga.response_handlers['http.get.success'].phase).toBe('response');
+    expect(saga.plugins).toEqual([
+      {
+        plugin_key: 'infra',
+        plugin_kind: 'manifest',
+        action_names: ['scheduleCommand']
+      },
+      {
+        plugin_key: 'http',
+        plugin_kind: 'manifest',
+        action_names: ['get']
+      }
+    ]);
+
+    const pluginKind: 'manifest' = saga.plugins[1].plugin_kind;
+    expect(pluginKind).toBe('manifest');
   });
 
   it('rejects invalid plugin helper usage at compile time', () => {
