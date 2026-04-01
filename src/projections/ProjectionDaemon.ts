@@ -132,48 +132,51 @@ export class ProjectionDaemon<TState = unknown> {
         const eventKey = `${event.aggregateType}:${event.aggregateId}:${event.sequence}`;
         if (processedEvents.has(eventKey)) continue;
         
-        const targetDocId = await this.resolveTargetDocumentId(event);
-        
-        if (targetDocId === null) {
+        const targetDocIds = await this.resolveTargetDocumentIds(event);
+
+        if (targetDocIds.length === 0) {
           // Skip events without valid targets (join events without subscription)
           continue;
         }
-        
-        // Get or create pending document
-        let pending = pendingDocuments.get(targetDocId);
-        if (!pending) {
-          const existingState = await store.load(targetDocId);
-          const state = existingState || projection.initialState(targetDocId);
-          pending = {
-            docId: targetDocId,
-            state: state as TState,
-            events: [],
-            cursor: { sequence: 0 }
-          };
-          pendingDocuments.set(targetDocId, pending);
-        }
-        
-        // Process the event (this may trigger subscriptions via context)
-        this.currentDocId = targetDocId;
-        const context = this.createContext();
-        
-        pending.state = produce(pending.state, (draft: Draft<TState>) => {
-          const handler = this.findHandler(event);
-          if (handler) {
-            handler(draft, event, context);
-          }
-        });
 
-        await this.persistContextSubscriptions(context);
-        
-        // Update cursor to latest event
-        pending.cursor = {
-          sequence: Math.max(pending.cursor.sequence, event.sequence),
-          timestamp: event.timestamp
-        };
-        
+        for (const targetDocId of targetDocIds) {
+          // Get or create pending document
+          let pending = pendingDocuments.get(targetDocId);
+          if (!pending) {
+            const existingState = await store.load(targetDocId);
+            const state = existingState || projection.initialState(targetDocId);
+            pending = {
+              docId: targetDocId,
+              state: state as TState,
+              events: [],
+              cursor: { sequence: 0 }
+            };
+            pendingDocuments.set(targetDocId, pending);
+          }
+
+          // Process the event (this may trigger subscriptions via context)
+          this.currentDocId = targetDocId;
+          const context = this.createContext();
+
+          pending.state = produce(pending.state, (draft: Draft<TState>) => {
+            const handler = this.findHandler(event);
+            if (handler) {
+              handler(draft, event, context);
+            }
+          });
+
+          await this.persistContextSubscriptions(context);
+
+          // Update cursor to latest event
+          pending.cursor = {
+            sequence: Math.max(pending.cursor.sequence, event.sequence),
+            timestamp: event.timestamp
+          };
+
+          this.currentDocId = null;
+        }
+
         processedEvents.add(eventKey);
-        this.currentDocId = null;
         madeProgress = true;
       }
     }
@@ -206,12 +209,14 @@ export class ProjectionDaemon<TState = unknown> {
    * 2. If event is from .join stream: ONLY process if subscribeTo() was called
    *    for this aggregate+id; otherwise IGNORE (prevent ghost documents)
    */
-  private async resolveTargetDocumentId(event: ProjectionEvent): Promise<string | null> {
+  private async resolveTargetDocumentIds(event: ProjectionEvent): Promise<string[]> {
     const { projection } = this.options;
     
     // Check if this is a .from stream event
     if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
-      return projection.identity(event); // Primary owner dictates document ID
+      const identity = projection.identity(event);
+      const docIds = Array.isArray(identity) ? identity : [identity];
+      return Array.from(new Set(docIds));
     }
     
     // Check if this is a .join stream event
@@ -224,15 +229,15 @@ export class ProjectionDaemon<TState = unknown> {
       const targetDocId = await this.linkStore.resolveTarget(event.aggregateType, event.aggregateId);
 
       if (targetDocId) {
-        return targetDocId;
+        return [targetDocId];
       }
       
       // No subscription - IGNORE this event (prevents ghost documents)
-      return null;
+      return [];
     }
     
     // Unknown stream type - ignore
-    return null;
+    return [];
   }
   
   /**

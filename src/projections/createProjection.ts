@@ -163,8 +163,8 @@ export interface ProjectionDefinition<TState = unknown> {
   joinStreams?: JoinStreamDefinition<TState>[];
   /** Initial state factory function */
   initialState: (documentId: string) => TState;
-  /** Identity resolver - determines which document ID receives an event */
-  identity: (event: BaseProjectionEvent) => string;
+  /** Identity resolver - determines which document ID(s) receive an event */
+  identity: (event: BaseProjectionEvent) => string | readonly string[];
   /** Subscriptions captured during projection definition */
   subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 }
@@ -188,7 +188,7 @@ export interface ProjectionBuilder<TState> {
   /**
    * Override the default identity resolver
    */
-  identity(fn: (event: BaseProjectionEvent) => string): ProjectionBuilder<TState>;
+  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState>;
   
   /**
    * Define the primary stream to project from
@@ -218,7 +218,7 @@ export interface ProjectionBuilder<TState> {
 class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _name: string;
   private _initialState: (id: string) => TState;
-  private _identity: (event: BaseProjectionEvent) => string;
+  private _identity: (event: BaseProjectionEvent) => string | readonly string[];
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
 
@@ -234,7 +234,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  identity(fn: (event: BaseProjectionEvent) => string): ProjectionBuilder<TState> {
+  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState> {
     this._identity = fn;
     return this;
   }
