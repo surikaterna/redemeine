@@ -898,7 +898,7 @@ export interface SagaBuilder<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TPlugins, TResponseHandlerBindings>;
-  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
     handlers: TNextResponseHandlerBindings
   ): SagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState, TPlugins, TResponseHandlerBindings>;
@@ -920,7 +920,7 @@ export interface SagaBuilderAwaitingCorrelation<
   TStartInput
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderAwaitingCorrelation<TNextState, TPlugins, TResponseHandlerBindings, TStartInput>;
-  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
     handlers: TNextResponseHandlerBindings
   ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TNextResponseHandlerBindings, TStartInput>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
@@ -942,7 +942,7 @@ export interface SagaBuilderCorrelated<
   TCorrelationId
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderCorrelated<TNextState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
-  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
     handlers: TNextResponseHandlerBindings
   ): SagaBuilderCorrelated<TState, TPlugins, TNextResponseHandlerBindings, TStartInput, TCorrelationId>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
@@ -1164,7 +1164,7 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createAwaitingCorrelationBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput>();
     },
-    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
         TNextResponseHandlerBindings
@@ -1210,7 +1210,7 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createCorrelatedBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
     },
-    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
         TNextResponseHandlerBindings
@@ -1279,7 +1279,7 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createSagaBuilder<TNextState, TPlugins, TResponseHandlerBindings>(state);
     },
-    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
       const nextState = {
         ...state,
         response_handlers: handlers

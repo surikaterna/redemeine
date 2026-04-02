@@ -77,7 +77,7 @@ export const BillingSaga = createSaga<BillingSagaState>({
   name: 'billing-saga',
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseHandlers({
+  .responseDefinitions({
     billingFetchSucceeded: {
       plugin_key: 'http',
       action_name: 'get',
