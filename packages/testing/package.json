@@ -20,6 +20,8 @@
     "lint": "bunx tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@redemeine/mirage": "workspace:*",
+    "@redemeine/projection": "workspace:*",
     "@redemeine/saga": "workspace:*"
   }
 }

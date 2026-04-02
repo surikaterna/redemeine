@@ -7,3 +7,8 @@ export {
   type TestSagaInvokeResult,
   type TestSagaInvokeSuccess
 } from './testSaga';
+export {
+  createTestDepot,
+  type CreateTestDepotOptions,
+  type TestDepot
+} from './createTestDepot';
