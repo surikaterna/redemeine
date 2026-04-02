@@ -57,6 +57,7 @@ export {
   type SagaRunActivityIntent,
   type SagaScheduleIntent
 } from './createSaga';
+export { createAggregate } from './aggregateBridge';
 export {
   parseSagaIdentityUrn,
   toSagaIdentityUrn,

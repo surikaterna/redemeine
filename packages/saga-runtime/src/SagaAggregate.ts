@@ -4,9 +4,11 @@ type Event<P = unknown> = {
   payload: P;
 };
 
-const { createAggregate } = require('../../../src/createAggregate') as {
+const sagaPackage = require('@redemeine/saga/aggregateBridge') as {
   createAggregate: (name: string, initialState: unknown) => any;
 };
+
+const { createAggregate } = sagaPackage;
 
 export interface SagaRecentWindowLimits {
   transitions: number;
