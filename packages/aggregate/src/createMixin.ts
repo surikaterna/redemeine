@@ -1,6 +1,7 @@
-import { Event, EventEmitterFactory, EventType, CommandType, SelectorsMap, MapCommandsToPayloads, CommandContext, CommandIntents } from '@redemeine/kernel';
+import { Event, EventType, CommandType, SelectorsMap, CommandContext, CommandIntents } from '@redemeine/kernel';
 import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
+import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
 import {
   MapEntityCommands,
   EntityListOptions,
