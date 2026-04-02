@@ -1,7 +1,5 @@
 import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
 import {
-  InMemoryProjectionStore,
-  ProjectionDaemon,
   type IEventSubscription,
   type IProjectionStore,
   type ProjectionDefinition as RuntimeProjectionDefinition
@@ -63,12 +61,49 @@ type EventQueueSubscription = IEventSubscription & {
   hasPendingEventsAfter(cursor: Checkpoint): boolean;
 };
 
+type ProjectionDaemonLike<TState> = {
+  processBatch(): Promise<{ eventsProcessed: number }>;
+};
+
+type ProjectionRuntimeModule = {
+  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
+  ProjectionDaemon: new <TState>(options: {
+    projection: ProjectionDefinition<TState>;
+    subscription: IEventSubscription;
+    store: IProjectionStore<TState>;
+    batchSize: number;
+  }) => ProjectionDaemonLike<TState>;
+};
+
 type ProjectionRuntime = {
   readonly projection: ProjectionDefinition<any>;
   readonly store: IProjectionStore<any>;
   readonly subscription: EventQueueSubscription;
-  readonly daemon: ProjectionDaemon<any>;
+  readonly daemon: ProjectionDaemonLike<any>;
 };
+
+let projectionRuntimeModulePromise: Promise<ProjectionRuntimeModule> | null = null;
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+
+async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
+  if (!projectionRuntimeModulePromise) {
+    projectionRuntimeModulePromise = (async () => {
+      try {
+        return await dynamicImport('@redemeine/projection') as ProjectionRuntimeModule;
+      } catch (packageImportError) {
+        try {
+          return await dynamicImport('../../projection/src/index') as ProjectionRuntimeModule;
+        } catch (sourceImportError) {
+          throw new Error(
+            `createTestDepot: unable to load projection runtime from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
+          );
+        }
+      }
+    })();
+  }
+
+  return projectionRuntimeModulePromise;
+}
 
 export interface CreateTestDepotOptions {
   readonly aggregates: readonly AggregateDefinitionLike[];
@@ -179,14 +214,30 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   const sagaRegistrations = [...(options.sagas ?? [])];
 
   const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>();
-  const projectionRuntimes: ProjectionRuntime[] = (options.projections ?? []).map((projection) => {
-    const store = new InMemoryProjectionStore<any>();
-    const subscription = createEventQueueSubscription();
-    const daemon = new ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
-    projectionStoreByDefinition.set(projection, store);
+  let projectionRuntimes: ProjectionRuntime[] = [];
+  let projectionInitialization: Promise<void> | null = null;
 
-    return { projection, store, subscription, daemon };
-  });
+  const ensureProjectionRuntimesInitialized = async (): Promise<void> => {
+    if (!projectionInitialization) {
+      projectionInitialization = (async () => {
+        if ((options.projections ?? []).length === 0) {
+          return;
+        }
+
+        const projectionRuntime = await loadProjectionRuntimeModule();
+        projectionRuntimes = (options.projections ?? []).map((projection) => {
+          const store = new projectionRuntime.InMemoryProjectionStore<any>();
+          const subscription = createEventQueueSubscription();
+          const daemon = new projectionRuntime.ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
+          projectionStoreByDefinition.set(projection, store);
+
+          return { projection, store, subscription, daemon };
+        });
+      })();
+    }
+
+    await projectionInitialization;
+  };
 
   const mirages = new Map<string, ReturnType<typeof createMirage>>();
   const queue: Array<{ command: CommandEnvelope; deferred: Deferred<void> }> = [];
@@ -195,6 +246,8 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   let globalSequence = 0;
 
   const processProjectionRuntimes = async (events: readonly DomainEvent[], aggregateId: string): Promise<void> => {
+    await ensureProjectionRuntimesInitialized();
+
     if (events.length === 0 || projectionRuntimes.length === 0) {
       return;
     }
@@ -335,6 +388,8 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     },
     projections: {
       async get(projection, id) {
+        await ensureProjectionRuntimesInitialized();
+
         const store = projectionStoreByDefinition.get(projection);
         if (!store) {
           throw new Error(`createTestDepot.projections.get: projection "${projection.name}" is not registered`);
