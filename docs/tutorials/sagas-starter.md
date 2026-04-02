@@ -77,7 +77,7 @@ export const BillingSaga = createSaga<BillingSagaState>({
   name: 'billing-saga',
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseHandlers({
+  .responseDefinitions({
     billingFetchSucceeded: {
       plugin_key: 'http',
       action_name: 'get',
@@ -112,12 +112,62 @@ export const BillingSaga = createSaga<BillingSagaState>({
       ctx.actions.core.schedule('invoice-timeout', 5_000);
     }
   })
+  .onResponses({
+    billingFetchSucceeded: (state, response, ctx) => {
+      state.settled = true;
+      state.attempts += Number(response.payload?.attempt ?? 0);
+      ctx.actions.core.cancelSchedule('invoice-timeout');
+    }
+  })
+  .onErrors({
+    billingFetchFailed: (state, error, ctx) => {
+      state.settled = false;
+      state.attempts += 1;
+      ctx.actions.core.schedule('invoice-timeout', 5_000);
+      void error.error;
+    }
+  })
   .build();
 ```
 
 Handlers are mutation-style (Immer semantics): mutate `state`, then emit intents through `ctx` helpers.
 
 Request routing is durable and restart-safe because only named handler tokens are persisted (`response_handler_key`, `error_handler_key`, `handler_data`). Inline callback persistence is not supported.
+
+Executable response/error handlers are registered separately with `.onResponses(...)` and `.onErrors(...)`. These runtime maps are not persisted; they are attached at build time for in-process execution.
+
+Concretely:
+
+- Persisted map: `response_handlers` (from `responseDefinitions(...)`).
+- Runtime-only maps: `executable_response_handlers` and `executable_error_handlers` (from `.onResponses(...)` / `.onErrors(...)`).
+
+## Deterministic testing chain with invokeResponse / invokeError
+
+Use the testing fixture to simulate worker outcomes in a deterministic FIFO chain:
+
+```ts
+import { testSaga } from '@redemeine/testing';
+
+const fixture = testSaga(BillingSaga)
+  .withState({ attempts: 0, settled: false })
+  .receiveEvent({
+    type: 'created',
+    payload: { invoiceId: 'inv-1', amount: 250 }
+  })
+  .invokeError('billingFetchFailed', { message: 'timeout' })
+  .invokeResponse('billingFetchSucceeded', { attempt: 2, status: 'ok' });
+
+fixture
+  .expectState({ attempts: 3, settled: true })
+  .expectIntents([
+    { type: 'schedule', id: 'invoice-timeout', delay: 5_000 },
+    { type: 'cancel-schedule', id: 'invoice-timeout' }
+  ]);
+```
+
+`invokeResponse(token, payload)` only accepts response-phase tokens and `invokeError(token, payload)` only accepts error-phase tokens.
+
+Because pending plugin requests are queued per token, repeated `.invokeError(...)` / `.invokeResponse(...)` calls are deterministic (FIFO within each token queue).
 
 ## 4) Add retry policy to activity intents
 

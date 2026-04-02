@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
   defineSagaPlugin,
+  runSagaErrorHandler,
+  runSagaResponseHandler,
   type CanonicalSagaIdentityInput,
   type SagaPluginRequestIntent
 } from '../src';
@@ -27,6 +29,24 @@ const PLUGIN_WITH_DATA_IDENTITY: CanonicalSagaIdentityInput = {
 const PLUGIN_OPTIONAL_IDENTITY: CanonicalSagaIdentityInput = {
   namespace: 'plugins',
   name: 'plugin_optional_saga',
+  version: 1
+};
+
+const PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_executable_handler_gating',
+  version: 1
+};
+
+const PLUGIN_NO_DEFS_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_no_defs',
+  version: 1
+};
+
+const PLUGIN_INVOKE_TYPING_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_invoke_typing',
   version: 1
 };
 
@@ -116,7 +136,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         'http.get.success': {
           plugin_key: 'http',
           action_name: 'get',
@@ -139,6 +159,30 @@ describe('createSaga plugin-capable ctx typing', () => {
         }
       })
       .initialState(() => ({ retries: 0 }))
+      .onResponses({
+        'http.get.success': (state, response, ctx) => {
+          const token: 'http.get.success' = response.token;
+          const pluginKey: string = response.request.plugin_key;
+
+          ctx.actions.core.schedule('response-followup', 500);
+          state.retries += 1;
+
+          expect(token).toBe('http.get.success');
+          expect(pluginKey).toBe('http');
+        }
+      })
+      .onErrors({
+        'http.get.failure': (state, error, ctx) => {
+          const token: 'http.get.failure' = error.token;
+          const actionName: string = error.request.action_name;
+
+          ctx.actions.core.cancelSchedule('response-followup');
+          state.retries += 1;
+
+          expect(token).toBe('http.get.failure');
+          expect(actionName).toBe('get');
+        }
+      })
       .on(InvoiceAggregate, {
         created: async (state, event, ctx) => {
           const scheduled = ctx.actions.infra.scheduleCommand('invoice.retry', 5000);
@@ -171,6 +215,8 @@ describe('createSaga plugin-capable ctx typing', () => {
     expect(saga.response_handlers['http.get.success'].plugin_key).toBe('http');
     expect(saga.response_handlers['http.get.success'].action_name).toBe('get');
     expect(saga.response_handlers['http.get.success'].phase).toBe('response');
+    expect(typeof saga.executable_response_handlers?.['http.get.success']).toBe('function');
+    expect(typeof saga.executable_error_handlers?.['http.get.failure']).toBe('function');
     expect(saga.plugins).toEqual([
       {
         plugin_key: 'infra',
@@ -193,7 +239,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         okay: {
           plugin_key: 'http',
           action_name: 'get',
@@ -280,7 +326,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_RESPONSE_BROKEN_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         broken: {
           plugin_key: 'http',
           action_name: 'get',
@@ -289,6 +335,140 @@ describe('createSaga plugin-capable ctx typing', () => {
         }
       })
       .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('enforces phase-safe executable response/error handler registration', () => {
+    createSaga({
+      identity: PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY,
+      plugins: [InfraPlugin, HttpPlugin] as const
+    })
+      .responseDefinitions({
+        okay: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      // @ts-expect-error onResponses only accepts response-phase tokens
+      .onResponses({
+        okay: (_state, _response, _ctx) => undefined,
+        fail: (_state, _response, _ctx) => undefined
+      })
+      // @ts-expect-error onErrors only accepts error-phase tokens
+      .onErrors({
+        fail: (_state, _error, _ctx) => undefined,
+        okay: (_state, _error, _ctx) => undefined
+      })
+      .build();
+
+    createSaga({
+      identity: PLUGIN_NO_DEFS_IDENTITY
+    })
+      // @ts-expect-error no responseDefinitions means no executable response keys
+      .onResponses({
+        anything: (_state, _response, _ctx) => undefined
+      })
+      // @ts-expect-error no responseDefinitions means no executable error keys
+      .onErrors({
+        anything: (_state, _error, _ctx) => undefined
+      })
+      .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('types invoke helpers with phase-safe token constraints', () => {
+    const saga = createSaga({
+      identity: PLUGIN_INVOKE_TYPING_IDENTITY,
+      plugins: [HttpPlugin] as const
+    })
+      .responseDefinitions({
+        ok: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      .initialState(() => ({ retries: 0, lastResponse: '', lastError: '' }))
+      .onResponses({
+        ok: (state, response) => {
+          state.retries += 1;
+          state.lastResponse = String(response.payload);
+        }
+      })
+      .onErrors({
+        fail: (state, error) => {
+          state.retries += 1;
+          state.lastError = String(error.error);
+        }
+      })
+      .build();
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'ok',
+        payload: { status: 200 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'fail',
+        error: { message: 'boom' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeResponse helper only accepts response-phase tokens
+        token: 'fail',
+        payload: { status: 500 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeError helper only accepts error-phase tokens
+        token: 'ok',
+        error: { message: 'wrong phase' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
 
     expect(true).toBe(true);
   });
@@ -342,7 +522,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_WITH_DATA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         success: {
           plugin_key: 'http',
           action_name: 'get',

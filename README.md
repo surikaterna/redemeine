@@ -325,7 +325,7 @@ Assertions: * .expectEvents(events): Deep-equals the array of typed events retur
 .expectError(ErrorClass, message?): Asserts that the command handler threw the expected Domain Error (Invariant Violation).
 
 2. The Saga Tester (testSaga)
-Provide a fluent fixture that executes a Saga's .on() or .responseHandlers() and captures the resulting infrastructure Intents.
+Provide a fluent fixture that executes a Saga's .on() or .responseDefinitions() and captures the resulting infrastructure Intents.
 
 API: testSaga(sagaDef)
 
@@ -334,6 +334,10 @@ State Management: .withState(state) allows the developer to arrange the starting
 Event Injection: .receiveEvent(event) triggers the main reducer.
 
 Response/Error Injection: .invokeResponse(token, payload) and .invokeError(token, payload) allow the developer to simulate the framework routing an external worker's response back to the Saga, including the serialized passThroughContext.
+
+Token bindings come from `responseDefinitions(...)` (persisted as `response_handlers`), while executable callbacks registered through `.onResponses(...)` / `.onErrors(...)` are runtime-only maps (`executable_response_handlers` / `executable_error_handlers`).
+
+Determinism: invoke calls dequeue pending requests in FIFO order per token, so chained `.invokeError(...)` / `.invokeResponse(...)` sequences are stable and repeatable.
 
 Assertions: * .expectState(expected): Deep-equals the mutated Immer draft.
 
@@ -361,6 +365,8 @@ Execution: Developers can depot.dispatch(...) at the entry point, await depot.wa
 Aggregate Validation: An aggregate test successfully fails if a when command violates an invariant based on the given history, and successfully passes when asserting the correct emitted events.
 
 Saga Time-Travel Chain: A Saga test successfully chains .receiveEvent() -> .invokeError() -> .invokeResponse() in a single fluent block, proving that state carries forward, retries increment correctly, and time-based schedule intents are asserted identically to HTTP intents.
+
+Phase safety: `invokeResponse` accepts response-phase tokens only, and `invokeError` accepts error-phase tokens only.
 
 Strict Purity: The entire @redemeine/testing suite can be executed on a machine with no internet connection, no Docker daemon, and no mocked external libraries (like nock), completing 1,000 assertions in under 2 seconds.
 
