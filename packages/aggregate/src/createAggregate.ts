@@ -1,4 +1,4 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep } from '@redemeine/kernel';
+import { Event, Command, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep } from '@redemeine/kernel';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
 import { createCommandProcessor } from './createCommandProcessor';
@@ -11,6 +11,7 @@ import { applyEvent } from './applyEvent';
 import { defaultNamingStrategy } from './naming';
 import type { Merge } from './types/Merge';
 import type { AllKeys } from './types/AllKeys';
+import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
 
 type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
