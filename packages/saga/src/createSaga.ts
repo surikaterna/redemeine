@@ -87,21 +87,12 @@ export type TErrorToken<TToken extends string = string> = SagaPhaseToken<TToken,
 export type TRetryToken<TToken extends string = string> = SagaPhaseToken<TToken, 'retry'>;
 
 export interface SagaResponseHandlerTokenBinding<
-  TPluginKey extends string = string,
-  TActionName extends string = string,
   TPhase extends SagaResponseHandlerPhase = SagaResponseHandlerPhase
 > {
-  readonly plugin_key: TPluginKey;
-  readonly action_name: TActionName;
   readonly phase: TPhase;
 }
 
 export type SagaResponseHandlerTokenBindings = Record<string, SagaResponseHandlerTokenBinding>;
-
-type SagaNoExtraKeys<TActual, TAllowed extends PropertyKey> =
-  Exclude<keyof TActual, TAllowed> extends never
-    ? TActual
-    : never;
 
 export type SagaResponseTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
   SagaResponseHandlerKeysByPhase<TBindings, 'response'>;
@@ -120,6 +111,33 @@ type SagaResponseHandlerTokenForPhase<
   : TPhase extends 'error'
     ? TErrorToken<TToken>
     : TRetryToken<TToken>;
+
+type SagaBindingsFromResponseHandlers<THandlers extends Record<string, unknown>> = {
+  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'response'>;
+};
+
+type SagaBindingsFromErrorHandlers<THandlers extends Record<string, unknown>> = {
+  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'error'>;
+};
+
+type SagaBindingsFromRetryHandlers<THandlers extends Record<string, unknown>> = {
+  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'retry'>;
+};
+
+type SagaAnyResponseHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
+  string,
+  SagaExecutableResponseHandler<TState, TPlugins, any, any>
+>;
+
+type SagaAnyErrorHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
+  string,
+  SagaExecutableErrorHandler<TState, TPlugins, any, any>
+>;
+
+type SagaAnyRetryHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
+  string,
+  SagaExecutableRetryHandler<TState, TPlugins, any, any>
+>;
 
 type SagaResponseHandlerKeysByPhase<
   TBindings extends SagaResponseHandlerTokenBindings,
@@ -164,6 +182,13 @@ export interface SagaResponseCallbackEnvelope<TToken extends TResponseToken<stri
 
 /** Input shape for executable error callbacks. */
 export interface SagaErrorCallbackEnvelope<TToken extends TErrorToken<string> = TErrorToken<string>, TError = unknown> {
+  readonly token: TToken;
+  readonly error: TError;
+  readonly request: SagaExternalHandlerRequestContext;
+}
+
+/** Input shape for executable retry callbacks. */
+export interface SagaRetryCallbackEnvelope<TToken extends TRetryToken<string> = TRetryToken<string>, TError = unknown> {
   readonly token: TToken;
   readonly error: TError;
   readonly request: SagaExternalHandlerRequestContext;
@@ -245,21 +270,6 @@ export type SagaPluginRegistryFromManifests<TPlugins extends SagaPluginManifestL
     : never;
 };
 
-type SagaResponseHandlerKeysByPhaseForAction<
-  TBindings extends SagaResponseHandlerTokenBindings,
-  TPhase extends SagaResponseHandlerPhase,
-  TPluginKey extends string,
-  TActionName extends string
-> = {
-  [THandlerKey in keyof TBindings & string]: TBindings[THandlerKey] extends {
-    phase: TPhase;
-    plugin_key: TPluginKey;
-    action_name: TActionName;
-  }
-    ? THandlerKey
-    : never;
-}[keyof TBindings & string];
-
 type SagaRequestActionChainWithDataStep<
   TPluginKey extends string,
   TActionName extends string,
@@ -279,21 +289,14 @@ type SagaRequestActionChainOnResponseStep<
   THandlerData
 > = {
   onResponse: (
-    token: TResponseToken<
-      SagaResponseHandlerKeysByPhaseForAction<
-      TBindings,
-      'response',
-      TPluginKey,
-      TActionName
-    >
-    >
+    token: TResponseToken<SagaResponseTokenKey<TBindings>>
   ) => SagaRequestActionChainOnErrorStep<
     TPluginKey,
     TActionName,
     TExecutionPayload,
     TBindings,
     THandlerData,
-    TResponseToken<SagaResponseHandlerKeysByPhaseForAction<TBindings, 'response', TPluginKey, TActionName>>
+    TResponseToken<SagaResponseTokenKey<TBindings>>
   >;
 };
 
@@ -306,19 +309,12 @@ type SagaRequestActionChainOnErrorStep<
   TResponseHandlerKey extends TResponseToken<string>
 > = {
   onError: (
-    token: TErrorToken<
-      SagaResponseHandlerKeysByPhaseForAction<
-      TBindings,
-      'error',
-      TPluginKey,
-      TActionName
-    >
-    >
+    token: TErrorToken<SagaErrorTokenKey<TBindings>>
   ) => SagaPluginRequestIntent<
     TPluginKey,
     TActionName,
     TExecutionPayload,
-    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorToken<SagaResponseHandlerKeysByPhaseForAction<TBindings, 'error', TPluginKey, TActionName>>, THandlerData>
+    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorToken<SagaErrorTokenKey<TBindings>>, THandlerData>
   >;
 };
 
@@ -925,9 +921,6 @@ export type SagaExecutableResponseHandlers<
 > = {
   /**
    * Runtime-only executable response handlers keyed by response token.
-   *
-   * This map is intentionally non-serialized and not part of the
-   * persisted/wire `response_handlers` contract.
    */
   [TToken in SagaResponseTokenKey<TResponseHandlerBindings>]?: SagaExecutableResponseHandler<
     TState,
@@ -944,15 +937,36 @@ export type SagaExecutableErrorHandlers<
 > = {
   /**
    * Runtime-only executable error handlers keyed by error token.
-   *
-   * This map is intentionally non-serialized and not part of the
-   * persisted/wire `response_handlers` contract.
    */
   [TToken in SagaErrorTokenKey<TResponseHandlerBindings>]?: SagaExecutableErrorHandler<
     TState,
     TPlugins,
     TResponseHandlerBindings,
     TErrorToken<TToken>
+  >;
+};
+
+export type SagaExecutableRetryHandler<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TToken extends SagaRetryTokenKey<TResponseHandlerBindings> = SagaRetryTokenKey<TResponseHandlerBindings>
+> = (
+  state: Draft<TState>,
+  retry: SagaRetryCallbackEnvelope<TRetryToken<TToken>>,
+  ctx: SagaIntentContext<TPlugins, TResponseHandlerBindings>
+) => SagaHandlerResult;
+
+export type SagaExecutableRetryHandlers<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+> = {
+  [TToken in SagaRetryTokenKey<TResponseHandlerBindings>]?: SagaExecutableRetryHandler<
+    TState,
+    TPlugins,
+    TResponseHandlerBindings,
+    TToken
   >;
 };
 
@@ -1058,12 +1072,9 @@ export interface SagaDefinition<
   initialState: SagaInitialStateFactory<TState>;
   start?: SagaStartHandler<unknown, TState, TPlugins, TResponseHandlerBindings>;
   startContracts: SagaStartDslContracts<unknown, unknown>;
-  /** Persisted definition-only response/error token bindings. */
-  response_handlers: TResponseHandlerBindings;
-  /** Runtime-only executable response handlers (non-serialized). */
-  executable_response_handlers?: SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>;
-  /** Runtime-only executable error handlers (non-serialized). */
-  executable_error_handlers?: SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>;
+  responseHandlers: SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>;
+  errorHandlers: SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>;
+  retryHandlers: SagaExecutableRetryHandlers<TState, TPlugins, TResponseHandlerBindings>;
   correlations: Array<{
     aggregateType: string;
     sagaType: string;
@@ -1087,19 +1098,15 @@ export interface SagaBuilder<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilder<TNextState, TPlugins, TResponseHandlerBindings>;
-  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
-    handlers: TNextResponseHandlerBindings
-  ): SagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>;
-  onResponses<
-    THandlers extends SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaResponseTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings>;
-  onErrors<
-    THandlers extends SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaErrorTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings>;
+  onResponses<THandlers extends SagaAnyResponseHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>>;
+  onErrors<THandlers extends SagaAnyErrorHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>>;
+  onRetries<THandlers extends SagaAnyRetryHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilder<TState, TPlugins, TResponseHandlerBindings>;
   on<TAggregate extends SagaAggregateDefinition>(
     aggregate: TAggregate,
@@ -1119,19 +1126,15 @@ export interface SagaBuilderAwaitingCorrelation<
   TStartInput
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderAwaitingCorrelation<TNextState, TPlugins, TResponseHandlerBindings, TStartInput>;
-  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
-    handlers: TNextResponseHandlerBindings
-  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TNextResponseHandlerBindings, TStartInput>;
-  onResponses<
-    THandlers extends SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaResponseTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
-  onErrors<
-    THandlers extends SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaErrorTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  onResponses<THandlers extends SagaAnyResponseHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>, TStartInput>;
+  onErrors<THandlers extends SagaAnyErrorHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>, TStartInput>;
+  onRetries<THandlers extends SagaAnyRetryHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>, TStartInput>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
   on<TAggregate extends SagaAggregateDefinition>(
     aggregate: TAggregate,
@@ -1151,19 +1154,15 @@ export interface SagaBuilderCorrelated<
   TCorrelationId
 > {
   initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderCorrelated<TNextState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
-  responseDefinitions<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
-    handlers: TNextResponseHandlerBindings
-  ): SagaBuilderCorrelated<TState, TPlugins, TNextResponseHandlerBindings, TStartInput, TCorrelationId>;
-  onResponses<
-    THandlers extends SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaResponseTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
-  onErrors<
-    THandlers extends SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>
-  >(
-    handlers: SagaNoExtraKeys<THandlers, SagaErrorTokenKey<TResponseHandlerBindings>>
-  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+  onResponses<THandlers extends SagaAnyResponseHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>, TStartInput, TCorrelationId>;
+  onErrors<THandlers extends SagaAnyErrorHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>, TStartInput, TCorrelationId>;
+  onRetries<THandlers extends SagaAnyRetryHandlerMap<TState, TPlugins>>(
+    handlers: THandlers
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>, TStartInput, TCorrelationId>;
   correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
   on<TAggregate extends SagaAggregateDefinition>(
     aggregate: TAggregate,
@@ -1213,13 +1212,17 @@ interface SagaDefinitionDraft<
   initialState: SagaInitialStateFactory<unknown>;
   start?: SagaStartHandler<unknown, unknown, SagaPluginManifestList, SagaResponseHandlerTokenBindings>;
   startContracts: SagaStartDslContracts<unknown, unknown>;
-  response_handlers: TResponseHandlerBindings;
-  executable_response_handlers?: SagaExecutableResponseHandlers<
+  responseHandlers: SagaExecutableResponseHandlers<
     unknown,
     SagaPluginManifestList,
     TResponseHandlerBindings
   >;
-  executable_error_handlers?: SagaExecutableErrorHandlers<
+  errorHandlers: SagaExecutableErrorHandlers<
+    unknown,
+    SagaPluginManifestList,
+    TResponseHandlerBindings
+  >;
+  retryHandlers: SagaExecutableRetryHandlers<
     unknown,
     SagaPluginManifestList,
     TResponseHandlerBindings
@@ -1241,6 +1244,36 @@ interface SagaDefinitionDraft<
       SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
     >;
   }>;
+}
+
+function createTokenBindingsFromHandlerMaps<
+  TResponseHandlers extends Record<string, unknown>,
+  TErrorHandlers extends Record<string, unknown>,
+  TRetryHandlers extends Record<string, unknown>
+>(
+  responseHandlers: TResponseHandlers,
+  errorHandlers: TErrorHandlers,
+  retryHandlers: TRetryHandlers
+): SagaBindingsFromResponseHandlers<TResponseHandlers>
+  & SagaBindingsFromErrorHandlers<TErrorHandlers>
+  & SagaBindingsFromRetryHandlers<TRetryHandlers> {
+  const bindings: Record<string, SagaResponseHandlerTokenBinding> = {};
+
+  for (const token of Object.keys(responseHandlers)) {
+    bindings[token] = { phase: 'response' };
+  }
+
+  for (const token of Object.keys(errorHandlers)) {
+    bindings[token] = { phase: 'error' };
+  }
+
+  for (const token of Object.keys(retryHandlers)) {
+    bindings[token] = { phase: 'retry' };
+  }
+
+  return bindings as SagaBindingsFromResponseHandlers<TResponseHandlers>
+    & SagaBindingsFromErrorHandlers<TErrorHandlers>
+    & SagaBindingsFromRetryHandlers<TRetryHandlers>;
 }
 
 function getAggregateType(aggregate: SagaAggregateDefinition): string {
@@ -1348,7 +1381,11 @@ export async function runSagaResponseHandler<
     plugins = [] as unknown as TPlugins
   } = input;
   const token = envelope.token;
-  const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
+  const tokenBinding = (createTokenBindingsFromHandlerMaps(
+    definition.responseHandlers,
+    definition.errorHandlers,
+    definition.retryHandlers
+  ) as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
 
   if (tokenBinding === undefined) {
     return {
@@ -1362,7 +1399,7 @@ export async function runSagaResponseHandler<
     return createPhaseMismatchResult(token, 'response', tokenBinding.phase);
   }
 
-  const handler = (definition.executable_response_handlers as Record<
+  const handler = (definition.responseHandlers as Record<
     string,
     SagaExecutableResponseHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
   > | undefined)?.[token];
@@ -1380,7 +1417,11 @@ export async function runSagaResponseHandler<
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),
     intents,
-    definition.response_handlers,
+    createTokenBindingsFromHandlerMaps(
+      definition.responseHandlers,
+      definition.errorHandlers,
+      definition.retryHandlers
+    ) as TResponseHandlerBindings,
     plugins
   );
 
@@ -1414,7 +1455,11 @@ export async function runSagaErrorHandler<
     plugins = [] as unknown as TPlugins
   } = input;
   const token = envelope.token;
-  const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
+  const tokenBinding = (createTokenBindingsFromHandlerMaps(
+    definition.responseHandlers,
+    definition.errorHandlers,
+    definition.retryHandlers
+  ) as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
 
   if (tokenBinding === undefined) {
     return {
@@ -1428,7 +1473,7 @@ export async function runSagaErrorHandler<
     return createPhaseMismatchResult(token, 'error', tokenBinding.phase);
   }
 
-  const handler = (definition.executable_error_handlers as Record<
+  const handler = (definition.errorHandlers as Record<
     string,
     SagaExecutableErrorHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
   > | undefined)?.[token];
@@ -1446,7 +1491,11 @@ export async function runSagaErrorHandler<
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),
     intents,
-    definition.response_handlers,
+    createTokenBindingsFromHandlerMaps(
+      definition.responseHandlers,
+      definition.errorHandlers,
+      definition.retryHandlers
+    ) as TResponseHandlerBindings,
     plugins
   );
 
@@ -1483,12 +1532,7 @@ function createSagaBuilder<
     return Object.keys(cloned).length === 0 ? undefined : cloned;
   };
 
-  const buildDefinitionStateWithoutRuntimeMaps = () => {
-    const definitionState = { ...state };
-    delete (definitionState as { executable_response_handlers?: unknown }).executable_response_handlers;
-    delete (definitionState as { executable_error_handlers?: unknown }).executable_error_handlers;
-    return definitionState;
-  };
+  const buildDefinitionState = () => ({ ...state });
 
   const addCorrelation = (aggregate: SagaAggregateDefinition, correlate: SagaCorrelationFactory) => {
     state.correlations.push({
@@ -1525,34 +1569,68 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createAwaitingCorrelationBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput>();
     },
-    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+    onResponses<THandlers extends SagaExecutableResponseHandlers<TLocalState, TPlugins, SagaBindingsFromResponseHandlers<THandlers>>>(handlers: THandlers) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
-        TNextResponseHandlerBindings
-      >).response_handlers = handlers;
-      return createAwaitingCorrelationBuilder<TLocalState, TNextResponseHandlerBindings, TStartInput>();
-    },
-    onResponses(handlers: SagaExecutableResponseHandlers<TLocalState, TPlugins, TLocalResponseHandlerBindings>) {
-      (state as unknown as SagaDefinitionDraft<
-        SagaPluginRegistryFromManifests<TPlugins>,
-        TLocalResponseHandlerBindings
-      >).executable_response_handlers = handlers as SagaExecutableResponseHandlers<
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+      >).responseHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+        >).responseHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableResponseHandlers<
         unknown,
         SagaPluginManifestList,
-        TLocalResponseHandlerBindings
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
       >;
-      return createAwaitingCorrelationBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput>();
+      return createAwaitingCorrelationBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>,
+        TStartInput
+      >();
     },
-    onErrors(handlers: SagaExecutableErrorHandlers<TLocalState, TPlugins, TLocalResponseHandlerBindings>) {
+    onErrors<THandlers extends SagaExecutableErrorHandlers<TLocalState, TPlugins, SagaBindingsFromErrorHandlers<THandlers>>>(handlers: THandlers) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
-        TLocalResponseHandlerBindings
-      >).executable_error_handlers = handlers as SagaExecutableErrorHandlers<
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+      >).errorHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+        >).errorHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableErrorHandlers<
         unknown,
         SagaPluginManifestList,
-        TLocalResponseHandlerBindings
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
       >;
-      return createAwaitingCorrelationBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput>();
+      return createAwaitingCorrelationBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>,
+        TStartInput
+      >();
+    },
+    onRetries<THandlers extends SagaExecutableRetryHandlers<TLocalState, TPlugins, SagaBindingsFromRetryHandlers<THandlers>>>(handlers: THandlers) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >).retryHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+        >).retryHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableRetryHandlers<
+        unknown,
+        SagaPluginManifestList,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >;
+      return createAwaitingCorrelationBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>,
+        TStartInput
+      >();
     },
     correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
       addCorrelation(aggregate, correlate);
@@ -1593,34 +1671,71 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createCorrelatedBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
     },
-    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+    onResponses<THandlers extends SagaExecutableResponseHandlers<TLocalState, TPlugins, SagaBindingsFromResponseHandlers<THandlers>>>(handlers: THandlers) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
-        TNextResponseHandlerBindings
-      >).response_handlers = handlers;
-      return createCorrelatedBuilder<TLocalState, TNextResponseHandlerBindings, TStartInput, TCorrelationId>();
-    },
-    onResponses(handlers: SagaExecutableResponseHandlers<TLocalState, TPlugins, TLocalResponseHandlerBindings>) {
-      (state as unknown as SagaDefinitionDraft<
-        SagaPluginRegistryFromManifests<TPlugins>,
-        TLocalResponseHandlerBindings
-      >).executable_response_handlers = handlers as SagaExecutableResponseHandlers<
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+      >).responseHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+        >).responseHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableResponseHandlers<
         unknown,
         SagaPluginManifestList,
-        TLocalResponseHandlerBindings
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
       >;
-      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+      return createCorrelatedBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>,
+        TStartInput,
+        TCorrelationId
+      >();
     },
-    onErrors(handlers: SagaExecutableErrorHandlers<TLocalState, TPlugins, TLocalResponseHandlerBindings>) {
+    onErrors<THandlers extends SagaExecutableErrorHandlers<TLocalState, TPlugins, SagaBindingsFromErrorHandlers<THandlers>>>(handlers: THandlers) {
       (state as unknown as SagaDefinitionDraft<
         SagaPluginRegistryFromManifests<TPlugins>,
-        TLocalResponseHandlerBindings
-      >).executable_error_handlers = handlers as SagaExecutableErrorHandlers<
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+      >).errorHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+        >).errorHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableErrorHandlers<
         unknown,
         SagaPluginManifestList,
-        TLocalResponseHandlerBindings
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
       >;
-      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+      return createCorrelatedBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>,
+        TStartInput,
+        TCorrelationId
+      >();
+    },
+    onRetries<THandlers extends SagaExecutableRetryHandlers<TLocalState, TPlugins, SagaBindingsFromRetryHandlers<THandlers>>>(handlers: THandlers) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >).retryHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+        >).retryHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableRetryHandlers<
+        unknown,
+        SagaPluginManifestList,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >;
+      return createCorrelatedBuilder<
+        TLocalState,
+        TLocalResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>,
+        TStartInput,
+        TCorrelationId
+      >();
     },
     correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
       addCorrelation(aggregate, correlate);
@@ -1667,23 +1782,20 @@ function createSagaBuilder<
       return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
     },
     build() {
-      const executableResponseHandlers = buildRuntimeExecutableHandlers(state.executable_response_handlers);
-      const executableErrorHandlers = buildRuntimeExecutableHandlers(state.executable_error_handlers);
+      const responseHandlers = buildRuntimeExecutableHandlers(state.responseHandlers) ?? {};
+      const errorHandlers = buildRuntimeExecutableHandlers(state.errorHandlers) ?? {};
+      const retryHandlers = buildRuntimeExecutableHandlers(state.retryHandlers) ?? {};
 
       return ({
-        ...buildDefinitionStateWithoutRuntimeMaps(),
+        ...buildDefinitionState(),
         plugins: [...state.plugins],
         startContracts: {
           ...state.startContracts,
           triggers: [...state.startContracts.triggers]
         },
-        response_handlers: { ...state.response_handlers },
-        ...(executableResponseHandlers === undefined
-          ? {}
-          : { executable_response_handlers: executableResponseHandlers }),
-        ...(executableErrorHandlers === undefined
-          ? {}
-          : { executable_error_handlers: executableErrorHandlers })
+        responseHandlers,
+        errorHandlers,
+        retryHandlers
       } as unknown) as SagaDefinition<TLocalState, TPlugins, TLocalResponseHandlerBindings>;
     }
   });
@@ -1693,29 +1805,65 @@ function createSagaBuilder<
       state.initialState = factory as SagaInitialStateFactory<unknown>;
       return createSagaBuilder<TNextState, TPlugins, TResponseHandlerBindings>(state);
     },
-    responseDefinitions<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
-      const nextState = {
-        ...state,
-        response_handlers: handlers
-      } as SagaDefinitionDraft<SagaPluginRegistryFromManifests<TPlugins>, TNextResponseHandlerBindings>;
-
-      return createSagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>(nextState);
-    },
-    onResponses(handlers: SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>) {
-      state.executable_response_handlers = handlers as SagaExecutableResponseHandlers<
+    onResponses<THandlers extends SagaExecutableResponseHandlers<TState, TPlugins, SagaBindingsFromResponseHandlers<THandlers>>>(handlers: THandlers) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+      >).responseHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+        >).responseHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableResponseHandlers<
         unknown,
         SagaPluginManifestList,
-        TResponseHandlerBindings
+        TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
       >;
-      return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
+      return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>>(state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>
+      >);
     },
-    onErrors(handlers: SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>) {
-      state.executable_error_handlers = handlers as SagaExecutableErrorHandlers<
+    onErrors<THandlers extends SagaExecutableErrorHandlers<TState, TPlugins, SagaBindingsFromErrorHandlers<THandlers>>>(handlers: THandlers) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+      >).errorHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+        >).errorHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableErrorHandlers<
         unknown,
         SagaPluginManifestList,
-        TResponseHandlerBindings
+        TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
       >;
-      return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
+      return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>>(state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromErrorHandlers<THandlers>
+      >);
+    },
+    onRetries<THandlers extends SagaExecutableRetryHandlers<TState, TPlugins, SagaBindingsFromRetryHandlers<THandlers>>>(handlers: THandlers) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >).retryHandlers = {
+        ...((state as unknown as SagaDefinitionDraft<
+          SagaPluginRegistryFromManifests<TPlugins>,
+          TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+        >).retryHandlers as Record<string, unknown>),
+        ...(handlers as Record<string, unknown>)
+      } as SagaExecutableRetryHandlers<
+        unknown,
+        SagaPluginManifestList,
+        TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >;
+      return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>>(state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TResponseHandlerBindings & SagaBindingsFromRetryHandlers<THandlers>
+      >);
     },
     correlate(aggregate, correlate) {
       addCorrelation(aggregate, correlate);
@@ -1743,23 +1891,20 @@ function createSagaBuilder<
       return createAwaitingCorrelationBuilder<TState, TResponseHandlerBindings, TStartInput>();
     },
     build() {
-      const executableResponseHandlers = buildRuntimeExecutableHandlers(state.executable_response_handlers);
-      const executableErrorHandlers = buildRuntimeExecutableHandlers(state.executable_error_handlers);
+      const responseHandlers = buildRuntimeExecutableHandlers(state.responseHandlers) ?? {};
+      const errorHandlers = buildRuntimeExecutableHandlers(state.errorHandlers) ?? {};
+      const retryHandlers = buildRuntimeExecutableHandlers(state.retryHandlers) ?? {};
 
       return ({
-        ...buildDefinitionStateWithoutRuntimeMaps(),
+        ...buildDefinitionState(),
         plugins: [...state.plugins],
         startContracts: {
           ...state.startContracts,
           triggers: [...state.startContracts.triggers]
         },
-        response_handlers: { ...state.response_handlers },
-        ...(executableResponseHandlers === undefined
-          ? {}
-          : { executable_response_handlers: executableResponseHandlers }),
-        ...(executableErrorHandlers === undefined
-          ? {}
-          : { executable_error_handlers: executableErrorHandlers })
+        responseHandlers,
+        errorHandlers,
+        retryHandlers
       } as unknown) as SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
     }
   };
@@ -1794,9 +1939,9 @@ export function createSaga<
       correlation: undefined,
       triggers: []
     },
-    response_handlers: {},
-    executable_response_handlers: undefined,
-    executable_error_handlers: undefined,
+    responseHandlers: {},
+    errorHandlers: {},
+    retryHandlers: {},
     correlations: [],
     handlers: []
   };
