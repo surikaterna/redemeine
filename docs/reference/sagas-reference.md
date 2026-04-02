@@ -95,6 +95,53 @@ Use `createSaga({ identity, plugins? })` to build saga definitions with typed pl
 - Handlers use mutation-style state updates (Immer draft semantics).
 - Scope is **definition-only**: this API defines typed intent contracts and persisted routing metadata; it does **not** execute plugin runtimes.
 
+### Typed plugin helper API contracts (planned)
+
+The following helper APIs are part of the typed saga plugin roadmap and are
+documented here as **contract-first** behavior for upcoming implementation:
+
+- `defineOneWay(...)`
+- `defineRequestResponse(...)`
+- `defineCustomAction(...)`
+
+Contract details:
+
+- `defineOneWay(...)`
+  - Builds a one-way plugin action contract.
+  - Emits intent immediately from the handler turn and returns that intent.
+- `defineRequestResponse(...)`
+  - Builds a request-response contract with durable routing.
+  - `.withData(...)` is optional.
+  - `.onResponse(...)` is required.
+  - `.onError(...)` is required.
+  - `.onRetry(...)` is optional.
+  - `onError` is terminal after retries are exhausted, or when an error is
+    classified as non-retryable.
+- `defineCustomAction(...)`
+  - Builds a custom action contract using constrained builder primitives.
+  - Plugin authors may define custom completeness semantics while still using
+    deterministic intent-state mutation primitives.
+
+Planned `builderCtx` primitive surface:
+
+- `createPending(...)`
+- `patch(...)` / `set(...)`
+- `snapshot(...)`
+- `finalize(...)` / `emit(...)`
+- `complete(...)` / `isComplete(...)`
+
+Intent emission timing semantics:
+
+- One-way: emit immediately.
+- Request-response: emit after request routing is fully bound (`onResponse` +
+  `onError`, with optional `withData` / `onRetry`).
+- Custom: emission/finalization is explicit and controlled through `builderCtx`.
+
+Out of scope/deferred:
+
+- Plugin `forCommands` ergonomics are explicitly deferred and are not part of
+  this contract pass.
+
 ### Canonical plugin + saga example (void + request_response)
 
 ```ts
