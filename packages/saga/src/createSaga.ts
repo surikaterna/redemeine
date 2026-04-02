@@ -72,7 +72,7 @@ export type SagaPluginVoidActionNames<TPlugin extends SagaPluginManifest> =
 export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
   SagaPluginActionNamesByKind<TPlugin, 'request_response'>;
 
-export type SagaResponseHandlerPhase = 'response' | 'error';
+export type SagaResponseHandlerPhase = 'response' | 'error' | 'retry';
 
 export interface SagaResponseHandlerTokenBinding<
   TPluginKey extends string = string,
@@ -97,6 +97,9 @@ export type SagaResponseTokenKey<TBindings extends SagaResponseHandlerTokenBindi
 export type SagaErrorTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
   SagaResponseHandlerKeysByPhase<TBindings, 'error'>;
 
+export type SagaRetryTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
+  SagaResponseHandlerKeysByPhase<TBindings, 'retry'>;
+
 type SagaResponseHandlerKeysByPhase<
   TBindings extends SagaResponseHandlerTokenBindings,
   TPhase extends SagaResponseHandlerPhase
@@ -116,7 +119,179 @@ export type SagaResponseHandlerTokenNamespace<
 export type SagaResponseHandlerTokenAccess<TBindings extends SagaResponseHandlerTokenBindings> = {
   readonly onResponse: SagaResponseHandlerTokenNamespace<TBindings, 'response'>;
   readonly onError: SagaResponseHandlerTokenNamespace<TBindings, 'error'>;
+  readonly onRetry: SagaResponseHandlerTokenNamespace<TBindings, 'retry'>;
 };
+
+export interface SagaOneWayActionDefinition<TBuild extends AnyFunction = AnyFunction> {
+  readonly build: TBuild;
+  readonly description?: string;
+}
+
+export interface SagaRequestResponseActionDefinition<TBuild extends AnyFunction = AnyFunction> {
+  readonly build: TBuild;
+  readonly description?: string;
+}
+
+export interface SagaCustomActionPendingState<
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> {
+  execution_payload: TExecutionPayload;
+  routing_metadata?: TRoutingMetadata;
+}
+
+/**
+ * Constrained primitive surface provided to `defineCustomAction(...)` builders.
+ */
+export interface SagaCustomActionBuilderCtx<
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> {
+  createPending: (initial: SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata>) => void;
+  patch: (patch: Partial<SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata>>) => void;
+  set: (next: SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata>) => void;
+  snapshot: () => Readonly<SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata>>;
+  finalize: () => Readonly<SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata>>;
+  emit: () => void;
+  complete: () => void;
+  isComplete: () => boolean;
+}
+
+export interface SagaCustomOneWayActionDefinition<
+  TArgs extends unknown[] = unknown[],
+  TExecutionPayload = unknown
+> {
+  readonly action_kind: 'void';
+  readonly build: (
+    builderCtx: SagaCustomActionBuilderCtx<TExecutionPayload, SagaPluginRequestRoutingMetadata>,
+    ...args: TArgs
+  ) => TExecutionPayload;
+  readonly description?: string;
+}
+
+export interface SagaCustomRequestResponseActionDefinition<
+  TArgs extends unknown[] = unknown[],
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> {
+  readonly action_kind: 'request_response';
+  readonly build: (
+    builderCtx: SagaCustomActionBuilderCtx<TExecutionPayload, TRoutingMetadata>,
+    ...args: TArgs
+  ) => TExecutionPayload;
+  readonly description?: string;
+}
+
+type SagaCustomActionDefinition =
+  | SagaCustomOneWayActionDefinition<unknown[], unknown>
+  | SagaCustomRequestResponseActionDefinition<unknown[], unknown, SagaPluginRequestRoutingMetadata>;
+
+function normalizeActionDefinition<TBuild extends AnyFunction>(
+  input: TBuild | { readonly build: TBuild; readonly description?: string }
+): { build: TBuild; description?: string } {
+  return typeof input === 'function'
+    ? { build: input }
+    : { build: input.build, ...(input.description === undefined ? {} : { description: input.description }) };
+}
+
+/** Additive helper for authoring one-way action descriptors. */
+export function defineOneWay<TBuild extends AnyFunction>(
+  input: TBuild | SagaOneWayActionDefinition<TBuild>
+): SagaPluginVoidActionDescriptor<TBuild> {
+  const normalized = normalizeActionDefinition(input);
+  return {
+    action_kind: 'void',
+    build: normalized.build,
+    ...(normalized.description === undefined ? {} : { description: normalized.description })
+  };
+}
+
+/** Additive helper for authoring request-response action descriptors. */
+export function defineRequestResponse<TBuild extends AnyFunction>(
+  input: TBuild | SagaRequestResponseActionDefinition<TBuild>
+): SagaPluginRequestResponseActionDescriptor<TBuild> {
+  const normalized = normalizeActionDefinition(input);
+  return {
+    action_kind: 'request_response',
+    build: normalized.build,
+    ...(normalized.description === undefined ? {} : { description: normalized.description })
+  };
+}
+
+function createCustomActionBuilderCtx<
+  TExecutionPayload,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata
+>(): SagaCustomActionBuilderCtx<TExecutionPayload, TRoutingMetadata> {
+  let pending: SagaCustomActionPendingState<TExecutionPayload, TRoutingMetadata> = {
+    execution_payload: undefined as unknown as TExecutionPayload
+  };
+  let completed = false;
+
+  const snapshot = () => ({ ...pending });
+
+  return {
+    createPending(initial) {
+      pending = { ...initial };
+    },
+    patch(next) {
+      pending = { ...pending, ...next };
+    },
+    set(next) {
+      pending = { ...next };
+    },
+    snapshot,
+    finalize: snapshot,
+    emit() {
+      completed = true;
+    },
+    complete() {
+      completed = true;
+    },
+    isComplete() {
+      return completed;
+    }
+  };
+}
+
+/**
+ * Additive helper for custom action descriptors with constrained builderCtx
+ * primitives. Returned descriptors remain backward-compatible raw descriptors.
+ */
+export function defineCustomAction<
+  TArgs extends unknown[],
+  TExecutionPayload
+>(
+  definition: SagaCustomOneWayActionDefinition<TArgs, TExecutionPayload>
+): SagaPluginVoidActionDescriptor<(...args: TArgs) => TExecutionPayload>;
+export function defineCustomAction<
+  TArgs extends unknown[],
+  TExecutionPayload,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata
+>(
+  definition: SagaCustomRequestResponseActionDefinition<TArgs, TExecutionPayload, TRoutingMetadata>
+): SagaPluginRequestResponseActionDescriptor<(...args: TArgs) => TExecutionPayload>;
+export function defineCustomAction(
+  definition: SagaCustomActionDefinition
+): SagaPluginActionDescriptor<AnyFunction> {
+  const build = (...args: unknown[]) => {
+    const builderCtx = createCustomActionBuilderCtx<unknown, SagaPluginRequestRoutingMetadata>();
+    const output = definition.build(builderCtx, ...args);
+    const snapshot = builderCtx.snapshot();
+    return snapshot.execution_payload === undefined ? output : snapshot.execution_payload;
+  };
+
+  if (definition.action_kind === 'void') {
+    return defineOneWay({
+      build,
+      ...(definition.description === undefined ? {} : { description: definition.description })
+    });
+  }
+
+  return defineRequestResponse({
+    build,
+    ...(definition.description === undefined ? {} : { description: definition.description })
+  });
+}
 
 /** Minimal request envelope forwarded to external response/error handlers. */
 export interface SagaExternalHandlerRequestContext {
@@ -241,6 +416,23 @@ type SagaRequestActionChainWithDataStep<
   withData: <THandlerData>(
     data: THandlerData
   ) => SagaRequestActionChainOnResponseStep<TPluginKey, TActionName, TExecutionPayload, TBindings, THandlerData>;
+  onResponse: <
+    TResponseHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+      TBindings,
+      'response',
+      TPluginKey,
+      TActionName
+    >
+  >(
+    token: TResponseHandlerKey
+  ) => SagaRequestActionChainPostResponseStep<
+    TPluginKey,
+    TActionName,
+    TExecutionPayload,
+    TBindings,
+    undefined,
+    TResponseHandlerKey
+  >;
 };
 
 type SagaRequestActionChainOnResponseStep<
@@ -259,7 +451,7 @@ type SagaRequestActionChainOnResponseStep<
     >
   >(
     token: TResponseHandlerKey
-  ) => SagaRequestActionChainOnErrorStep<
+  ) => SagaRequestActionChainPostResponseStep<
     TPluginKey,
     TActionName,
     TExecutionPayload,
@@ -269,7 +461,7 @@ type SagaRequestActionChainOnResponseStep<
   >;
 };
 
-type SagaRequestActionChainOnErrorStep<
+type SagaRequestActionChainPostResponseStep<
   TPluginKey extends string,
   TActionName extends string,
   TExecutionPayload,
@@ -277,6 +469,24 @@ type SagaRequestActionChainOnErrorStep<
   THandlerData,
   TResponseHandlerKey extends string
 > = {
+  onRetry: <
+    TRetryHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+      TBindings,
+      'retry',
+      TPluginKey,
+      TActionName
+    >
+  >(
+    token: TRetryHandlerKey
+  ) => SagaRequestActionChainOnErrorStepWithRetry<
+    TPluginKey,
+    TActionName,
+    TExecutionPayload,
+    TBindings,
+    THandlerData,
+    TResponseHandlerKey,
+    TRetryHandlerKey
+  >;
   onError: <
     TErrorHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
       TBindings,
@@ -291,6 +501,32 @@ type SagaRequestActionChainOnErrorStep<
     TActionName,
     TExecutionPayload,
     SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData>
+  >;
+};
+
+type SagaRequestActionChainOnErrorStepWithRetry<
+  TPluginKey extends string,
+  TActionName extends string,
+  TExecutionPayload,
+  TBindings extends SagaResponseHandlerTokenBindings,
+  THandlerData,
+  TResponseHandlerKey extends string,
+  TRetryHandlerKey extends string
+> = {
+  onError: <
+    TErrorHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+      TBindings,
+      'error',
+      TPluginKey,
+      TActionName
+    >
+  >(
+    token: TErrorHandlerKey
+  ) => SagaPluginRequestIntent<
+    TPluginKey,
+    TActionName,
+    TExecutionPayload,
+    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData, TRetryHandlerKey>
   >;
 };
 
@@ -342,11 +578,13 @@ export interface SagaRunActivityIntent<TResult = unknown> {
 export interface SagaPluginRequestRoutingMetadata<
   TResponseHandlerKey extends string = string,
   TErrorHandlerKey extends string = string,
-  THandlerData = unknown
+  THandlerData = unknown,
+  TRetryHandlerKey extends string = string
 > {
   readonly response_handler_key: TResponseHandlerKey;
   readonly error_handler_key: TErrorHandlerKey;
   readonly handler_data: THandlerData;
+  readonly retry_handler_key?: TRetryHandlerKey;
 }
 
 /**
@@ -698,29 +936,48 @@ function createPluginActionsContext(
         pluginActions[actionName] = (...args: any[]) => {
           const executionPayload = actionDescriptor.build(...args);
 
-          return {
-            withData: (handlerData: unknown) => ({
-              onResponse: (responseHandlerKey: string) => ({
-                onError: (errorHandlerKey: string) => {
-                  const intent: SagaPluginRequestIntent = {
-                    type: 'plugin-request',
-                    plugin_key: plugin.plugin_key,
-                    action_name: actionName,
-                    action_kind: 'request_response',
-                    execution_payload: executionPayload,
-                    routing_metadata: {
-                      response_handler_key: responseHandlerKey,
-                      error_handler_key: errorHandlerKey,
-                      handler_data: handlerData
-                    },
-                    metadata
-                  };
+          const createIntent = (
+            handlerData: unknown,
+            responseHandlerKey: string,
+            errorHandlerKey: string,
+            retryHandlerKey?: string
+          ) => {
+            const intent: SagaPluginRequestIntent = {
+              type: 'plugin-request',
+              plugin_key: plugin.plugin_key,
+              action_name: actionName,
+              action_kind: 'request_response',
+              execution_payload: executionPayload,
+              routing_metadata: {
+                response_handler_key: responseHandlerKey,
+                error_handler_key: errorHandlerKey,
+                handler_data: handlerData,
+                ...(retryHandlerKey === undefined ? {} : { retry_handler_key: retryHandlerKey })
+              },
+              metadata
+            };
 
-                  emitIntent(intent);
-                  return intent;
-                }
-              })
+            emitIntent(intent);
+            return intent;
+          };
+
+          const createResponseChain = (handlerData: unknown) => ({
+            onResponse: (responseHandlerKey: string) => ({
+              onRetry: (retryHandlerKey: string) => ({
+                onError: (errorHandlerKey: string) => createIntent(
+                  handlerData,
+                  responseHandlerKey,
+                  errorHandlerKey,
+                  retryHandlerKey
+                )
+              }),
+              onError: (errorHandlerKey: string) => createIntent(handlerData, responseHandlerKey, errorHandlerKey)
             })
+          });
+
+          return {
+            withData: (handlerData: unknown) => createResponseChain(handlerData),
+            onResponse: createResponseChain(undefined).onResponse
           };
         };
         continue;
@@ -772,6 +1029,7 @@ export function createSagaDispatchContext<
 
   const onResponse = createResponseHandlerTokenNamespace(responseHandlers, 'response');
   const onError = createResponseHandlerTokenNamespace(responseHandlers, 'error');
+  const onRetry = createResponseHandlerTokenNamespace(responseHandlers, 'retry');
   const corePlugin = createSagaCorePluginManifest(metadata, emit);
   const actions = createPluginActionsContext([corePlugin, ...plugins], metadata, emit) as SagaPluginActionsContext<
     TPlugins,
@@ -787,6 +1045,7 @@ export function createSagaDispatchContext<
     },
     onResponse,
     onError,
+    onRetry,
     emit,
     commandsFor: (aggregateDef, aggregateId, metadataOverride) => actions.core.dispatch(
       aggregateDef,
