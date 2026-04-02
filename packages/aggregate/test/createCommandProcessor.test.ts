@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from '@jest/globals';
 import { createCommandProcessor } from '../src/createCommandProcessor';
-import { Command } from '../src/types';
-import { resetIdentityFactory, setIdentityFactory } from '../src/identity';
+import { Command, resetIdentityFactory, setIdentityFactory } from '@redemeine/kernel';
 
 describe('createCommandProcessor', () => {
     afterEach(() => {

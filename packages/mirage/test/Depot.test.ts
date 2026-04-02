@@ -1,8 +1,8 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregate } from '../src/createAggregate';
+import { createAggregate } from '@redemeine/aggregate';
 import { createDepot, EventStore } from '../src/Depot';
 import { createLegacyAggregateBridge } from '../src/createMirage';
-import { Event, RedemeinePlugin } from '../src/types';
+import { Event, RedemeinePlugin } from '@redemeine/kernel';
 
 type S = { id: string; count: number };
 

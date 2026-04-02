@@ -1,6 +1,5 @@
-import { createAggregate } from '../src/createAggregate';
-import { createMixin } from '../src/createMixin';
-import { Event } from '../src/types';
+import { createAggregate, createMixin } from '@redemeine/aggregate';
+import { Event } from '@redemeine/kernel';
 
 // --- Setup Mock Data ---
 

@@ -1,15 +1,10 @@
-import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin } from './types';
+import { Event, Command, EventEmitterFactory, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, MapCommandsToPayloads, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep, Merge, AllKeys, applyEvent, defaultNamingStrategy } from '@redemeine/kernel';
 import { MixinPackage } from './createMixin';
 import { EntityPackage } from './createEntity';
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import { Merge } from './utils/types/Merge';
-import { AllKeys } from './utils/types/AllKeys';
-import { applyEvent } from './utils/applyEvent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
-import { defaultNamingStrategy } from './utils/naming';
 import { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import { bindContext } from './bindContext';
 

@@ -1,4 +1,4 @@
-import { CommandContext } from '../types';
+import { CommandContext } from '@redemeine/kernel';
 
 export function createCommandContextProxy<TIntents extends Record<string, unknown>>(): CommandContext<TIntents> {
   return new Proxy({}, {

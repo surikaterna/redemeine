@@ -1,9 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregate } from '../src/createAggregate';
-import { createEntity } from '../src/createEntity';
-import { createMirage } from '../src/createMirage';
-import { Event } from '../src/types';
-import type { ReadonlyDeep } from '../src/utils/types/ReadonlyDeep';
+import { createAggregate, createEntity } from '@redemeine/aggregate';
+import { createMirage } from '@redemeine/mirage';
+import { Event, ReadonlyDeep } from '@redemeine/kernel';
 
 type ActivityKind = 'LEG' | 'STOP';
 

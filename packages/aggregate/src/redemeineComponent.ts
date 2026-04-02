@@ -1,9 +1,8 @@
-import { CommandContext, CommandIntents, CommandResult, Event, PackedCommandWithMeta, PluginExtensions, SelectorsMap, ShorthandCommandWithMeta } from './types';
+import { CommandContext, CommandIntents, CommandResult, Event, PackedCommandWithMeta, PluginExtensions, SelectorsMap, ShorthandCommandWithMeta, ReadonlyDeep } from '@redemeine/kernel';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import type { Merge } from './utils/types/Merge';
-import type { AllKeys } from './utils/types/AllKeys';
-import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
+import type { Merge } from '@redemeine/kernel';
+import type { AllKeys } from '@redemeine/kernel';
+import type { ReplaceFirstArg } from '@redemeine/kernel';
 
 export type GenericSelectors = Record<string, unknown>;
 export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any, Record<string, unknown>, {}>>;

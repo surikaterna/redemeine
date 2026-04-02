@@ -1,9 +1,5 @@
-import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions, PluginIntents } from './types';
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import { formatCommandType } from './utils/naming';
+import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions, PluginIntents, ReadonlyDeep, formatCommandType, createReadonlyDeepProxy, createIdentity } from '@redemeine/kernel';
 import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
-import { createReadonlyDeepProxy } from './utils/readonlyProxy';
-import { createIdentity } from './identity';
 
 type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
     events: Event[];

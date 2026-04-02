@@ -1,9 +1,6 @@
-import { createAggregate } from '../src/createAggregate';
-import { Event } from '../src/types';
-import { createMixin } from '../src/createMixin';
-import { createEntity } from '../src/createEntity';
-import { createMirage, extractUncommittedEvents } from '../src/createMirage';
-import { ReadonlyDeep } from '../src/utils/types/ReadonlyDeep';
+import { createAggregate, createMixin, createEntity } from '@redemeine/aggregate';
+import { Event, ReadonlyDeep } from '@redemeine/kernel';
+import { createMirage, extractUncommittedEvents } from '@redemeine/mirage';
 
 interface OrderLine {
   id: string;
