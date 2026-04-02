@@ -242,6 +242,8 @@ export function testSaga<
   const responseQueues = new Map<string, TestSagaQueuedRequest[]>();
   const errorQueues = new Map<string, TestSagaQueuedRequest[]>();
   const requestCounter = { current: 0 };
+  const knownResponseTokens = new Set(Object.keys(definition.responseHandlers));
+  const knownErrorTokens = new Set(Object.keys(definition.errorHandlers));
 
   const tokenBindings = Object.freeze({
     ...Object.fromEntries(Object.keys(definition.responseHandlers).map((token) => [token, { phase: 'response' as const }])),
@@ -253,11 +255,6 @@ export function testSaga<
     state = output.state;
     latestIntents = output.intents;
     enqueuePluginRequests(output.intents, responseQueues, errorQueues, requestCounter);
-  };
-
-  const isKnownTokenForPhase = (token: string, phase: 'response' | 'error') => {
-    const tokenBinding = tokenBindings[token];
-    return tokenBinding !== undefined && tokenBinding.phase === phase;
   };
 
   const fixture: TestSagaFixture<TState, TPlugins, TResponseHandlerBindings> = {
@@ -291,7 +288,7 @@ export function testSaga<
       return fixture;
     },
     async invokeResponse(token: string, payload: unknown) {
-      if (!isKnownTokenForPhase(token, 'response')) {
+      if (!knownResponseTokens.has(token)) {
         return {
           ok: false,
           reason: 'unknown_token',
@@ -336,7 +333,7 @@ export function testSaga<
       };
     },
     async invokeError(token: string, error: unknown) {
-      if (!isKnownTokenForPhase(token, 'error')) {
+      if (!knownErrorTokens.has(token)) {
         return {
           ok: false,
           reason: 'unknown_token',
