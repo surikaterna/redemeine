@@ -1,5 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
-import type { IProjectionStore, Checkpoint } from '../src/projections';
+import type { IProjectionStore, Checkpoint } from '../src';
 
 // Mock implementation for testing interface contract
 class MockProjectionStore<TState> implements IProjectionStore<TState> {
@@ -35,7 +35,7 @@ describe('IProjectionStore interface contract', () => {
     const store = new MockProjectionStore<{ count: number }>();
     const id = 'test-doc-1';
     const state = { count: 42 };
-    const checkpoint: Checkpoint = { sequence: 10, timestamp: Date.now() };
+    const checkpoint: Checkpoint = { sequence: 10, timestamp: new Date().toISOString() };
 
     await store.save(id, state, checkpoint);
     const loaded = await store.load(id);

@@ -1,6 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { createProjection } from '../../src/projections/createProjection';
-import { createAggregate } from '../../src/createAggregate';
+import { createProjection } from '../src/createProjection';
 
 // ============================================================================
 // Test payload types - distinct types to verify type isolation
@@ -32,27 +31,33 @@ interface OrderDeliveredPayload {
 // Test aggregates from real createAggregate(...).build() output
 // ============================================================================
 
-const invoiceAgg = createAggregate('invoice', { total: 0, paid: false as boolean })
-  .events({
-    created: (state, event: { payload: InvoiceCreatedPayload }) => {
-      state.total = event.payload.amount;
-    },
-    paid: (state, event: { payload: InvoicePaidPayload }) => {
-      state.paid = true;
+const invoiceAgg = {
+  __aggregateType: 'invoice' as const,
+  pure: {
+    eventProjectors: {
+      created: (_state: unknown, event: { payload: InvoiceCreatedPayload }) => {
+        void event;
+      },
+      paid: (_state: unknown, event: { payload: InvoicePaidPayload }) => {
+        void event;
+      }
     }
-  })
-  .build();
+  }
+};
 
-const orderAgg = createAggregate('order', { items: [] as string[], status: 'pending' })
-  .events({
-    shipped: (state, event: { payload: OrderShippedPayload }) => {
-      state.status = `shipped:${event.payload.trackingNumber}`;
-    },
-    delivered: (state, event: { payload: OrderDeliveredPayload }) => {
-      state.status = `delivered:${event.payload.deliveredAt}`;
+const orderAgg = {
+  __aggregateType: 'order' as const,
+  pure: {
+    eventProjectors: {
+      shipped: (_state: unknown, event: { payload: OrderShippedPayload }) => {
+        void event;
+      },
+      delivered: (_state: unknown, event: { payload: OrderDeliveredPayload }) => {
+        void event;
+      }
     }
-  })
-  .build();
+  }
+};
 
 // ============================================================================
 // Tests: Type Inference for Projections
@@ -196,16 +201,19 @@ describe('Type Inference for Projections', () => {
   });
 
   it('should preserve type inference when chaining multiple .join() calls', () => {
-    const shipmentAgg = createAggregate('shipment', { status: 'pending' })
-      .events({
-        dispatched: (state, event: { payload: { dispatchId: string } }) => {
-          state.status = `dispatched:${event.payload.dispatchId}`;
-        },
-        received: (state, event: { payload: { receivedAt: string } }) => {
-          state.status = `received:${event.payload.receivedAt}`;
+    const shipmentAgg = {
+      __aggregateType: 'shipment' as const,
+      pure: {
+        eventProjectors: {
+          dispatched: (_state: unknown, event: { payload: { dispatchId: string } }) => {
+            void event;
+          },
+          received: (_state: unknown, event: { payload: { receivedAt: string } }) => {
+            void event;
+          }
         }
-      })
-      .build();
+      }
+    };
 
     const projection = createProjection('chained-joins', () => ({ total: 0 }))
       .from(invoiceAgg, {

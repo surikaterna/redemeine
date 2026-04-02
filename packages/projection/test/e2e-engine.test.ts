@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { createProjection, ProjectionDefinition } from '../../src/projections/createProjection';
-import { InMemoryProjectionStore } from '../../src/projections/InMemoryProjectionStore';
-import { ProjectionDaemon } from '../../src/projections/ProjectionDaemon';
-import { ProjectionEvent, Checkpoint } from '../../src/projections/types';
-import { IEventSubscription } from '../../src/projections/IEventSubscription';
+import { createProjection, ProjectionDefinition } from '../src/createProjection';
+import { InMemoryProjectionStore } from '../src/InMemoryProjectionStore';
+import { ProjectionDaemon } from '../src/ProjectionDaemon';
+import { ProjectionEvent, Checkpoint } from '../src/types';
+import { IEventSubscription } from '../src/IEventSubscription';
 
 type TestProjectionEvent = ProjectionEvent & { id: string };
 
@@ -62,8 +62,7 @@ function createMockSubscription(events: ProjectionEvent[]): IEventSubscription {
       const lastSeq = batch.length > 0 ? batch[batch.length - 1].sequence : cursor.sequence;
       return {
         events: batch,
-        nextCursor: { sequence: lastSeq, timestamp: new Date().toISOString() },
-        hasMore: events.some((event) => event.sequence > lastSeq)
+        nextCursor: { sequence: lastSeq, timestamp: new Date().toISOString() }
       };
     }
   };

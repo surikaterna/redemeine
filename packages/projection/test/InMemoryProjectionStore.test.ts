@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach } from '@jest/globals';
-import { InMemoryProjectionStore, Checkpoint } from '../../src/projections';
+import { InMemoryProjectionStore, Checkpoint } from '../src';
 
 describe('InMemoryProjectionStore', () => {
   let store: InMemoryProjectionStore<{ count: number }>;
@@ -16,7 +16,7 @@ describe('InMemoryProjectionStore', () => {
   test('save and load work correctly', async () => {
     const id = 'test-doc-1';
     const state = { count: 42 };
-    const checkpoint: Checkpoint = { sequence: 10, timestamp: Date.now() };
+    const checkpoint: Checkpoint = { sequence: 10, timestamp: new Date().toISOString() };
 
     await store.save(id, state, checkpoint);
     const loaded = await store.load(id);
