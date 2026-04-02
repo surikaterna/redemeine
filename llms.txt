@@ -14,7 +14,7 @@ Redemeine operates on a **"Type-Transparent"** architecture:
 - **CamelCase to Dot-Notation:** Trust the internal naming engine to map `registerUser` (method) to `user.registered` (event path) automatically.
 
 ## 🚀 Example Composition
-import { AggregateBuilder } from 'redemeine';
+import { createAggregate } from '@redemeine/aggregate';
 
 /** 1. Pure TypeScript Contracts */
 export interface RegisterUser {
@@ -28,8 +28,12 @@ export interface UserState {
   status: 'guest' | 'registered';
 }
 
+const initialUserState: UserState = {
+  status: 'guest'
+};
+
 /** 2. Clean Aggregate Composition */
-export const UserAggregate = new AggregateBuilder<UserState>()
+export const UserAggregate = createAggregate<UserState, 'user'>('user', initialUserState)
   .events({
     /** State Projection: Direct mutation via Immer */
     userRegistered: (state, event: RegisterUser) => {
@@ -55,109 +59,8 @@ export const UserAggregate = new AggregateBuilder<UserState>()
 
 ## 🛠️ API Reference (Builders)
 
-### `AggregateBuilder`
-_The core builder interface for composing Aggregates in Redemeine.
-Uses a fluent chained API to progressively layer events, commands, mixins, and entities._
-
-**Methods:**
-- `.extends()` (Returns `this`) - Inherit all business rules, selectors, and events from a parent aggregate builder.
-- `.entities()` (Returns `this`) - Register nested entities into the aggregate's namespace.
-Entities keep their own private selectors and logic.
-The naming engine will automatically map nested calls to targeted dot-notation commands (e.g. `order.order_lines.cancel.command`).
-
-In the Mirage, mapped entities represent Immutable Hybrid Entity Collections: 
-They act as a safe read-only array (e.g., iterating or calculating length) 
-and as a command factory function (passing the entity ID).
-- `.entityList()` (Returns `this`) - Register a list-backed entity collection with optional simple or composite primary key definition.
-- `.entityMap()` (Returns `this`) - Register a record-backed entity map with optional known keys.
-- `.valueObject()` (Returns `this`) - Register a value object branch. It is exposed as read-only state and does not add routed commands.
-- `.valueObjectList()` (Returns `this`) - Register a read-only value object list branch.
-Unlike entities, this branch does not route nested commands.
-- `.valueObjectMap()` (Returns `this`) - Register a read-only value object map branch.
-Unlike entities, this branch does not route nested commands.
-- `.mixins()` (Returns `this`) - Compose reusable domain logic chunks (Mixins) into this aggregate.
-- `.plugins()` (Returns `this`) - Register aggregate-level plugins to be composed into Mirage/Depot runtime behavior.
-- `.events()` (Returns `this`) - Register state-altering event handlers.
-**Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
-The auto-namer maps camelCase keys to dot notation (e.g. `itemAdded` -> `aggregate.item_added.event`). **[IMMER MUTATION ALLOWED]**
-- `.overrideEventNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific events.
-Crucial for legacy migrations where historical event strings do not match the standard `aggregate.entity.action` convention.
-- `.naming()` (Returns `this`) - Replaces the default Targeted Naming engine with a custom strategy.
-Use this if your entire system uses a different naming convention (e.g., camelCase instead of dot-notation).
-- `.commands()` (Returns `this`) - Define command processors that execute business logic and emit events.
-**Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands, only within `.events()`.
-The auto-namer evaluates camelCase keys (e.g. `dispatchShipment` -> `aggregate.dispatch_shipment.command`). **[READONLY LOGIC LAYER]**
-- `.overrideCommandNames()` (Returns `this`) - Overrides the default Targeted Naming engine for specific commands.
-Prevents the auto-namer from modifying the key into standard dot-notation routing.
-- `.hooks()` (Returns `this`) - Registers lifecycle hooks for cross-cutting concerns (e.g., logging, auth, metrics).
-Hooks intercept the execution flow but DO NOT mutate state directly.
-- `.build()` - Finalizes and compiles the aggregate.
-
-### `EntityBuilder`
-_Core library class._
-
-**Methods:**
-- `.events()` (Returns `this`) - Register state-altering event handlers for this Entity.
-**Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
-The targeted auto-namer maps camelCase keys to dot notation combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`). **[IMMER MUTATION ALLOWED]**
-- `.overrideEventNames()` (Returns `this`) - Overrides generated event names for this entity.
-- `.selectors()` (Returns `this`) - Define pure functions scoped only to this entity's structure.
-- `.commands()` (Returns `this`) - Define scoped command processors that execute business logic.
-**Magic:** The `state` provided here is strictly `ReadonlyDeep`. State MUST NOT be mutated in commands.
-The auto-namer evaluates camelCase keys with the entity's namespace (e.g. `cancelLine` -> `aggregate.entity.cancel_line.command`). **[READONLY LOGIC LAYER]**
-- `.entityList()` (Returns `this`) - Register a list-backed nested entity collection.
-- `.entityMap()` (Returns `this`) - Register a record-backed nested entity map.
-- `.valueObjectList()` (Returns `this`) - Register a read-only nested value object list branch.
-- `.valueObjectMap()` (Returns `this`) - Register a read-only nested value object map branch.
-- `.overrideCommandNames()` (Returns `this`) - Overrides generated command names for this entity.
-- `.build()` - Finalizes and compiles the Entity into a pluggable package.
-
-### `MixinBuilder`
-_Core library class._
-
-**Methods:**
-- `.events()` (Returns `this`) - Register event handlers for this Mixin that apply state mutations. **[IMMER MUTATION ALLOWED]**
-- `.overrideEventNames()` (Returns `this`)
-- `.selectors()` (Returns `this`)
-- `.commands()` (Returns `this`) **[READONLY LOGIC LAYER]**
-- `.entityList()` (Returns `this`)
-- `.entityMap()` (Returns `this`)
-- `.valueObjectList()` (Returns `this`)
-- `.valueObjectMap()` (Returns `this`)
-- `.overrideCommandNames()` (Returns `this`)
-- `.build()`
-
-### `NamingStrategy`
-_Interface controlling the "Targeted Naming" engine used to automatically route and identify events and commands._
-
-**Methods:**
-- `.command()` - Transforms a given property name (and optionally its path) into a fully qualified command type string.
-- `.event()` - Transforms a given property name (and optionally its path) into a fully qualified event type string.
-
-### `ProjectionBuilder`
-_Builder interface for creating projections fluently_
-
-**Methods:**
-- `.initialState()` (Returns `this`) - Override the initial state factory
-- `.identity()` (Returns `this`) - Override the default identity resolver
-- `.from()` (Returns `this`) - Define the primary stream to project from
-- `.join()` (Returns `this`) - Add a joined stream for correlating related aggregates
-- `.build()` - Build the final projection definition
-
-### `SagaBuilder`
-_Fluent builder for composing a saga definition._
-
-**Methods:**
-- `.initialState()` (Returns `this`)
-- `.responseHandlers()` (Returns `this`)
-- `.correlate()` (Returns `this`)
-- `.on()` (Returns `this`)
-- `.build()`
-
 ## 🎯 Targeted Naming Patterns
 Methods map to paths using these conventions:
-- `command` (Auto-formatted path component)
-- `event` (Auto-formatted path component)
 
 --- 
-**Metadata:** 83 Interfaces, 96 Types, 6 Public Functions.
+**Metadata:** 0 Interfaces, 0 Types, 0 Public Functions.
