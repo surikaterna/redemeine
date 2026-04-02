@@ -891,6 +891,12 @@ export type SagaExecutableResponseHandlers<
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = {
+  /**
+   * Runtime-only executable response handlers keyed by response token.
+   *
+   * This map is intentionally non-serialized and not part of the
+   * persisted/wire `response_handlers` contract.
+   */
   [TToken in SagaResponseTokenKey<TResponseHandlerBindings>]?: SagaExecutableResponseHandler<
     TState,
     TPlugins,
@@ -904,6 +910,12 @@ export type SagaExecutableErrorHandlers<
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = {
+  /**
+   * Runtime-only executable error handlers keyed by error token.
+   *
+   * This map is intentionally non-serialized and not part of the
+   * persisted/wire `response_handlers` contract.
+   */
   [TToken in SagaErrorTokenKey<TResponseHandlerBindings>]?: SagaExecutableErrorHandler<
     TState,
     TPlugins,
@@ -961,8 +973,11 @@ export interface SagaDefinition<
   initialState: SagaInitialStateFactory<TState>;
   start?: SagaStartHandler<unknown, TState, TPlugins, TResponseHandlerBindings>;
   startContracts: SagaStartDslContracts<unknown, unknown>;
+  /** Persisted definition-only response/error token bindings. */
   response_handlers: TResponseHandlerBindings;
+  /** Runtime-only executable response handlers (non-serialized). */
   executable_response_handlers?: SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>;
+  /** Runtime-only executable error handlers (non-serialized). */
   executable_error_handlers?: SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>;
   correlations: Array<{
     aggregateType: string;
@@ -1215,6 +1230,24 @@ function createSagaBuilder<
     TResponseHandlerBindings
   >
 ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings> {
+  const buildRuntimeExecutableHandlers = <THandlers extends Record<string, unknown>>(
+    handlers: THandlers | undefined
+  ): THandlers | undefined => {
+    if (handlers === undefined) {
+      return undefined;
+    }
+
+    const cloned = { ...handlers };
+    return Object.keys(cloned).length === 0 ? undefined : cloned;
+  };
+
+  const buildDefinitionStateWithoutRuntimeMaps = () => {
+    const definitionState = { ...state };
+    delete (definitionState as { executable_response_handlers?: unknown }).executable_response_handlers;
+    delete (definitionState as { executable_error_handlers?: unknown }).executable_error_handlers;
+    return definitionState;
+  };
+
   const addCorrelation = (aggregate: SagaAggregateDefinition, correlate: SagaCorrelationFactory) => {
     state.correlations.push({
       aggregate,
@@ -1392,20 +1425,23 @@ function createSagaBuilder<
       return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
     },
     build() {
+      const executableResponseHandlers = buildRuntimeExecutableHandlers(state.executable_response_handlers);
+      const executableErrorHandlers = buildRuntimeExecutableHandlers(state.executable_error_handlers);
+
       return ({
-        ...state,
+        ...buildDefinitionStateWithoutRuntimeMaps(),
         plugins: [...state.plugins],
         startContracts: {
           ...state.startContracts,
           triggers: [...state.startContracts.triggers]
         },
         response_handlers: { ...state.response_handlers },
-        ...(state.executable_response_handlers === undefined
+        ...(executableResponseHandlers === undefined
           ? {}
-          : { executable_response_handlers: { ...state.executable_response_handlers } }),
-        ...(state.executable_error_handlers === undefined
+          : { executable_response_handlers: executableResponseHandlers }),
+        ...(executableErrorHandlers === undefined
           ? {}
-          : { executable_error_handlers: { ...state.executable_error_handlers } })
+          : { executable_error_handlers: executableErrorHandlers })
       } as unknown) as SagaDefinition<TLocalState, TPlugins, TLocalResponseHandlerBindings>;
     }
   });
@@ -1465,20 +1501,23 @@ function createSagaBuilder<
       return createAwaitingCorrelationBuilder<TState, TResponseHandlerBindings, TStartInput>();
     },
     build() {
+      const executableResponseHandlers = buildRuntimeExecutableHandlers(state.executable_response_handlers);
+      const executableErrorHandlers = buildRuntimeExecutableHandlers(state.executable_error_handlers);
+
       return ({
-        ...state,
+        ...buildDefinitionStateWithoutRuntimeMaps(),
         plugins: [...state.plugins],
         startContracts: {
           ...state.startContracts,
           triggers: [...state.startContracts.triggers]
         },
         response_handlers: { ...state.response_handlers },
-        ...(state.executable_response_handlers === undefined
+        ...(executableResponseHandlers === undefined
           ? {}
-          : { executable_response_handlers: { ...state.executable_response_handlers } }),
-        ...(state.executable_error_handlers === undefined
+          : { executable_response_handlers: executableResponseHandlers }),
+        ...(executableErrorHandlers === undefined
           ? {}
-          : { executable_error_handlers: { ...state.executable_error_handlers } })
+          : { executable_error_handlers: executableErrorHandlers })
       } as unknown) as SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
     }
   };
