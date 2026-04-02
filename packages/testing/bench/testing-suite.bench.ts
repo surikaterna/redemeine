@@ -183,18 +183,6 @@ async function benchmarkSagaFixture(iterations: number): Promise<BenchResult> {
 
   const saga = createSaga<{ attempts: number }>({ identity })
     .initialState(() => ({ attempts: 0 }))
-    .responseDefinitions({
-      'payment.capture.ok': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'response'
-      },
-      'payment.capture.failed': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'error'
-      }
-    })
     .on(PaymentAggregate, {
       started: (_state, event, ctx) => {
         const typedEvent = event as { payload: { id: string } };
@@ -217,6 +205,9 @@ async function benchmarkSagaFixture(iterations: number): Promise<BenchResult> {
       'payment.capture.ok': (state) => {
         state.attempts += 1;
       }
+    })
+    .onErrors({
+      'payment.capture.failed': () => undefined
     })
     .build();
 
