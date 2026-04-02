@@ -4,6 +4,7 @@ import {
   runSagaResponseHandler,
   type SagaAggregateDefinition,
   type SagaDefinition,
+  type SagaErrorTokenKey,
   type SagaExecutableHandlerFailureReason,
   type SagaIntent,
   type SagaIntentMetadata,
@@ -11,7 +12,8 @@ import {
   type SagaPluginRequestIntent,
   type SagaReducerOutput,
   type SagaResponseHandlerTokenBinding,
-  type SagaResponseHandlerTokenBindings
+  type SagaResponseHandlerTokenBindings,
+  type SagaResponseTokenKey
 } from '@redemeine/saga';
 
 type SagaEventEnvelope = {
@@ -64,8 +66,14 @@ export interface TestSagaFixture<
 > {
   withState(state: TState): TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>;
   receiveEvent(event: SagaEventEnvelope): Promise<TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>>;
-  invokeResponse(token: string, payload: unknown): Promise<TestSagaInvokeResult<TState>>;
-  invokeError(token: string, error: unknown): Promise<TestSagaInvokeResult<TState>>;
+  invokeResponse<TToken extends SagaResponseTokenKey<TResponseHandlerBindings>>(
+    token: TToken,
+    payload: unknown
+  ): Promise<TestSagaInvokeResult<TState, TToken>>;
+  invokeError<TToken extends SagaErrorTokenKey<TResponseHandlerBindings>>(
+    token: TToken,
+    error: unknown
+  ): Promise<TestSagaInvokeResult<TState, TToken>>;
   expectState(expected: TState | ((state: TState) => boolean | void)): TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>;
   expectIntents(
     expected: readonly SagaIntent[] | ((intents: readonly SagaIntent[]) => boolean | void)
@@ -284,7 +292,10 @@ export function testSaga<
       applyOutput(output);
       return fixture;
     },
-    async invokeResponse(token: string, payload: unknown) {
+    async invokeResponse<TToken extends SagaResponseTokenKey<TResponseHandlerBindings>>(
+      token: TToken,
+      payload: unknown
+    ): Promise<TestSagaInvokeResult<TState, TToken>> {
       if (!isKnownTokenForPhase(token, 'response')) {
         return {
           ok: false,
@@ -329,7 +340,10 @@ export function testSaga<
         output: result.output
       };
     },
-    async invokeError(token: string, error: unknown) {
+    async invokeError<TToken extends SagaErrorTokenKey<TResponseHandlerBindings>>(
+      token: TToken,
+      error: unknown
+    ): Promise<TestSagaInvokeResult<TState, TToken>> {
       if (!isKnownTokenForPhase(token, 'error')) {
         return {
           ok: false,
