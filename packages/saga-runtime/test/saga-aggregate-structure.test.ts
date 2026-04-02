@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSagaAggregate } from '../../src/sagas/createSagaAggregate';
+import { createSagaAggregate } from '../src/createSagaAggregate';
 
 const isoAt = (secondsOffset: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, secondsOffset)).toISOString();
 

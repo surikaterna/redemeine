@@ -11,12 +11,21 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./aggregateBridge": {
+      "types": "./src/aggregateBridge.ts",
+      "import": "./src/aggregateBridge.ts",
+      "require": "./src/aggregateBridge.ts",
+      "default": "./src/aggregateBridge.ts"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
+    "test": "bun test ./test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "immer": "^10.1.1"
   }
 }

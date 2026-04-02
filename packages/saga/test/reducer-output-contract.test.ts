@@ -3,7 +3,7 @@ import {
   createSaga,
   type SagaIntent,
   type SagaReducerOutput
-} from '../../src/sagas';
+} from '../src';
 
 const BillingAggregate = {
   __aggregateType: 'billing',

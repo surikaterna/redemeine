@@ -229,7 +229,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
     }
   };
 
-  const built = createAggregate<SagaAggregateState, TAggregateName>(aggregateName, initialState)
+  const built = createAggregate(aggregateName, initialState)
     .events({
       instanceCreated: (state, event: Event<SagaInstanceCreatedEventPayload>) => {
         state.sagaId = event.payload.sagaId;

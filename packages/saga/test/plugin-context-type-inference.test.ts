@@ -3,7 +3,7 @@ import {
   createSaga,
   defineSagaPlugin,
   type SagaPluginRequestIntent
-} from '../../src/sagas';
+} from '../src';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',

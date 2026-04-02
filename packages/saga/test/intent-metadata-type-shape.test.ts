@@ -4,7 +4,7 @@ import {
   type SagaIntent,
   type SagaPluginRequestIntent,
   type SagaPluginRequestRoutingMetadata
-} from '../../src/sagas';
+} from '../src';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',

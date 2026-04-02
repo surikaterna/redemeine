@@ -66,10 +66,17 @@
     "packages/saga": {
       "name": "@redemeine/saga",
       "version": "0.1.0",
+      "dependencies": {
+        "immer": "^10.1.1",
+      },
     },
     "packages/saga-runtime": {
       "name": "@redemeine/saga-runtime",
       "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/aggregate": "workspace:*",
+        "@redemeine/saga": "workspace:*",
+      },
     },
   },
   "packages": {
