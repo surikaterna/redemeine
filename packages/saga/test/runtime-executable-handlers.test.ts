@@ -5,7 +5,9 @@ import {
   runSagaResponseHandler,
   type CanonicalSagaIdentityInput,
   type SagaDefinition,
-  type SagaIntent
+  type SagaIntent,
+  type TErrorToken,
+  type TResponseToken
 } from '../src';
 
 type RuntimeTestState = {
@@ -54,7 +56,7 @@ describe('runtime executable saga handlers', () => {
       definition: saga,
       state: { attempts: 2 },
       envelope: {
-        token: 'billing.charge.ok',
+        token: 'billing.charge.ok' as TResponseToken<'billing.charge.ok'>,
         payload: 'accepted',
         request: {
           plugin_key: 'billing',
@@ -107,7 +109,7 @@ describe('runtime executable saga handlers', () => {
       definition: saga,
       state: { attempts: 1 },
       envelope: {
-        token: 'billing.charge.failed',
+        token: 'billing.charge.failed' as TErrorToken<'billing.charge.failed'>,
         error: 'declined',
         request: {
           plugin_key: 'billing',
@@ -142,7 +144,7 @@ describe('runtime executable saga handlers', () => {
     ]);
   });
 
-  it('returns deterministic failure contract for token lookup and phase mismatch', async () => {
+  it('returns deterministic failure contract for token lookup and response phase mismatch', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_FAILURES_IDENTITY })
       .onErrors({
         'billing.charge.failed': () => undefined
@@ -154,7 +156,7 @@ describe('runtime executable saga handlers', () => {
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.unknown',
+        token: 'billing.charge.unknown' as unknown as TResponseToken<string>,
         payload: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -169,11 +171,11 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const responsePhaseMismatch = await runSagaResponseHandler({
+    const unknownResponseToken = await runSagaResponseHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.failed',
+        token: 'billing.charge.failed' as unknown as TResponseToken<string>,
         payload: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -182,7 +184,7 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(responsePhaseMismatch).toEqual({
+    expect(unknownResponseToken).toEqual({
       ok: false,
       reason: 'phase_mismatch',
       token: 'billing.charge.failed',
@@ -191,7 +193,7 @@ describe('runtime executable saga handlers', () => {
     });
   });
 
-  it('returns token_not_defined and phase_mismatch for error helper', async () => {
+  it('returns token_not_defined for unknown tokens and phase mismatch in error helper', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_ERROR_FAILURES_IDENTITY })
       .onResponses({
         'billing.charge.ok': () => undefined
@@ -206,7 +208,7 @@ describe('runtime executable saga handlers', () => {
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.unknown',
+        token: 'billing.charge.unknown' as unknown as TErrorToken<string>,
         error: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -221,11 +223,11 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const errorPhaseMismatch = await runSagaErrorHandler({
+    const unknownErrorToken = await runSagaErrorHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.ok',
+        token: 'billing.charge.ok' as unknown as TErrorToken<string>,
         error: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -234,7 +236,7 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(errorPhaseMismatch).toEqual({
+    expect(unknownErrorToken).toEqual({
       ok: false,
       reason: 'phase_mismatch',
       token: 'billing.charge.ok',

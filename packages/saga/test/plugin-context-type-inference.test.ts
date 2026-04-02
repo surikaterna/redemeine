@@ -5,6 +5,8 @@ import {
   runSagaErrorHandler,
   runSagaResponseHandler,
   type CanonicalSagaIdentityInput,
+  type TErrorToken,
+  type TResponseToken,
   type SagaPluginRequestIntent
 } from '../src';
 
@@ -32,9 +34,9 @@ const PLUGIN_OPTIONAL_IDENTITY: CanonicalSagaIdentityInput = {
   version: 1
 };
 
-const PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY: CanonicalSagaIdentityInput = {
+const PLUGIN_HANDLER_MAP_GATING_IDENTITY: CanonicalSagaIdentityInput = {
   namespace: 'plugins',
-  name: 'plugin_saga_executable_handler_gating',
+  name: 'plugin_saga_handler_map_gating',
   version: 1
 };
 
@@ -161,6 +163,14 @@ describe('createSaga plugin-capable ctx typing', () => {
           expect(actionName).toBe('get');
         }
       })
+      .onRetries({
+        'http.get.retry': (state, retry, _ctx) => {
+          const token: 'http.get.retry' = retry.token;
+
+          expect(token).toBe('http.get.retry');
+          state.retries += 1;
+        }
+      })
       .onResponses({
         'http.post.success': () => undefined
       })
@@ -177,6 +187,16 @@ describe('createSaga plugin-capable ctx typing', () => {
             .onError(ctx.onError['http.get.failure']);
           const successToken: 'http.get.success' = ctx.onResponse['http.get.success'];
           const errorToken: 'http.get.failure' = ctx.onError['http.get.failure'];
+          const retryToken: 'http.get.retry' = ctx.onRetry['http.get.retry'];
+
+          const responseOnly = (token: TResponseToken<'http.get.success'>) => token;
+          const errorOnly = (token: TErrorToken<'http.get.failure'>) => token;
+
+          const brandedSuccessToken = responseOnly(successToken as unknown as TResponseToken<'http.get.success'>);
+          const brandedErrorToken = errorOnly(errorToken as unknown as TErrorToken<'http.get.failure'>);
+
+          expect(brandedSuccessToken).toBe('http.get.success');
+          expect(brandedErrorToken).toBe('http.get.failure');
 
           const jobName: 'invoice.retry' = scheduled.name;
           const routedInvoiceId: string = requestIntent.routing_metadata.handler_data.invoiceId;
@@ -191,6 +211,7 @@ describe('createSaga plugin-capable ctx typing', () => {
           expect(statusHeaders).toBeDefined();
           expect(successToken).toBe('http.get.success');
           expect(errorToken).toBe('http.get.failure');
+          expect(retryToken).toBe('http.get.retry');
           state.retries += 1;
         }
       })
@@ -198,9 +219,9 @@ describe('createSaga plugin-capable ctx typing', () => {
 
     expect(typeof saga.responseHandlers['http.get.success']).toBe('function');
     expect(typeof saga.errorHandlers['http.get.failure']).toBe('function');
+    expect(typeof saga.retryHandlers['http.get.retry']).toBe('function');
     expect(typeof saga.responseHandlers['http.post.success']).toBe('function');
     expect(typeof saga.errorHandlers['http.post.failure']).toBe('function');
-    expect(saga.retryHandlers).toEqual({});
     expect(saga.plugins).toEqual([
       {
         plugin_key: 'infra',
@@ -304,7 +325,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('enforces phase-safe executable response/error handler registration', () => {
     createSaga({
-      identity: PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY,
+      identity: PLUGIN_HANDLER_MAP_GATING_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .onResponses({
@@ -314,6 +335,9 @@ describe('createSaga plugin-capable ctx typing', () => {
       .onErrors({
         fail: (_state, _error, _ctx) => undefined,
         okay: (_state, _error, _ctx) => undefined
+      })
+      .onRetries({
+        retry: (_state, _retry, _ctx) => undefined
       })
       .build();
 
@@ -355,7 +379,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       definition: saga,
       state: { retries: 0, lastResponse: '', lastError: '' },
       envelope: {
-        token: 'ok',
+        token: 'ok' as TResponseToken<'ok'>,
         payload: { status: 200 },
         request: {
           plugin_key: 'http',
@@ -368,7 +392,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       definition: saga,
       state: { retries: 0, lastResponse: '', lastError: '' },
       envelope: {
-        token: 'fail',
+        token: 'fail' as TErrorToken<'fail'>,
         error: { message: 'boom' },
         request: {
           plugin_key: 'http',
