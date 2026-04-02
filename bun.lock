@@ -87,6 +87,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@redemeine/saga": "workspace:*",
+        "immer": "^10.1.1",
       },
     },
   },
