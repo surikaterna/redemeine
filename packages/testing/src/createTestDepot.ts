@@ -1,6 +1,11 @@
 import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
-
-declare const require: (id: string) => unknown;
+import {
+  InMemoryProjectionStore,
+  ProjectionDaemon,
+  type IEventSubscription,
+  type IProjectionStore,
+  type ProjectionDefinition as RuntimeProjectionDefinition
+} from '@redemeine/projection';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -34,44 +39,7 @@ type ProjectionContext = {
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 };
 
-type ProjectionDefinition<TState = unknown> = {
-  readonly name: string;
-  readonly fromStream: {
-    readonly aggregate: { __aggregateType: string };
-    readonly handlers: Record<string, (state: TState, event: ProjectionEvent, ctx: ProjectionContext) => void>;
-  };
-  readonly joinStreams?: ReadonlyArray<{
-    readonly aggregate: { __aggregateType: string };
-    readonly handlers: Record<string, (state: TState, event: ProjectionEvent, ctx: ProjectionContext) => void>;
-  }>;
-  readonly initialState: (documentId: string) => TState;
-  readonly identity: (event: ProjectionEvent) => string | readonly string[];
-  readonly subscriptions: ReadonlyArray<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
-};
-
-type IEventSubscription = {
-  poll(cursor: Checkpoint, batchSize: number): Promise<{ events: ProjectionEvent[]; nextCursor: Checkpoint }>;
-};
-
-type ProjectionStoreLike<TState> = {
-  load(id: string): Promise<TState | null>;
-  save(id: string, state: TState, cursor: Checkpoint): Promise<void>;
-  getCheckpoint?(id: string): Promise<Checkpoint | null>;
-};
-
-type ProjectionDaemonLike = {
-  processBatch(): Promise<{ eventsProcessed: number }>;
-};
-
-type ProjectionRuntimeModule = {
-  InMemoryProjectionStore: new <TState = unknown>() => ProjectionStoreLike<TState>;
-  ProjectionDaemon: new <TState = unknown>(options: {
-    projection: ProjectionDefinition<TState>;
-    subscription: IEventSubscription;
-    store: ProjectionStoreLike<TState>;
-    batchSize?: number;
-  }) => ProjectionDaemonLike;
-};
+type ProjectionDefinition<TState = unknown> = RuntimeProjectionDefinition<TState>;
 
 type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any> & {
   readonly __aggregateType?: string;
@@ -97,9 +65,9 @@ type EventQueueSubscription = IEventSubscription & {
 
 type ProjectionRuntime = {
   readonly projection: ProjectionDefinition<any>;
-  readonly store: ProjectionStoreLike<any>;
+  readonly store: IProjectionStore<any>;
   readonly subscription: EventQueueSubscription;
-  readonly daemon: ProjectionDaemonLike;
+  readonly daemon: ProjectionDaemon<any>;
 };
 
 export interface CreateTestDepotOptions {
@@ -204,18 +172,17 @@ function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: nu
 }
 
 export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
-  const projectionRuntimeModule = require('../../projection/src') as ProjectionRuntimeModule;
   const commandRoute = buildCommandRouting(options.aggregates);
 
   // v1 hook only: sagas are registered for routing bookkeeping.
   // Full external worker response simulation is intentionally deferred.
   const sagaRegistrations = [...(options.sagas ?? [])];
 
-  const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, ProjectionStoreLike<any>>();
+  const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>();
   const projectionRuntimes: ProjectionRuntime[] = (options.projections ?? []).map((projection) => {
-    const store = new projectionRuntimeModule.InMemoryProjectionStore<any>();
+    const store = new InMemoryProjectionStore<any>();
     const subscription = createEventQueueSubscription();
-    const daemon = new projectionRuntimeModule.ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
+    const daemon = new ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
     projectionStoreByDefinition.set(projection, store);
 
     return { projection, store, subscription, daemon };
