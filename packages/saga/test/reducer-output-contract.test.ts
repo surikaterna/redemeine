@@ -106,9 +106,9 @@ describe('S08 reducer output contract typing', () => {
 
     expect(saga.handlers).toHaveLength(1);
     expect(saga.plugins).toEqual([]);
-    expect(saga.response_handlers).toEqual({});
-    expect('executable_response_handlers' in saga).toBe(false);
-    expect('executable_error_handlers' in saga).toBe(false);
+    expect(saga.responseHandlers).toEqual({});
+    expect(saga.errorHandlers).toEqual({});
+    expect(saga.retryHandlers).toEqual({});
     expect(saga.identity).toEqual({
       namespace: 'billing',
       name: 'billing_saga',
@@ -173,7 +173,7 @@ describe('S08 reducer output contract typing', () => {
     expect(true).toBe(true);
   });
 
-  it('keeps runtime executable maps separate from persisted response_handlers', () => {
+  it('keeps runtime handler maps in camelCase public API', () => {
     const responseFn = (_state: { attempts: number }, _response: { token: 'billing.charge.ok' }) => undefined;
     const errorFn = (_state: { attempts: number }, _error: { token: 'billing.charge.failed' }) => undefined;
 
@@ -184,18 +184,6 @@ describe('S08 reducer output contract typing', () => {
         version: 1
       }
     })
-      .responseDefinitions({
-        'billing.charge.ok': {
-          plugin_key: 'billing',
-          action_name: 'charge',
-          phase: 'response'
-        },
-        'billing.charge.failed': {
-          plugin_key: 'billing',
-          action_name: 'charge',
-          phase: 'error'
-        }
-      })
       .onResponses({
         'billing.charge.ok': responseFn
       })
@@ -204,25 +192,13 @@ describe('S08 reducer output contract typing', () => {
       })
       .build();
 
-    expect(saga.response_handlers).toEqual({
-      'billing.charge.ok': {
-        plugin_key: 'billing',
-        action_name: 'charge',
-        phase: 'response'
-      },
-      'billing.charge.failed': {
-        plugin_key: 'billing',
-        action_name: 'charge',
-        phase: 'error'
-      }
-    });
-    expect(saga.executable_response_handlers).toEqual({
+    expect(saga.responseHandlers).toEqual({
       'billing.charge.ok': responseFn
     });
-    expect(saga.executable_error_handlers).toEqual({
+    expect(saga.errorHandlers).toEqual({
       'billing.charge.failed': errorFn
     });
-    expect(typeof saga.response_handlers['billing.charge.ok']).toBe('object');
-    expect(typeof saga.executable_response_handlers?.['billing.charge.ok']).toBe('function');
+    expect(saga.retryHandlers).toEqual({});
+    expect(typeof saga.responseHandlers['billing.charge.ok']).toBe('function');
   });
 });
