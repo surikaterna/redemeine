@@ -12,6 +12,9 @@ export type SagaInitialStateFactory<TState> = () => TState;
 export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
 type AnyFunction = (...args: any[]) => unknown;
+const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
+
+type SagaHelperEmissionMode = 'one_way' | 'request_response';
 
 export type SagaPluginActionKind = 'void' | 'request_response';
 
@@ -36,6 +39,20 @@ export type SagaPluginActionDescriptor<
 > =
   | SagaPluginVoidActionDescriptor<TBuild>
   | SagaPluginRequestResponseActionDescriptor<TBuild>;
+
+type SagaPluginActionDescriptorWithHelperMetadata = SagaPluginActionDescriptor & {
+  readonly [SAGA_HELPER_EMISSION_MODE]?: SagaHelperEmissionMode;
+};
+
+type SagaOneWayHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
+  SagaPluginVoidActionDescriptor<TBuild> & {
+    readonly [SAGA_HELPER_EMISSION_MODE]: 'one_way';
+  };
+
+type SagaRequestResponseHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
+  SagaPluginRequestResponseActionDescriptor<TBuild> & {
+    readonly [SAGA_HELPER_EMISSION_MODE]: 'request_response';
+  };
 
 export type SagaPluginActions = Record<string, SagaPluginActionDescriptor>;
 
@@ -197,11 +214,12 @@ function normalizeActionDefinition<TBuild extends AnyFunction>(
 /** Additive helper for authoring one-way action descriptors. */
 export function defineOneWay<TBuild extends AnyFunction>(
   input: TBuild | SagaOneWayActionDefinition<TBuild>
-): SagaPluginVoidActionDescriptor<TBuild> {
+): SagaOneWayHelperActionDescriptor<TBuild> {
   const normalized = normalizeActionDefinition(input);
   return {
     action_kind: 'void',
     build: normalized.build,
+    [SAGA_HELPER_EMISSION_MODE]: 'one_way',
     ...(normalized.description === undefined ? {} : { description: normalized.description })
   };
 }
@@ -209,11 +227,12 @@ export function defineOneWay<TBuild extends AnyFunction>(
 /** Additive helper for authoring request-response action descriptors. */
 export function defineRequestResponse<TBuild extends AnyFunction>(
   input: TBuild | SagaRequestResponseActionDefinition<TBuild>
-): SagaPluginRequestResponseActionDescriptor<TBuild> {
+): SagaRequestResponseHelperActionDescriptor<TBuild> {
   const normalized = normalizeActionDefinition(input);
   return {
     action_kind: 'request_response',
     build: normalized.build,
+    [SAGA_HELPER_EMISSION_MODE]: 'request_response',
     ...(normalized.description === undefined ? {} : { description: normalized.description })
   };
 }
@@ -281,16 +300,18 @@ export function defineCustomAction(
   };
 
   if (definition.action_kind === 'void') {
-    return defineOneWay({
+    return {
+      action_kind: 'void',
       build,
       ...(definition.description === undefined ? {} : { description: definition.description })
-    });
+    };
   }
 
-  return defineRequestResponse({
+  return {
+    action_kind: 'request_response',
     build,
     ...(definition.description === undefined ? {} : { description: definition.description })
-  });
+  };
 }
 
 /** Minimal request envelope forwarded to external response/error handlers. */
@@ -544,7 +565,13 @@ type SagaPluginActionContextForManifestAction<
       SagaPluginActionExecutionPayload<TAction>,
       TBindings
     >
-  : (...args: SagaPluginActionArguments<TAction>) => SagaPluginActionExecutionPayload<TAction>;
+  : TAction extends { readonly [SAGA_HELPER_EMISSION_MODE]: 'one_way' }
+    ? (...args: SagaPluginActionArguments<TAction>) => SagaPluginOneWayIntent<
+      TPluginKey,
+      TActionName,
+      SagaPluginActionExecutionPayload<TAction>
+    >
+    : (...args: SagaPluginActionArguments<TAction>) => SagaPluginActionExecutionPayload<TAction>;
 
 type SagaPluginActionsForManifest<
   TPlugin extends SagaPluginManifest,
@@ -571,6 +598,20 @@ export interface SagaRunActivityIntent<TResult = unknown> {
   readonly name: string;
   readonly closure: SagaActivityClosure<TResult>;
   readonly retryPolicy?: SagaRetryPolicy;
+  readonly metadata: SagaIntentMetadata;
+}
+
+/** Intent that emits plugin-owned one-way action payloads immediately. */
+export interface SagaPluginOneWayIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> {
+  readonly type: 'plugin-one-way';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly action_kind: 'void';
+  readonly execution_payload: TExecutionPayload;
   readonly metadata: SagaIntentMetadata;
 }
 
@@ -615,6 +656,7 @@ export type SagaIntent =
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent
+  | SagaPluginOneWayIntent
   | SagaPluginRequestIntent;
 
 /** Command envelope shape emitted by aggregate command creators. */
@@ -930,11 +972,12 @@ function createPluginActionsContext(
     const pluginActions: Record<string, (...args: any[]) => unknown> = Object.create(null);
 
     for (const actionName of Object.keys(plugin.actions)) {
-      const actionDescriptor = plugin.actions[actionName];
+      const actionDescriptor = plugin.actions[actionName] as SagaPluginActionDescriptorWithHelperMetadata;
 
       if (actionDescriptor.action_kind === 'request_response') {
         pluginActions[actionName] = (...args: any[]) => {
           const executionPayload = actionDescriptor.build(...args);
+          let terminalIntent: SagaPluginRequestIntent | undefined;
 
           const createIntent = (
             handlerData: unknown,
@@ -942,6 +985,10 @@ function createPluginActionsContext(
             errorHandlerKey: string,
             retryHandlerKey?: string
           ) => {
+            if (terminalIntent !== undefined) {
+              return terminalIntent;
+            }
+
             const intent: SagaPluginRequestIntent = {
               type: 'plugin-request',
               plugin_key: plugin.plugin_key,
@@ -958,6 +1005,7 @@ function createPluginActionsContext(
             };
 
             emitIntent(intent);
+            terminalIntent = intent;
             return intent;
           };
 
@@ -983,7 +1031,25 @@ function createPluginActionsContext(
         continue;
       }
 
-      pluginActions[actionName] = (...args: any[]) => actionDescriptor.build(...args);
+      pluginActions[actionName] = (...args: any[]) => {
+        const executionPayload = actionDescriptor.build(...args);
+
+        if (actionDescriptor[SAGA_HELPER_EMISSION_MODE] !== 'one_way') {
+          return executionPayload;
+        }
+
+        const intent: SagaPluginOneWayIntent = {
+          type: 'plugin-one-way',
+          plugin_key: plugin.plugin_key,
+          action_name: actionName,
+          action_kind: 'void',
+          execution_payload: executionPayload,
+          metadata
+        };
+
+        emitIntent(intent);
+        return intent;
+      };
     }
 
     actionsContext[plugin.plugin_key] = pluginActions;
