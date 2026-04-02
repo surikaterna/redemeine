@@ -178,3 +178,28 @@ The following saga modules/helpers are no longer documented as public API and sh
 Consumers should depend on the public saga definition surface only (`createSaga`, retry helpers, registry helpers, canonical event names).
 
 As saga feature slices progress, these shared modules can be complemented by feature-first saga folders where appropriate.
+
+## ADR: Typed-first Testing Pyramid and In-Memory Integration Depot
+
+- **Status:** Accepted (Epic kickoff)
+- **Date:** 2026-04-02
+- **Related Beads:** redemeine-t8g (epic), redemeine-t8g.1 (contract lock)
+
+### Decision
+
+Redemeine testing guidance will be **typed-first by default** using aggregate commandCreators and eventCreators across test fixtures. The @redemeine/testing package will provide fluent fixtures for aggregate, saga, and projection testing, plus an in-memory integration engine (createTestDepot) implemented as a thin orchestration layer over existing runtime primitives.
+
+### Why
+
+Typed factories improve refactor safety, autocomplete ergonomics, and payload correctness. A thin orchestration strategy minimizes behavioral drift from production runtime semantics while preserving fast, deterministic, infrastructure-free integration testing.
+
+### Scope notes
+
+- createTestDepot v1 focuses on deterministic command -> event -> projection integration flow, including saga registration/routing hooks.
+- Full worker response simulation remains an explicit follow-up slice after v1.
+- Raw envelope dispatch remains supported as a fallback for boundary/replay/negative-shape tests.
+
+### Consequences
+
+- Docs and examples should prioritize typed factories over raw string envelopes.
+- Benchmarking is introduced as non-blocking first, then promoted to a gate once CI baseline is stable.

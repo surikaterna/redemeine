@@ -4,6 +4,7 @@ import {
   runSagaResponseHandler,
   type SagaAggregateDefinition,
   type SagaDefinition,
+  type SagaErrorTokenKey,
   type SagaExecutableHandlerFailureReason,
   type SagaIntent,
   type SagaIntentMetadata,
@@ -11,7 +12,8 @@ import {
   type SagaPluginRequestIntent,
   type SagaReducerOutput,
   type SagaResponseHandlerTokenBinding,
-  type SagaResponseHandlerTokenBindings
+  type SagaResponseHandlerTokenBindings,
+  type SagaResponseTokenKey
 } from '@redemeine/saga';
 
 type SagaEventEnvelope = {
@@ -64,8 +66,14 @@ export interface TestSagaFixture<
 > {
   withState(state: TState): TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>;
   receiveEvent(event: SagaEventEnvelope): Promise<TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>>;
-  invokeResponse(token: string, payload: unknown): Promise<TestSagaInvokeResult<TState>>;
-  invokeError(token: string, error: unknown): Promise<TestSagaInvokeResult<TState>>;
+  invokeResponse<TToken extends SagaResponseTokenKey<TResponseHandlerBindings>>(
+    token: TToken,
+    payload: unknown
+  ): Promise<TestSagaInvokeResult<TState, TToken>>;
+  invokeError<TToken extends SagaErrorTokenKey<TResponseHandlerBindings>>(
+    token: TToken,
+    error: unknown
+  ): Promise<TestSagaInvokeResult<TState, TToken>>;
   expectState(expected: TState | ((state: TState) => boolean | void)): TestSagaFixture<TState, TPlugins, TResponseHandlerBindings>;
   expectIntents(
     expected: readonly SagaIntent[] | ((intents: readonly SagaIntent[]) => boolean | void)
@@ -242,16 +250,19 @@ export function testSaga<
   const responseQueues = new Map<string, TestSagaQueuedRequest[]>();
   const errorQueues = new Map<string, TestSagaQueuedRequest[]>();
   const requestCounter = { current: 0 };
+  const knownResponseTokens = new Set(Object.keys(definition.responseHandlers));
+  const knownErrorTokens = new Set(Object.keys(definition.errorHandlers));
+
+  const tokenBindings = Object.freeze({
+    ...Object.fromEntries(Object.keys(definition.responseHandlers).map((token) => [token, { phase: 'response' as const }])),
+    ...Object.fromEntries(Object.keys(definition.errorHandlers).map((token) => [token, { phase: 'error' as const }])),
+    ...Object.fromEntries(Object.keys(definition.retryHandlers).map((token) => [token, { phase: 'retry' as const }]))
+  }) as Record<string, SagaResponseHandlerTokenBinding | undefined>;
 
   const applyOutput = (output: SagaReducerOutput<TState>) => {
     state = output.state;
     latestIntents = output.intents;
     enqueuePluginRequests(output.intents, responseQueues, errorQueues, requestCounter);
-  };
-
-  const isKnownTokenForPhase = (token: string, phase: 'response' | 'error') => {
-    const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
-    return tokenBinding !== undefined && tokenBinding.phase === phase;
   };
 
   const fixture: TestSagaFixture<TState, TPlugins, TResponseHandlerBindings> = {
@@ -277,15 +288,18 @@ export function testSaga<
         } as any,
         resolved.handler as any,
         resolveMetadata(event.metadata),
-        definition.response_handlers,
+        tokenBindings as TResponseHandlerBindings,
         runtimePlugins
       );
 
       applyOutput(output);
       return fixture;
     },
-    async invokeResponse(token: string, payload: unknown) {
-      if (!isKnownTokenForPhase(token, 'response')) {
+    async invokeResponse<TToken extends SagaResponseTokenKey<TResponseHandlerBindings>>(
+      token: TToken,
+      payload: unknown
+    ): Promise<TestSagaInvokeResult<TState, TToken>> {
+      if (!knownResponseTokens.has(token)) {
         return {
           ok: false,
           reason: 'unknown_token',
@@ -329,8 +343,11 @@ export function testSaga<
         output: result.output
       };
     },
-    async invokeError(token: string, error: unknown) {
-      if (!isKnownTokenForPhase(token, 'error')) {
+    async invokeError<TToken extends SagaErrorTokenKey<TResponseHandlerBindings>>(
+      token: TToken,
+      error: unknown
+    ): Promise<TestSagaInvokeResult<TState, TToken>> {
+      if (!knownErrorTokens.has(token)) {
         return {
           ok: false,
           reason: 'unknown_token',

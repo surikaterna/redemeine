@@ -1,10 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
-  type CanonicalSagaIdentityInput,
-  type SagaResponseHandlerTokenBindings
+  type CanonicalSagaIdentityInput
 } from '@redemeine/saga';
-import { testSaga } from '../src';
+import { testSaga, type TestSagaFixture } from '../src';
 
 const PaymentAggregate = {
   __aggregateType: 'payment',
@@ -39,24 +38,15 @@ const TEST_SAGA_FAILURES_IDENTITY: CanonicalSagaIdentityInput = {
   version: 1
 };
 
+const responseBindings = {
+  'payment.capture.ok': { phase: 'response' as const },
+  'payment.capture.failed': { phase: 'error' as const }
+};
+
 describe('testSaga fixture', () => {
   it('runs chain flow through event -> invokeResponse -> invokeError', async () => {
-    const responseBindings = {
-      'payment.capture.ok': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'response'
-      },
-      'payment.capture.failed': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'error'
-      }
-    } as const satisfies SagaResponseHandlerTokenBindings;
-
     const saga = createSaga<{ attempts: number; log: string[] }>({ identity: TEST_SAGA_CHAIN_IDENTITY })
       .initialState(() => ({ attempts: 0, log: [] as string[] }))
-      .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
         started: (state, event, ctx) => {
           state.log.push(`started:${event.payload.id}`);
@@ -134,22 +124,8 @@ describe('testSaga fixture', () => {
   });
 
   it('dequeues plugin requests FIFO per token', async () => {
-    const responseBindings = {
-      'payment.capture.ok': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'response'
-      },
-      'payment.capture.failed': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'error'
-      }
-    } as const satisfies SagaResponseHandlerTokenBindings;
-
     const saga = createSaga<{ seen: string[] }>({ identity: TEST_SAGA_FIFO_IDENTITY })
       .initialState(() => ({ seen: [] as string[] }))
-      .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
         started: (state, event, ctx) => {
           state.seen.push(`event:${event.payload.id}`);
@@ -210,32 +186,77 @@ describe('testSaga fixture', () => {
     fixture.expectState({
       seen: ['event:p-2', 'response:first', 'response:second']
     });
+
+    // Compile-time phase safety assertions (token misuse must fail).
+    if (false) {
+      const typedFixture = null as unknown as TestSagaFixture<{ seen: string[] }, readonly [], typeof responseBindings>;
+      // @ts-expect-error invokeResponse only accepts response-phase tokens
+      void typedFixture.invokeResponse('payment.capture.failed', 'x');
+      // @ts-expect-error invokeError only accepts error-phase tokens
+      void typedFixture.invokeError('payment.capture.ok', 'x');
+    }
   });
 
-  it('returns explicit deterministic failures for unknown token and empty queue', async () => {
+  it('returns explicit deterministic failures for unknown token, queue empty, and handler failures', async () => {
     const saga = createSaga<{ touched: number }>({ identity: TEST_SAGA_FAILURES_IDENTITY })
       .initialState(() => ({ touched: 0 }))
-      .responseDefinitions({
-        'payment.capture.ok': {
-          plugin_key: 'payments',
-          action_name: 'capture',
-          phase: 'response'
-        },
-        'payment.capture.failed': {
-          plugin_key: 'payments',
-          action_name: 'capture',
-          phase: 'error'
+      .onResponses({
+        'payment.capture.ok': () => undefined
+      })
+      .onErrors({
+        'payment.capture.failed': () => undefined
+      })
+      .on(PaymentAggregate, {
+        started: (_state, event, ctx) => {
+          ctx.emit({
+            type: 'plugin-request',
+            plugin_key: 'payments',
+            action_name: 'capture',
+            action_kind: 'request_response',
+            execution_payload: { id: event.payload.id },
+            routing_metadata: {
+              response_handler_key: 'payment.capture.ok',
+              error_handler_key: 'payment.capture.failed',
+              handler_data: { from: 'failure-test' }
+            },
+            metadata: ctx.metadata
+          });
         }
       })
       .build();
 
+    const runtimeHandlerGaps = saga as unknown as {
+      responseHandlers: Record<string, unknown>;
+      errorHandlers: Record<string, unknown>;
+    };
+    runtimeHandlerGaps.responseHandlers['payment.capture.ok'] = undefined;
+    runtimeHandlerGaps.errorHandlers['payment.capture.failed'] = undefined;
+
     const fixture = testSaga(saga);
 
-    const unknownResponse = await fixture.invokeResponse('payment.unknown', 'x');
+    const unknownResponse = await fixture.invokeResponse('payment.unknown' as any, 'x');
     expect(unknownResponse).toEqual({
       ok: false,
       reason: 'unknown_token',
       token: 'payment.unknown'
+    });
+
+    await fixture.receiveEvent({
+      type: 'started',
+      payload: { id: 'p-3' },
+      aggregateType: 'payment',
+      metadata: {
+        sagaId: 'saga-3',
+        correlationId: 'corr-3',
+        causationId: 'cause-3'
+      }
+    });
+
+    const responseHandlerFailure = await fixture.invokeResponse('payment.capture.ok', 'x');
+    expect(responseHandlerFailure).toEqual({
+      ok: false,
+      reason: 'handler_not_registered',
+      token: 'payment.capture.ok'
     });
 
     const emptyResponse = await fixture.invokeResponse('payment.capture.ok', 'x');
@@ -245,11 +266,29 @@ describe('testSaga fixture', () => {
       token: 'payment.capture.ok'
     });
 
-    const unknownError = await fixture.invokeError('payment.unknown.error', 'x');
+    const unknownError = await fixture.invokeError('payment.unknown.error' as any, 'x');
     expect(unknownError).toEqual({
       ok: false,
       reason: 'unknown_token',
       token: 'payment.unknown.error'
+    });
+
+    await fixture.receiveEvent({
+      type: 'started',
+      payload: { id: 'p-4' },
+      aggregateType: 'payment',
+      metadata: {
+        sagaId: 'saga-4',
+        correlationId: 'corr-4',
+        causationId: 'cause-4'
+      }
+    });
+
+    const errorHandlerFailure = await fixture.invokeError('payment.capture.failed', 'x');
+    expect(errorHandlerFailure).toEqual({
+      ok: false,
+      reason: 'handler_not_registered',
+      token: 'payment.capture.failed'
     });
 
     const emptyError = await fixture.invokeError('payment.capture.failed', 'x');
