@@ -920,6 +920,57 @@ export type SagaExecutableErrorHandlers<
   >;
 };
 
+export type SagaExecutableHandlerFailureReason =
+  | 'token_not_defined'
+  | 'handler_not_registered'
+  | 'phase_mismatch';
+
+export type SagaExecutableHandlerSuccessResult<TState, TToken extends string = string> = {
+  readonly ok: true;
+  readonly output: SagaReducerOutput<TState>;
+  readonly token: TToken;
+};
+
+export type SagaExecutableHandlerFailureResult<TToken extends string = string> = {
+  readonly ok: false;
+  readonly reason: SagaExecutableHandlerFailureReason;
+  readonly token: TToken;
+  readonly expected_phase?: SagaResponseHandlerPhase;
+  readonly actual_phase?: SagaResponseHandlerPhase;
+};
+
+export type SagaExecutableHandlerResult<TState, TToken extends string = string> =
+  | SagaExecutableHandlerSuccessResult<TState, TToken>
+  | SagaExecutableHandlerFailureResult<TToken>;
+
+export interface RunSagaResponseHandlerInput<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TToken extends SagaResponseTokenKey<TResponseHandlerBindings> = SagaResponseTokenKey<TResponseHandlerBindings>,
+  TPayload = unknown
+> {
+  readonly definition: SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
+  readonly state: TState;
+  readonly envelope: SagaResponseCallbackEnvelope<TToken, TPayload>;
+  readonly intentMetadata?: Partial<SagaIntentMetadata>;
+  readonly plugins?: TPlugins;
+}
+
+export interface RunSagaErrorHandlerInput<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TToken extends SagaErrorTokenKey<TResponseHandlerBindings> = SagaErrorTokenKey<TResponseHandlerBindings>,
+  TError = unknown
+> {
+  readonly definition: SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
+  readonly state: TState;
+  readonly envelope: SagaErrorCallbackEnvelope<TToken, TError>;
+  readonly intentMetadata?: Partial<SagaIntentMetadata>;
+  readonly plugins?: TPlugins;
+}
+
 /** Normalized trigger contract shape retained in saga definition metadata. */
 export interface SagaTriggerContract<
   TStartInput,
@@ -1223,6 +1274,31 @@ function createSagaPluginRegistry<TPlugins extends SagaPluginManifestList>(
   })) as SagaPluginRegistryFromManifests<TPlugins>;
 }
 
+function resolveIntentMetadata(
+  request: SagaExternalHandlerRequestContext,
+  override?: Partial<SagaIntentMetadata>
+): SagaIntentMetadata {
+  return {
+    sagaId: override?.sagaId ?? request.sagaId ?? 'unknown-saga-id',
+    correlationId: override?.correlationId ?? request.correlationId ?? 'unknown-correlation-id',
+    causationId: override?.causationId ?? request.causationId ?? 'unknown-causation-id'
+  };
+}
+
+function createPhaseMismatchResult<TToken extends string>(
+  token: TToken,
+  expectedPhase: SagaResponseHandlerPhase,
+  actualPhase: SagaResponseHandlerPhase
+): SagaExecutableHandlerFailureResult<TToken> {
+  return {
+    ok: false,
+    reason: 'phase_mismatch',
+    token,
+    expected_phase: expectedPhase,
+    actual_phase: actualPhase
+  };
+}
+
 /**
  * Executes a single saga handler with mutation-first semantics and produces
  * deterministic reducer output.
@@ -1255,6 +1331,136 @@ export async function runSagaHandler<
   return {
     state: finishDraft(draft) as TState,
     intents: intentBuffer
+  };
+}
+
+export async function runSagaResponseHandler<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TToken extends SagaResponseTokenKey<TResponseHandlerBindings> = SagaResponseTokenKey<TResponseHandlerBindings>,
+  TPayload = unknown
+>(
+  input: RunSagaResponseHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TPayload>
+): Promise<SagaExecutableHandlerResult<TState, TToken>> {
+  const {
+    definition,
+    state,
+    envelope,
+    intentMetadata,
+    plugins = [] as unknown as TPlugins
+  } = input;
+  const token = envelope.token;
+  const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
+
+  if (tokenBinding === undefined) {
+    return {
+      ok: false,
+      reason: 'token_not_defined',
+      token
+    };
+  }
+
+  if (tokenBinding.phase !== 'response') {
+    return createPhaseMismatchResult(token, 'response', tokenBinding.phase);
+  }
+
+  const handler = (definition.executable_response_handlers as Record<
+    string,
+    SagaExecutableResponseHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
+  > | undefined)?.[token];
+
+  if (handler === undefined) {
+    return {
+      ok: false,
+      reason: 'handler_not_registered',
+      token
+    };
+  }
+
+  const draft = createDraft(state);
+  const intents: SagaIntent[] = [];
+  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
+    resolveIntentMetadata(envelope.request, intentMetadata),
+    intents,
+    definition.response_handlers,
+    plugins
+  );
+
+  await handler(draft, envelope as SagaResponseCallbackEnvelope<any, TPayload>, ctx);
+
+  return {
+    ok: true,
+    output: {
+      state: finishDraft(draft) as TState,
+      intents
+    },
+    token
+  };
+}
+
+export async function runSagaErrorHandler<
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TToken extends SagaErrorTokenKey<TResponseHandlerBindings> = SagaErrorTokenKey<TResponseHandlerBindings>,
+  TError = unknown
+>(
+  input: RunSagaErrorHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TError>
+): Promise<SagaExecutableHandlerResult<TState, TToken>> {
+  const {
+    definition,
+    state,
+    envelope,
+    intentMetadata,
+    plugins = [] as unknown as TPlugins
+  } = input;
+  const token = envelope.token;
+  const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
+
+  if (tokenBinding === undefined) {
+    return {
+      ok: false,
+      reason: 'token_not_defined',
+      token
+    };
+  }
+
+  if (tokenBinding.phase !== 'error') {
+    return createPhaseMismatchResult(token, 'error', tokenBinding.phase);
+  }
+
+  const handler = (definition.executable_error_handlers as Record<
+    string,
+    SagaExecutableErrorHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
+  > | undefined)?.[token];
+
+  if (handler === undefined) {
+    return {
+      ok: false,
+      reason: 'handler_not_registered',
+      token
+    };
+  }
+
+  const draft = createDraft(state);
+  const intents: SagaIntent[] = [];
+  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
+    resolveIntentMetadata(envelope.request, intentMetadata),
+    intents,
+    definition.response_handlers,
+    plugins
+  );
+
+  await handler(draft, envelope as SagaErrorCallbackEnvelope<any, TError>, ctx);
+
+  return {
+    ok: true,
+    output: {
+      state: finishDraft(draft) as TState,
+      intents
+    },
+    token
   };
 }
 
