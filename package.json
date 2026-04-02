@@ -1,6 +1,7 @@
 {
   "name": "redemeine",
   "version": "0.1.0",
+  "packageManager": "bun@1.3.11",
   "description": "Sane defaults CQRS/ES aggregates library",
   "author": "Your Name/Team",
   "license": "MIT",
@@ -32,13 +33,23 @@
     }
   },
   "scripts": {
-    "build": "node ./bin/build-dual.js",
+    "build": "bun run build:turbo",
+    "build:turbo": "turbo run build --continue",
+    "build:legacy": "node ./bin/build-dual.js",
     "build:cjs": "tsc -p tsconfig.build.cjs.json",
     "build:esm": "tsc -p tsconfig.build.esm.json",
     "watch": "tsc -w",
-    "test": "jest",
+    "test": "bun run test:turbo",
+    "test:turbo": "turbo run test --continue",
+    "test:legacy": "jest",
     "test:watch": "jest --watchAll",
-    "test-compile": "tsc -p ./",
+    "typecheck": "bun run typecheck:turbo",
+    "typecheck:turbo": "turbo run typecheck --continue",
+    "typecheck:legacy": "tsc -p ./",
+    "test-compile": "bun run typecheck:legacy",
+    "lint": "bun run lint:turbo",
+    "lint:turbo": "turbo run lint --continue",
+    "lint:legacy": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "docs:typedoc": "typedoc",
     "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
     "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt",
@@ -46,6 +57,9 @@
     "docs:dev": "npm run start --prefix website",
     "docs:build": "npm run build --prefix website"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "devDependencies": {
     "@jest/globals": "^30.3.0",
     "@types/jest": "^30.0.0",
@@ -60,6 +74,7 @@
     "typedoc-plugin-markdown": "^4.11.0",
     "typedoc-plugin-mdn-links": "^5.1.1",
     "typedoc-plugin-missing-exports": "^4.1.2",
+    "turbo": "^2.5.3",
     "typescript": "^5.9.3",
     "utility-types": "^3.11.0",
     "zod": "^4.3.6",
