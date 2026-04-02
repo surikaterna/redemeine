@@ -172,6 +172,21 @@ const saga = createSaga<InvoiceSagaState>({
       ctx.actions.core.schedule('invoice-reminder', 5_000);
     }
   })
+  .onResponses({
+    invoiceFetchSucceeded: (state, response, ctx) => {
+      state.settled = true;
+      ctx.actions.core.cancelSchedule('invoice-reminder');
+      state.attempted += Number(response.payload?.attempt ?? 0);
+    }
+  })
+  .onErrors({
+    invoiceFetchFailed: (state, error, ctx) => {
+      state.settled = false;
+      state.attempted += 1;
+      ctx.actions.core.schedule('invoice-retry', 5_000);
+      void error.error;
+    }
+  })
   .build();
 ```
 
@@ -183,10 +198,41 @@ Core contracts:
   - `.withData(handlerData)`
   - `.onResponse(responseToken)`
   - `.onError(errorToken)`
+- `responseDefinitions(...)` declares durable token bindings (`plugin_key`, `action_name`, `phase`).
+- `onResponses(...)` and `onErrors(...)` attach executable handlers to those tokens with phase-safe typing.
 - Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
 - Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
 - `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
+
+### Persistence model vs runtime executable maps
+
+- `saga.response_handlers` is the persisted/wire-safe definition map and is the only routing metadata that must survive restarts.
+- `saga.executable_response_handlers` and `saga.executable_error_handlers` are runtime-only executable function maps derived from `onResponses(...)` / `onErrors(...)`.
+- Runtime helpers (`runSagaResponseHandler` / `runSagaErrorHandler`) resolve tokens through `response_handlers` first, then execute runtime handlers when registered.
+
+## Deterministic `testSaga` invoke chain
+
+For testing, use `testSaga(...)` to execute the same token routing deterministically without plugin runtime workers:
+
+```ts
+import { testSaga } from '@redemeine/testing';
+
+const fixture = testSaga(saga)
+  .withState({ attempted: 0, settled: false })
+  .receiveEvent({
+    type: 'created',
+    payload: { invoiceId: 'inv-1', amount: 250 }
+  })
+  .invokeError('invoiceFetchFailed', { message: 'timeout' })
+  .invokeResponse('invoiceFetchSucceeded', { attempt: 2, status: 'ok' });
+
+fixture.expectState({ attempted: 3, settled: true });
+```
+
+- `invokeResponse(token, payload)` is token-phase-safe and accepts response-phase tokens only.
+- `invokeError(token, payload)` is token-phase-safe and accepts error-phase tokens only.
+- Invocation order is deterministic for queued plugin requests (FIFO per token).
 
 ## Retry policy helpers
 

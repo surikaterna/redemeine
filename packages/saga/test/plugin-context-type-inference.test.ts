@@ -2,8 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
   defineSagaPlugin,
+  runSagaErrorHandler,
+  runSagaResponseHandler,
   type SagaPluginRequestIntent
-} from '../src';
+} from '../src/createSaga';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -335,6 +337,95 @@ describe('createSaga plugin-capable ctx typing', () => {
         anything: (_state, _error, _ctx) => undefined
       })
       .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('types invoke helpers with phase-safe token constraints', () => {
+    const saga = createSaga({
+      name: 'plugin-saga-invoke-typing',
+      plugins: [HttpPlugin] as const
+    })
+      .responseDefinitions({
+        ok: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      .initialState(() => ({ retries: 0, lastResponse: '', lastError: '' }))
+      .onResponses({
+        ok: (state, response) => {
+          state.retries += 1;
+          state.lastResponse = String(response.payload);
+        }
+      })
+      .onErrors({
+        fail: (state, error) => {
+          state.retries += 1;
+          state.lastError = String(error.error);
+        }
+      })
+      .build();
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'ok',
+        payload: { status: 200 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'fail',
+        error: { message: 'boom' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeResponse helper only accepts response-phase tokens
+        token: 'fail',
+        payload: { status: 500 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeError helper only accepts error-phase tokens
+        token: 'ok',
+        error: { message: 'wrong phase' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
 
     expect(true).toBe(true);
   });
