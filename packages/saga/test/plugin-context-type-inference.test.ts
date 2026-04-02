@@ -139,6 +139,30 @@ describe('createSaga plugin-capable ctx typing', () => {
         }
       })
       .initialState(() => ({ retries: 0 }))
+      .onResponses({
+        'http.get.success': (state, response, ctx) => {
+          const token: 'http.get.success' = response.token;
+          const pluginKey: string = response.request.plugin_key;
+
+          ctx.actions.core.schedule('response-followup', 500);
+          state.retries += 1;
+
+          expect(token).toBe('http.get.success');
+          expect(pluginKey).toBe('http');
+        }
+      })
+      .onErrors({
+        'http.get.failure': (state, error, ctx) => {
+          const token: 'http.get.failure' = error.token;
+          const actionName: string = error.request.action_name;
+
+          ctx.actions.core.cancelSchedule('response-followup');
+          state.retries += 1;
+
+          expect(token).toBe('http.get.failure');
+          expect(actionName).toBe('get');
+        }
+      })
       .on(InvoiceAggregate, {
         created: async (state, event, ctx) => {
           const scheduled = ctx.actions.infra.scheduleCommand('invoice.retry', 5000);
@@ -171,6 +195,8 @@ describe('createSaga plugin-capable ctx typing', () => {
     expect(saga.response_handlers['http.get.success'].plugin_key).toBe('http');
     expect(saga.response_handlers['http.get.success'].action_name).toBe('get');
     expect(saga.response_handlers['http.get.success'].phase).toBe('response');
+    expect(typeof saga.executable_response_handlers?.['http.get.success']).toBe('function');
+    expect(typeof saga.executable_error_handlers?.['http.get.failure']).toBe('function');
     expect(saga.plugins).toEqual([
       {
         plugin_key: 'infra',
@@ -287,6 +313,51 @@ describe('createSaga plugin-capable ctx typing', () => {
           // @ts-expect-error phase must be response|error
           phase: 'success'
         }
+      })
+      .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('enforces phase-safe executable response/error handler registration', () => {
+    createSaga({
+      name: 'plugin-saga-executable-handler-gating',
+      plugins: [InfraPlugin, HttpPlugin] as const
+    })
+      .responseDefinitions({
+        okay: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      // @ts-expect-error onResponses only accepts response-phase tokens
+      .onResponses({
+        okay: (_state, _response, _ctx) => undefined,
+        fail: (_state, _response, _ctx) => undefined
+      })
+      // @ts-expect-error onErrors only accepts error-phase tokens
+      .onErrors({
+        fail: (_state, _error, _ctx) => undefined,
+        okay: (_state, _error, _ctx) => undefined
+      })
+      .build();
+
+    createSaga({
+      name: 'plugin-saga-no-defs'
+    })
+      // @ts-expect-error no responseDefinitions means no executable response keys
+      .onResponses({
+        anything: (_state, _response, _ctx) => undefined
+      })
+      // @ts-expect-error no responseDefinitions means no executable error keys
+      .onErrors({
+        anything: (_state, _error, _ctx) => undefined
       })
       .build();
 
