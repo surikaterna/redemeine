@@ -1,0 +1,11 @@
+{
+  "name": "@redemeine/root-runner",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "bun run --cwd ../.. build:legacy",
+    "typecheck": "bun run --cwd ../.. typecheck:legacy",
+    "test": "bun run --cwd ../.. test:legacy",
+    "lint": "bun run --cwd ../.. lint:legacy"
+  }
+}
