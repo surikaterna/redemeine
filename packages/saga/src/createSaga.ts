@@ -66,6 +66,47 @@ export interface SagaPluginManifest<
   readonly description?: string;
 }
 
+/**
+ * Typed plugin helper API contract (documentation-only for redemeine-7pj.1).
+ *
+ * These helpers are intentionally not implemented in this step; this block
+ * captures the agreed user-facing contract that follow-up implementation work
+ * must satisfy.
+ *
+ * Planned helpers:
+ * - `defineOneWay(...)`
+ * - `defineRequestResponse(...)`
+ * - `defineCustomAction(...)`
+ *
+ * Contract rules:
+ * - `defineOneWay(...)` builds a plugin action that emits immediately and
+ *   returns the produced intent in the same handler turn.
+ * - `defineRequestResponse(...)` uses a request-response routing chain where
+ *   `.withData(...)` is optional, `.onResponse(...)` is required, `.onError(...)`
+ *   is required, and `.onRetry(...)` is optional.
+ * - `onError` is terminal after retries are exhausted or when an error is
+ *   classified as non-retryable.
+ * - `defineCustomAction(...)` receives constrained `builderCtx` primitives and
+ *   may own completeness semantics for the custom flow.
+ *
+ * Planned `builderCtx` primitives:
+ * - `createPending(...)`
+ * - `patch(...)` / `set(...)`
+ * - `snapshot(...)`
+ * - `finalize(...)` / `emit(...)`
+ * - `complete(...)` / `isComplete(...)`
+ *
+ * Intent emission timing semantics:
+ * - One-way helpers emit immediately.
+ * - Request-response helpers emit the request intent once routing handlers are
+ *   fully bound.
+ * - Custom helpers may emit/finalize explicitly via `builderCtx`.
+ *
+ * Explicitly deferred/out of scope:
+ * - Plugin `forCommands` ergonomics are intentionally deferred to a separate
+ *   bead and are not part of this contract step.
+ */
+
 export type SagaPluginActionBuild<TAction extends SagaPluginActionDescriptor> = TAction['build'];
 
 export type SagaPluginActionArguments<TAction extends SagaPluginActionDescriptor> =
