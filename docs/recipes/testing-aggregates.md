@@ -1,5 +1,8 @@
 # Testing Aggregates: The BDD Recipe
 
+> Contract reference: see [Testing DX v1 Contracts](/docs/architecture/testing-dx-v1-contracts) for locked fixture API and semantics under bead `redemeine-t8g.1`.
+> See also: [Testing Pyramid (Typed-First)](/docs/recipes/testing-pyramid) for layer selection, typed-first defaults, and raw-envelope fallback guidance.
+
 One of the greatest benefits of using Redemeine's pure CQRS and Event Sourcing architecture is testing. Because your domain logic is completely decoupled from infrastructure (no databases, no external API calls, no complex mock setups), you can test your core business rules instantly in memory.
 
 The best way to test Event Sourced systems is using the **Given / When / Then** (Behavior-Driven Development) pattern:

@@ -86,7 +86,10 @@
       "name": "@redemeine/testing",
       "version": "0.1.0",
       "dependencies": {
+        "@redemeine/mirage": "workspace:*",
+        "@redemeine/projection": "workspace:*",
         "@redemeine/saga": "workspace:*",
+        "immer": "^10.1.1",
       },
     },
   },
