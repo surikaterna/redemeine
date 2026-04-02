@@ -135,3 +135,15 @@ Fallback policy (allowed, explicit):
 - Not promising full production-runtime parity for all edge scheduling cases in v1.
 - Not expanding raw-envelope flows into first-class primary examples.
 - Not locking benchmark thresholds in this document (covered separately).
+
+---
+
+## Benchmark baseline policy (v1)
+
+- Benchmark collection for testing DX is **informational-only** in v1.
+- The benchmark command must report:
+  - elapsed time,
+  - assertion volume,
+  - lightweight run metadata (runtime/platform/timestamp).
+- CI benchmark execution is **non-blocking** and must not fail merge decisions.
+- v1 benchmark output establishes trend data only; hard performance gates are a follow-up decision after baseline stability is observed.

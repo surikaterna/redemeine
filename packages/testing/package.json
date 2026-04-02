@@ -17,6 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test ./test",
+    "bench": "bun run ./bench/testing-suite.bench.ts",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
