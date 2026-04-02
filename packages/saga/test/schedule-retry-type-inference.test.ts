@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../src';
+import { createSaga, type CanonicalSagaIdentityInput } from '../src';
+
+const INVOICE_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'billing',
+  name: 'invoice_saga',
+  version: 1
+};
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -18,7 +24,7 @@ const InvoiceAggregate = {
 
 describe('createSaga ctx schedule/retry helper typing', () => {
   it('accepts valid schedule, cancelSchedule, and runActivity calls', () => {
-    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
+    createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: async (state, _event, ctx) => {
@@ -45,7 +51,7 @@ describe('createSaga ctx schedule/retry helper typing', () => {
   });
 
   it('rejects invalid schedule and retry policy usage at compile time', () => {
-    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
+    createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {

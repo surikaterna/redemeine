@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../src';
+import { createSaga, deriveSagaUrn, type CanonicalSagaIdentityInput } from '../src';
+
+const INVOICE_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'billing',
+  name: 'invoice_orchestration',
+  version: 2
+};
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -23,12 +29,7 @@ const InvoiceAggregate = {
 describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
   it('valid command creator calls compile for known aggregate command keys', () => {
     const saga = createSaga<{ dispatched: number }>({
-      name: 'invoice-saga',
-      identity: {
-        namespace: 'billing',
-        name: 'invoice-orchestration',
-        version: 2
-      }
+      identity: INVOICE_SAGA_IDENTITY
     })
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
@@ -44,20 +45,26 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
     expect(saga.handlers).toHaveLength(1);
     expect(saga.identity).toEqual({
       namespace: 'billing',
-      name: 'invoice-orchestration',
+      name: 'invoice_orchestration',
       version: 2,
-      legacyName: 'invoice-saga',
-      sagaType: 'billing.invoice-orchestration.v2',
-      sagaUrn: 'urn:redemeine:saga:billing:invoice-orchestration:v2'
+      sagaKey: 'billing/invoice_orchestration',
+      sagaType: 'billing/invoice_orchestration@v2',
+      sagaUrn: 'urn:redemeine:saga:billing:invoice_orchestration:v2'
     });
-    expect(saga.sagaType).toBe('billing.invoice-orchestration.v2');
-    expect(saga.sagaUrn).toBe('urn:redemeine:saga:billing:invoice-orchestration:v2');
-    expect(saga.handlers[0]?.sagaType).toBe('billing.invoice-orchestration.v2');
-    expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:billing:invoice-orchestration:v2');
+    expect(saga.sagaKey).toBe('billing/invoice_orchestration');
+    expect(saga.sagaType).toBe('billing/invoice_orchestration@v2');
+    expect(saga.sagaUrn).toBe('urn:redemeine:saga:billing:invoice_orchestration:v2');
+    expect(deriveSagaUrn({
+      namespace: saga.identity.namespace,
+      name: saga.identity.name,
+      version: saga.identity.version
+    })).toBe(saga.sagaUrn);
+    expect(saga.handlers[0]?.sagaType).toBe('billing/invoice_orchestration@v2');
+    expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:billing:invoice_orchestration:v2');
   });
 
   it('invalid payload fails at compile time', () => {
-    createSaga<{ dispatched: number }>({ name: 'invoice-saga' })
+    createSaga<{ dispatched: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {
@@ -72,7 +79,7 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
   });
 
   it('invalid command key fails at compile time', () => {
-    createSaga<{ dispatched: number }>({ name: 'invoice-saga' })
+    createSaga<{ dispatched: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ dispatched: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {

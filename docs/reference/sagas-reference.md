@@ -8,12 +8,14 @@ For generated API signatures, use `/docs/api/`.
 
 ## Public module overview
 
-- `createSaga.ts`: typed saga definition builder and intent types.
-- `RetryPolicy.ts`: retry validation, backoff scheduling, and classification helpers.
-- `triggers.ts`: definition-only trigger builders (`event`, `parent`, `direct`, `recovery`, `schedule.*`) with typed `toStartInput` and `when` chaining.
-- `startPolicy.ts`: typed start policy helper constructors for trigger contracts.
+From `@redemeine/saga`:
 
-Public export barrel (`src/sagas/index.ts`):
+- `createSaga`: typed saga definition builder and intent types.
+- `RetryPolicy` exports: retry validation, backoff scheduling, and classification helpers.
+- `triggers` exports: definition-only trigger builders (`event`, `parent`, `direct`, `recovery`, `schedule.*`) with typed `toStartInput` and `when` chaining.
+- `startPolicy`: typed start policy helper constructors for trigger contracts.
+
+Public export barrel (`packages/saga/src/index.ts`):
 
 - `createSaga`
 - `SagaRetryPolicy` + retry helpers
@@ -22,14 +24,18 @@ Public export barrel (`src/sagas/index.ts`):
 
 Usage note:
 
-- `createSagaAggregate(nameOrOptions?)` exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
+- `createSagaAggregate(nameOrOptions?)` is owned by `@redemeine/saga-runtime` (re-exported from `packages/saga-runtime/src/index.ts`) and exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
 - Trigger builders and start-policy helpers are **definition-layer only** and do not change runtime execution behavior.
 
 Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
 ## Saga identity contract (canonical)
 
-Saga identity is definition-first and has a canonical source of truth.
+Saga identity is strict and has one canonical source of truth in `@redemeine/saga`.
+
+- Canonical identity derives from structured fields via `normalizeSagaIdentity`.
+- URN helpers are intentionally minimal: `deriveSagaUrn`, `deriveSagaInstanceUrn`, `parseSagaUrn`.
+- Legacy adapter/compat identity entrypoints were removed as a release-breaking cleanup.
 
 ### Structured source fields (required)
 
@@ -47,9 +53,7 @@ These three fields are authoritative. Persisted or transmitted identity strings 
 - `name`: `^[a-z0-9]+(?:[._-][a-z0-9]+)*$`
   - Lowercase alphanumeric tokens
   - Optional separators between tokens: `.`, `_`, `-`
-- `version`:
-  - Number form: must satisfy `Number.isSafeInteger(version) && version >= 1`
-  - String form: must match `^[1-9][0-9]*$` exactly (no prefixes/suffixes/decimals)
+- `version`: must satisfy `Number.isSafeInteger(version) && version >= 1`
 
 ### Normalization rules
 
@@ -59,13 +63,13 @@ Apply normalization before validation and derivation:
 2. Lowercase `namespace` and `name`.
 3. Do not rewrite or infer separators beyond trimming/lowercasing; invalid separator or whitespace usage fails validation.
 4. `version` must be an integer (`Number.isSafeInteger(version)`) and `version >= 1`.
-5. Do not silently coerce non-canonical version strings (for example, `"01"`, `"v2"`, `"2.0"`) at runtime integration boundaries.
 
 ### Derived identity fields
 
 From normalized structured fields:
 
-- `sagaType = <namespace>.<name>.v<version>`
+- `sagaKey = <namespace>/<name>`
+- `sagaType = <namespace>/<name>@v<version>`
 - `sagaUrn = urn:redemeine:saga:<namespace>:<name>:v<version>`
 - `instanceUrn` is optional and, when used, extends `sagaUrn`:
   - `instanceUrn = <sagaUrn>:instance:<instanceId>`
@@ -79,15 +83,14 @@ Notes:
 
 The public `sagas` module exposes lightweight declaration types:
 
-- `SagaIdentityFields` (required structured source)
-- `SagaIdentityDerived` (derived values + optional `instanceUrn`)
-- `SagaIdentityContract` (combined view)
+- `CanonicalSagaIdentityInput` (required structured source)
+- `NormalizedSagaIdentity` (canonical normalized + derived identity)
 
 ## Defining sagas (manifest-first)
 
-Use `createSaga({ name, plugins? })` to build saga definitions with typed plugin actions.
+Use `createSaga({ identity, plugins? })` to build saga definitions with typed plugin actions.
 
-- `name` is required.
+- `identity` is required and must include `namespace`, `name`, and integer `version`.
 - `plugins?` is an optional tuple of `defineSagaPlugin(...)` manifests.
 - Handlers use mutation-style state updates (Immer draft semantics).
 - Scope is **definition-only**: this API defines typed intent contracts and persisted routing metadata; it does **not** execute plugin runtimes.
@@ -135,7 +138,11 @@ const InvoiceAggregate = {
 } as const;
 
 const saga = createSaga<InvoiceSagaState>({
-  name: 'invoice-saga',
+  identity: {
+    namespace: 'billing',
+    name: 'invoice_saga',
+    version: 1
+  },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
   .responseHandlers({
@@ -227,6 +234,11 @@ Attach policies to trigger-adjacent contracts through `SagaTriggerStartContract`
 `SagaAggregate` is a **persistence/contract shape** for saga state and emitted records.
 It is intentionally structure-only and does **not** define runtime worker behavior.
 
+Ownership note:
+
+- Runtime aggregate factory APIs (`createSagaAggregate`, `SagaAggregate` types) are provided by `@redemeine/saga-runtime`.
+- `@redemeine/saga` remains the definition/identity package for saga authoring surfaces.
+
 ### Naming and wire format conventions
 
 - Saga state uses **camelCase** keys (for example `createdAt`, `updatedAt`, `transitionVersion`).
@@ -280,4 +292,4 @@ If you used older/expanded saga docs, migrate as follows:
 - **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
 - **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
-- **Treat internals as unstable:** anything outside `src/sagas/index.ts` exports is implementation detail.
+- **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.

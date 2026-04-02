@@ -25,7 +25,6 @@ export {
   type SagaIntentContext,
   type SagaIntentContextBase,
   type SagaIdentityFields,
-  type SagaIdentityInput,
   type SagaIdentityMetadata,
   type SagaIntentMetadata,
   type SagaPluginActionArguments,
@@ -108,17 +107,40 @@ export {
 } from './triggers';
 export { createAggregate } from './aggregateBridge';
 export {
-  parseSagaIdentityUrn,
-  toSagaIdentityUrn,
-  validateSagaIdentity,
-  validateSagaName,
-  validateSagaNamespace,
-  validateSagaVersion,
-  SagaIdentityValidationError,
-  type SagaIdentity,
-  type SagaIdentityErrorCode
-} from './SagaIdentity';
-export * from './RetryPolicy';
-export * from './SagaIdentityContract';
-export * from './identity/index';
-export * from './SagaIdentityAdapter';
+  buildSagaType,
+  normalizeSagaIdentity,
+  SagaIdentityNormalizationError,
+  deriveSagaInstanceUrn,
+  deriveSagaUrn,
+  parseSagaUrn,
+  buildCanonicalSagaKey,
+  buildCanonicalSagaInstanceUrn,
+  buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
+  normalizeSagaName,
+  normalizeSagaNamespace,
+  SAGA_NAME_PATTERN,
+  SAGA_NAMESPACE_PATTERN,
+  SAGA_URN_PREFIX,
+  SAGA_VERSION_TOKEN_PATTERN,
+  type SagaIdentityInput as CanonicalSagaIdentityInput,
+  type SagaIdentityNormalizationErrorCode,
+  type SagaIdentityParts,
+  type NormalizedSagaIdentity,
+  type SagaStructuredIdentity,
+  type CanonicalSagaIdentityParts
+} from './identity/index';
+
+// Retry policy exports.
+export {
+  validateRetryPolicy,
+  computeNextAttemptAt,
+  isRetryableError,
+  classifyRetryableError,
+  type SagaRetryPolicy,
+  type RetryableErrorClassification,
+  type RetryableErrorPredicate,
+  type RetryableErrorClassificationOptions,
+  type RetrySchedulingNow
+} from './RetryPolicy';
+

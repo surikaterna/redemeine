@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../src';
+import { createSaga, type CanonicalSagaIdentityInput } from '../src';
+
+const BILLING_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'billing',
+  name: 'billing_saga',
+  version: 1
+};
 
 const BillingAggregate = {
   __aggregateType: 'billing',
@@ -22,7 +28,7 @@ const BillingAggregate = {
 
 describe('R5 acceptance: ctx.commandsFor aggregate wrapper typing', () => {
   it('infers command methods and payload shape from aggregate command creators', () => {
-    createSaga<{ attempts: number }>({ name: 'billing-saga' })
+    createSaga<{ attempts: number }>({ identity: BILLING_SAGA_IDENTITY })
       .initialState(() => ({ attempts: 0 }))
       .on(BillingAggregate, {
         started: (state, event, ctx) => {
@@ -51,7 +57,7 @@ describe('R5 acceptance: ctx.commandsFor aggregate wrapper typing', () => {
   });
 
   it('rejects unknown command names and invalid payload signatures at compile time', () => {
-    createSaga<{ attempts: number }>({ name: 'billing-saga' })
+    createSaga<{ attempts: number }>({ identity: BILLING_SAGA_IDENTITY })
       .initialState(() => ({ attempts: 0 }))
       .on(BillingAggregate, {
         started: (_state, _event, ctx) => {

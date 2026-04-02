@@ -1,18 +1,15 @@
-export interface SagaStructuredIdentity {
-  readonly namespace: string;
-  readonly name: string;
-  readonly version: number;
-}
+import {
+  buildCanonicalSagaInstanceUrn,
+  buildCanonicalSagaUrn
+} from './canonical';
+import { normalizeSagaIdentity } from './normalizeSagaIdentity';
+import type { SagaIdentityInput } from './types';
+
+export type SagaStructuredIdentity = SagaIdentityInput;
 
 function assertNonEmptyString(value: string, fieldName: 'namespace' | 'name' | 'instanceId'): void {
   if (typeof value !== 'string' || value.length === 0) {
     throw new TypeError(`Saga ${fieldName} must be a non-empty string`);
-  }
-}
-
-function assertVersion(version: number): void {
-  if (!Number.isInteger(version) || version < 1) {
-    throw new TypeError('Saga version must be a positive integer');
   }
 }
 
@@ -22,13 +19,8 @@ function assertVersion(version: number): void {
  * Format: `urn:redemeine:saga:<namespace>:<name>:v<version>`
  */
 export function deriveSagaUrn(identity: SagaStructuredIdentity): string {
-  const { namespace, name, version } = identity;
-
-  assertNonEmptyString(namespace, 'namespace');
-  assertNonEmptyString(name, 'name');
-  assertVersion(version);
-
-  return `urn:redemeine:saga:${namespace}:${name}:v${version}`;
+  const normalized = normalizeSagaIdentity(identity);
+  return buildCanonicalSagaUrn(normalized);
 }
 
 /**
@@ -39,11 +31,19 @@ export function deriveSagaUrn(identity: SagaStructuredIdentity): string {
 export function deriveSagaInstanceUrn(identity: SagaStructuredIdentity, instanceId: string): string {
   assertNonEmptyString(instanceId, 'instanceId');
 
-  const { namespace, name, version } = identity;
+  const normalized = normalizeSagaIdentity(identity);
+  return buildCanonicalSagaInstanceUrn(normalized, instanceId);
+}
 
-  assertNonEmptyString(namespace, 'namespace');
-  assertNonEmptyString(name, 'name');
-  assertVersion(version);
+export function parseSagaUrn(urn: string): SagaStructuredIdentity {
+  const match = /^urn:redemeine:saga:([^:]+):([^:]+):v([1-9][0-9]*)$/.exec(urn);
+  if (!match) {
+    throw new TypeError('Saga URN must match "urn:redemeine:saga:<namespace>:<name>:v<version>".');
+  }
 
-  return `${deriveSagaUrn(identity)}:instance:${instanceId}`;
+  return normalizeSagaIdentity({
+    namespace: match[1],
+    name: match[2],
+    version: Number(match[3])
+  });
 }

@@ -3,26 +3,18 @@ import {
   type NormalizedSagaIdentity,
   type SagaIdentityInput
 } from './types';
-
-const NAMESPACE_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9]+)*$/;
-const NAME_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-const VERSION_STRING_PATTERN = /^[1-9][0-9]*$/;
-
-const normalizeNamespace = (namespace: string): string => namespace.trim().toLowerCase();
-
-const normalizeName = (name: string): string => name.trim().toLowerCase();
+import {
+  buildCanonicalSagaKey,
+  buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
+  normalizeSagaName,
+  normalizeSagaNamespace,
+  SAGA_NAME_PATTERN,
+  SAGA_NAMESPACE_PATTERN
+} from './canonical';
 
 const normalizeVersion = (version: SagaIdentityInput['version']): number => {
-  const parsed = typeof version === 'string'
-    ? (() => {
-        const trimmed = version.trim();
-        if (!VERSION_STRING_PATTERN.test(trimmed)) {
-          return Number.NaN;
-        }
-
-        return Number(trimmed);
-      })()
-    : version;
+  const parsed = version;
 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new SagaIdentityNormalizationError(
@@ -35,20 +27,20 @@ const normalizeVersion = (version: SagaIdentityInput['version']): number => {
 };
 
 export function buildSagaType(namespace: string, name: string, version: number): string {
-  return `${namespace}.${name}.v${version}`;
+  return buildCanonicalSagaType({ namespace, name, version });
 }
 
 export function normalizeSagaIdentity(input: SagaIdentityInput): NormalizedSagaIdentity {
-  const namespace = normalizeNamespace(input.namespace);
-  if (!NAMESPACE_PATTERN.test(namespace)) {
+  const namespace = normalizeSagaNamespace(input.namespace);
+  if (!SAGA_NAMESPACE_PATTERN.test(namespace)) {
     throw new SagaIdentityNormalizationError(
       'invalid_namespace',
       'Saga identity namespace must be dot-delimited lowercase alphanumeric segments.'
     );
   }
 
-  const name = normalizeName(input.name);
-  if (!NAME_PATTERN.test(name)) {
+  const name = normalizeSagaName(input.name);
+  if (!SAGA_NAME_PATTERN.test(name)) {
     throw new SagaIdentityNormalizationError(
       'invalid_name',
       'Saga identity name must be lowercase alphanumeric and may include . _ - separators.'
@@ -57,10 +49,16 @@ export function normalizeSagaIdentity(input: SagaIdentityInput): NormalizedSagaI
 
   const version = normalizeVersion(input.version);
 
+  const sagaKey = buildCanonicalSagaKey({ namespace, name, version });
+  const sagaType = buildSagaType(namespace, name, version);
+  const sagaUrn = buildCanonicalSagaUrn({ namespace, name, version });
+
   return {
     namespace,
     name,
     version,
-    sagaType: buildSagaType(namespace, name, version)
+    sagaKey,
+    sagaType,
+    sagaUrn
   };
 }

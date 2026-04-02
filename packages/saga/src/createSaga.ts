@@ -1,5 +1,9 @@
 import { createDraft, finishDraft, type Draft } from 'immer';
 import type { SagaRetryPolicy } from './RetryPolicy';
+import {
+  normalizeSagaIdentity,
+  type SagaIdentityInput
+} from './identity';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
@@ -868,6 +872,7 @@ export interface SagaDefinition<
 > {
   name: string;
   identity: SagaIdentityMetadata;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
   plugins: SagaPluginRegistryFromManifests<TPlugins>;
@@ -960,15 +965,8 @@ export interface SagaBuilderCorrelated<
 }
 
 export interface CreateSagaOptions<TPlugins extends SagaPluginManifestList = readonly []> {
-  name: string;
-  identity?: SagaIdentityInput;
+  identity: SagaIdentityInput;
   plugins?: TPlugins;
-}
-
-export interface SagaIdentityInput {
-  namespace?: string;
-  name?: string;
-  version?: number;
 }
 
 export interface SagaIdentityFields {
@@ -978,7 +976,7 @@ export interface SagaIdentityFields {
 }
 
 export interface SagaIdentityMetadata extends SagaIdentityFields {
-  legacyName: string;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
 }
@@ -994,6 +992,7 @@ interface SagaDefinitionDraft<
 > {
   name: string;
   identity: SagaIdentityMetadata;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
   plugins: TPlugins;
@@ -1024,52 +1023,15 @@ function getAggregateType(aggregate: SagaAggregateDefinition): string {
   return aggregate.__aggregateType ?? 'unknown';
 }
 
-function normalizeIdentitySegment(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-');
-
-  return normalized.length > 0 ? normalized : fallback;
-}
-
-function normalizeIdentityVersion(version: number | undefined): number {
-  if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0) {
-    return 1;
-  }
-
-  return version;
-}
-
-function deriveSagaType(identity: SagaIdentityFields): string {
-  return `${identity.namespace}.${identity.name}.v${identity.version}`;
-}
-
-function deriveSagaUrn(identity: SagaIdentityFields): string {
-  return `urn:redemeine:saga:${identity.namespace}:${identity.name}:v${identity.version}`;
-}
-
 function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>): SagaIdentityMetadata {
-  const legacyName = options.name;
-  const namespace = normalizeIdentitySegment(options.identity?.namespace ?? 'legacy', 'legacy');
-  const name = normalizeIdentitySegment(options.identity?.name ?? legacyName, 'saga');
-  const version = normalizeIdentityVersion(options.identity?.version);
-  const base: SagaIdentityFields = {
-    namespace,
-    name,
-    version
-  };
-
-  const sagaType = deriveSagaType(base);
-  const sagaUrn = deriveSagaUrn(base);
-
+  const normalized = normalizeSagaIdentity(options.identity);
   return {
-    ...base,
-    legacyName,
-    sagaType,
-    sagaUrn
+    namespace: normalized.namespace,
+    name: normalized.name,
+    version: normalized.version,
+    sagaKey: normalized.sagaKey,
+    sagaType: normalized.sagaType,
+    sagaUrn: normalized.sagaUrn
   };
 }
 
@@ -1342,8 +1304,9 @@ export function createSaga<
     SagaPluginRegistryFromManifests<SagaPluginsFromOptions<TOptions>>,
     Record<never, never>
   > = {
-    name: options.name,
+    name: identity.name,
     identity,
+    sagaKey: identity.sagaKey,
     sagaType: identity.sagaType,
     sagaUrn: identity.sagaUrn,
     plugins: pluginRegistry,

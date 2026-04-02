@@ -1,11 +1,23 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../src/createSaga';
+import { createSaga, type CanonicalSagaIdentityInput } from '../src';
+
+const ORDER_START_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'orders',
+  name: 'order_start_saga',
+  version: 1
+};
+
+const GATED_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'orders',
+  name: 'gated_saga',
+  version: 1
+};
 
 describe('createSaga start/correlateBy/triggeredBy definition DSL', () => {
   it('requires correlateBy before triggeredBy/build and stores normalized contracts', () => {
     const predicate = (trigger: { source: 'event' | 'direct'; payload: { orderId: string } }) => trigger.source === 'event';
 
-    const definition = createSaga<{ started: boolean }>({ name: 'order-start-saga' })
+    const definition = createSaga<{ started: boolean }>({ identity: ORDER_START_IDENTITY })
       .initialState(() => ({ started: false }))
       .start<{ orderId: string; source: 'event' | 'direct' }>((_start, _ctx) => undefined)
       .correlateBy((start) => start.orderId)
@@ -38,7 +50,7 @@ describe('createSaga start/correlateBy/triggeredBy definition DSL', () => {
   });
 
   it('enforces builder-phase gating at compile time', () => {
-    const awaitingCorrelation = createSaga({ name: 'gated-saga' }).start<{ orderId: string }>((_start, _ctx) => undefined);
+    const awaitingCorrelation = createSaga({ identity: GATED_IDENTITY }).start<{ orderId: string }>((_start, _ctx) => undefined);
 
     // @ts-expect-error build is unavailable before correlateBy
     type BuildBeforeCorrelateBy = typeof awaitingCorrelation.build;

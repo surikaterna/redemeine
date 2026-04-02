@@ -10,17 +10,19 @@ describe('saga identity normalization', () => {
     expect(normalizeSagaIdentity({
       namespace: ' Billing.Invoice ',
       name: 'Payment-Flow',
-      version: '2'
+      version: 2
     })).toEqual({
       namespace: 'billing.invoice',
       name: 'payment-flow',
       version: 2,
-      sagaType: 'billing.invoice.payment-flow.v2'
+      sagaKey: 'billing.invoice/payment-flow',
+      sagaType: 'billing.invoice/payment-flow@v2',
+      sagaUrn: 'urn:redemeine:saga:billing.invoice:payment-flow:v2'
     });
   });
 
   it('builds deterministic sagaType from canonical parts', () => {
-    expect(buildSagaType('ops.reconciliation', 'rebuild_ledger', 7)).toBe('ops.reconciliation.rebuild_ledger.v7');
+    expect(buildSagaType('ops.reconciliation', 'rebuild_ledger', 7)).toBe('ops.reconciliation/rebuild_ledger@v7');
   });
 
   it('rejects invalid namespace values', () => {
@@ -63,24 +65,28 @@ describe('saga identity normalization', () => {
     expect(() => normalizeSagaIdentity({
       namespace: 'billing.invoice',
       name: 'payment-flow',
+      // @ts-expect-error version must be numeric
       version: 'v1'
     })).toThrow(SagaIdentityNormalizationError);
 
     expect(() => normalizeSagaIdentity({
       namespace: 'billing.invoice',
       name: 'payment-flow',
+      // @ts-expect-error version must be numeric
       version: '2.0'
     })).toThrow(SagaIdentityNormalizationError);
 
     expect(() => normalizeSagaIdentity({
       namespace: 'billing.invoice',
       name: 'payment-flow',
+      // @ts-expect-error version must be numeric
       version: 'v2'
     })).toThrow(SagaIdentityNormalizationError);
 
     expect(() => normalizeSagaIdentity({
       namespace: 'billing.invoice',
       name: 'payment-flow',
+      // @ts-expect-error version must be numeric
       version: '01'
     })).toThrow(SagaIdentityNormalizationError);
 
@@ -94,6 +100,7 @@ describe('saga identity normalization', () => {
       normalizeSagaIdentity({
         namespace: 'billing.invoice',
         name: 'payment-flow',
+        // @ts-expect-error version must be numeric
         version: 'v1'
       });
     } catch (error) {

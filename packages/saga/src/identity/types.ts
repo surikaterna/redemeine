@@ -7,11 +7,13 @@ export interface SagaIdentityParts {
 export type SagaIdentityInput = {
   namespace: string;
   name: string;
-  version: number | string;
+  version: number;
 };
 
 export interface NormalizedSagaIdentity extends SagaIdentityParts {
+  sagaKey: string;
   sagaType: string;
+  sagaUrn: string;
 }
 
 export type SagaIdentityNormalizationErrorCode =
