@@ -1,5 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
-import { deriveSagaInstanceUrn, deriveSagaUrn, type SagaStructuredIdentity } from '../src';
+import {
+  deriveSagaInstanceUrn,
+  deriveSagaUrn,
+  parseSagaIdentityUrn,
+  toSagaIdentityUrn,
+  type SagaStructuredIdentity
+} from '../src';
 
 describe('saga URN derivation', () => {
   const identity: SagaStructuredIdentity = {
@@ -11,6 +17,15 @@ describe('saga URN derivation', () => {
   it('derives canonical saga URN deterministically', () => {
     expect(deriveSagaUrn(identity)).toBe('urn:redemeine:saga:commerce:checkout:v3');
     expect(deriveSagaUrn(identity)).toBe('urn:redemeine:saga:commerce:checkout:v3');
+  });
+
+  it('preserves historical URN format across canonical and compatibility entrypoints', () => {
+    const canonicalUrn = deriveSagaUrn(identity);
+    const compatibilityUrn = toSagaIdentityUrn(identity);
+
+    expect(canonicalUrn).toBe('urn:redemeine:saga:commerce:checkout:v3');
+    expect(compatibilityUrn).toBe(canonicalUrn);
+    expect(parseSagaIdentityUrn(canonicalUrn)).toEqual(identity);
   });
 
   it('derives canonical saga instance URN with explicit instance id', () => {

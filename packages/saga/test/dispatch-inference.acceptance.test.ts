@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../src';
+import { createSaga, deriveSagaUrn, toSagaIdentityUrn } from '../src';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -52,6 +52,16 @@ describe('S27 acceptance: aggregate-driven dispatch inference safety', () => {
     });
     expect(saga.sagaType).toBe('billing.invoice-orchestration.v2');
     expect(saga.sagaUrn).toBe('urn:redemeine:saga:billing:invoice-orchestration:v2');
+    expect(toSagaIdentityUrn({
+      namespace: saga.identity.namespace,
+      name: saga.identity.name,
+      version: saga.identity.version
+    })).toBe(saga.sagaUrn);
+    expect(deriveSagaUrn({
+      namespace: saga.identity.namespace,
+      name: saga.identity.name,
+      version: saga.identity.version
+    })).toBe(saga.sagaUrn);
     expect(saga.handlers[0]?.sagaType).toBe('billing.invoice-orchestration.v2');
     expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:billing:invoice-orchestration:v2');
   });

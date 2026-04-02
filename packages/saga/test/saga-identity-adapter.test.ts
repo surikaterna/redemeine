@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { normalizeSagaIdentityInput } from '../src';
+import { normalizeSagaIdentityInput, type SagaIntentMetadata } from '../src';
 
 describe('saga identity backward compatibility adapter', () => {
   it('accepts canonical structured identity objects without deprecation flags', () => {
@@ -50,6 +50,35 @@ describe('saga identity backward compatibility adapter', () => {
     });
     expect(result.deprecated).toBe(true);
     expect(result.deprecationNotes.join(' ')).toContain('deprecated');
+  });
+
+  it('keeps createSaga identity metadata contract parity for canonical and compatibility shapes', () => {
+    const canonical = normalizeSagaIdentityInput({
+      sagaId: 'saga-meta',
+      correlationId: 'corr-meta',
+      causationId: 'cause-meta'
+    });
+
+    const legacyObject = normalizeSagaIdentityInput({
+      saga_id: 'saga-meta',
+      correlation_id: 'corr-meta',
+      causation_id: 'cause-meta'
+    });
+
+    const legacyString = normalizeSagaIdentityInput('saga-meta|corr-meta|cause-meta');
+
+    const expected: SagaIntentMetadata = {
+      sagaId: 'saga-meta',
+      correlationId: 'corr-meta',
+      causationId: 'cause-meta'
+    };
+
+    expect(canonical.identity).toEqual(expected);
+    expect(legacyObject.identity).toEqual(expected);
+    expect(legacyString.identity).toEqual(expected);
+    expect(canonical.deprecated).toBe(false);
+    expect(legacyObject.deprecated).toBe(true);
+    expect(legacyString.deprecated).toBe(true);
   });
 
   it('rejects unsupported legacy identity forms with clear guidance', () => {

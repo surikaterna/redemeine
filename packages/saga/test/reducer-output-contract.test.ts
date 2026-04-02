@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
+  deriveSagaUrn,
+  toSagaIdentityUrn,
   type SagaIntent,
   type SagaReducerOutput
 } from '../src';
@@ -109,6 +111,16 @@ describe('S08 reducer output contract typing', () => {
     });
     expect(saga.sagaType).toBe('legacy.billing-saga.v1');
     expect(saga.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
+    expect(toSagaIdentityUrn({
+      namespace: saga.identity.namespace,
+      name: saga.identity.name,
+      version: saga.identity.version
+    })).toBe(saga.sagaUrn);
+    expect(deriveSagaUrn({
+      namespace: saga.identity.namespace,
+      name: saga.identity.name,
+      version: saga.identity.version
+    })).toBe(saga.sagaUrn);
     expect(saga.correlations).toEqual([]);
     expect(saga.handlers[0]?.sagaType).toBe('legacy.billing-saga.v1');
     expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
