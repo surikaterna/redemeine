@@ -243,6 +243,12 @@ export function testSaga<
   const errorQueues = new Map<string, TestSagaQueuedRequest[]>();
   const requestCounter = { current: 0 };
 
+  const tokenBindings = Object.freeze({
+    ...Object.fromEntries(Object.keys(definition.responseHandlers).map((token) => [token, { phase: 'response' as const }])),
+    ...Object.fromEntries(Object.keys(definition.errorHandlers).map((token) => [token, { phase: 'error' as const }])),
+    ...Object.fromEntries(Object.keys(definition.retryHandlers).map((token) => [token, { phase: 'retry' as const }]))
+  }) as Record<string, SagaResponseHandlerTokenBinding | undefined>;
+
   const applyOutput = (output: SagaReducerOutput<TState>) => {
     state = output.state;
     latestIntents = output.intents;
@@ -250,7 +256,7 @@ export function testSaga<
   };
 
   const isKnownTokenForPhase = (token: string, phase: 'response' | 'error') => {
-    const tokenBinding = (definition.response_handlers as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
+    const tokenBinding = tokenBindings[token];
     return tokenBinding !== undefined && tokenBinding.phase === phase;
   };
 
@@ -277,7 +283,7 @@ export function testSaga<
         } as any,
         resolved.handler as any,
         resolveMetadata(event.metadata),
-        definition.response_handlers,
+        tokenBindings as TResponseHandlerBindings,
         runtimePlugins
       );
 
