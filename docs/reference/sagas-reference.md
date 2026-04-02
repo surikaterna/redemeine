@@ -10,17 +10,20 @@ For generated API signatures, use `/docs/api/`.
 
 - `createSaga.ts`: typed saga definition builder and intent types.
 - `RetryPolicy.ts`: retry validation, backoff scheduling, and classification helpers.
-- `createSagaAggregate.ts`: public constructor/export for the structure-only `SagaAggregate` contract.
+- `triggers.ts`: definition-only trigger builders (`event`, `parent`, `direct`, `recovery`, `schedule.*`) with typed `toStartInput` and `when` chaining.
+- `startPolicy.ts`: typed start policy helper constructors for trigger contracts.
 
 Public export barrel (`src/sagas/index.ts`):
 
 - `createSaga`
 - `SagaRetryPolicy` + retry helpers
-- `createSagaAggregate`
+- `createSagaTriggerBuilder`
+- `startPolicy`
 
 Usage note:
 
 - `createSagaAggregate(nameOrOptions?)` exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
+- Trigger builders and start-policy helpers are **definition-layer only** and do not change runtime execution behavior.
 
 Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
@@ -195,6 +198,23 @@ Retry helpers in `RetryPolicy.ts`:
 - `classifyRetryableError(error, options?)`
 
 Policy shape: `SagaRetryPolicy` (`maxAttempts`, `initialBackoffMs`, `backoffCoefficient`, optional caps/jitter).
+
+## Trigger builders and start policies (definition-only)
+
+Use `createSagaTriggerBuilder<TStartInput>()` when you want typed trigger definitions that map source payloads to saga `StartInput` without introducing runtime execution concerns in this package.
+
+- Trigger families: `event`, `parent`, `direct`, `recovery`, and `schedule` (`interval`, `isoInterval`, `cron`, `rrule`).
+- Each trigger requires `toStartInput(source) => startInput`.
+- Optional `.when((source, startInput) => boolean)` chaining preserves strong inference across chained predicates.
+- Schedule definitions carry semantics metadata (`elapsed-time` vs `wall-clock`) and default DST policy at the definition layer.
+
+Use `startPolicy` for typed policy literals:
+
+- `startPolicy.ifIdle()`
+- `startPolicy.joinExisting()`
+- `startPolicy.restart({ mode?: 'graceful' | 'force', reason?: string })`
+
+Attach policies to trigger-adjacent contracts through `SagaTriggerStartContract`.
 
 ## Typed aggregate dispatch
 
