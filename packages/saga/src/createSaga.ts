@@ -72,7 +72,19 @@ export type SagaPluginVoidActionNames<TPlugin extends SagaPluginManifest> =
 export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
   SagaPluginActionNamesByKind<TPlugin, 'request_response'>;
 
-export type SagaResponseHandlerPhase = 'response' | 'error';
+export type SagaResponseHandlerPhase = 'response' | 'error' | 'retry';
+
+declare const sagaResponseHandlerTokenBrand: unique symbol;
+
+type SagaPhaseToken<TToken extends string, TPhase extends SagaResponseHandlerPhase> = TToken & {
+  readonly [sagaResponseHandlerTokenBrand]: TPhase;
+};
+
+export type TResponseToken<TToken extends string = string> = SagaPhaseToken<TToken, 'response'>;
+
+export type TErrorToken<TToken extends string = string> = SagaPhaseToken<TToken, 'error'>;
+
+export type TRetryToken<TToken extends string = string> = SagaPhaseToken<TToken, 'retry'>;
 
 export interface SagaResponseHandlerTokenBinding<
   TPluginKey extends string = string,
@@ -97,6 +109,18 @@ export type SagaResponseTokenKey<TBindings extends SagaResponseHandlerTokenBindi
 export type SagaErrorTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
   SagaResponseHandlerKeysByPhase<TBindings, 'error'>;
 
+export type SagaRetryTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
+  SagaResponseHandlerKeysByPhase<TBindings, 'retry'>;
+
+type SagaResponseHandlerTokenForPhase<
+  TToken extends string,
+  TPhase extends SagaResponseHandlerPhase
+> = TPhase extends 'response'
+  ? TResponseToken<TToken>
+  : TPhase extends 'error'
+    ? TErrorToken<TToken>
+    : TRetryToken<TToken>;
+
 type SagaResponseHandlerKeysByPhase<
   TBindings extends SagaResponseHandlerTokenBindings,
   TPhase extends SagaResponseHandlerPhase
@@ -110,12 +134,16 @@ export type SagaResponseHandlerTokenNamespace<
   TBindings extends SagaResponseHandlerTokenBindings,
   TPhase extends SagaResponseHandlerPhase
 > = {
-  readonly [THandlerKey in SagaResponseHandlerKeysByPhase<TBindings, TPhase>]: THandlerKey;
+  readonly [THandlerKey in SagaResponseHandlerKeysByPhase<TBindings, TPhase>]: SagaResponseHandlerTokenForPhase<
+    THandlerKey,
+    TPhase
+  >;
 };
 
 export type SagaResponseHandlerTokenAccess<TBindings extends SagaResponseHandlerTokenBindings> = {
   readonly onResponse: SagaResponseHandlerTokenNamespace<TBindings, 'response'>;
   readonly onError: SagaResponseHandlerTokenNamespace<TBindings, 'error'>;
+  readonly onRetry: SagaResponseHandlerTokenNamespace<TBindings, 'retry'>;
 };
 
 /** Minimal request envelope forwarded to external response/error handlers. */
@@ -128,14 +156,14 @@ export interface SagaExternalHandlerRequestContext {
 }
 
 /** Input shape for executable response callbacks. */
-export interface SagaResponseCallbackEnvelope<TToken extends string = string, TPayload = unknown> {
+export interface SagaResponseCallbackEnvelope<TToken extends TResponseToken<string> = TResponseToken<string>, TPayload = unknown> {
   readonly token: TToken;
   readonly payload: TPayload;
   readonly request: SagaExternalHandlerRequestContext;
 }
 
 /** Input shape for executable error callbacks. */
-export interface SagaErrorCallbackEnvelope<TToken extends string = string, TError = unknown> {
+export interface SagaErrorCallbackEnvelope<TToken extends TErrorToken<string> = TErrorToken<string>, TError = unknown> {
   readonly token: TToken;
   readonly error: TError;
   readonly request: SagaExternalHandlerRequestContext;
@@ -250,22 +278,22 @@ type SagaRequestActionChainOnResponseStep<
   TBindings extends SagaResponseHandlerTokenBindings,
   THandlerData
 > = {
-  onResponse: <
-    TResponseHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+  onResponse: (
+    token: TResponseToken<
+      SagaResponseHandlerKeysByPhaseForAction<
       TBindings,
       'response',
       TPluginKey,
       TActionName
     >
-  >(
-    token: TResponseHandlerKey
+    >
   ) => SagaRequestActionChainOnErrorStep<
     TPluginKey,
     TActionName,
     TExecutionPayload,
     TBindings,
     THandlerData,
-    TResponseHandlerKey
+    TResponseToken<SagaResponseHandlerKeysByPhaseForAction<TBindings, 'response', TPluginKey, TActionName>>
   >;
 };
 
@@ -275,22 +303,22 @@ type SagaRequestActionChainOnErrorStep<
   TExecutionPayload,
   TBindings extends SagaResponseHandlerTokenBindings,
   THandlerData,
-  TResponseHandlerKey extends string
+  TResponseHandlerKey extends TResponseToken<string>
 > = {
-  onError: <
-    TErrorHandlerKey extends SagaResponseHandlerKeysByPhaseForAction<
+  onError: (
+    token: TErrorToken<
+      SagaResponseHandlerKeysByPhaseForAction<
       TBindings,
       'error',
       TPluginKey,
       TActionName
     >
-  >(
-    token: TErrorHandlerKey
+    >
   ) => SagaPluginRequestIntent<
     TPluginKey,
     TActionName,
     TExecutionPayload,
-    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData>
+    SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorToken<SagaResponseHandlerKeysByPhaseForAction<TBindings, 'error', TPluginKey, TActionName>>, THandlerData>
   >;
 };
 
@@ -772,6 +800,7 @@ export function createSagaDispatchContext<
 
   const onResponse = createResponseHandlerTokenNamespace(responseHandlers, 'response');
   const onError = createResponseHandlerTokenNamespace(responseHandlers, 'error');
+  const onRetry = createResponseHandlerTokenNamespace(responseHandlers, 'retry');
   const corePlugin = createSagaCorePluginManifest(metadata, emit);
   const actions = createPluginActionsContext([corePlugin, ...plugins], metadata, emit) as SagaPluginActionsContext<
     TPlugins,
@@ -787,6 +816,7 @@ export function createSagaDispatchContext<
     },
     onResponse,
     onError,
+    onRetry,
     emit,
     commandsFor: (aggregateDef, aggregateId, metadataOverride) => actions.core.dispatch(
       aggregateDef,
@@ -868,7 +898,8 @@ export type SagaExecutableResponseHandler<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaResponseTokenKey<TResponseHandlerBindings> = SagaResponseTokenKey<TResponseHandlerBindings>
+  TToken extends TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>> =
+    TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>>
 > = (
   state: Draft<TState>,
   response: SagaResponseCallbackEnvelope<TToken>,
@@ -879,7 +910,8 @@ export type SagaExecutableErrorHandler<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaErrorTokenKey<TResponseHandlerBindings> = SagaErrorTokenKey<TResponseHandlerBindings>
+  TToken extends TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>> =
+    TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>>
 > = (
   state: Draft<TState>,
   error: SagaErrorCallbackEnvelope<TToken>,
@@ -901,7 +933,7 @@ export type SagaExecutableResponseHandlers<
     TState,
     TPlugins,
     TResponseHandlerBindings,
-    TToken
+    TResponseToken<TToken>
   >;
 };
 
@@ -920,7 +952,7 @@ export type SagaExecutableErrorHandlers<
     TState,
     TPlugins,
     TResponseHandlerBindings,
-    TToken
+    TErrorToken<TToken>
   >;
 };
 
@@ -951,7 +983,8 @@ export interface RunSagaResponseHandlerInput<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaResponseTokenKey<TResponseHandlerBindings> = SagaResponseTokenKey<TResponseHandlerBindings>,
+  TToken extends TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>> =
+    TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>>,
   TPayload = unknown
 > {
   readonly definition: SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
@@ -965,7 +998,8 @@ export interface RunSagaErrorHandlerInput<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaErrorTokenKey<TResponseHandlerBindings> = SagaErrorTokenKey<TResponseHandlerBindings>,
+  TToken extends TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>> =
+    TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>>,
   TError = unknown
 > {
   readonly definition: SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
@@ -1300,7 +1334,8 @@ export async function runSagaResponseHandler<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaResponseTokenKey<TResponseHandlerBindings> = SagaResponseTokenKey<TResponseHandlerBindings>,
+  TToken extends TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>> =
+    TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>>,
   TPayload = unknown
 >(
   input: RunSagaResponseHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TPayload>
@@ -1365,7 +1400,8 @@ export async function runSagaErrorHandler<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends SagaErrorTokenKey<TResponseHandlerBindings> = SagaErrorTokenKey<TResponseHandlerBindings>,
+  TToken extends TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>> =
+    TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>>,
   TError = unknown
 >(
   input: RunSagaErrorHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TError>
