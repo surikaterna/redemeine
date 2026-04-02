@@ -16,7 +16,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
+    "test": "bun test ./test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "immer": "^10.1.1"
   }
 }

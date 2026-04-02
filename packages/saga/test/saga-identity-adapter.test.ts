@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { normalizeSagaIdentityInput } from '../../src/sagas';
+import { normalizeSagaIdentityInput } from '../src';
 
 describe('saga identity backward compatibility adapter', () => {
   it('accepts canonical structured identity objects without deprecation flags', () => {

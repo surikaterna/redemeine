@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { deriveSagaInstanceUrn, deriveSagaUrn, type SagaStructuredIdentity } from '../../src/sagas';
+import { deriveSagaInstanceUrn, deriveSagaUrn, type SagaStructuredIdentity } from '../src';
 
 describe('saga URN derivation', () => {
   const identity: SagaStructuredIdentity = {

@@ -7,7 +7,7 @@ import {
   validateSagaName,
   validateSagaNamespace,
   validateSagaVersion
-} from '../../src/sagas';
+} from '../src';
 
 describe('saga identity validation and error mapping', () => {
   it('accepts valid namespace/name/version and derives canonical URN', () => {

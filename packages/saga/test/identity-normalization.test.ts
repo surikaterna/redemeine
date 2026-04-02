@@ -3,7 +3,7 @@ import {
   SagaIdentityNormalizationError,
   buildSagaType,
   normalizeSagaIdentity
-} from '../../src/sagas';
+} from '../src';
 
 describe('saga identity normalization', () => {
   it('normalizes namespace/name/version and derives sagaType', () => {

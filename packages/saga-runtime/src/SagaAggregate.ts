@@ -1,5 +1,12 @@
-import { createAggregate } from '../createAggregate';
-import type { Event } from '../types';
+declare const require: (id: string) => any;
+
+type Event<P = unknown> = {
+  payload: P;
+};
+
+const { createAggregate } = require('../../../src/createAggregate') as {
+  createAggregate: (name: string, initialState: unknown) => any;
+};
 
 export interface SagaRecentWindowLimits {
   transitions: number;
@@ -229,7 +236,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
     }
   };
 
-  const built = createAggregate<SagaAggregateState, TAggregateName>(aggregateName, initialState)
+  const built = createAggregate(aggregateName, initialState)
     .events({
       instanceCreated: (state, event: Event<SagaInstanceCreatedEventPayload>) => {
         state.sagaId = event.payload.sagaId;

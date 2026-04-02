@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga } from '../../src/sagas';
+import { createSaga } from '../src';
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
