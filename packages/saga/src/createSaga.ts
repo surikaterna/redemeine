@@ -972,8 +972,7 @@ export type SagaExecutableRetryHandlers<
 
 export type SagaExecutableHandlerFailureReason =
   | 'token_not_defined'
-  | 'handler_not_registered'
-  | 'phase_mismatch';
+  | 'handler_not_registered';
 
 export type SagaExecutableHandlerSuccessResult<TState, TToken extends string = string> = {
   readonly ok: true;
@@ -985,8 +984,6 @@ export type SagaExecutableHandlerFailureResult<TToken extends string = string> =
   readonly ok: false;
   readonly reason: SagaExecutableHandlerFailureReason;
   readonly token: TToken;
-  readonly expected_phase?: SagaResponseHandlerPhase;
-  readonly actual_phase?: SagaResponseHandlerPhase;
 };
 
 export type SagaExecutableHandlerResult<TState, TToken extends string = string> =
@@ -1314,18 +1311,12 @@ function resolveIntentMetadata(
   };
 }
 
-function createPhaseMismatchResult<TToken extends string>(
-  token: TToken,
-  expectedPhase: SagaResponseHandlerPhase,
-  actualPhase: SagaResponseHandlerPhase
-): SagaExecutableHandlerFailureResult<TToken> {
-  return {
-    ok: false,
-    reason: 'phase_mismatch',
-    token,
-    expected_phase: expectedPhase,
-    actual_phase: actualPhase
-  };
+function hasOwnToken(handlers: Record<string, unknown> | undefined, token: string): boolean {
+  if (handlers === undefined) {
+    return false;
+  }
+
+  return Object.prototype.hasOwnProperty.call(handlers, token);
 }
 
 /**
@@ -1381,22 +1372,13 @@ export async function runSagaResponseHandler<
     plugins = [] as unknown as TPlugins
   } = input;
   const token = envelope.token;
-  const tokenBinding = (createTokenBindingsFromHandlerMaps(
-    definition.responseHandlers,
-    definition.errorHandlers,
-    definition.retryHandlers
-  ) as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
 
-  if (tokenBinding === undefined) {
+  if (!hasOwnToken(definition.responseHandlers as Record<string, unknown> | undefined, token)) {
     return {
       ok: false,
       reason: 'token_not_defined',
       token
     };
-  }
-
-  if (tokenBinding.phase !== 'response') {
-    return createPhaseMismatchResult(token, 'response', tokenBinding.phase);
   }
 
   const handler = (definition.responseHandlers as Record<
@@ -1455,22 +1437,13 @@ export async function runSagaErrorHandler<
     plugins = [] as unknown as TPlugins
   } = input;
   const token = envelope.token;
-  const tokenBinding = (createTokenBindingsFromHandlerMaps(
-    definition.responseHandlers,
-    definition.errorHandlers,
-    definition.retryHandlers
-  ) as Record<string, SagaResponseHandlerTokenBinding | undefined>)[token];
 
-  if (tokenBinding === undefined) {
+  if (!hasOwnToken(definition.errorHandlers as Record<string, unknown> | undefined, token)) {
     return {
       ok: false,
       reason: 'token_not_defined',
       token
     };
-  }
-
-  if (tokenBinding.phase !== 'error') {
-    return createPhaseMismatchResult(token, 'error', tokenBinding.phase);
   }
 
   const handler = (definition.errorHandlers as Record<

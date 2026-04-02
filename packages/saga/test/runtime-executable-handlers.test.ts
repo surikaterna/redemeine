@@ -144,7 +144,7 @@ describe('runtime executable saga handlers', () => {
     ]);
   });
 
-  it('returns deterministic failure contract for token lookup and response phase mismatch', async () => {
+  it('returns deterministic failure contract for unknown response tokens', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_FAILURES_IDENTITY })
       .onErrors({
         'billing.charge.failed': () => undefined
@@ -171,7 +171,7 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const unknownResponseToken = await runSagaResponseHandler({
+    const responseUnknownToken = await runSagaResponseHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
@@ -184,16 +184,14 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(unknownResponseToken).toEqual({
+    expect(responseUnknownToken).toEqual({
       ok: false,
-      reason: 'phase_mismatch',
-      token: 'billing.charge.failed',
-      expected_phase: 'response',
-      actual_phase: 'error'
+      reason: 'token_not_defined',
+      token: 'billing.charge.failed'
     });
   });
 
-  it('returns token_not_defined for unknown tokens and phase mismatch in error helper', async () => {
+  it('returns deterministic failure contract for unknown error tokens', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_ERROR_FAILURES_IDENTITY })
       .onResponses({
         'billing.charge.ok': () => undefined
@@ -223,7 +221,7 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const unknownErrorToken = await runSagaErrorHandler({
+    const errorUnknownToken = await runSagaErrorHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
@@ -236,12 +234,10 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(unknownErrorToken).toEqual({
+    expect(errorUnknownToken).toEqual({
       ok: false,
-      reason: 'phase_mismatch',
-      token: 'billing.charge.ok',
-      expected_phase: 'error',
-      actual_phase: 'response'
+      reason: 'token_not_defined',
+      token: 'billing.charge.ok'
     });
   });
 });
