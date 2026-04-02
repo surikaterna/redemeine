@@ -16,3 +16,16 @@ export {
   deriveSagaUrn,
   type SagaStructuredIdentity
 } from './sagaUrn';
+
+export {
+  buildCanonicalSagaInstanceUrn,
+  buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
+  normalizeSagaName,
+  normalizeSagaNamespace,
+  SAGA_NAME_PATTERN,
+  SAGA_NAMESPACE_PATTERN,
+  SAGA_URN_PREFIX,
+  SAGA_VERSION_TOKEN_PATTERN,
+  type CanonicalSagaIdentityParts
+} from './canonical';

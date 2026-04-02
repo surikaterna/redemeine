@@ -1,3 +1,10 @@
+import {
+  buildCanonicalSagaUrn,
+  SAGA_NAME_PATTERN,
+  SAGA_NAMESPACE_PATTERN,
+  SAGA_VERSION_TOKEN_PATTERN
+} from './identity/canonical';
+
 export interface SagaIdentity {
   namespace: string;
   name: string;
@@ -29,9 +36,6 @@ export class SagaIdentityValidationError extends Error {
     Object.setPrototypeOf(this, SagaIdentityValidationError.prototype);
   }
 }
-
-const SAGA_NAMESPACE_PATTERN = /^[a-z0-9]+(?:\.[a-z0-9]+)*$/;
-const SAGA_NAME_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 
 export function validateSagaNamespace(namespace: string): string {
   if (!SAGA_NAMESPACE_PATTERN.test(namespace)) {
@@ -83,7 +87,7 @@ export function validateSagaIdentity(identity: SagaIdentity): SagaIdentity {
 
 export function toSagaIdentityUrn(identity: SagaIdentity): string {
   validateSagaIdentity(identity);
-  return `urn:redemeine:saga:${identity.namespace}:${identity.name}:v${identity.version}`;
+  return buildCanonicalSagaUrn(identity);
 }
 
 export function parseSagaIdentityUrn(urn: string): SagaIdentity {
@@ -98,8 +102,7 @@ export function parseSagaIdentityUrn(urn: string): SagaIdentity {
   }
 
   const [, , , namespace, name, versionToken] = parts;
-  const versionMatch = /^v([1-9][0-9]*)$/.exec(versionToken);
-  if (!versionMatch) {
+  if (!versionToken.startsWith('v') || !SAGA_VERSION_TOKEN_PATTERN.test(versionToken.slice(1))) {
     throw new SagaIdentityValidationError({
       code: 'SAGA_IDENTITY_MALFORMED_URN',
       field: 'urn',
@@ -111,6 +114,6 @@ export function parseSagaIdentityUrn(urn: string): SagaIdentity {
   return validateSagaIdentity({
     namespace,
     name,
-    version: Number(versionMatch[1])
+    version: Number(versionToken.slice(1))
   });
 }

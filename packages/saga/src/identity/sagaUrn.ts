@@ -1,3 +1,8 @@
+import {
+  buildCanonicalSagaInstanceUrn,
+  buildCanonicalSagaUrn
+} from './canonical';
+
 export interface SagaStructuredIdentity {
   readonly namespace: string;
   readonly name: string;
@@ -28,7 +33,7 @@ export function deriveSagaUrn(identity: SagaStructuredIdentity): string {
   assertNonEmptyString(name, 'name');
   assertVersion(version);
 
-  return `urn:redemeine:saga:${namespace}:${name}:v${version}`;
+  return buildCanonicalSagaUrn(identity);
 }
 
 /**
@@ -45,5 +50,5 @@ export function deriveSagaInstanceUrn(identity: SagaStructuredIdentity, instance
   assertNonEmptyString(name, 'name');
   assertVersion(version);
 
-  return `${deriveSagaUrn(identity)}:instance:${instanceId}`;
+  return buildCanonicalSagaInstanceUrn(identity, instanceId);
 }
