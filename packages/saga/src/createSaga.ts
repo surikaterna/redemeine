@@ -341,18 +341,16 @@ export function defineCustomAction(
   };
 
   if (definition.action_kind === 'void') {
-    return {
-      action_kind: 'void',
+    return defineOneWay({
       build,
       ...(definition.description === undefined ? {} : { description: definition.description })
-    };
+    });
   }
 
-  return {
-    action_kind: 'request_response',
+  return defineRequestResponse({
     build,
     ...(definition.description === undefined ? {} : { description: definition.description })
-  };
+  });
 }
 
 /** Minimal request envelope forwarded to external response/error handlers. */

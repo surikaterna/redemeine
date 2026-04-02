@@ -412,3 +412,16 @@ If you used older/expanded saga docs, migrate as follows:
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
 - **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
 - **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.
+
+## Migration note (additive plugin action helpers)
+
+`@redemeine/saga` now also exports additive helper APIs for plugin manifests:
+
+- `defineOneWay(...)`
+- `defineRequestResponse(...)`
+- `defineCustomAction(...)`
+
+Compatibility note:
+
+- Existing raw descriptors with explicit `action_kind` (`'void'` / `'request_response'`) remain fully supported.
+- You can migrate incrementally by mixing helper-based and raw descriptors in the same plugin manifest.
