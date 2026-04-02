@@ -366,3 +366,4 @@ Strict Purity: The entire @redemeine/testing suite can be executed on a machine 
 
 Depot End-to-End: An integration test successfully dispatches a Command, which emits an Event, which updates an in-memory Projection, all within a single createTestDepot instance.
 
+## Plugins for opentelemetry in runtimes
