@@ -1,5 +1,5 @@
 import { produce } from 'immer';
-import { Event } from '../types';
+import type { Event } from '@redemeine/kernel';
 import { parseTargetedEventPath, formatFlatEventType } from './naming';
 
 export function applyEvent<S>(

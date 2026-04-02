@@ -1,4 +1,4 @@
-import { EventType, NamingStrategy } from '../types';
+import type { EventType, NamingStrategy } from '@redemeine/kernel';
 
 const toSnakeCase = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 

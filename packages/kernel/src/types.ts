@@ -1,5 +1,5 @@
 import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import type { ReplaceFirstArg } from './utils/types/ReplaceFirstArg';
+type ReplaceFirstArg<S, F> = F extends (x: any, ...args: infer P) => infer R ? (state: S, ...args: P) => R : never;
 
 // types.ts
 
