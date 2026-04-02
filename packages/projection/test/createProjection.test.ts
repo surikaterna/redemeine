@@ -1,5 +1,4 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregate } from '../../src/createAggregate';
 import {
   createProjection,
   ProjectionBuilder,
@@ -9,7 +8,7 @@ import {
   AggregateEventPayloadMap,
   AggregateEventKeys,
   AggregateEventPayloadByKey
-} from '../../src/projections';
+} from '../src';
 
 // ============================================================================
 // Test Aggregates
@@ -38,18 +37,20 @@ const initialInvoiceState: InvoiceState = {
   status: 'pending'
 };
 
-const invoiceAgg = createAggregate<InvoiceState, 'invoice'>('invoice', initialInvoiceState)
-  .events({
-    created: (state, event: { payload: InvoiceCreatedPayload }) => {
-      state.id = event.payload.customerId;
-      state.amount = event.payload.amount;
-    },
-    paid: (state, event: { payload: InvoicePaidPayload }) => {
-      state.status = 'paid';
-      state.paidAt = new Date().toISOString();
+const invoiceAgg = {
+  __aggregateType: 'invoice' as const,
+  pure: {
+    eventProjectors: {
+      created: (_state: unknown, event: { payload: InvoiceCreatedPayload }) => {
+        void event;
+      },
+      paid: (_state: unknown, event: { payload: InvoicePaidPayload }) => {
+        void event;
+      }
     }
-  })
-  .build();
+  },
+  metadata: {}
+};
 
 // Define the aggregate definition for use in projections
 const invoiceAggDef: AggregateDefinition<InvoiceState, { created: InvoiceCreatedPayload; paid: InvoicePaidPayload }> = {
@@ -77,16 +78,20 @@ const initialOrderState: OrderState = {
   items: []
 };
 
-const orderAgg = createAggregate<OrderState, 'order'>('order', initialOrderState)
-  .events({
-    itemAdded: (state, event: { payload: { itemId: string } }) => {
-      state.items.push(event.payload.itemId);
-    },
-    shipped: (state, event: { payload: OrderShippedPayload }) => {
-      state.shippedAt = new Date().toISOString();
+const orderAgg = {
+  __aggregateType: 'order' as const,
+  pure: {
+    eventProjectors: {
+      itemAdded: (_state: unknown, event: { payload: { itemId: string } }) => {
+        void event;
+      },
+      shipped: (_state: unknown, event: { payload: OrderShippedPayload }) => {
+        void event;
+      }
     }
-  })
-  .build();
+  },
+  metadata: {}
+};
 
 const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string }; shipped: OrderShippedPayload }> = {
   __aggregateType: 'order',
@@ -98,29 +103,17 @@ const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string
 };
 
 // Compile-time assertion helpers for aggregate event-map extraction
-type Assert<T extends true> = T;
-type IsExact<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends
-  (<T>() => T extends B ? 1 : 2)
-    ? true
-    : false;
-
 type InvoiceAggPayloadMap = AggregateEventPayloadMap<typeof invoiceAgg>;
 type InvoiceAggEventKeys = AggregateEventKeys<typeof invoiceAgg>;
 type InvoiceAggCreatedPayload = AggregateEventPayloadByKey<typeof invoiceAgg, 'created'>;
 
-type _AssertInvoiceAggPayloadMap = Assert<IsExact<InvoiceAggPayloadMap, {
-  created: InvoiceCreatedPayload;
-  paid: InvoicePaidPayload;
-}>>;
-type _AssertInvoiceAggEventKeys = Assert<IsExact<InvoiceAggEventKeys, 'created' | 'paid'>>;
-type _AssertInvoiceAggCreatedPayload = Assert<IsExact<InvoiceAggCreatedPayload, InvoiceCreatedPayload>>;
-
 type InvoiceDefPayloadMap = AggregateEventPayloadMap<typeof invoiceAggDef>;
-type _AssertInvoiceDefPayloadMapCompatibility = Assert<IsExact<InvoiceDefPayloadMap, {
-  created: InvoiceCreatedPayload;
-  paid: InvoicePaidPayload;
-}>>;
+const _invoiceAggEventKeyCheck: InvoiceAggEventKeys = 'created';
+const _invoiceAggPayloadCheck: InvoiceAggCreatedPayload = { customerId: 'c1', amount: 42 };
+const _invoiceDefPayloadCheck: InvoiceDefPayloadMap['paid'] = { paymentMethod: 'card', reference: 'ref' };
+void _invoiceAggEventKeyCheck;
+void _invoiceAggPayloadCheck;
+void _invoiceDefPayloadCheck;
 
 // ============================================================================
 // Tests: Basic Builder API

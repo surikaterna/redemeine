@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import { createProjection, ProjectionDefinition, ProjectionEvent, AggregateDefinition, InMemoryProjectionStore } from '../../src/projections';
-import { ProjectionDaemon } from '../../src/projections/ProjectionDaemon';
-import { IProjectionStore } from '../../src/projections/IProjectionStore';
-import { IEventSubscription } from '../../src/projections/IEventSubscription';
-import { Checkpoint, EventBatch } from '../../src/projections/types';
+import { createProjection, ProjectionDefinition, ProjectionEvent, AggregateDefinition, InMemoryProjectionStore } from '../src';
+import { ProjectionDaemon } from '../src/ProjectionDaemon';
+import { IProjectionStore } from '../src/IProjectionStore';
+import { IEventSubscription } from '../src/IEventSubscription';
+import { Checkpoint, EventBatch } from '../src/types';
 
 // Test aggregates - need proper aggregate definition for new API
 const invoiceAgg = {
@@ -135,7 +135,7 @@ describe('Lifecycle Routing', () => {
   });
 
   it('should PROCESS .join() event WITH subscribeTo', async () => {
-    const projection = createProjection<InvoiceState & { orders: string[] }>('invoice-test', (docId) => ({ total: 0, orders: [] }))
+    const projection = createProjection<InvoiceState>('invoice-test', (docId) => ({ total: 0, orders: [] }))
       .from(invoiceAgg, {
         'invoice.created': (state, event: any, ctx) => {
           // Subscribe to order events for this invoice
@@ -146,7 +146,7 @@ describe('Lifecycle Routing', () => {
       .join(orderAgg, {
         'order.shipped': (state, event: any) => {
           state.total += event.payload.amount;
-          state.orders.push(event.aggregateId);
+          (state.orders ??= []).push(event.aggregateId);
         }
       })
       .build();
@@ -222,7 +222,7 @@ describe('Lifecycle Routing', () => {
   it('should route .join() events to the subscribed document', async () => {
     let subscribeContext: any = null;
     
-    const projection = createProjection<InvoiceState & { orders: string[] }>('invoice-test', (docId) => ({ total: 0, orders: [] }))
+    const projection = createProjection<InvoiceState>('invoice-test', (docId) => ({ total: 0, orders: [] }))
       .from(invoiceAgg, {
         'invoice.created': (state, event: any, ctx) => {
           // Subscribe to order
@@ -233,7 +233,7 @@ describe('Lifecycle Routing', () => {
       })
       .join(orderAgg, {
         'order.shipped': (state, event: any) => {
-          state.orders.push(event.aggregateId);
+          (state.orders ??= []).push(event.aggregateId);
         }
       })
       .build();

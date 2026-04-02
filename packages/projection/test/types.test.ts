@@ -1,5 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
-import type { Checkpoint, EventBatch, ProjectionEvent } from '../../src/projections/types';
+import type { Checkpoint, EventBatch, ProjectionEvent } from '../src/types';
 
 /**
  * Type-level tests verify TypeScript compiles correctly.
@@ -24,34 +24,28 @@ describe('Checkpoint', () => {
 
 describe('EventBatch', () => {
   test('accepts batch with events and cursor', () => {
-    const batch: EventBatch<{ id: string; value: number }> = {
-      events: [{ id: 'e1', value: 1 }, { id: 'e2', value: 2 }],
-      nextCursor: { sequence: 50 },
-      hasMore: true
+    const batch: EventBatch = {
+      events: [{ aggregateType: 'a', aggregateId: '1', type: 't', payload: {}, sequence: 1, timestamp: '2024-01-01T00:00:00Z' }],
+      nextCursor: { sequence: 50 }
     };
 
-    expect(batch.events).toHaveLength(2);
+    expect(batch.events).toHaveLength(1);
     expect(batch.nextCursor.sequence).toBe(50);
-    expect(batch.hasMore).toBe(true);
   });
 
   test('accepts empty batch', () => {
-    const batch: EventBatch<string> = {
+    const batch: EventBatch = {
       events: [],
-      nextCursor: { sequence: 0 },
-      hasMore: false
+      nextCursor: { sequence: 0 }
     };
 
     expect(batch.events).toHaveLength(0);
-    expect(batch.hasMore).toBe(false);
   });
 
   test('supports generic event types', () => {
-    type CustomEvent = { type: string; data: unknown };
-    const batch: EventBatch<CustomEvent> = {
-      events: [{ type: 'test', data: { foo: 'bar' } }],
-      nextCursor: { sequence: 1 },
-      hasMore: false
+    const batch: EventBatch = {
+      events: [{ aggregateType: 'task', aggregateId: 'task-1', type: 'test', payload: { foo: 'bar' }, sequence: 1, timestamp: '2024-01-01T00:00:00Z' }],
+      nextCursor: { sequence: 1 }
     };
 
     expect(batch.events[0].type).toBe('test');
@@ -60,8 +54,7 @@ describe('EventBatch', () => {
 
 describe('ProjectionEvent', () => {
   test('accepts valid projection event', () => {
-    const event: ProjectionEvent<{ amount: number; currency: string }, 'invoice.created.event'> = {
-      id: 'evt-123',
+    const event: ProjectionEvent = {
       aggregateType: 'invoice',
       aggregateId: 'inv-456',
       type: 'invoice.created.event',
@@ -70,7 +63,6 @@ describe('ProjectionEvent', () => {
       timestamp: '2024-01-15T10:30:00.000Z'
     };
 
-    expect(event.id).toBe('evt-123');
     expect(event.aggregateType).toBe('invoice');
     expect(event.aggregateId).toBe('inv-456');
     expect(event.type).toBe('invoice.created.event');
@@ -79,12 +71,11 @@ describe('ProjectionEvent', () => {
   });
 
   test('accepts projection event with optional metadata', () => {
-    const event: ProjectionEvent<void, 'order.placed.event'> = {
-      id: 'evt-789',
+    const event: ProjectionEvent = {
       aggregateType: 'order',
       aggregateId: 'ord-001',
       type: 'order.placed.event',
-      payload: undefined,
+      payload: {},
       sequence: 5,
       timestamp: '2024-01-16T14:00:00.000Z',
       metadata: {
@@ -98,8 +89,7 @@ describe('ProjectionEvent', () => {
   });
 
   test('supports flexible type parameter for event naming', () => {
-    const event: ProjectionEvent<{ status: string }> = {
-      id: 'evt-abc',
+    const event: ProjectionEvent = {
       aggregateType: 'task',
       aggregateId: 'task-1',
       type: 'task.completed', // custom type without .event suffix

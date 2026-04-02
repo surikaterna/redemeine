@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import { ProjectionDaemon, ProjectionDaemonOptions, BatchStats } from '../../src/projections/ProjectionDaemon';
-import { IProjectionStore } from '../../src/projections/IProjectionStore';
-import { IEventSubscription } from '../../src/projections/IEventSubscription';
-import { IProjectionLinkStore } from '../../src/projections/IProjectionLinkStore';
-import { ProjectionDefinition, createProjection } from '../../src/projections/createProjection';
-import { Checkpoint, EventBatch, ProjectionEvent } from '../../src/projections/types';
+import { ProjectionDaemon, ProjectionDaemonOptions, BatchStats } from '../src/ProjectionDaemon';
+import { IProjectionStore } from '../src/IProjectionStore';
+import { IEventSubscription } from '../src/IEventSubscription';
+import { IProjectionLinkStore } from '../src/IProjectionLinkStore';
+import { ProjectionDefinition, createProjection } from '../src/createProjection';
+import { Checkpoint, EventBatch, ProjectionEvent } from '../src/types';
 
 // Test types
 interface TestState {

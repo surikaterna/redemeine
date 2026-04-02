@@ -18,5 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "immer": "^10.2.0"
   }
 }
