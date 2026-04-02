@@ -116,7 +116,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         'http.get.success': {
           plugin_key: 'http',
           action_name: 'get',
@@ -193,7 +193,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         okay: {
           plugin_key: 'http',
           action_name: 'get',
@@ -280,7 +280,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_RESPONSE_BROKEN_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         broken: {
           plugin_key: 'http',
           action_name: 'get',
@@ -342,7 +342,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       identity: PLUGIN_WITH_DATA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
-      .responseHandlers({
+      .responseDefinitions({
         success: {
           plugin_key: 'http',
           action_name: 'get',

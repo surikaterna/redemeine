@@ -145,7 +145,7 @@ const saga = createSaga<InvoiceSagaState>({
   },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseHandlers({
+  .responseDefinitions({
     invoiceFetchSucceeded: {
       plugin_key: 'http',
       action_name: 'get',

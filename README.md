@@ -325,7 +325,7 @@ Assertions: * .expectEvents(events): Deep-equals the array of typed events retur
 .expectError(ErrorClass, message?): Asserts that the command handler threw the expected Domain Error (Invariant Violation).
 
 2. The Saga Tester (testSaga)
-Provide a fluent fixture that executes a Saga's .on() or .responseHandlers() and captures the resulting infrastructure Intents.
+Provide a fluent fixture that executes a Saga's .on() or .responseDefinitions() and captures the resulting infrastructure Intents.
 
 API: testSaga(sagaDef)
 
