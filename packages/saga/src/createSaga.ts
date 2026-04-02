@@ -1,5 +1,11 @@
 import { createDraft, finishDraft, type Draft } from 'immer';
 import type { SagaRetryPolicy } from './RetryPolicy';
+import {
+  buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
+  normalizeCanonicalIdentitySegment,
+  normalizeCanonicalSagaVersion
+} from './identity';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
@@ -1024,46 +1030,19 @@ function getAggregateType(aggregate: SagaAggregateDefinition): string {
   return aggregate.__aggregateType ?? 'unknown';
 }
 
-function normalizeIdentitySegment(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-');
-
-  return normalized.length > 0 ? normalized : fallback;
-}
-
-function normalizeIdentityVersion(version: number | undefined): number {
-  if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0) {
-    return 1;
-  }
-
-  return version;
-}
-
-function deriveSagaType(identity: SagaIdentityFields): string {
-  return `${identity.namespace}.${identity.name}.v${identity.version}`;
-}
-
-function deriveSagaUrn(identity: SagaIdentityFields): string {
-  return `urn:redemeine:saga:${identity.namespace}:${identity.name}:v${identity.version}`;
-}
-
 function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>): SagaIdentityMetadata {
   const legacyName = options.name;
-  const namespace = normalizeIdentitySegment(options.identity?.namespace ?? 'legacy', 'legacy');
-  const name = normalizeIdentitySegment(options.identity?.name ?? legacyName, 'saga');
-  const version = normalizeIdentityVersion(options.identity?.version);
+  const namespace = normalizeCanonicalIdentitySegment(options.identity?.namespace ?? 'legacy', 'legacy');
+  const name = normalizeCanonicalIdentitySegment(options.identity?.name ?? legacyName, 'saga');
+  const version = normalizeCanonicalSagaVersion(options.identity?.version);
   const base: SagaIdentityFields = {
     namespace,
     name,
     version
   };
 
-  const sagaType = deriveSagaType(base);
-  const sagaUrn = deriveSagaUrn(base);
+  const sagaType = buildCanonicalSagaType(base);
+  const sagaUrn = buildCanonicalSagaUrn(base);
 
   return {
     ...base,

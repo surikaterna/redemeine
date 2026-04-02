@@ -19,6 +19,8 @@ export {
 
 export {
   buildCanonicalSagaInstanceUrn,
+  normalizeCanonicalIdentitySegment,
+  normalizeCanonicalSagaVersion,
   buildCanonicalSagaType,
   buildCanonicalSagaUrn,
   normalizeSagaName,
