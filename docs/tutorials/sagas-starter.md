@@ -2,13 +2,13 @@
 
 This starter walks through the minimum moving parts for building a manifest-first, event-sourced saga in Redemeine.
 
-> ⚠️ **Breaking change:** this tutorial now focuses on the manifest-first saga definition API (`createSaga({ name, plugins? })`).
+> ⚠️ **Breaking change:** this tutorial now focuses on the manifest-first saga definition API (`createSaga({ identity, plugins? })`).
 
 You will:
 
 1. Define saga state.
 2. Define plugins with `defineSagaPlugin(...)`.
-3. Build a saga with `createSaga({ name, plugins? })`.
+3. Build a saga with `createSaga({ identity, plugins? })`.
 4. Use namespaced plugin actions (`ctx.actions.<plugin_key>.<action>(...)`).
 5. Route `request_response` actions with `.withData(...).onResponse(token).onError(token)`.
 
@@ -52,7 +52,12 @@ export const HttpPlugin = defineSagaPlugin({
 ## 3) Build the saga definition (canonical mixed-action example)
 
 ```ts
-import { createSaga } from '@redemeine/saga';
+import {
+  createSaga,
+  type TErrorToken,
+  type TRetryToken,
+  type TResponseToken
+} from '@redemeine/saga';
 
 const BillingAggregate = {
   __aggregateType: 'billing',
@@ -74,44 +79,15 @@ const BillingAggregate = {
 } as const;
 
 export const BillingSaga = createSaga<BillingSagaState>({
-  name: 'billing-saga',
+  identity: {
+    namespace: 'billing',
+    name: 'billing_saga',
+    version: 1
+  },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseDefinitions({
-    billingFetchSucceeded: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'response'
-    },
-    billingFetchFailed: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'error'
-    }
-  })
   .initialState(() => ({ attempts: 0, settled: false }))
   .correlate(BillingAggregate, event => event.payload.invoiceId)
-  .on(BillingAggregate, {
-    created: (state, event, ctx) => {
-      state.attempts += 1;
-
-      // void plugin action
-      ctx.actions.infra.scheduleCommand('billing.retry', 5_000);
-
-      // request_response plugin action chain
-      ctx.actions.http
-        .get(`https://api.example.com/billing/${event.payload.invoiceId}`)
-        .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempts })
-        .onResponse(ctx.onResponse.billingFetchSucceeded)
-        .onError(ctx.onError.billingFetchFailed);
-
-      // core actions are available in the same namespace
-      const commands = ctx.actions.core.dispatch(BillingAggregate, event.payload.invoiceId);
-      commands.charge({ invoiceId: event.payload.invoiceId, amount: 250 });
-      commands.notify({ invoiceId: event.payload.invoiceId, channel: 'email' });
-      ctx.actions.core.schedule('invoice-timeout', 5_000);
-    }
-  })
   .onResponses({
     billingFetchSucceeded: (state, response, ctx) => {
       state.settled = true;
@@ -127,19 +103,47 @@ export const BillingSaga = createSaga<BillingSagaState>({
       void error.error;
     }
   })
+  .onRetries({
+    billingFetchRetrying: (state, retry) => {
+      state.attempts = Math.max(state.attempts, retry.attempt);
+    }
+  })
+  .on(BillingAggregate, {
+    created: (state, event, ctx) => {
+      state.attempts += 1;
+
+      const successToken: TResponseToken<'billingFetchSucceeded'> = ctx.onResponse.billingFetchSucceeded;
+      const failureToken: TErrorToken<'billingFetchFailed'> = ctx.onError.billingFetchFailed;
+      const retryToken: TRetryToken<'billingFetchRetrying'> = ctx.onRetry.billingFetchRetrying;
+      void retryToken;
+
+      // void plugin action
+      ctx.actions.infra.scheduleCommand('billing.retry', 5_000);
+
+      // request_response plugin action chain
+      ctx.actions.http
+        .get(`https://api.example.com/billing/${event.payload.invoiceId}`)
+        .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempts })
+        .onResponse(successToken)
+        .onError(failureToken);
+
+      // core actions are available in the same namespace
+      const commands = ctx.actions.core.dispatch(BillingAggregate, event.payload.invoiceId);
+      commands.charge({ invoiceId: event.payload.invoiceId, amount: 250 });
+      commands.notify({ invoiceId: event.payload.invoiceId, channel: 'email' });
+      ctx.actions.core.schedule('invoice-timeout', 5_000);
+    }
+  })
   .build();
 ```
 
 Handlers are mutation-style (Immer semantics): mutate `state`, then emit intents through `ctx` helpers.
 
-Request routing is durable and restart-safe because only named handler tokens are persisted (`response_handler_key`, `error_handler_key`, `handler_data`). Inline callback persistence is not supported.
+Callback registration is handler-map-first: `.onResponses(...)`, `.onErrors(...)`, and `.onRetries(...)` define both token namespaces and executable handlers.
 
-Executable response/error handlers are registered separately with `.onResponses(...)` and `.onErrors(...)`. These runtime maps are not persisted; they are attached at build time for in-process execution.
+`ctx.onResponse.*`, `ctx.onError.*`, and `ctx.onRetry.*` expose branded tokens (`TResponseToken` / `TErrorToken` / `TRetryToken`) so cross-phase token usage is rejected at compile time.
 
-Concretely:
-
-- Persisted map: `response_handlers` (from `responseDefinitions(...)`).
-- Runtime-only maps: `executable_response_handlers` and `executable_error_handlers` (from `.onResponses(...)` / `.onErrors(...)`).
+Runtime action-level validation for callback envelopes is intentionally deferred in this phase; runtime dispatch performs phase-specific handler map lookup only.
 
 ## Deterministic testing chain with invokeResponse / invokeError
 
@@ -185,7 +189,13 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<BillingSagaState>('billing-saga')
+const sagaWithActivity = createSaga<BillingSagaState>({
+  identity: {
+    namespace: 'billing',
+    name: 'billing_activity_saga',
+    version: 1
+  }
+})
   .initialState(() => ({ attempts: 0, settled: false }))
   .on(BillingAggregate, {
     created: (state, event, ctx) => {
@@ -210,7 +220,6 @@ Definition-only scope reminder: plugin runtime execution is intentionally out of
 When persisting saga progress as a structure-only `SagaAggregate` model, keep these terms distinct:
 
 - Code-level keys remain camelCase (`scheduleCommand`, `billingFetchSucceeded`, etc.).
-- Persisted/wire metadata fields remain snake_case (`plugin_key`, `action_name`, `response_handler_key`, `error_handler_key`, `handler_data`).
 - Event/command `type` values on the wire are snake_case.
 - Timestamps are ISO8601 strings.
 - Recent transitions/events/activities are compact bounded windows with separate totals.
