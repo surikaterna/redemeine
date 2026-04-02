@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSaga, type SagaResponseHandlerTokenBindings } from '../src/createSaga';
-import { testSaga } from '../src/testSaga';
+import {
+  createSaga,
+  testSaga,
+  type CanonicalSagaIdentityInput,
+  type SagaResponseHandlerTokenBindings
+} from '../src';
 
 const PaymentAggregate = {
   __aggregateType: 'payment',
@@ -17,6 +21,24 @@ const PaymentAggregate = {
   }
 } as const;
 
+const TEST_SAGA_CHAIN_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'test.saga',
+  name: 'chain',
+  version: 1
+};
+
+const TEST_SAGA_FIFO_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'test.saga',
+  name: 'fifo',
+  version: 1
+};
+
+const TEST_SAGA_FAILURES_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'test.saga',
+  name: 'failures',
+  version: 1
+};
+
 describe('testSaga fixture', () => {
   it('runs chain flow through event -> invokeResponse -> invokeError', async () => {
     const responseBindings = {
@@ -32,7 +54,7 @@ describe('testSaga fixture', () => {
       }
     } as const satisfies SagaResponseHandlerTokenBindings;
 
-    const saga = createSaga<{ attempts: number; log: string[] }>({ name: 'test-saga-chain' })
+    const saga = createSaga<{ attempts: number; log: string[] }>({ identity: TEST_SAGA_CHAIN_IDENTITY })
       .initialState(() => ({ attempts: 0, log: [] as string[] }))
       .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
@@ -125,7 +147,7 @@ describe('testSaga fixture', () => {
       }
     } as const satisfies SagaResponseHandlerTokenBindings;
 
-    const saga = createSaga<{ seen: string[] }>({ name: 'test-saga-fifo' })
+    const saga = createSaga<{ seen: string[] }>({ identity: TEST_SAGA_FIFO_IDENTITY })
       .initialState(() => ({ seen: [] as string[] }))
       .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
@@ -191,7 +213,7 @@ describe('testSaga fixture', () => {
   });
 
   it('returns explicit deterministic failures for unknown token and empty queue', async () => {
-    const saga = createSaga<{ touched: number }>({ name: 'test-saga-failures' })
+    const saga = createSaga<{ touched: number }>({ identity: TEST_SAGA_FAILURES_IDENTITY })
       .initialState(() => ({ touched: 0 }))
       .responseDefinitions({
         'payment.capture.ok': {

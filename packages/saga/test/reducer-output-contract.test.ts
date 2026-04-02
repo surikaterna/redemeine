@@ -177,7 +177,13 @@ describe('S08 reducer output contract typing', () => {
     const responseFn = (_state: { attempts: number }, _response: { token: 'billing.charge.ok' }) => undefined;
     const errorFn = (_state: { attempts: number }, _error: { token: 'billing.charge.failed' }) => undefined;
 
-    const saga = createSaga<{ attempts: number }>({ name: 'billing-saga-runtime-maps' })
+    const saga = createSaga<{ attempts: number }>({
+      identity: {
+        namespace: 'billing',
+        name: 'billing_saga_runtime_maps',
+        version: 1
+      }
+    })
       .responseDefinitions({
         'billing.charge.ok': {
           plugin_key: 'billing',

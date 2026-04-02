@@ -3,10 +3,11 @@ import {
   createSaga,
   runSagaErrorHandler,
   runSagaResponseHandler,
+  type CanonicalSagaIdentityInput,
   type SagaDefinition,
   type SagaIntent,
   type SagaResponseHandlerTokenBindings
-} from '../src/createSaga';
+} from '../src';
 
 type RuntimeTestState = {
   attempts: number;
@@ -27,9 +28,33 @@ const responseBindings = {
   }
 } as const satisfies SagaResponseHandlerTokenBindings;
 
+const RUNTIME_RESPONSE_HANDLER_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'runtime',
+  name: 'response_handler',
+  version: 1
+};
+
+const RUNTIME_ERROR_HANDLER_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'runtime',
+  name: 'error_handler',
+  version: 1
+};
+
+const RUNTIME_HANDLER_FAILURES_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'runtime',
+  name: 'handler_failures',
+  version: 1
+};
+
+const RUNTIME_HANDLER_ERROR_FAILURES_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'runtime',
+  name: 'handler_error_failures',
+  version: 1
+};
+
 describe('runtime executable saga handlers', () => {
   it('runs response handler by token and returns deterministic reducer output', async () => {
-    const saga = createSaga<RuntimeTestState>({ name: 'runtime-response-handler' })
+    const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_RESPONSE_HANDLER_IDENTITY })
       .responseDefinitions(responseBindings)
       .onResponses({
         'billing.charge.ok': (state, response, ctx) => {
@@ -83,7 +108,7 @@ describe('runtime executable saga handlers', () => {
   });
 
   it('runs error handler by token and returns deterministic reducer output', async () => {
-    const saga = createSaga<RuntimeTestState>({ name: 'runtime-error-handler' })
+    const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_ERROR_HANDLER_IDENTITY })
       .responseDefinitions(responseBindings)
       .onErrors({
         'billing.charge.failed': (state, error, ctx) => {
@@ -134,7 +159,7 @@ describe('runtime executable saga handlers', () => {
   });
 
   it('returns deterministic failure contract for token lookup and phase mismatch', async () => {
-    const saga = createSaga<RuntimeTestState>({ name: 'runtime-handler-failures' })
+    const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_FAILURES_IDENTITY })
       .responseDefinitions(responseBindings)
       .build();
     const untypedSaga = saga as unknown as SagaDefinition<RuntimeTestState, readonly [], any>;
@@ -181,7 +206,7 @@ describe('runtime executable saga handlers', () => {
   });
 
   it('returns handler_not_registered and phase_mismatch for error helper', async () => {
-    const saga = createSaga<RuntimeTestState>({ name: 'runtime-handler-error-failures' })
+    const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_ERROR_FAILURES_IDENTITY })
       .responseDefinitions(responseBindings)
       .build();
     const untypedSaga = saga as unknown as SagaDefinition<RuntimeTestState, readonly [], any>;
