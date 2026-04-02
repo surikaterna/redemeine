@@ -58,6 +58,9 @@
     "packages/projection": {
       "name": "@redemeine/projection",
       "version": "0.1.0",
+      "dependencies": {
+        "immer": "^10.2.0",
+      },
     },
     "packages/root-runner": {
       "name": "@redemeine/root-runner",

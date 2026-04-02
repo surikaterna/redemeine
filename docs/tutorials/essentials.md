@@ -29,7 +29,7 @@ export interface CartState {
 We use `createAggregate` to start constructing our domain model. Think of this as the Redux Toolkit `createSlice` on steroids.
 
 ```ts
-import { createAggregate } from 'redemeine';
+import { createAggregate } from '@redemeine/aggregate';
 import type { CartState, CartItem } from './types';
 
 const initialState: CartState = {
@@ -83,7 +83,7 @@ Notice how we aren't validating the `payload` structure here? Your handler stays
 Now we take our static blueprint and breathe life into it using `createMirage`. This proxy object maps our commands securely to our instance while tracking uncommitted events.
 
 ```ts
-import { createMirage } from 'redemeine';
+import { createMirage } from '@redemeine/mirage';
 
 function runCartFlow() {
   // 1. Create a living instance of our aggregate

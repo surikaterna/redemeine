@@ -59,6 +59,7 @@ Legend: ✅ allowed, ❌ forbidden, — same package
 |---|---|
 | `import { ... } from 'redemeine'` | `import { ... } from '@redemeine/<package>'` |
 | `import { ... } from 'redemeine/sagas'` | `import { ... } from '@redemeine/saga'` |
+| `import { ... } from 'redemeine/projections'` | `import { ... } from '@redemeine/projection'` |
 | `import { ... } from 'redemeine/sagas/internal/runtime/*'` | `import { ... } from '@redemeine/saga-runtime'` (only public runtime exports) |
 | `import { ... } from 'src/aggregate/*'` | `import { ... } from '@redemeine/aggregate'` |
 | `import { ... } from 'src/mirage/*'` | `import { ... } from '@redemeine/mirage'` |

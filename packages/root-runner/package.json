@@ -2,10 +2,11 @@
   "name": "@redemeine/root-runner",
   "version": "0.0.0",
   "private": true,
+  "deprecated": "Transitional package from single-package orchestration. Use workspace package tasks via turbo.",
   "scripts": {
-    "build": "bun run --cwd ../.. build:legacy",
-    "typecheck": "bun run --cwd ../.. typecheck:legacy",
-    "test": "bun run --cwd ../.. test:legacy",
-    "lint": "bun run --cwd ../.. lint:legacy"
+    "build": "bun --eval \"console.log('@redemeine/root-runner is deprecated; use bunx turbo run build')\"",
+    "typecheck": "bun --eval \"console.log('@redemeine/root-runner is deprecated; use bunx turbo run typecheck')\"",
+    "test": "bun --eval \"console.log('@redemeine/root-runner is deprecated; use bunx turbo run test')\"",
+    "lint": "bun --eval \"console.log('@redemeine/root-runner is deprecated; use bunx turbo run lint')\""
   }
 }
