@@ -70,6 +70,7 @@
       "name": "@redemeine/saga",
       "version": "0.1.0",
       "dependencies": {
+        "@redemeine/aggregate": "workspace:*",
         "immer": "^10.1.1",
       },
     },
