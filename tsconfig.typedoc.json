@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "moduleResolution": "node",
+    "paths": {
+      "@redemeine/aggregate": ["packages/aggregate/src/index.ts"],
+      "@redemeine/kernel": ["packages/kernel/src/index.ts"],
+      "@redemeine/mirage": ["packages/mirage/src/index.ts"],
+      "@redemeine/projection": ["packages/projection/src/index.ts"],
+      "@redemeine/saga": ["packages/saga/src/index.ts"],
+      "@redemeine/saga-runtime": ["packages/saga-runtime/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/redemeine.ts",
+    "packages/aggregate/src/**/*.ts",
+    "packages/kernel/src/**/*.ts",
+    "packages/mirage/src/**/*.ts",
+    "packages/projection/src/**/*.ts",
+    "packages/saga/src/**/*.ts",
+    "packages/saga-runtime/src/**/*.ts"
+  ]
+}

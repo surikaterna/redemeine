@@ -27,7 +27,7 @@ export interface AccountState {
 When bootstrapping your aggregate, pass this state interface directly into the builder:
 
 ```ts
-import { createAggregate } from 'redemeine';
+import { createAggregate } from '@redemeine/aggregate';
 
 const initialState: AccountState = {
   id: '',
@@ -125,7 +125,7 @@ export const AccountAggregate = createAggregate<AccountState, 'Account'>('Accoun
   .build();
 
 // 2. We use createMirage to spawn live instances
-import { createMirage } from 'redemeine';
+import { createMirage } from '@redemeine/mirage';
 
 export function getLiveAccount(id: string) {
     return createMirage(AccountAggregate, id);

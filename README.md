@@ -13,7 +13,8 @@
 ## ⚡ Visual Hook
 
 ```typescript
-import { createAggregate, createMirage } from 'redemeine';
+import { createAggregate } from '@redemeine/aggregate';
+import { createMirage } from '@redemeine/mirage';
 
 // Compose your aggregate builder with typed commands, events, and entities
 const OrderAggregate = createAggregate('Order', initialOrderState)
@@ -140,17 +141,30 @@ Start with the docs tutorial at `docs/tutorials/sagas-starter.md` and the refere
 *   🧪 [**`/examples`**](./examples) - Executable, real-world CQRS applications.
 *   🤖 [**`/llms.txt`**](./llms.txt) - Contextual overview specifically optimized for AI coding assistants.
 
+## 🧱 Monorepo Package Architecture
+
+Redemeine now ships as a Bun+Turbo workspace with explicit package entry points:
+
+- `@redemeine/kernel` - shared contracts and cross-package utilities
+- `@redemeine/aggregate` - aggregate/entity/mixin builders
+- `@redemeine/mirage` - live aggregate runtime helpers
+- `@redemeine/projection` - projection builders + daemon/store helpers
+- `@redemeine/saga` - saga definition DSL + retry utilities
+- `@redemeine/saga-runtime` - runtime-facing saga orchestration seams
+
+Legacy root imports from `redemeine` are deprecated for internal and new consumer code. Prefer direct `@redemeine/*` imports.
+
 ## 🛠️ Scaffold Your Project
 
 Get up to speed in seconds by leveraging the CLI to generate your domain skeleton:
 
 ```bash
 # Initialize a new Redemeine workspace with standard conventions
-npx redemeine init <name>
+bunx redemeine init <name>
 
 # Generate a new aggregate with its standard command and event files
 # (This automatically scaffolds a "Given/When/Then" test suite!)
-npx redemeine generate aggregate Shipment
+bunx redemeine generate aggregate Shipment
 ```
 
 ## 🏗️ Core Concepts

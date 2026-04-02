@@ -19,7 +19,7 @@ export const Events = z.object({
 });
 `;
 
-export const aggregateTemplate = (aggregateName: string) => `import { createAggregate, EntityArray } from 'redemeine';
+export const aggregateTemplate = (aggregateName: string) => `import { createAggregate, EntityArray } from '@redemeine/aggregate';
 import { InitialState, Commands, Events } from './contract';
 import * as selectors from './selectors';
 
@@ -36,7 +36,7 @@ export const selectorsTemplate = () => `// Define your pluggable selectors here
 export const getCoreState = (state: any) => state;
 `;
 
-export const entityTemplate = (entityName: string) => `import { createEntity } from 'redemeine';
+export const entityTemplate = (entityName: string) => `import { createEntity } from '@redemeine/aggregate';
 
 export const ${entityName}Entity = createEntity('${entityName}')
   .selectors({
