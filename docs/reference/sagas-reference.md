@@ -8,12 +8,14 @@ For generated API signatures, use `/docs/api/`.
 
 ## Public module overview
 
-- `createSaga.ts`: typed saga definition builder and intent types.
-- `RetryPolicy.ts`: retry validation, backoff scheduling, and classification helpers.
-- `triggers.ts`: definition-only trigger builders (`event`, `parent`, `direct`, `recovery`, `schedule.*`) with typed `toStartInput` and `when` chaining.
-- `startPolicy.ts`: typed start policy helper constructors for trigger contracts.
+From `@redemeine/saga`:
 
-Public export barrel (`src/sagas/index.ts`):
+- `createSaga`: typed saga definition builder and intent types.
+- `RetryPolicy` exports: retry validation, backoff scheduling, and classification helpers.
+- `triggers` exports: definition-only trigger builders (`event`, `parent`, `direct`, `recovery`, `schedule.*`) with typed `toStartInput` and `when` chaining.
+- `startPolicy`: typed start policy helper constructors for trigger contracts.
+
+Public export barrel (`packages/saga/src/index.ts`):
 
 - `createSaga`
 - `SagaRetryPolicy` + retry helpers
@@ -22,14 +24,17 @@ Public export barrel (`src/sagas/index.ts`):
 
 Usage note:
 
-- `createSagaAggregate(nameOrOptions?)` exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
+- `createSagaAggregate(nameOrOptions?)` is owned by `@redemeine/saga-runtime` (re-exported from `packages/saga-runtime/src/index.ts`) and exposes the public, structure-only saga aggregate contract used for persisted saga records and wire-level shape typing.
 - Trigger builders and start-policy helpers are **definition-layer only** and do not change runtime execution behavior.
 
 Anything outside these documented exports is runtime implementation detail and may change without semver guarantees.
 
 ## Saga identity contract (canonical)
 
-Saga identity is definition-first and has a canonical source of truth.
+Saga identity is definition-first and has a canonical source of truth in `@redemeine/saga`.
+
+- Canonical identity derives from structured fields via the identity module (`normalizeSagaIdentity`, `buildSagaType`, `deriveSagaUrn`, `deriveSagaInstanceUrn`).
+- Compatibility exports remain available for non-breaking migration (`toSagaIdentityUrn`, `parseSagaIdentityUrn`, `validateSagaIdentity*`, and `normalizeSagaIdentityInput` for legacy input shapes).
 
 ### Structured source fields (required)
 
@@ -227,6 +232,11 @@ Attach policies to trigger-adjacent contracts through `SagaTriggerStartContract`
 `SagaAggregate` is a **persistence/contract shape** for saga state and emitted records.
 It is intentionally structure-only and does **not** define runtime worker behavior.
 
+Ownership note:
+
+- Runtime aggregate factory APIs (`createSagaAggregate`, `SagaAggregate` types) are provided by `@redemeine/saga-runtime`.
+- `@redemeine/saga` remains the definition/identity package for saga authoring surfaces.
+
 ### Naming and wire format conventions
 
 - Saga state uses **camelCase** keys (for example `createdAt`, `updatedAt`, `transitionVersion`).
@@ -280,4 +290,4 @@ If you used older/expanded saga docs, migrate as follows:
 - **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
 - **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
-- **Treat internals as unstable:** anything outside `src/sagas/index.ts` exports is implementation detail.
+- **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.
