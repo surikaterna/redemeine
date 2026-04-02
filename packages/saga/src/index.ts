@@ -55,7 +55,12 @@ export {
   type SagaResponseHandlerTokenNamespace,
   type SagaRunActivity,
   type SagaRunActivityIntent,
-  type SagaScheduleIntent
+  type SagaScheduleIntent,
+  type SagaStartCorrelationResolver,
+  type SagaStartDslContracts,
+  type SagaStartHandler,
+  type SagaTriggerContract,
+  type SagaTriggerDefinition
 } from './createSaga';
 export { createAggregate } from './aggregateBridge';
 export {

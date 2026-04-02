@@ -810,6 +810,56 @@ export type SagaHandlers<
   >;
 };
 
+/** Handler used by trigger-based saga starts before any aggregate events. */
+export type SagaStartHandler<
+  TStartInput,
+  TState,
+  TPlugins extends SagaPluginManifestList = readonly [],
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+> = (
+  start: TStartInput,
+  ctx: SagaIntentContext<TPlugins, TResponseHandlerBindings>
+) => SagaHandlerResult;
+
+/** Resolver that maps normalized start input to a correlation key. */
+export type SagaStartCorrelationResolver<TStartInput, TCorrelationId = unknown> = (
+  start: TStartInput
+) => TCorrelationId;
+
+/** Normalized trigger contract shape retained in saga definition metadata. */
+export interface SagaTriggerContract<
+  TStartInput,
+  TTriggerInput = unknown,
+  TKind extends string = string
+> {
+  readonly kind: TKind;
+  readonly toStartInput: (trigger: TTriggerInput) => TStartInput;
+  readonly when?: (trigger: TTriggerInput) => boolean;
+  readonly hasWhen: boolean;
+}
+
+/** Trigger definition accepted by `.triggeredBy(...)`. */
+export interface SagaTriggerDefinition<
+  TStartInput,
+  TTriggerInput = unknown,
+  TKind extends string = string
+> {
+  readonly kind: TKind;
+  readonly toStartInput: (trigger: TTriggerInput) => TStartInput;
+  readonly when?: (trigger: TTriggerInput) => boolean;
+}
+
+/** Normalized start/correlation/trigger metadata exported on saga definitions. */
+export interface SagaStartDslContracts<TStartInput = unknown, TCorrelationId = unknown> {
+  readonly start?: {
+    readonly kind: 'definition-only';
+  };
+  readonly correlation?: {
+    readonly correlateBy: SagaStartCorrelationResolver<TStartInput, TCorrelationId>;
+  };
+  readonly triggers: readonly SagaTriggerContract<TStartInput, unknown, string>[];
+}
+
 /** Built saga definition consumed by runtime execution layers. */
 export interface SagaDefinition<
   TState = unknown,
@@ -822,6 +872,8 @@ export interface SagaDefinition<
   sagaUrn: string;
   plugins: SagaPluginRegistryFromManifests<TPlugins>;
   initialState: SagaInitialStateFactory<TState>;
+  start?: SagaStartHandler<unknown, TState, TPlugins, TResponseHandlerBindings>;
+  startContracts: SagaStartDslContracts<unknown, unknown>;
   response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
@@ -854,6 +906,56 @@ export interface SagaBuilder<
     aggregate: TAggregate,
     handlers: SagaHandlers<TState, TAggregate, TPlugins, TResponseHandlerBindings>
   ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings>;
+  start<TStartInput>(
+    handler: SagaStartHandler<TStartInput, TState, TPlugins, TResponseHandlerBindings>
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  build(): SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
+}
+
+/** Builder phase after `start(...)` and before required `correlateBy(...)`. */
+export interface SagaBuilderAwaitingCorrelation<
+  TState,
+  TPlugins extends SagaPluginManifestList,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
+  TStartInput
+> {
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderAwaitingCorrelation<TNextState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+    handlers: TNextResponseHandlerBindings
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TNextResponseHandlerBindings, TStartInput>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  on<TAggregate extends SagaAggregateDefinition>(
+    aggregate: TAggregate,
+    handlers: SagaHandlers<TState, TAggregate, TPlugins, TResponseHandlerBindings>
+  ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  correlateBy<TCorrelationId>(
+    correlate: SagaStartCorrelationResolver<TStartInput, TCorrelationId>
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+}
+
+/** Builder phase after `correlateBy(...)`, where triggers and build are available. */
+export interface SagaBuilderCorrelated<
+  TState,
+  TPlugins extends SagaPluginManifestList,
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
+  TStartInput,
+  TCorrelationId
+> {
+  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderCorrelated<TNextState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+  responseHandlers<const TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(
+    handlers: TNextResponseHandlerBindings
+  ): SagaBuilderCorrelated<TState, TPlugins, TNextResponseHandlerBindings, TStartInput, TCorrelationId>;
+  correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+  on<TAggregate extends SagaAggregateDefinition>(
+    aggregate: TAggregate,
+    handlers: SagaHandlers<TState, TAggregate, TPlugins, TResponseHandlerBindings>
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+  correlateBy<TNextCorrelationId>(
+    correlate: SagaStartCorrelationResolver<TStartInput, TNextCorrelationId>
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TNextCorrelationId>;
+  triggeredBy<TTriggerInput, TKind extends string = string>(
+    trigger: SagaTriggerDefinition<TStartInput, TTriggerInput, TKind>
+  ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
   build(): SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
 }
 
@@ -896,6 +998,8 @@ interface SagaDefinitionDraft<
   sagaUrn: string;
   plugins: TPlugins;
   initialState: SagaInitialStateFactory<unknown>;
+  start?: SagaStartHandler<unknown, unknown, SagaPluginManifestList, SagaResponseHandlerTokenBindings>;
+  startContracts: SagaStartDslContracts<unknown, unknown>;
   response_handlers: TResponseHandlerBindings;
   correlations: Array<{
     aggregateType: string;
@@ -1025,6 +1129,151 @@ function createSagaBuilder<
     TResponseHandlerBindings
   >
 ): SagaBuilder<TState, TPlugins, TResponseHandlerBindings> {
+  const addCorrelation = (aggregate: SagaAggregateDefinition, correlate: SagaCorrelationFactory) => {
+    state.correlations.push({
+      aggregate,
+      aggregateType: getAggregateType(aggregate),
+      sagaType: state.sagaType,
+      sagaUrn: state.sagaUrn,
+      correlate
+    });
+  };
+
+  const addHandlers = (
+    aggregate: SagaAggregateDefinition,
+    handlers: Record<
+      string,
+      SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
+    >
+  ) => {
+    state.handlers.push({
+      aggregate,
+      aggregateType: getAggregateType(aggregate),
+      sagaType: state.sagaType,
+      sagaUrn: state.sagaUrn,
+      handlers
+    });
+  };
+
+  const createAwaitingCorrelationBuilder = <
+    TLocalState,
+    TLocalResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
+    TStartInput
+  >(): SagaBuilderAwaitingCorrelation<TLocalState, TPlugins, TLocalResponseHandlerBindings, TStartInput> => ({
+    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+      state.initialState = factory as SagaInitialStateFactory<unknown>;
+      return createAwaitingCorrelationBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput>();
+    },
+    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TNextResponseHandlerBindings
+      >).response_handlers = handlers;
+      return createAwaitingCorrelationBuilder<TLocalState, TNextResponseHandlerBindings, TStartInput>();
+    },
+    correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
+      addCorrelation(aggregate, correlate);
+      return createAwaitingCorrelationBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput>();
+    },
+    on<TAggregate extends SagaAggregateDefinition>(
+      aggregate: TAggregate,
+      handlers: SagaHandlers<TLocalState, TAggregate, TPlugins, TLocalResponseHandlerBindings>
+    ) {
+      addHandlers(
+        aggregate,
+        handlers as Record<
+          string,
+          SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
+        >
+      );
+      return createAwaitingCorrelationBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput>();
+    },
+    correlateBy<TCorrelationId>(correlate: SagaStartCorrelationResolver<TStartInput, TCorrelationId>) {
+      state.startContracts = {
+        ...state.startContracts,
+        correlation: {
+          correlateBy: correlate as SagaStartCorrelationResolver<unknown, unknown>
+        }
+      };
+
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+    }
+  });
+
+  const createCorrelatedBuilder = <
+    TLocalState,
+    TLocalResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
+    TStartInput,
+    TCorrelationId
+  >(): SagaBuilderCorrelated<TLocalState, TPlugins, TLocalResponseHandlerBindings, TStartInput, TCorrelationId> => ({
+    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+      state.initialState = factory as SagaInitialStateFactory<unknown>;
+      return createCorrelatedBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+    },
+    responseHandlers<TNextResponseHandlerBindings extends SagaResponseHandlerTokenBindings>(handlers: TNextResponseHandlerBindings) {
+      (state as unknown as SagaDefinitionDraft<
+        SagaPluginRegistryFromManifests<TPlugins>,
+        TNextResponseHandlerBindings
+      >).response_handlers = handlers;
+      return createCorrelatedBuilder<TLocalState, TNextResponseHandlerBindings, TStartInput, TCorrelationId>();
+    },
+    correlate<TAggregate extends SagaAggregateDefinition>(aggregate: TAggregate, correlate: SagaCorrelationFactory) {
+      addCorrelation(aggregate, correlate);
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+    },
+    on<TAggregate extends SagaAggregateDefinition>(
+      aggregate: TAggregate,
+      handlers: SagaHandlers<TLocalState, TAggregate, TPlugins, TLocalResponseHandlerBindings>
+    ) {
+      addHandlers(
+        aggregate,
+        handlers as Record<
+          string,
+          SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
+        >
+      );
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+    },
+    correlateBy<TNextCorrelationId>(correlate: SagaStartCorrelationResolver<TStartInput, TNextCorrelationId>) {
+      state.startContracts = {
+        ...state.startContracts,
+        correlation: {
+          correlateBy: correlate as SagaStartCorrelationResolver<unknown, unknown>
+        }
+      };
+
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TNextCorrelationId>();
+    },
+    triggeredBy<TTriggerInput, TKind extends string = string>(
+      trigger: SagaTriggerDefinition<TStartInput, TTriggerInput, TKind>
+    ) {
+      const normalizedTrigger: SagaTriggerContract<unknown, unknown, string> = {
+        kind: trigger.kind,
+        toStartInput: trigger.toStartInput as (trigger: unknown) => unknown,
+        when: trigger.when as ((trigger: unknown) => boolean) | undefined,
+        hasWhen: typeof trigger.when === 'function'
+      };
+
+      state.startContracts = {
+        ...state.startContracts,
+        triggers: [...state.startContracts.triggers, normalizedTrigger]
+      };
+
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+    },
+    build() {
+      return ({
+        ...state,
+        plugins: [...state.plugins],
+        startContracts: {
+          ...state.startContracts,
+          triggers: [...state.startContracts.triggers]
+        },
+        response_handlers: { ...state.response_handlers }
+      } as unknown) as SagaDefinition<TLocalState, TPlugins, TLocalResponseHandlerBindings>;
+    }
+  });
+
   return {
     initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
@@ -1039,32 +1288,38 @@ function createSagaBuilder<
       return createSagaBuilder<TState, TPlugins, TNextResponseHandlerBindings>(nextState);
     },
     correlate(aggregate, correlate) {
-      state.correlations.push({
-        aggregate,
-        aggregateType: getAggregateType(aggregate),
-        sagaType: state.sagaType,
-        sagaUrn: state.sagaUrn,
-        correlate
-      });
+      addCorrelation(aggregate, correlate);
       return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
     },
     on(aggregate, handlers) {
-      state.handlers.push({
+      addHandlers(
         aggregate,
-        aggregateType: getAggregateType(aggregate),
-        sagaType: state.sagaType,
-        sagaUrn: state.sagaUrn,
-        handlers: handlers as Record<
+        handlers as Record<
           string,
           SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
         >
-      });
+      );
       return createSagaBuilder<TState, TPlugins, TResponseHandlerBindings>(state);
+    },
+    start<TStartInput>(handler: SagaStartHandler<TStartInput, TState, TPlugins, TResponseHandlerBindings>) {
+      state.start = handler as SagaStartHandler<unknown, unknown, SagaPluginManifestList, SagaResponseHandlerTokenBindings>;
+      state.startContracts = {
+        ...state.startContracts,
+        start: {
+          kind: 'definition-only'
+        }
+      };
+
+      return createAwaitingCorrelationBuilder<TState, TResponseHandlerBindings, TStartInput>();
     },
     build() {
       return ({
         ...state,
         plugins: [...state.plugins],
+        startContracts: {
+          ...state.startContracts,
+          triggers: [...state.startContracts.triggers]
+        },
         response_handlers: { ...state.response_handlers }
       } as unknown) as SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
     }
@@ -1093,6 +1348,12 @@ export function createSaga<
     sagaUrn: identity.sagaUrn,
     plugins: pluginRegistry,
     initialState: () => undefined,
+    start: undefined,
+    startContracts: {
+      start: undefined,
+      correlation: undefined,
+      triggers: []
+    },
     response_handlers: {},
     correlations: [],
     handlers: []
