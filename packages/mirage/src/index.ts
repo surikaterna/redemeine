@@ -1,2 +1,2 @@
-// @redemeine/mirage package entrypoint placeholder.
-export {};
+export * from './createMirage';
+export * from './Depot';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
-import { createEntity } from '../src/createEntity';
-import { Event } from '../src/types';
+import { createEntity } from '@redemeine/aggregate';
+import { Event } from '@redemeine/kernel';
 
 describe('createEntity', () => {
   test('builds entity package with flat builder API and metadata', () => {

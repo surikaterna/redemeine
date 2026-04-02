@@ -1,5 +1,4 @@
-import { createCommand } from '../createCommand';
-import { NamingStrategy } from '../types';
+import { createCommand, NamingStrategy } from '@redemeine/kernel';
 import { GenericCommandMap, createCommandPayload } from '../redemeineComponent';
 
 export function createCommandCreatorsProxy(

@@ -1,8 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregate } from '../src/createAggregate';
-import { createEntity } from '../src/createEntity';
+import { createAggregate, createEntity } from '@redemeine/aggregate';
 import { createMirage, createLegacyAggregateBridge } from '../src/createMirage';
-import { Event, RedemeinePlugin } from '../src/types';
+import { Event, RedemeinePlugin } from '@redemeine/kernel';
 
 interface TestState {
     value: number;

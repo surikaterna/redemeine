@@ -1,10 +1,6 @@
-import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError } from './types';
-import { Contract } from './Contract';
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
-import { createReadonlyDeepProxy } from './utils/readonlyProxy';
-import type { EntityPackage } from './createEntity';
-import type { AggregateEntityRegistry } from './createAggregate';
-import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from './bindContext';
+import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError, Contract, ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import type { EntityPackage, AggregateEntityRegistry } from '@redemeine/aggregate';
+import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
 type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 

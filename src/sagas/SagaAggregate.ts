@@ -1,5 +1,5 @@
-import { createAggregate } from '../createAggregate';
-import type { Event } from '../types';
+import { createAggregate } from '@redemeine/aggregate';
+import type { Event } from '@redemeine/kernel';
 
 export interface SagaRecentWindowLimits {
   transitions: number;

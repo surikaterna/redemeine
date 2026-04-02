@@ -1,9 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
-import { createAggregate } from '../src/createAggregate';
-import { createEntity } from '../src/createEntity';
-import { createMixin } from '../src/createMixin';
-import { createMirage } from '../src/createMirage';
-import { CommandResult, Event, RedemeinePlugin } from '../src/types';
+import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
+import { createMirage } from '@redemeine/mirage';
+import { CommandResult, Event, RedemeinePlugin } from '@redemeine/kernel';
 
 type ParentState = { id: string; count: number; line: { id: string; qty: number }[] };
 
