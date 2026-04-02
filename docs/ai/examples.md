@@ -1,4 +1,4 @@
-import { AggregateBuilder } from 'redemeine';
+import { createAggregate } from '@redemeine/aggregate';
 
 /** 1. Pure TypeScript Contracts */
 export interface RegisterUser {
@@ -12,8 +12,12 @@ export interface UserState {
   status: 'guest' | 'registered';
 }
 
+const initialUserState: UserState = {
+  status: 'guest'
+};
+
 /** 2. Clean Aggregate Composition */
-export const UserAggregate = new AggregateBuilder<UserState>()
+export const UserAggregate = createAggregate<UserState, 'user'>('user', initialUserState)
   .events({
     /** State Projection: Direct mutation via Immer */
     userRegistered: (state, event: RegisterUser) => {

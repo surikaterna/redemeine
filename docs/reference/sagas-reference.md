@@ -1,6 +1,6 @@
 # Saga API Reference
 
-This page is the quick reference for the **public** saga API exported from `redemeine`.
+This page is the quick reference for the **public** saga API exported from `@redemeine/saga`.
 
 > ⚠️ **Breaking change:** the public saga surface is now intentionally minimal.
 
@@ -92,7 +92,7 @@ Use `createSaga({ name, plugins? })` to build saga definitions with typed plugin
 ### Canonical plugin + saga example (void + request_response)
 
 ```ts
-import { createSaga, defineSagaPlugin } from 'redemeine';
+import { createSaga, defineSagaPlugin } from '@redemeine/saga';
 
 type InvoiceSagaState = { attempted: number; settled: boolean };
 

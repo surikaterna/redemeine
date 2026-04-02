@@ -1,0 +1,31 @@
+{
+  "name": "@redemeine/saga",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./aggregateBridge": {
+      "types": "./src/aggregateBridge.ts",
+      "import": "./src/aggregateBridge.ts",
+      "require": "./src/aggregateBridge.ts",
+      "default": "./src/aggregateBridge.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test ./test",
+    "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "immer": "^10.1.1"
+  }
+}

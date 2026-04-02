@@ -1,9 +1,11 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "composite": false,
     "module": "es2020",
     "moduleResolution": "node",
     "outDir": "./dist/esm",
+    "declarationMap": false,
     "declaration": false
   },
   "include": ["src/**/*"],

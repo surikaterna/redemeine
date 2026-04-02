@@ -26,7 +26,7 @@ type BillingSagaState = {
 ## 2) Define plugin manifests
 
 ```ts
-import { defineSagaPlugin } from 'redemeine';
+import { defineSagaPlugin } from '@redemeine/saga';
 
 export const InfraPlugin = defineSagaPlugin({
   plugin_key: 'infra',
@@ -52,7 +52,7 @@ export const HttpPlugin = defineSagaPlugin({
 ## 3) Build the saga definition (canonical mixed-action example)
 
 ```ts
-import { createSaga } from 'redemeine';
+import { createSaga } from '@redemeine/saga';
 
 const BillingAggregate = {
   __aggregateType: 'billing',
@@ -125,7 +125,7 @@ Request routing is durable and restart-safe because only named handler tokens ar
 import {
   createSaga,
   validateRetryPolicy
-} from 'redemeine';
+} from '@redemeine/saga';
 
 const policy = validateRetryPolicy({
   maxAttempts: 5,

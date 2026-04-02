@@ -27,18 +27,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+
+      - name: 🥟 Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.11'
 
       - name: 📦 Install Dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: 🔍 Extract API Surface
         id: reflector
         run: |
           # Generate a JSON snapshot of the current public API
-          npx tsx bin/redemeine-reflector.ts --json > api-surface.json
+          bunx tsx bin/redemeine-reflector.ts --json > api-surface.json
           # Generate the new llms.txt content
-          npx tsx bin/redemeine-reflector.ts --generate-llms-ctx > new-llms.txt
+          bunx tsx bin/redemeine-reflector.ts --generate-llms-ctx > new-llms.txt
 
       - name: 🤖 Update llms.txt
         run: |
@@ -55,7 +59,7 @@ jobs:
       - name: 📚 Generate TypeDoc API Reference
         run: |
           # Generate the markdown files
-          npx typedoc
+          bunx typedoc
           
           # Check if TypeDoc actually changed anything in the docs/api folder
           if [[ -n $(git status --porcelain docs/api/) ]]; then
@@ -72,4 +76,4 @@ jobs:
       - name: 🚩 Verify TSDoc Coverage
         run: |
           # Use the reflector to fail the build if public exports lack TSDocs
-          npx tsx bin/redemeine-reflector.ts --verify-tsdoc
+          bunx tsx bin/redemeine-reflector.ts --verify-tsdoc
