@@ -1,8 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
-  type CanonicalSagaIdentityInput,
-  type SagaResponseHandlerTokenBindings
+  type CanonicalSagaIdentityInput
 } from '@redemeine/saga';
 import { testSaga, type TestSagaFixture } from '../src';
 
@@ -39,24 +38,15 @@ const TEST_SAGA_FAILURES_IDENTITY: CanonicalSagaIdentityInput = {
   version: 1
 };
 
+const responseBindings = {
+  'payment.capture.ok': { phase: 'response' as const },
+  'payment.capture.failed': { phase: 'error' as const }
+};
+
 describe('testSaga fixture', () => {
   it('runs chain flow through event -> invokeResponse -> invokeError', async () => {
-    const responseBindings = {
-      'payment.capture.ok': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'response'
-      },
-      'payment.capture.failed': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'error'
-      }
-    } as const satisfies SagaResponseHandlerTokenBindings;
-
     const saga = createSaga<{ attempts: number; log: string[] }>({ identity: TEST_SAGA_CHAIN_IDENTITY })
       .initialState(() => ({ attempts: 0, log: [] as string[] }))
-      .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
         started: (state, event, ctx) => {
           state.log.push(`started:${event.payload.id}`);
@@ -134,22 +124,8 @@ describe('testSaga fixture', () => {
   });
 
   it('dequeues plugin requests FIFO per token', async () => {
-    const responseBindings = {
-      'payment.capture.ok': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'response'
-      },
-      'payment.capture.failed': {
-        plugin_key: 'payments',
-        action_name: 'capture',
-        phase: 'error'
-      }
-    } as const satisfies SagaResponseHandlerTokenBindings;
-
     const saga = createSaga<{ seen: string[] }>({ identity: TEST_SAGA_FIFO_IDENTITY })
       .initialState(() => ({ seen: [] as string[] }))
-      .responseDefinitions(responseBindings)
       .on(PaymentAggregate, {
         started: (state, event, ctx) => {
           state.seen.push(`event:${event.payload.id}`);
@@ -224,17 +200,11 @@ describe('testSaga fixture', () => {
   it('returns explicit deterministic failures for unknown token, queue empty, and handler failures', async () => {
     const saga = createSaga<{ touched: number }>({ identity: TEST_SAGA_FAILURES_IDENTITY })
       .initialState(() => ({ touched: 0 }))
-      .responseDefinitions({
-        'payment.capture.ok': {
-          plugin_key: 'payments',
-          action_name: 'capture',
-          phase: 'response'
-        },
-        'payment.capture.failed': {
-          plugin_key: 'payments',
-          action_name: 'capture',
-          phase: 'error'
-        }
+      .onResponses({
+        'payment.capture.ok': () => undefined
+      })
+      .onErrors({
+        'payment.capture.failed': () => undefined
       })
       .on(PaymentAggregate, {
         started: (_state, event, ctx) => {
@@ -254,6 +224,13 @@ describe('testSaga fixture', () => {
         }
       })
       .build();
+
+    const runtimeHandlerGaps = saga as unknown as {
+      responseHandlers: Record<string, unknown>;
+      errorHandlers: Record<string, unknown>;
+    };
+    runtimeHandlerGaps.responseHandlers['payment.capture.ok'] = undefined;
+    runtimeHandlerGaps.errorHandlers['payment.capture.failed'] = undefined;
 
     const fixture = testSaga(saga);
 

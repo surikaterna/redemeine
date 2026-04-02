@@ -98,7 +98,13 @@ Use `createSaga({ identity, plugins? })` to build saga definitions with typed pl
 ### Canonical plugin + saga example (void + request_response)
 
 ```ts
-import { createSaga, defineSagaPlugin } from '@redemeine/saga';
+import {
+  createSaga,
+  defineSagaPlugin,
+  type TErrorToken,
+  type TRetryToken,
+  type TResponseToken
+} from '@redemeine/saga';
 
 type InvoiceSagaState = { attempted: number; settled: boolean };
 
@@ -145,40 +151,8 @@ const saga = createSaga<InvoiceSagaState>({
   },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseDefinitions({
-    invoiceFetchSucceeded: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'response'
-    },
-    invoiceFetchFailed: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'error'
-    }
-  })
   .initialState(() => ({ attempted: 0, settled: false }))
   .correlate(InvoiceAggregate, event => event.payload.invoiceId)
-  .on(InvoiceAggregate, {
-    created: (state, event, ctx) => {
-      state.attempted += 1;
-
-      // void action (manifest-defined)
-      ctx.actions.infra.scheduleCommand('invoice.retry', 5_000);
-
-      // request_response action chain
-      ctx.actions.http
-        .get(`https://api.example.com/invoices/${event.payload.invoiceId}`)
-        .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempted })
-        .onResponse(ctx.onResponse.invoiceFetchSucceeded)
-        .onError(ctx.onError.invoiceFetchFailed);
-
-      // built-in actions are also available under ctx.actions.core
-      const commands = ctx.actions.core.dispatch(InvoiceAggregate, event.payload.invoiceId);
-      commands.create({ invoiceId: event.payload.invoiceId, amount: event.payload.amount });
-      ctx.actions.core.schedule('invoice-reminder', 5_000);
-    }
-  })
   .onResponses({
     invoiceFetchSucceeded: (state, response, ctx) => {
       state.settled = true;
@@ -194,6 +168,36 @@ const saga = createSaga<InvoiceSagaState>({
       void error.error;
     }
   })
+  .onRetries({
+    invoiceFetchRetrying: (state, retry) => {
+      state.attempted = Math.max(state.attempted, retry.attempt);
+    }
+  })
+  .on(InvoiceAggregate, {
+    created: (state, event, ctx) => {
+      state.attempted += 1;
+
+      const successToken: TResponseToken<'invoiceFetchSucceeded'> = ctx.onResponse.invoiceFetchSucceeded;
+      const failureToken: TErrorToken<'invoiceFetchFailed'> = ctx.onError.invoiceFetchFailed;
+      const retryToken: TRetryToken<'invoiceFetchRetrying'> = ctx.onRetry.invoiceFetchRetrying;
+      void retryToken;
+
+      // void action (manifest-defined)
+      ctx.actions.infra.scheduleCommand('invoice.retry', 5_000);
+
+      // request_response action chain
+      ctx.actions.http
+        .get(`https://api.example.com/invoices/${event.payload.invoiceId}`)
+        .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempted })
+        .onResponse(successToken)
+        .onError(failureToken);
+
+      // built-in actions are also available under ctx.actions.core
+      const commands = ctx.actions.core.dispatch(InvoiceAggregate, event.payload.invoiceId);
+      commands.create({ invoiceId: event.payload.invoiceId, amount: event.payload.amount });
+      ctx.actions.core.schedule('invoice-reminder', 5_000);
+    }
+  })
   .build();
 ```
 
@@ -205,18 +209,16 @@ Core contracts:
   - `.withData(handlerData)`
   - `.onResponse(responseToken)`
   - `.onError(errorToken)`
-- `responseDefinitions(...)` declares durable token bindings (`plugin_key`, `action_name`, `phase`).
-- `onResponses(...)` and `onErrors(...)` attach executable handlers to those tokens with phase-safe typing.
-- Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
+- `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` are the registration source for token namespaces and executable handler maps.
+- `ctx.onResponse.*`, `ctx.onError.*`, and `ctx.onRetry.*` tokens are branded (`TResponseToken` / `TErrorToken` / `TRetryToken`) so phase mismatches fail at compile time.
 - Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
 - `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
-### Persistence model vs runtime executable maps
+### Runtime dispatch model
 
-- `saga.response_handlers` is the persisted/wire-safe definition map and is the only routing metadata that must survive restarts.
-- `saga.executable_response_handlers` and `saga.executable_error_handlers` are runtime-only executable function maps derived from `onResponses(...)` / `onErrors(...)`.
-- Runtime helpers (`runSagaResponseHandler` / `runSagaErrorHandler`) resolve tokens through `response_handlers` first, then execute runtime handlers when registered.
+- Runtime dispatch is handler-map-first: response, error, and retry callbacks are looked up directly from phase-specific handler maps.
+- Runtime action-level validation for callback envelopes is intentionally deferred in this phase.
 
 ## Deterministic `testSaga` invoke chain
 
@@ -289,7 +291,6 @@ Ownership note:
 
 - Saga state uses **camelCase** keys (for example `createdAt`, `updatedAt`, `transitionVersion`).
 - Code-level API keys use **camelCase** (for example plugin action names like `scheduleCommand`).
-- Persisted/wire plugin routing metadata fields use **snake_case** (`plugin_key`, `action_name`, `response_handler_key`, `error_handler_key`, `handler_data`).
 - Command and event `type` values on the wire use **snake_case** naming.
 - Temporal fields are serialized as **ISO8601** timestamps.
 - Recent transition/event/activity history is stored in **compact windows** (bounded arrays), with totals tracked separately.
@@ -331,9 +332,10 @@ In other words, the saga definition emits intents; runtime infrastructure may la
 If you used older/expanded saga docs, migrate as follows:
 
 - **Keep using:** `createSaga` and retry helpers.
-- **Use manifest-first builder form:** `createSaga<TState>({ name, plugins? })`.
+- **Use manifest-first builder form:** `createSaga<TState>({ identity, plugins? })`.
 - **Define plugin manifests with:** `defineSagaPlugin({ plugin_key, actions })`.
-- **Route request_response actions with durable named tokens only:** `.withData(...).onResponse(token).onError(token)`.
+- **Register callbacks with handler maps:** `.onResponses(...)`, `.onErrors(...)`, `.onRetries(...)`.
+- **Route request_response actions with phase-safe branded tokens:** `.withData(...).onResponse(token).onError(token)`.
 - **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
 - **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
