@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
   defineSagaPlugin,
+  runSagaErrorHandler,
+  runSagaResponseHandler,
   type CanonicalSagaIdentityInput,
   type SagaPluginRequestIntent
 } from '../src';
@@ -27,6 +29,24 @@ const PLUGIN_WITH_DATA_IDENTITY: CanonicalSagaIdentityInput = {
 const PLUGIN_OPTIONAL_IDENTITY: CanonicalSagaIdentityInput = {
   namespace: 'plugins',
   name: 'plugin_optional_saga',
+  version: 1
+};
+
+const PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_executable_handler_gating',
+  version: 1
+};
+
+const PLUGIN_NO_DEFS_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_no_defs',
+  version: 1
+};
+
+const PLUGIN_INVOKE_TYPING_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_invoke_typing',
   version: 1
 };
 
@@ -321,7 +341,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('enforces phase-safe executable response/error handler registration', () => {
     createSaga({
-      name: 'plugin-saga-executable-handler-gating',
+      identity: PLUGIN_EXECUTABLE_HANDLER_GATING_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .responseDefinitions({
@@ -349,7 +369,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       .build();
 
     createSaga({
-      name: 'plugin-saga-no-defs'
+      identity: PLUGIN_NO_DEFS_IDENTITY
     })
       // @ts-expect-error no responseDefinitions means no executable response keys
       .onResponses({
@@ -360,6 +380,95 @@ describe('createSaga plugin-capable ctx typing', () => {
         anything: (_state, _error, _ctx) => undefined
       })
       .build();
+
+    expect(true).toBe(true);
+  });
+
+  it('types invoke helpers with phase-safe token constraints', () => {
+    const saga = createSaga({
+      identity: PLUGIN_INVOKE_TYPING_IDENTITY,
+      plugins: [HttpPlugin] as const
+    })
+      .responseDefinitions({
+        ok: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'response'
+        },
+        fail: {
+          plugin_key: 'http',
+          action_name: 'get',
+          phase: 'error'
+        }
+      })
+      .initialState(() => ({ retries: 0, lastResponse: '', lastError: '' }))
+      .onResponses({
+        ok: (state, response) => {
+          state.retries += 1;
+          state.lastResponse = String(response.payload);
+        }
+      })
+      .onErrors({
+        fail: (state, error) => {
+          state.retries += 1;
+          state.lastError = String(error.error);
+        }
+      })
+      .build();
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'ok',
+        payload: { status: 200 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        token: 'fail',
+        error: { message: 'boom' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaResponseHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeResponse helper only accepts response-phase tokens
+        token: 'fail',
+        payload: { status: 500 },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
+
+    void runSagaErrorHandler({
+      definition: saga,
+      state: { retries: 0, lastResponse: '', lastError: '' },
+      envelope: {
+        // @ts-expect-error invokeError helper only accepts error-phase tokens
+        token: 'ok',
+        error: { message: 'wrong phase' },
+        request: {
+          plugin_key: 'http',
+          action_name: 'get'
+        }
+      }
+    });
 
     expect(true).toBe(true);
   });
