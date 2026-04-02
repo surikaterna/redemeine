@@ -1,17 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  parseSagaIdentityUrn,
-  SagaIdentityValidationError,
-  toSagaIdentityUrn,
-  validateSagaIdentity,
-  validateSagaName,
-  validateSagaNamespace,
-  validateSagaVersion
+  parseSagaUrn,
+  deriveSagaUrn,
+  normalizeSagaIdentity,
+  SagaIdentityNormalizationError
 } from '../src';
 
 describe('saga identity validation and error mapping', () => {
   it('accepts valid namespace/name/version and derives canonical URN', () => {
-    const identity = validateSagaIdentity({
+    const identity = normalizeSagaIdentity({
       namespace: 'commerce.billing',
       name: 'invoice-reminder',
       version: 2
@@ -20,53 +17,53 @@ describe('saga identity validation and error mapping', () => {
     expect(identity).toEqual({
       namespace: 'commerce.billing',
       name: 'invoice-reminder',
-      version: 2
+      version: 2,
+      sagaKey: 'commerce.billing/invoice-reminder',
+      sagaType: 'commerce.billing/invoice-reminder@v2',
+      sagaUrn: 'urn:redemeine:saga:commerce.billing:invoice-reminder:v2'
     });
 
-    expect(toSagaIdentityUrn(identity)).toBe('urn:redemeine:saga:commerce.billing:invoice-reminder:v2');
+    expect(deriveSagaUrn(identity)).toBe('urn:redemeine:saga:commerce.billing:invoice-reminder:v2');
   });
 
   it('accepts canonical separators used by normalization contract', () => {
-    const identity = validateSagaIdentity({
+    const identity = normalizeSagaIdentity({
       namespace: '1commerce.billing2',
       name: 'invoice.reminder_v2',
       version: 3
     });
 
-    expect(toSagaIdentityUrn(identity)).toBe('urn:redemeine:saga:1commerce.billing2:invoice.reminder_v2:v3');
+    expect(deriveSagaUrn(identity)).toBe('urn:redemeine:saga:1commerce.billing2:invoice.reminder_v2:v3');
   });
 
   it('maps malformed namespace to deterministic typed error', () => {
     try {
-      validateSagaNamespace('Commerce/Billing');
-      throw new Error('expected validateSagaNamespace to throw');
+      normalizeSagaIdentity({ namespace: 'Commerce/Billing', name: 'invoice-reminder', version: 2 });
+      throw new Error('expected normalizeSagaIdentity to throw');
     } catch (error) {
-      expect(error).toBeInstanceOf(SagaIdentityValidationError);
-      expect((error as SagaIdentityValidationError).code).toBe('SAGA_IDENTITY_INVALID_NAMESPACE');
-      expect((error as SagaIdentityValidationError).field).toBe('namespace');
+      expect(error).toBeInstanceOf(SagaIdentityNormalizationError);
+      expect((error as SagaIdentityNormalizationError).code).toBe('invalid_namespace');
     }
   });
 
   it('maps malformed name to deterministic typed error', () => {
     try {
-      validateSagaName('Invoice_Reminder');
-      throw new Error('expected validateSagaName to throw');
+      normalizeSagaIdentity({ namespace: 'commerce.billing', name: 'Invoice Reminder', version: 2 });
+      throw new Error('expected normalizeSagaIdentity to throw');
     } catch (error) {
-      expect(error).toBeInstanceOf(SagaIdentityValidationError);
-      expect((error as SagaIdentityValidationError).code).toBe('SAGA_IDENTITY_INVALID_NAME');
-      expect((error as SagaIdentityValidationError).field).toBe('name');
+      expect(error).toBeInstanceOf(SagaIdentityNormalizationError);
+      expect((error as SagaIdentityNormalizationError).code).toBe('invalid_name');
     }
   });
 
   it('maps invalid version classes to deterministic typed error', () => {
     for (const invalidVersion of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       try {
-        validateSagaVersion(invalidVersion);
-        throw new Error('expected validateSagaVersion to throw');
+        normalizeSagaIdentity({ namespace: 'commerce.billing', name: 'invoice-reminder', version: invalidVersion });
+        throw new Error('expected normalizeSagaIdentity to throw');
       } catch (error) {
-        expect(error).toBeInstanceOf(SagaIdentityValidationError);
-        expect((error as SagaIdentityValidationError).code).toBe('SAGA_IDENTITY_INVALID_VERSION');
-        expect((error as SagaIdentityValidationError).field).toBe('version');
+        expect(error).toBeInstanceOf(SagaIdentityNormalizationError);
+        expect((error as SagaIdentityNormalizationError).code).toBe('invalid_version');
       }
     }
   });
@@ -81,26 +78,27 @@ describe('saga identity validation and error mapping', () => {
     ];
 
     for (const urn of malformedUrns) {
-      try {
-        parseSagaIdentityUrn(urn);
-        throw new Error('expected parseSagaIdentityUrn to throw');
-      } catch (error) {
-        expect(error).toBeInstanceOf(SagaIdentityValidationError);
-        expect((error as SagaIdentityValidationError).code).toBe('SAGA_IDENTITY_MALFORMED_URN');
-        expect((error as SagaIdentityValidationError).field).toBe('urn');
-      }
+      expect(() => parseSagaUrn(urn)).toThrow(TypeError);
     }
   });
 
   it('parses valid URN and reuses identity field validators', () => {
-    expect(parseSagaIdentityUrn('urn:redemeine:saga:commerce.billing:invoice-reminder:v7')).toEqual({
+    expect(parseSagaUrn('urn:redemeine:saga:commerce.billing:invoice-reminder:v7')).toEqual({
       namespace: 'commerce.billing',
       name: 'invoice-reminder',
-      version: 7
+      version: 7,
+      sagaKey: 'commerce.billing/invoice-reminder',
+      sagaType: 'commerce.billing/invoice-reminder@v7',
+      sagaUrn: 'urn:redemeine:saga:commerce.billing:invoice-reminder:v7'
     });
 
-    expect(() => parseSagaIdentityUrn('urn:redemeine:saga:Commerce:invoice-reminder:v7')).toThrow(
-      SagaIdentityValidationError
-    );
+    expect(parseSagaUrn('urn:redemeine:saga:Commerce:invoice-reminder:v7')).toEqual({
+      namespace: 'commerce',
+      name: 'invoice-reminder',
+      version: 7,
+      sagaKey: 'commerce/invoice-reminder',
+      sagaType: 'commerce/invoice-reminder@v7',
+      sagaUrn: 'urn:redemeine:saga:commerce:invoice-reminder:v7'
+    });
   });
 });

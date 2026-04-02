@@ -2,10 +2,16 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
   deriveSagaUrn,
-  toSagaIdentityUrn,
+  type CanonicalSagaIdentityInput,
   type SagaIntent,
   type SagaReducerOutput
 } from '../src';
+
+const BILLING_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'billing',
+  name: 'billing_saga',
+  version: 1
+};
 
 const BillingAggregate = {
   __aggregateType: 'billing',
@@ -28,7 +34,7 @@ const BillingAggregate = {
 
 describe('S08 reducer output contract typing', () => {
   it('accepts deterministic state transition output with typed intents', () => {
-    const saga = createSaga<{ attempts: number; invoiceId: string }>({ name: 'billing-saga' })
+    const saga = createSaga<{ attempts: number; invoiceId: string }>({ identity: BILLING_SAGA_IDENTITY })
       .initialState(() => ({ attempts: 0 as number, invoiceId: 'inv-1' as string }))
       .on(BillingAggregate, {
         started: (state, _event, ctx) => {
@@ -102,32 +108,28 @@ describe('S08 reducer output contract typing', () => {
     expect(saga.plugins).toEqual([]);
     expect(saga.response_handlers).toEqual({});
     expect(saga.identity).toEqual({
-      namespace: 'legacy',
-      name: 'billing-saga',
+      namespace: 'billing',
+      name: 'billing_saga',
       version: 1,
-      legacyName: 'billing-saga',
-      sagaType: 'legacy.billing-saga.v1',
-      sagaUrn: 'urn:redemeine:saga:legacy:billing-saga:v1'
+      sagaKey: 'billing/billing_saga',
+      sagaType: 'billing/billing_saga@v1',
+      sagaUrn: 'urn:redemeine:saga:billing:billing_saga:v1'
     });
-    expect(saga.sagaType).toBe('legacy.billing-saga.v1');
-    expect(saga.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
-    expect(toSagaIdentityUrn({
-      namespace: saga.identity.namespace,
-      name: saga.identity.name,
-      version: saga.identity.version
-    })).toBe(saga.sagaUrn);
+    expect(saga.sagaKey).toBe('billing/billing_saga');
+    expect(saga.sagaType).toBe('billing/billing_saga@v1');
+    expect(saga.sagaUrn).toBe('urn:redemeine:saga:billing:billing_saga:v1');
     expect(deriveSagaUrn({
       namespace: saga.identity.namespace,
       name: saga.identity.name,
       version: saga.identity.version
     })).toBe(saga.sagaUrn);
     expect(saga.correlations).toEqual([]);
-    expect(saga.handlers[0]?.sagaType).toBe('legacy.billing-saga.v1');
-    expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:legacy:billing-saga:v1');
+    expect(saga.handlers[0]?.sagaType).toBe('billing/billing_saga@v1');
+    expect(saga.handlers[0]?.sagaUrn).toBe('urn:redemeine:saga:billing:billing_saga:v1');
   });
 
   it('rejects invalid reducer output shapes at compile time', () => {
-    createSaga<{ attempts: number; invoiceId: string }>({ name: 'billing-saga' })
+    createSaga<{ attempts: number; invoiceId: string }>({ identity: BILLING_SAGA_IDENTITY })
       .initialState(() => ({ attempts: 0, invoiceId: 'inv-1' }))
       .on(BillingAggregate, {
         started: (state, _event, _ctx) => {

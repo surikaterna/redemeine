@@ -2,8 +2,33 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
   defineSagaPlugin,
+  type CanonicalSagaIdentityInput,
   type SagaPluginRequestIntent
 } from '../src';
+
+const PLUGIN_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga',
+  version: 1
+};
+
+const PLUGIN_RESPONSE_BROKEN_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_response_broken',
+  version: 1
+};
+
+const PLUGIN_WITH_DATA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_saga_with_data',
+  version: 1
+};
+
+const PLUGIN_OPTIONAL_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'plugins',
+  name: 'plugin_optional_saga',
+  version: 1
+};
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -88,7 +113,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('infers plugin helper extensions alongside base ctx methods', () => {
     const saga = createSaga({
-      name: 'plugin-saga',
+      identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .responseHandlers({
@@ -165,7 +190,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('rejects invalid plugin helper usage at compile time', () => {
     createSaga({
-      name: 'plugin-saga',
+      identity: PLUGIN_SAGA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .responseHandlers({
@@ -252,7 +277,7 @@ describe('createSaga plugin-capable ctx typing', () => {
       .build();
 
     createSaga({
-      name: 'plugin-saga-response-broken',
+      identity: PLUGIN_RESPONSE_BROKEN_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .responseHandlers({
@@ -314,7 +339,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('propagates withData typing into routing metadata handler_data', () => {
     createSaga({
-      name: 'plugin-saga-with-data',
+      identity: PLUGIN_WITH_DATA_IDENTITY,
       plugins: [InfraPlugin, HttpPlugin] as const
     })
       .responseHandlers({
@@ -354,7 +379,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
   it('keeps optional plugin configuration valid when omitted', () => {
     const saga = createSaga({
-      name: 'plugin-optional-saga'
+      identity: PLUGIN_OPTIONAL_IDENTITY
     })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {

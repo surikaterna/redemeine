@@ -14,13 +14,13 @@ export {
 export {
   deriveSagaInstanceUrn,
   deriveSagaUrn,
+  parseSagaUrn,
   type SagaStructuredIdentity
 } from './sagaUrn';
 
 export {
+  buildCanonicalSagaKey,
   buildCanonicalSagaInstanceUrn,
-  normalizeCanonicalIdentitySegment,
-  normalizeCanonicalSagaVersion,
   buildCanonicalSagaType,
   buildCanonicalSagaUrn,
   normalizeSagaName,

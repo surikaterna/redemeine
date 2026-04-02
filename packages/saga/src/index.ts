@@ -25,7 +25,6 @@ export {
   type SagaIntentContext,
   type SagaIntentContextBase,
   type SagaIdentityFields,
-  type SagaIdentityInput,
   type SagaIdentityMetadata,
   type SagaIntentMetadata,
   type SagaPluginActionArguments,
@@ -108,27 +107,14 @@ export {
 } from './triggers';
 export { createAggregate } from './aggregateBridge';
 export {
-  parseSagaIdentityUrn,
-  toSagaIdentityUrn,
-  validateSagaIdentity,
-  validateSagaName,
-  validateSagaNamespace,
-  validateSagaVersion,
-  SagaIdentityValidationError,
-  type SagaIdentity,
-  type SagaIdentityErrorCode
-} from './SagaIdentity';
-
-// Canonical identity utilities (preferred surface for new code).
-export {
   buildSagaType,
   normalizeSagaIdentity,
   SagaIdentityNormalizationError,
   deriveSagaInstanceUrn,
   deriveSagaUrn,
+  parseSagaUrn,
+  buildCanonicalSagaKey,
   buildCanonicalSagaInstanceUrn,
-  normalizeCanonicalIdentitySegment,
-  normalizeCanonicalSagaVersion,
   buildCanonicalSagaType,
   buildCanonicalSagaUrn,
   normalizeSagaName,
@@ -158,16 +144,3 @@ export {
   type RetrySchedulingNow
 } from './RetryPolicy';
 
-// Compatibility exports kept for non-breaking consumers.
-export {
-  normalizeSagaIdentityInput,
-  type LegacySagaIdentityObject,
-  type SupportedSagaIdentityInput,
-  type NormalizedSagaIdentityResult
-} from './SagaIdentityAdapter';
-
-export {
-  type SagaIdentityContract,
-  type SagaIdentityDerived,
-  type SagaIdentityFields as LegacySagaIdentityFields
-} from './SagaIdentityContract';

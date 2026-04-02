@@ -18,26 +18,14 @@ export function normalizeSagaName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export function normalizeCanonicalIdentitySegment(value: string, fallback: string): string {
-  const normalized = normalizeSagaName(value)
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-');
-
-  return normalized.length > 0 ? normalized : fallback;
-}
-
-export function normalizeCanonicalSagaVersion(version: number | undefined): number {
-  if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0) {
-    return 1;
-  }
-
-  return version;
-}
-
 export function buildCanonicalSagaType(identity: CanonicalSagaIdentityParts): string {
   const { namespace, name, version } = identity;
-  return `${namespace}.${name}.v${version}`;
+  return `${namespace}/${name}@v${version}`;
+}
+
+export function buildCanonicalSagaKey(identity: CanonicalSagaIdentityParts): string {
+  const { namespace, name } = identity;
+  return `${namespace}/${name}`;
 }
 
 export function buildCanonicalSagaUrn(identity: CanonicalSagaIdentityParts): string {

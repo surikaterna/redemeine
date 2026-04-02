@@ -2,8 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   deriveSagaInstanceUrn,
   deriveSagaUrn,
-  parseSagaIdentityUrn,
-  toSagaIdentityUrn,
+  parseSagaUrn,
   type SagaStructuredIdentity
 } from '../src';
 
@@ -19,13 +18,18 @@ describe('saga URN derivation', () => {
     expect(deriveSagaUrn(identity)).toBe('urn:redemeine:saga:commerce:checkout:v3');
   });
 
-  it('preserves historical URN format across canonical and compatibility entrypoints', () => {
+  it('parses canonical URN into structured identity', () => {
     const canonicalUrn = deriveSagaUrn(identity);
-    const compatibilityUrn = toSagaIdentityUrn(identity);
 
     expect(canonicalUrn).toBe('urn:redemeine:saga:commerce:checkout:v3');
-    expect(compatibilityUrn).toBe(canonicalUrn);
-    expect(parseSagaIdentityUrn(canonicalUrn)).toEqual(identity);
+    expect(parseSagaUrn(canonicalUrn)).toEqual({
+      namespace: 'commerce',
+      name: 'checkout',
+      version: 3,
+      sagaKey: 'commerce/checkout',
+      sagaType: 'commerce/checkout@v3',
+      sagaUrn: canonicalUrn
+    });
   });
 
   it('derives canonical saga instance URN with explicit instance id', () => {
@@ -35,10 +39,10 @@ describe('saga URN derivation', () => {
   });
 
   it('throws for invalid identity fields', () => {
-    expect(() => deriveSagaUrn({ ...identity, namespace: '' })).toThrow(TypeError);
-    expect(() => deriveSagaUrn({ ...identity, name: '' })).toThrow(TypeError);
-    expect(() => deriveSagaUrn({ ...identity, version: 0 })).toThrow(TypeError);
-    expect(() => deriveSagaUrn({ ...identity, version: 1.5 })).toThrow(TypeError);
+    expect(() => deriveSagaUrn({ ...identity, namespace: '' })).toThrow();
+    expect(() => deriveSagaUrn({ ...identity, name: '' })).toThrow();
+    expect(() => deriveSagaUrn({ ...identity, version: 0 })).toThrow();
+    expect(() => deriveSagaUrn({ ...identity, version: 1.5 })).toThrow();
   });
 
   it('throws for invalid instance id', () => {

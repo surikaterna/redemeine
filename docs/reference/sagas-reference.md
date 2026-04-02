@@ -31,10 +31,11 @@ Anything outside these documented exports is runtime implementation detail and m
 
 ## Saga identity contract (canonical)
 
-Saga identity is definition-first and has a canonical source of truth in `@redemeine/saga`.
+Saga identity is strict and has one canonical source of truth in `@redemeine/saga`.
 
-- Canonical identity derives from structured fields via the identity module (`normalizeSagaIdentity`, `buildSagaType`, `deriveSagaUrn`, `deriveSagaInstanceUrn`).
-- Compatibility exports remain available for non-breaking migration (`toSagaIdentityUrn`, `parseSagaIdentityUrn`, `validateSagaIdentity*`, and `normalizeSagaIdentityInput` for legacy input shapes).
+- Canonical identity derives from structured fields via `normalizeSagaIdentity`.
+- URN helpers are intentionally minimal: `deriveSagaUrn`, `deriveSagaInstanceUrn`, `parseSagaUrn`.
+- Legacy adapter/compat identity entrypoints were removed as a release-breaking cleanup.
 
 ### Structured source fields (required)
 
@@ -52,9 +53,7 @@ These three fields are authoritative. Persisted or transmitted identity strings 
 - `name`: `^[a-z0-9]+(?:[._-][a-z0-9]+)*$`
   - Lowercase alphanumeric tokens
   - Optional separators between tokens: `.`, `_`, `-`
-- `version`:
-  - Number form: must satisfy `Number.isSafeInteger(version) && version >= 1`
-  - String form: must match `^[1-9][0-9]*$` exactly (no prefixes/suffixes/decimals)
+- `version`: must satisfy `Number.isSafeInteger(version) && version >= 1`
 
 ### Normalization rules
 
@@ -64,13 +63,13 @@ Apply normalization before validation and derivation:
 2. Lowercase `namespace` and `name`.
 3. Do not rewrite or infer separators beyond trimming/lowercasing; invalid separator or whitespace usage fails validation.
 4. `version` must be an integer (`Number.isSafeInteger(version)`) and `version >= 1`.
-5. Do not silently coerce non-canonical version strings (for example, `"01"`, `"v2"`, `"2.0"`) at runtime integration boundaries.
 
 ### Derived identity fields
 
 From normalized structured fields:
 
-- `sagaType = <namespace>.<name>.v<version>`
+- `sagaKey = <namespace>/<name>`
+- `sagaType = <namespace>/<name>@v<version>`
 - `sagaUrn = urn:redemeine:saga:<namespace>:<name>:v<version>`
 - `instanceUrn` is optional and, when used, extends `sagaUrn`:
   - `instanceUrn = <sagaUrn>:instance:<instanceId>`
@@ -84,15 +83,14 @@ Notes:
 
 The public `sagas` module exposes lightweight declaration types:
 
-- `SagaIdentityFields` (required structured source)
-- `SagaIdentityDerived` (derived values + optional `instanceUrn`)
-- `SagaIdentityContract` (combined view)
+- `CanonicalSagaIdentityInput` (required structured source)
+- `NormalizedSagaIdentity` (canonical normalized + derived identity)
 
 ## Defining sagas (manifest-first)
 
-Use `createSaga({ name, plugins? })` to build saga definitions with typed plugin actions.
+Use `createSaga({ identity, plugins? })` to build saga definitions with typed plugin actions.
 
-- `name` is required.
+- `identity` is required and must include `namespace`, `name`, and integer `version`.
 - `plugins?` is an optional tuple of `defineSagaPlugin(...)` manifests.
 - Handlers use mutation-style state updates (Immer draft semantics).
 - Scope is **definition-only**: this API defines typed intent contracts and persisted routing metadata; it does **not** execute plugin runtimes.
@@ -140,7 +138,11 @@ const InvoiceAggregate = {
 } as const;
 
 const saga = createSaga<InvoiceSagaState>({
-  name: 'invoice-saga',
+  identity: {
+    namespace: 'billing',
+    name: 'invoice_saga',
+    version: 1
+  },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
   .responseHandlers({

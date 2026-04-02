@@ -1,10 +1,17 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
+  type CanonicalSagaIdentityInput,
   type SagaIntent,
   type SagaPluginRequestIntent,
   type SagaPluginRequestRoutingMetadata
 } from '../src';
+
+const INVOICE_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
+  namespace: 'billing',
+  name: 'invoice_saga',
+  version: 1
+};
 
 const InvoiceAggregate = {
   __aggregateType: 'invoice',
@@ -23,7 +30,7 @@ const InvoiceAggregate = {
 
 describe('S07 acceptance: intent metadata type shape', () => {
   it('ctx exposes saga metadata and all intent helpers return metadata fields', () => {
-    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
+    createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (state, _event, ctx) => {
@@ -70,7 +77,7 @@ describe('S07 acceptance: intent metadata type shape', () => {
   });
 
   it('rejects invalid metadata shapes at compile time', () => {
-    createSaga<{ attempted: number }>({ name: 'invoice-saga' })
+    createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
         created: (_state, _event, ctx) => {

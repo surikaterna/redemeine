@@ -4,25 +4,17 @@ import {
   type SagaIdentityInput
 } from './types';
 import {
+  buildCanonicalSagaKey,
   buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
   normalizeSagaName,
   normalizeSagaNamespace,
   SAGA_NAME_PATTERN,
-  SAGA_NAMESPACE_PATTERN,
-  SAGA_VERSION_TOKEN_PATTERN
+  SAGA_NAMESPACE_PATTERN
 } from './canonical';
 
 const normalizeVersion = (version: SagaIdentityInput['version']): number => {
-  const parsed = typeof version === 'string'
-    ? (() => {
-        const trimmed = version.trim();
-        if (!SAGA_VERSION_TOKEN_PATTERN.test(trimmed)) {
-          return Number.NaN;
-        }
-
-        return Number(trimmed);
-      })()
-    : version;
+  const parsed = version;
 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new SagaIdentityNormalizationError(
@@ -57,10 +49,16 @@ export function normalizeSagaIdentity(input: SagaIdentityInput): NormalizedSagaI
 
   const version = normalizeVersion(input.version);
 
+  const sagaKey = buildCanonicalSagaKey({ namespace, name, version });
+  const sagaType = buildSagaType(namespace, name, version);
+  const sagaUrn = buildCanonicalSagaUrn({ namespace, name, version });
+
   return {
     namespace,
     name,
     version,
-    sagaType: buildSagaType(namespace, name, version)
+    sagaKey,
+    sagaType,
+    sagaUrn
   };
 }

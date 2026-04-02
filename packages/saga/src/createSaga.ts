@@ -1,10 +1,8 @@
 import { createDraft, finishDraft, type Draft } from 'immer';
 import type { SagaRetryPolicy } from './RetryPolicy';
 import {
-  buildCanonicalSagaType,
-  buildCanonicalSagaUrn,
-  normalizeCanonicalIdentitySegment,
-  normalizeCanonicalSagaVersion
+  normalizeSagaIdentity,
+  type SagaIdentityInput
 } from './identity';
 
 /** Factory used to initialize saga state for a new saga definition. */
@@ -874,6 +872,7 @@ export interface SagaDefinition<
 > {
   name: string;
   identity: SagaIdentityMetadata;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
   plugins: SagaPluginRegistryFromManifests<TPlugins>;
@@ -966,15 +965,8 @@ export interface SagaBuilderCorrelated<
 }
 
 export interface CreateSagaOptions<TPlugins extends SagaPluginManifestList = readonly []> {
-  name: string;
-  identity?: SagaIdentityInput;
+  identity: SagaIdentityInput;
   plugins?: TPlugins;
-}
-
-export interface SagaIdentityInput {
-  namespace?: string;
-  name?: string;
-  version?: number;
 }
 
 export interface SagaIdentityFields {
@@ -984,7 +976,7 @@ export interface SagaIdentityFields {
 }
 
 export interface SagaIdentityMetadata extends SagaIdentityFields {
-  legacyName: string;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
 }
@@ -1000,6 +992,7 @@ interface SagaDefinitionDraft<
 > {
   name: string;
   identity: SagaIdentityMetadata;
+  sagaKey: string;
   sagaType: string;
   sagaUrn: string;
   plugins: TPlugins;
@@ -1031,24 +1024,14 @@ function getAggregateType(aggregate: SagaAggregateDefinition): string {
 }
 
 function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>): SagaIdentityMetadata {
-  const legacyName = options.name;
-  const namespace = normalizeCanonicalIdentitySegment(options.identity?.namespace ?? 'legacy', 'legacy');
-  const name = normalizeCanonicalIdentitySegment(options.identity?.name ?? legacyName, 'saga');
-  const version = normalizeCanonicalSagaVersion(options.identity?.version);
-  const base: SagaIdentityFields = {
-    namespace,
-    name,
-    version
-  };
-
-  const sagaType = buildCanonicalSagaType(base);
-  const sagaUrn = buildCanonicalSagaUrn(base);
-
+  const normalized = normalizeSagaIdentity(options.identity);
   return {
-    ...base,
-    legacyName,
-    sagaType,
-    sagaUrn
+    namespace: normalized.namespace,
+    name: normalized.name,
+    version: normalized.version,
+    sagaKey: normalized.sagaKey,
+    sagaType: normalized.sagaType,
+    sagaUrn: normalized.sagaUrn
   };
 }
 
@@ -1321,8 +1304,9 @@ export function createSaga<
     SagaPluginRegistryFromManifests<SagaPluginsFromOptions<TOptions>>,
     Record<never, never>
   > = {
-    name: options.name,
+    name: identity.name,
     identity,
+    sagaKey: identity.sagaKey,
     sagaType: identity.sagaType,
     sagaUrn: identity.sagaUrn,
     plugins: pluginRegistry,
