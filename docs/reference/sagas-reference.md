@@ -95,30 +95,34 @@ Use `createSaga({ identity, plugins? })` to build saga definitions with typed pl
 - Handlers use mutation-style state updates (Immer draft semantics).
 - Scope is **definition-only**: this API defines typed intent contracts and persisted routing metadata; it does **not** execute plugin runtimes.
 
-### Canonical plugin + saga example (void + request_response)
+### Canonical plugin + saga example (helper-based plugin actions)
 
 ```ts
-import { createSaga, defineSagaPlugin } from '@redemeine/saga';
+import {
+  createSaga,
+  defineSagaPlugin,
+  defineOneWay,
+  defineRequestResponse,
+  defineCustomAction
+} from '@redemeine/saga';
 
 type InvoiceSagaState = { attempted: number; settled: boolean };
 
 const InfraPlugin = defineSagaPlugin({
   plugin_key: 'infra',
   actions: {
-    scheduleCommand: {
-      action_kind: 'void',
-      build: (name: 'invoice.retry', delayMs: number) => ({ name, delayMs })
-    }
+    scheduleCommand: defineOneWay((name: 'invoice.retry', delayMs: number) => ({ name, delayMs }))
   }
 });
 
 const HttpPlugin = defineSagaPlugin({
   plugin_key: 'http',
   actions: {
-    get: {
-      action_kind: 'request_response',
-      build: (url: string, headers?: Record<string, string>) => ({ url, headers })
-    }
+    get: defineRequestResponse((url: string, headers?: Record<string, string>) => ({ url, headers })),
+    // Custom builders can choose their own completion semantics.
+    annotate: defineCustomAction((builderCtx, topic: string, details: Record<string, unknown>) => {
+      return builderCtx.emitOneWay({ topic, details });
+    })
   }
 });
 
@@ -146,6 +150,11 @@ const saga = createSaga<InvoiceSagaState>({
   plugins: [InfraPlugin, HttpPlugin] as const
 })
   .responseDefinitions({
+    invoiceFetchRetrying: {
+      plugin_key: 'http',
+      action_name: 'get',
+      phase: 'retry'
+    },
     invoiceFetchSucceeded: {
       plugin_key: 'http',
       action_name: 'get',
@@ -163,14 +172,21 @@ const saga = createSaga<InvoiceSagaState>({
     created: (state, event, ctx) => {
       state.attempted += 1;
 
-      // void action (manifest-defined)
+      // one-way helper action
       ctx.actions.infra.scheduleCommand('invoice.retry', 5_000);
+
+      // custom helper action
+      ctx.actions.http.annotate('billing.attempted', { invoiceId: event.payload.invoiceId });
 
       // request_response action chain
       ctx.actions.http
         .get(`https://api.example.com/invoices/${event.payload.invoiceId}`)
+        // optional
         .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempted })
+        // optional
+        .onRetry(ctx.onRetry.invoiceFetchRetrying)
         .onResponse(ctx.onResponse.invoiceFetchSucceeded)
+        // terminal after retries exhausted/non-retryable
         .onError(ctx.onError.invoiceFetchFailed);
 
       // built-in actions are also available under ctx.actions.core
@@ -201,13 +217,20 @@ Core contracts:
 
 - Handler signature: `(state, event, ctx)` mutation-style state updates.
 - Plugin calls are namespaced as `ctx.actions.<plugin_key>.<action>(...)`.
-- Request/response plugin actions use the durable routing chain:
-  - `.withData(handlerData)`
+- Helper APIs provide ergonomic plugin action builders:
+  - `defineOneWay(build)`
+  - `defineRequestResponse(build)`
+  - `defineCustomAction((builderCtx, ...args) => ...)`
+- Request/response actions use durable routing chain:
+  - `.withData(handlerData)` (optional)
+  - `.onRetry(retryToken)` (optional)
   - `.onResponse(responseToken)`
-  - `.onError(errorToken)`
+  - `.onError(errorToken)` (terminal after retries exhausted/non-retryable)
 - `responseDefinitions(...)` declares durable token bindings (`plugin_key`, `action_name`, `phase`).
 - `onResponses(...)` and `onErrors(...)` attach executable handlers to those tokens with phase-safe typing.
 - Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
+- Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
+- `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
 - Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
 - `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
@@ -332,8 +355,11 @@ If you used older/expanded saga docs, migrate as follows:
 
 - **Keep using:** `createSaga` and retry helpers.
 - **Use manifest-first builder form:** `createSaga<TState>({ name, plugins? })`.
-- **Define plugin manifests with:** `defineSagaPlugin({ plugin_key, actions })`.
-- **Route request_response actions with durable named tokens only:** `.withData(...).onResponse(token).onError(token)`.
+- **Define plugin manifests with helper-based actions:** `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
+- **Route request/response actions with durable named tokens:** `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
+- **Semantics reminder:** `withData` and `onRetry` are optional; `onError` is terminal after retries are exhausted or on non-retryable errors.
+- **Backwards compatibility:** legacy `action_kind` descriptors continue to work while migrating.
+- **Deferred scope:** `forCommands` ergonomics remain tracked separately.
 - **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
 - **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.

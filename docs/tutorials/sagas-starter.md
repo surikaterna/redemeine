@@ -1,16 +1,16 @@
 # Redemeine Sagas Starter: Build a Retryable Billing Flow
 
-This starter walks through the minimum moving parts for building a manifest-first, event-sourced saga in Redemeine.
+This starter walks through the minimum moving parts for building a helper-first, event-sourced saga in Redemeine.
 
 > ⚠️ **Breaking change:** this tutorial now focuses on the manifest-first saga definition API (`createSaga({ name, plugins? })`).
 
 You will:
 
 1. Define saga state.
-2. Define plugins with `defineSagaPlugin(...)`.
+2. Define plugins with `defineSagaPlugin(...)` helper actions.
 3. Build a saga with `createSaga({ name, plugins? })`.
 4. Use namespaced plugin actions (`ctx.actions.<plugin_key>.<action>(...)`).
-5. Route `request_response` actions with `.withData(...).onResponse(token).onError(token)`.
+5. Route request/response actions with optional `.withData(...)`, optional `.onRetry(...)`, then `.onResponse(token).onError(token)`.
 
 ## 1) Define saga state
 
@@ -23,31 +23,36 @@ type BillingSagaState = {
 
 `createSaga<BillingSagaState>(...)` keeps handler state usage fully inferred.
 
-## 2) Define plugin manifests
+## 2) Define plugin manifests with helper APIs
 
 ```ts
-import { defineSagaPlugin } from '@redemeine/saga';
+import {
+  defineSagaPlugin,
+  defineOneWay,
+  defineRequestResponse,
+  defineCustomAction
+} from '@redemeine/saga';
 
 export const InfraPlugin = defineSagaPlugin({
   plugin_key: 'infra',
   actions: {
-    scheduleCommand: {
-      action_kind: 'void',
-      build: (name: 'billing.retry', delayMs: number) => ({ name, delayMs })
-    }
+    scheduleCommand: defineOneWay((name: 'billing.retry', delayMs: number) => ({ name, delayMs }))
   }
 });
 
 export const HttpPlugin = defineSagaPlugin({
   plugin_key: 'http',
   actions: {
-    get: {
-      action_kind: 'request_response',
-      build: (url: string, headers?: Record<string, string>) => ({ url, headers })
-    }
+    get: defineRequestResponse((url: string, headers?: Record<string, string>) => ({ url, headers })),
+    annotate: defineCustomAction((builderCtx, topic: string, details: Record<string, unknown>) => {
+      return builderCtx.emitOneWay({ topic, details });
+    })
   }
 });
 ```
+
+Backward compatibility note: legacy `action_kind` descriptors still work while migrating existing plugins.
+`forCommands` ergonomics are explicitly deferred from this helper rollout.
 
 ## 3) Build the saga definition (canonical mixed-action example)
 
@@ -78,6 +83,11 @@ export const BillingSaga = createSaga<BillingSagaState>({
   plugins: [InfraPlugin, HttpPlugin] as const
 })
   .responseDefinitions({
+    billingFetchRetrying: {
+      plugin_key: 'http',
+      action_name: 'get',
+      phase: 'retry'
+    },
     billingFetchSucceeded: {
       plugin_key: 'http',
       action_name: 'get',
@@ -95,14 +105,21 @@ export const BillingSaga = createSaga<BillingSagaState>({
     created: (state, event, ctx) => {
       state.attempts += 1;
 
-      // void plugin action
+      // one-way helper action
       ctx.actions.infra.scheduleCommand('billing.retry', 5_000);
+
+      // custom helper action
+      ctx.actions.http.annotate('billing.attempted', { invoiceId: event.payload.invoiceId });
 
       // request_response plugin action chain
       ctx.actions.http
         .get(`https://api.example.com/billing/${event.payload.invoiceId}`)
+        // optional
         .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempts })
+        // optional
+        .onRetry(ctx.onRetry.billingFetchRetrying)
         .onResponse(ctx.onResponse.billingFetchSucceeded)
+        // onError is terminal after retries exhausted/non-retryable
         .onError(ctx.onError.billingFetchFailed);
 
       // core actions are available in the same namespace
@@ -133,6 +150,12 @@ export const BillingSaga = createSaga<BillingSagaState>({
 Handlers are mutation-style (Immer semantics): mutate `state`, then emit intents through `ctx` helpers.
 
 Request routing is durable and restart-safe because only named handler tokens are persisted (`response_handler_key`, `error_handler_key`, `handler_data`). Inline callback persistence is not supported.
+
+For `defineRequestResponse(...)`, remember lifecycle semantics:
+
+- `withData(...)` is optional.
+- `onRetry(...)` is optional.
+- `onError(...)` is terminal and runs only when retries are exhausted or the error is non-retryable.
 
 Executable response/error handlers are registered separately with `.onResponses(...)` and `.onErrors(...)`. These runtime maps are not persisted; they are attached at build time for in-process execution.
 
