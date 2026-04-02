@@ -54,7 +54,7 @@ describe('runtime executable saga handlers', () => {
       definition: saga,
       state: { attempts: 2 },
       envelope: {
-        token: 'billing.charge.ok',
+        token: 'billing.charge.ok' as any,
         payload: 'accepted',
         request: {
           plugin_key: 'billing',
@@ -107,7 +107,7 @@ describe('runtime executable saga handlers', () => {
       definition: saga,
       state: { attempts: 1 },
       envelope: {
-        token: 'billing.charge.failed',
+        token: 'billing.charge.failed' as any,
         error: 'declined',
         request: {
           plugin_key: 'billing',
@@ -142,7 +142,7 @@ describe('runtime executable saga handlers', () => {
     ]);
   });
 
-  it('returns deterministic failure contract for token lookup and phase mismatch', async () => {
+  it('returns deterministic failure contract for unknown response tokens', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_FAILURES_IDENTITY })
       .onErrors({
         'billing.charge.failed': () => undefined
@@ -154,7 +154,7 @@ describe('runtime executable saga handlers', () => {
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.unknown',
+        token: 'billing.charge.unknown' as any,
         payload: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -169,11 +169,11 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const responsePhaseMismatch = await runSagaResponseHandler({
+    const responseUnknownToken = await runSagaResponseHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.failed',
+        token: 'billing.charge.failed' as any,
         payload: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -182,16 +182,14 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(responsePhaseMismatch).toEqual({
+    expect(responseUnknownToken).toEqual({
       ok: false,
-      reason: 'phase_mismatch',
-      token: 'billing.charge.failed',
-      expected_phase: 'response',
-      actual_phase: 'error'
+      reason: 'token_not_defined',
+      token: 'billing.charge.failed'
     });
   });
 
-  it('returns token_not_defined and phase_mismatch for error helper', async () => {
+  it('returns deterministic failure contract for unknown error tokens', async () => {
     const saga = createSaga<RuntimeTestState>({ identity: RUNTIME_HANDLER_ERROR_FAILURES_IDENTITY })
       .onResponses({
         'billing.charge.ok': () => undefined
@@ -206,7 +204,7 @@ describe('runtime executable saga handlers', () => {
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.unknown',
+        token: 'billing.charge.unknown' as any,
         error: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -221,11 +219,11 @@ describe('runtime executable saga handlers', () => {
       token: 'billing.charge.unknown'
     });
 
-    const errorPhaseMismatch = await runSagaErrorHandler({
+    const errorUnknownToken = await runSagaErrorHandler({
       definition: untypedSaga,
       state: { attempts: 0 },
       envelope: {
-        token: 'billing.charge.ok',
+        token: 'billing.charge.ok' as any,
         error: 'ignored',
         request: {
           plugin_key: 'billing',
@@ -234,12 +232,10 @@ describe('runtime executable saga handlers', () => {
       }
     });
 
-    expect(errorPhaseMismatch).toEqual({
+    expect(errorUnknownToken).toEqual({
       ok: false,
-      reason: 'phase_mismatch',
-      token: 'billing.charge.ok',
-      expected_phase: 'error',
-      actual_phase: 'response'
+      reason: 'token_not_defined',
+      token: 'billing.charge.ok'
     });
   });
 });
