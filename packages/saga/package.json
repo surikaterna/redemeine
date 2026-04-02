@@ -26,6 +26,7 @@
     "lint": "bunx tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@redemeine/aggregate": "workspace:*",
     "immer": "^10.1.1"
   }
 }
