@@ -1,6 +1,7 @@
 # Testing Projections
 
 > Contract reference: see [Testing DX v1 Contracts](/docs/architecture/testing-dx-v1-contracts) for locked fixture API and semantics under bead `redemeine-t8g.1`.
+> See also: [Testing Pyramid (Typed-First)](/docs/recipes/testing-pyramid) for fixture layering, typed-first policy, and allowed raw-envelope fallback cases.
 
 Use this recipe when you want fast, deterministic tests for projection behavior.
 
