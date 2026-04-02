@@ -118,7 +118,56 @@ export {
   type SagaIdentity,
   type SagaIdentityErrorCode
 } from './SagaIdentity';
-export * from './RetryPolicy';
-export * from './SagaIdentityContract';
-export * from './identity/index';
-export * from './SagaIdentityAdapter';
+
+// Canonical identity utilities (preferred surface for new code).
+export {
+  buildSagaType,
+  normalizeSagaIdentity,
+  SagaIdentityNormalizationError,
+  deriveSagaInstanceUrn,
+  deriveSagaUrn,
+  buildCanonicalSagaInstanceUrn,
+  normalizeCanonicalIdentitySegment,
+  normalizeCanonicalSagaVersion,
+  buildCanonicalSagaType,
+  buildCanonicalSagaUrn,
+  normalizeSagaName,
+  normalizeSagaNamespace,
+  SAGA_NAME_PATTERN,
+  SAGA_NAMESPACE_PATTERN,
+  SAGA_URN_PREFIX,
+  SAGA_VERSION_TOKEN_PATTERN,
+  type SagaIdentityInput as CanonicalSagaIdentityInput,
+  type SagaIdentityNormalizationErrorCode,
+  type SagaIdentityParts,
+  type NormalizedSagaIdentity,
+  type SagaStructuredIdentity,
+  type CanonicalSagaIdentityParts
+} from './identity/index';
+
+// Retry policy exports.
+export {
+  validateRetryPolicy,
+  computeNextAttemptAt,
+  isRetryableError,
+  classifyRetryableError,
+  type SagaRetryPolicy,
+  type RetryableErrorClassification,
+  type RetryableErrorPredicate,
+  type RetryableErrorClassificationOptions,
+  type RetrySchedulingNow
+} from './RetryPolicy';
+
+// Compatibility exports kept for non-breaking consumers.
+export {
+  normalizeSagaIdentityInput,
+  type LegacySagaIdentityObject,
+  type SupportedSagaIdentityInput,
+  type NormalizedSagaIdentityResult
+} from './SagaIdentityAdapter';
+
+export {
+  type SagaIdentityContract,
+  type SagaIdentityDerived,
+  type SagaIdentityFields as LegacySagaIdentityFields
+} from './SagaIdentityContract';
