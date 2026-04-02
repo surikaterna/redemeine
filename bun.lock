@@ -32,9 +32,33 @@
         "zod": "^3.0.0",
       },
     },
+    "packages/aggregate": {
+      "name": "@redemeine/aggregate",
+      "version": "0.1.0",
+    },
+    "packages/kernel": {
+      "name": "@redemeine/kernel",
+      "version": "0.1.0",
+    },
+    "packages/mirage": {
+      "name": "@redemeine/mirage",
+      "version": "0.1.0",
+    },
+    "packages/projection": {
+      "name": "@redemeine/projection",
+      "version": "0.1.0",
+    },
     "packages/root-runner": {
       "name": "@redemeine/root-runner",
       "version": "0.0.0",
+    },
+    "packages/saga": {
+      "name": "@redemeine/saga",
+      "version": "0.1.0",
+    },
+    "packages/saga-runtime": {
+      "name": "@redemeine/saga-runtime",
+      "version": "0.1.0",
     },
   },
   "packages": {
@@ -234,7 +258,19 @@
 
     "@pkgr/core": ["@pkgr/core@0.2.9", "", {}, "sha512-QNqXyfVS2wm9hweSYD2O7F0G06uurj9kZ96TRQE5Y9hU7+tgdZwIkbAKc5Ocy1HxEY2kuDQa6cQ1WRs/O5LFKA=="],
 
+    "@redemeine/aggregate": ["@redemeine/aggregate@workspace:packages/aggregate"],
+
+    "@redemeine/kernel": ["@redemeine/kernel@workspace:packages/kernel"],
+
+    "@redemeine/mirage": ["@redemeine/mirage@workspace:packages/mirage"],
+
+    "@redemeine/projection": ["@redemeine/projection@workspace:packages/projection"],
+
     "@redemeine/root-runner": ["@redemeine/root-runner@workspace:packages/root-runner"],
+
+    "@redemeine/saga": ["@redemeine/saga@workspace:packages/saga"],
+
+    "@redemeine/saga-runtime": ["@redemeine/saga-runtime@workspace:packages/saga-runtime"],
 
     "@rtsao/scc": ["@rtsao/scc@1.1.0", "", {}, "sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g=="],
 
