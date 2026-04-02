@@ -5,7 +5,7 @@ Use this recipe when you want fast, deterministic tests for projection behavior.
 ## 1) Build with `createProjection`
 
 ```ts
-import { createProjection } from 'redemeine/projections';
+import { createProjection } from '@redemeine/projection';
 
 const invoiceSummary = createProjection<{
   total: number;

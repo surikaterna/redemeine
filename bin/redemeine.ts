@@ -218,8 +218,8 @@ async function main() {
       initAggregate(name);
       console.log(colors.green('\nNext Steps:'));
       console.log(colors.cyan(`1. Check src/domains/\${name}/contract.ts to define your schema.`));
-      console.log(colors.cyan(`2. Run 'npx redemeine add-entity' to add nested collections.`));
-      console.log(colors.cyan(`3. Use tsc to verify your new aggregate.`));
+      console.log(colors.cyan(`2. Run 'bunx redemeine add-entity' to add nested collections.`));
+      console.log(colors.cyan(`3. Use 'bunx tsc' to verify your new aggregate.`));
       break;
     case 'add-entity':
       addEntity(name, options.to);

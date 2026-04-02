@@ -18,7 +18,7 @@ Here is a complete, copy-pasteable test suite demonstrating how effortless testi
 
 ```ts
 import { describe, it, expect } from 'vitest'; // or from '@jest/globals'
-import { createMirage, extractUncommittedEvents, clearUncommittedEvents } from 'redemeine';
+import { createMirage, extractUncommittedEvents, clearUncommittedEvents } from '@redemeine/mirage';
 
 // 1. Import your built aggregate blueprint from your domain folder
 import { ShipmentAggregate } from './ShipmentAggregate';
