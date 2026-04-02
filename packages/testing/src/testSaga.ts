@@ -12,7 +12,7 @@ import {
   type SagaReducerOutput,
   type SagaResponseHandlerTokenBinding,
   type SagaResponseHandlerTokenBindings
-} from './createSaga';
+} from '@redemeine/saga';
 
 type SagaEventEnvelope = {
   readonly type: string;

@@ -82,6 +82,13 @@
         "@redemeine/saga": "workspace:*",
       },
     },
+    "packages/testing": {
+      "name": "@redemeine/testing",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/saga": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
@@ -293,6 +300,8 @@
     "@redemeine/saga": ["@redemeine/saga@workspace:packages/saga"],
 
     "@redemeine/saga-runtime": ["@redemeine/saga-runtime@workspace:packages/saga-runtime"],
+
+    "@redemeine/testing": ["@redemeine/testing@workspace:packages/testing"],
 
     "@rtsao/scc": ["@rtsao/scc@1.1.0", "", {}, "sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g=="],
 

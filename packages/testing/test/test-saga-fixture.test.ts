@@ -1,10 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSaga,
-  testSaga,
   type CanonicalSagaIdentityInput,
   type SagaResponseHandlerTokenBindings
-} from '../src';
+} from '@redemeine/saga';
+import { testSaga } from '../src';
 
 const PaymentAggregate = {
   __aggregateType: 'payment',
