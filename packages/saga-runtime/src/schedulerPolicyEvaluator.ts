@@ -52,6 +52,7 @@ interface TenantRuntimeState {
   readonly fairnessWeight: number;
   readonly queue: SchedulerDecisionCandidate[];
   deficit: number;
+  skippedRounds: number;
   remainingRateLimit: number;
   selected: number;
   deferredRateLimited: number;
@@ -104,7 +105,16 @@ const compareCandidateRank = (left: SchedulerDecisionCandidate, right: Scheduler
   return left.sagaId.localeCompare(right.sagaId);
 };
 
-const compareTenantRuntimeState = (left: TenantRuntimeState, right: TenantRuntimeState): number => {
+const compareTenantRuntimeState = (
+  starvationThreshold: number
+) => (left: TenantRuntimeState, right: TenantRuntimeState): number => {
+  const leftStarved = left.skippedRounds >= starvationThreshold;
+  const rightStarved = right.skippedRounds >= starvationThreshold;
+
+  if (leftStarved !== rightStarved) {
+    return leftStarved ? -1 : 1;
+  }
+
   if (left.deficit !== right.deficit) {
     return right.deficit - left.deficit;
   }
@@ -152,6 +162,7 @@ export function evaluateSchedulerPolicy(
       fairnessWeight,
       queue: [],
       deficit: 0,
+      skippedRounds: 0,
       remainingRateLimit: typeof limit === 'number' ? Math.max(0, limit - consumed) : Number.POSITIVE_INFINITY,
       selected: 0,
       deferredRateLimited: 0
@@ -177,19 +188,25 @@ export function evaluateSchedulerPolicy(
       break;
     }
 
+    for (const state of eligible) {
+      state.skippedRounds += 1;
+    }
+
     let totalWeight = 0;
     for (const state of eligible) {
       totalWeight += state.fairnessWeight;
       state.deficit += state.fairnessWeight;
     }
 
-    eligible.sort(compareTenantRuntimeState);
+    const starvationThreshold = Math.max(2, eligible.length * 2);
+    eligible.sort(compareTenantRuntimeState(starvationThreshold));
     const winner = eligible[0];
     const next = winner.queue.shift();
     if (!next) {
       continue;
     }
 
+    winner.skippedRounds = 0;
     winner.remainingRateLimit -= 1;
     winner.selected += 1;
     winner.deficit -= totalWeight;
