@@ -95,15 +95,62 @@ Use `createSaga({ identity, plugins? })` to build saga definitions with typed pl
 - Handlers use mutation-style state updates (Immer draft semantics).
 - Scope is **definition-only**: this API defines typed intent contracts and persisted routing metadata; it does **not** execute plugin runtimes.
 
-### Canonical plugin + saga example (void + request_response)
+### Typed plugin helper API contracts (planned)
+
+The following helper APIs are part of the typed saga plugin roadmap and are
+documented here as **contract-first** behavior for upcoming implementation:
+
+- `defineOneWay(...)`
+- `defineRequestResponse(...)`
+- `defineCustomAction(...)`
+
+Contract details:
+
+- `defineOneWay(...)`
+  - Builds a one-way plugin action contract.
+  - Emits intent immediately from the handler turn and returns that intent.
+- `defineRequestResponse(...)`
+  - Builds a request-response contract with durable routing.
+  - `.withData(...)` is optional.
+  - `.onResponse(...)` is required.
+  - `.onError(...)` is required.
+  - `.onRetry(...)` is optional.
+  - `onError` is terminal after retries are exhausted, or when an error is
+    classified as non-retryable.
+- `defineCustomAction(...)`
+  - Builds a custom action contract using constrained builder primitives.
+  - Plugin authors may define custom completeness semantics while still using
+    deterministic intent-state mutation primitives.
+
+Planned `builderCtx` primitive surface:
+
+- `createPending(...)`
+- `patch(...)` / `set(...)`
+- `snapshot(...)`
+- `finalize(...)` / `emit(...)`
+- `complete(...)` / `isComplete(...)`
+
+Intent emission timing semantics:
+
+- One-way: emit immediately.
+- Request-response: emit after request routing is fully bound (`onResponse` +
+  `onError`, with optional `withData` / `onRetry`).
+- Custom: emission/finalization is explicit and controlled through `builderCtx`.
+
+Out of scope/deferred:
+
+- Plugin `forCommands` ergonomics are explicitly deferred and are not part of
+  this contract pass.
+
+### Canonical plugin + saga example (helper-based plugin actions)
 
 ```ts
 import {
   createSaga,
   defineSagaPlugin,
-  type TErrorToken,
-  type TRetryToken,
-  type TResponseToken
+  defineOneWay,
+  defineRequestResponse,
+  defineCustomAction
 } from '@redemeine/saga';
 
 type InvoiceSagaState = { attempted: number; settled: boolean };
@@ -111,20 +158,18 @@ type InvoiceSagaState = { attempted: number; settled: boolean };
 const InfraPlugin = defineSagaPlugin({
   plugin_key: 'infra',
   actions: {
-    scheduleCommand: {
-      action_kind: 'void',
-      build: (name: 'invoice.retry', delayMs: number) => ({ name, delayMs })
-    }
+    scheduleCommand: defineOneWay((name: 'invoice.retry', delayMs: number) => ({ name, delayMs }))
   }
 });
 
 const HttpPlugin = defineSagaPlugin({
   plugin_key: 'http',
   actions: {
-    get: {
-      action_kind: 'request_response',
-      build: (url: string, headers?: Record<string, string>) => ({ url, headers })
-    }
+    get: defineRequestResponse((url: string, headers?: Record<string, string>) => ({ url, headers })),
+    // Custom builders can choose their own completion semantics.
+    annotate: defineCustomAction((builderCtx, topic: string, details: Record<string, unknown>) => {
+      return builderCtx.emitOneWay({ topic, details });
+    })
   }
 });
 
@@ -151,8 +196,6 @@ const saga = createSaga<InvoiceSagaState>({
   },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .initialState(() => ({ attempted: 0, settled: false }))
-  .correlate(InvoiceAggregate, event => event.payload.invoiceId)
   .onResponses({
     invoiceFetchSucceeded: (state, response, ctx) => {
       state.settled = true;
@@ -169,28 +212,32 @@ const saga = createSaga<InvoiceSagaState>({
     }
   })
   .onRetries({
-    invoiceFetchRetrying: (state, retry) => {
-      state.attempted = Math.max(state.attempted, retry.attempt);
+    invoiceFetchRetrying: state => {
+      state.attempted += 1;
     }
   })
+  .initialState(() => ({ attempted: 0, settled: false }))
+  .correlate(InvoiceAggregate, event => event.payload.invoiceId)
   .on(InvoiceAggregate, {
     created: (state, event, ctx) => {
       state.attempted += 1;
 
-      const successToken: TResponseToken<'invoiceFetchSucceeded'> = ctx.onResponse.invoiceFetchSucceeded;
-      const failureToken: TErrorToken<'invoiceFetchFailed'> = ctx.onError.invoiceFetchFailed;
-      const retryToken: TRetryToken<'invoiceFetchRetrying'> = ctx.onRetry.invoiceFetchRetrying;
-      void retryToken;
-
-      // void action (manifest-defined)
+      // one-way helper action
       ctx.actions.infra.scheduleCommand('invoice.retry', 5_000);
+
+      // custom helper action
+      ctx.actions.http.annotate('billing.attempted', { invoiceId: event.payload.invoiceId });
 
       // request_response action chain
       ctx.actions.http
         .get(`https://api.example.com/invoices/${event.payload.invoiceId}`)
+        // optional
         .withData({ invoiceId: event.payload.invoiceId, attempt: state.attempted })
-        .onResponse(successToken)
-        .onError(failureToken);
+        // optional
+        .onRetry(ctx.onRetry.invoiceFetchRetrying)
+        .onResponse(ctx.onResponse.invoiceFetchSucceeded)
+        // terminal after retries exhausted/non-retryable
+        .onError(ctx.onError.invoiceFetchFailed);
 
       // built-in actions are also available under ctx.actions.core
       const commands = ctx.actions.core.dispatch(InvoiceAggregate, event.payload.invoiceId);
@@ -205,20 +252,28 @@ Core contracts:
 
 - Handler signature: `(state, event, ctx)` mutation-style state updates.
 - Plugin calls are namespaced as `ctx.actions.<plugin_key>.<action>(...)`.
-- Request/response plugin actions use the durable routing chain:
-  - `.withData(handlerData)`
+- Helper APIs provide ergonomic plugin action builders:
+  - `defineOneWay(build)`
+  - `defineRequestResponse(build)`
+  - `defineCustomAction((builderCtx, ...args) => ...)`
+- Request/response actions use durable routing chain:
+  - `.withData(handlerData)` (optional)
+  - `.onRetry(retryToken)` (optional)
   - `.onResponse(responseToken)`
-  - `.onError(errorToken)`
-- `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` are the registration source for token namespaces and executable handler maps.
-- `ctx.onResponse.*`, `ctx.onError.*`, and `ctx.onRetry.*` tokens are branded (`TResponseToken` / `TErrorToken` / `TRetryToken`) so phase mismatches fail at compile time.
+  - `.onError(errorToken)` (terminal after retries exhausted/non-retryable)
+- `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` register executable handlers and define token namespaces with phase-safe typing.
+- Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
+- Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
+- `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
 - Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
 - `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
-### Runtime dispatch model
+### Handler registration and runtime maps
 
-- Runtime dispatch is handler-map-first: response, error, and retry callbacks are looked up directly from phase-specific handler maps.
-- Runtime action-level validation for callback envelopes is intentionally deferred in this phase.
+- `saga.responseHandlers`, `saga.errorHandlers`, and `saga.retryHandlers` are the registered executable function maps.
+- Token namespaces (`ctx.onResponse.*`, `ctx.onError.*`, `ctx.onRetry.*`) are derived from these registrations and are phase-branded.
+- Runtime helpers (`runSagaResponseHandler` / `runSagaErrorHandler`) resolve and execute against those maps.
 
 ## Deterministic `testSaga` invoke chain
 
@@ -291,6 +346,7 @@ Ownership note:
 
 - Saga state uses **camelCase** keys (for example `createdAt`, `updatedAt`, `transitionVersion`).
 - Code-level API keys use **camelCase** (for example plugin action names like `scheduleCommand`).
+- Persisted/wire plugin routing metadata fields use **snake_case** (`plugin_key`, `action_name`, `response_handler_key`, `error_handler_key`, `handler_data`).
 - Command and event `type` values on the wire use **snake_case** naming.
 - Temporal fields are serialized as **ISO8601** timestamps.
 - Recent transition/event/activity history is stored in **compact windows** (bounded arrays), with totals tracked separately.
@@ -332,12 +388,27 @@ In other words, the saga definition emits intents; runtime infrastructure may la
 If you used older/expanded saga docs, migrate as follows:
 
 - **Keep using:** `createSaga` and retry helpers.
-- **Use manifest-first builder form:** `createSaga<TState>({ identity, plugins? })`.
-- **Define plugin manifests with:** `defineSagaPlugin({ plugin_key, actions })`.
-- **Register callbacks with handler maps:** `.onResponses(...)`, `.onErrors(...)`, `.onRetries(...)`.
-- **Route request_response actions with phase-safe branded tokens:** `.withData(...).onResponse(token).onError(token)`.
+- **Use manifest-first builder form:** `createSaga<TState>({ name, plugins? })`.
+- **Define plugin manifests with helper-based actions:** `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
+- **Route request/response actions with durable named tokens:** `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
+- **Semantics reminder:** `withData` and `onRetry` are optional; `onError` is terminal after retries are exhausted or on non-retryable errors.
+- **Backwards compatibility:** legacy `action_kind` descriptors continue to work while migrating.
+- **Deferred scope:** `forCommands` ergonomics remain tracked separately.
 - **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
 - **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
 - **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
 - **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
 - **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.
+
+## Migration note (additive plugin action helpers)
+
+`@redemeine/saga` now also exports additive helper APIs for plugin manifests:
+
+- `defineOneWay(...)`
+- `defineRequestResponse(...)`
+- `defineCustomAction(...)`
+
+Compatibility note:
+
+- Existing raw descriptors with explicit `action_kind` (`'void'` / `'request_response'`) remain fully supported.
+- You can migrate incrementally by mixing helper-based and raw descriptors in the same plugin manifest.
