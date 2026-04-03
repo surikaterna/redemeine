@@ -9,7 +9,7 @@ import {
   type SagaIntent,
   type SagaIntentMetadata,
   type SagaPluginManifestList,
-  type SagaPluginRequestIntent,
+  type SagaPluginIntent,
   type SagaReducerOutput,
   type SagaResponseHandlerTokenBinding,
   type SagaResponseHandlerTokenBindings,
@@ -163,11 +163,11 @@ function enqueuePluginRequests(
   nextRequestId: { current: number }
 ): void {
   for (const intent of intents) {
-    if (intent.type !== 'plugin-request') {
+    if (intent.type !== 'plugin-intent' || intent.interaction !== 'request_response') {
       continue;
     }
 
-    const pluginRequest = intent as SagaPluginRequestIntent;
+    const pluginRequest = intent as SagaPluginIntent<string, string, unknown, 'request_response'>;
     const requestId = ++nextRequestId.current;
 
     const requestBase = {

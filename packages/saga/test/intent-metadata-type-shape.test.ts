@@ -3,7 +3,7 @@ import {
   createSaga,
   type CanonicalSagaIdentityInput,
   type SagaIntent,
-  type SagaPluginRequestIntent,
+  type SagaPluginIntent,
   type SagaPluginRequestRoutingMetadata
 } from '../src';
 
@@ -29,7 +29,7 @@ const InvoiceAggregate = {
 } as const;
 
 describe('S07 acceptance: intent metadata type shape', () => {
-  it('ctx exposes saga metadata and all intent helpers return metadata fields', () => {
+  it('ctx exposes saga metadata and intent helpers return metadata fields', () => {
     createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
@@ -53,12 +53,14 @@ describe('S07 acceptance: intent metadata type shape', () => {
 
           const dispatchedSagaId: string = dispatchIntent.metadata.sagaId;
           const scheduledCorrelationId: string = scheduleIntent.metadata.correlationId;
+          const cancelCausationId: string = ctx.actions.core.cancelSchedule('invoice-reminder').metadata.causationId;
 
           expect(ctxSagaId).toBeDefined();
           expect(ctxCorrelationId).toBeDefined();
           expect(ctxCausationId).toBeDefined();
           expect(dispatchedSagaId).toBeDefined();
           expect(scheduledCorrelationId).toBeDefined();
+          expect(cancelCausationId).toBeDefined();
 
         }
       })
@@ -76,6 +78,9 @@ describe('S07 acceptance: intent metadata type shape', () => {
           });
           // @ts-expect-error metadata values must be strings
           ctx.actions.core.schedule('invoice-reminder', 5_000, { correlationId: 99 });
+
+          // @ts-expect-error metadata values must be strings
+          ctx.actions.core.cancelSchedule('invoice-reminder', { causationId: false });
 
           // @ts-expect-error context metadata fields are required strings
           const invalid: number = ctx.metadata.sagaId;
@@ -100,10 +105,10 @@ describe('S07 acceptance: intent metadata type shape', () => {
     };
 
     const intent: SagaIntent = {
-      type: 'plugin-request',
+      type: 'plugin-intent',
       plugin_key: 'http',
       action_name: 'get',
-      action_kind: 'request_response',
+      interaction: 'request_response',
       execution_payload: {
         url: 'https://api.example.com/invoices/inv-2'
       },
@@ -115,15 +120,15 @@ describe('S07 acceptance: intent metadata type shape', () => {
       }
     };
 
-    const pluginIntent = intent as SagaPluginRequestIntent;
+    const pluginIntent = intent as SagaPluginIntent<string, string, unknown, 'request_response'>;
     expect(pluginIntent.routing_metadata.response_handler_key).toBe('http.get.success');
 
     // @ts-expect-error routing_metadata is required for plugin request intents
-    const missingRouting: SagaPluginRequestIntent = {
-      type: 'plugin-request',
+    const missingRouting: SagaPluginIntent<string, string, unknown, 'request_response'> = {
+      type: 'plugin-intent',
       plugin_key: 'http',
       action_name: 'get',
-      action_kind: 'request_response',
+      interaction: 'request_response',
       execution_payload: {},
       metadata: {
         sagaId: 'saga-3',

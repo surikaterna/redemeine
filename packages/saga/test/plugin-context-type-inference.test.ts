@@ -5,9 +5,9 @@ import {
   runSagaErrorHandler,
   runSagaResponseHandler,
   type CanonicalSagaIdentityInput,
+  type SagaPluginIntent,
   type TErrorToken,
-  type TResponseToken,
-  type SagaPluginRequestIntent
+  type TResponseToken
 } from '../src';
 
 const PLUGIN_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
@@ -71,7 +71,7 @@ const InfraPlugin = defineSagaPlugin({
   plugin_key: 'infra',
   actions: {
     scheduleCommand: {
-      action_kind: 'void',
+      interaction: 'fire_and_forget',
       build: (name: 'invoice.retry', delayMs: number) => ({ name, delayMs })
     }
   }
@@ -81,11 +81,11 @@ const HttpPlugin = defineSagaPlugin({
   plugin_key: 'http',
   actions: {
     get: {
-      action_kind: 'request_response',
+      interaction: 'request_response',
       build: (url: string, headers?: Record<string, string>) => ({ url, headers })
     },
     post: {
-      action_kind: 'request_response',
+      interaction: 'request_response',
       build: (url: string, body: unknown) => ({ url, body })
     }
   }
@@ -99,24 +99,24 @@ describe('createSaga plugin-capable ctx typing', () => {
       description: 'HTTP integration',
       actions: {
         ping: {
-          action_kind: 'void',
+          interaction: 'fire_and_forget',
           build: (url: string) => ({ url })
         },
         get: {
-          action_kind: 'request_response',
+          interaction: 'request_response',
           build: (url: string, headers?: Record<string, string>) => ({ url, headers })
         }
       }
     });
 
     const pluginKey: 'http' = httpPlugin.plugin_key;
-    const pingKind: 'void' = httpPlugin.actions.ping.action_kind;
-    const getKind: 'request_response' = httpPlugin.actions.get.action_kind;
+    const pingKind: 'fire_and_forget' = httpPlugin.actions.ping.interaction;
+    const getKind: 'request_response' = httpPlugin.actions.get.interaction;
     const pingPayload = httpPlugin.actions.ping.build('https://example.com/ping');
     const getPayload = httpPlugin.actions.get.build('https://example.com/items', { authorization: 'Bearer x' });
 
     expect(pluginKey).toBe('http');
-    expect(pingKind).toBe('void');
+    expect(pingKind).toBe('fire_and_forget');
     expect(getKind).toBe('request_response');
     expect(pingPayload.url).toBe('https://example.com/ping');
     expect(getPayload.url).toBe('https://example.com/items');
@@ -125,8 +125,8 @@ describe('createSaga plugin-capable ctx typing', () => {
       plugin_key: 'broken',
       actions: {
         execute: {
-          // @ts-expect-error action_kind must be one of the supported literals
-          action_kind: 'request',
+          // @ts-expect-error interaction must be one of the supported literals
+          interaction: 'request',
           build: () => ({})
         }
       }
@@ -204,6 +204,7 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           ctx.actions.core.schedule('invoice-reminder', 1_000);
           ctx.actions.core.cancelSchedule('invoice-reminder');
+          ctx.actions.core.schedule('audit', 100);
 
           expect(jobName).toBe('invoice.retry');
           expect(routedInvoiceId).toBe(event.payload.invoiceId);
@@ -432,20 +433,21 @@ describe('createSaga plugin-capable ctx typing', () => {
   });
 
   it('types request-response plugin intent with separated payload and routing metadata', () => {
-    const intent: SagaPluginRequestIntent<
+    const intent: SagaPluginIntent<
       'http',
       'get',
       { url: string; headers?: Record<string, string> },
+      'request_response',
       {
         response_handler_key: 'http.get.success';
         error_handler_key: 'http.get.failure';
         handler_data: { invoiceId: string };
       }
     > = {
-      type: 'plugin-request',
+      type: 'plugin-intent',
       plugin_key: 'http',
       action_name: 'get',
-      action_kind: 'request_response',
+      interaction: 'request_response',
       execution_payload: {
         url: 'https://api.example.com/invoices/inv-1',
         headers: { authorization: 'Bearer t' }

@@ -40,9 +40,15 @@ describe('S08 reducer output contract typing', () => {
         started: (state, _event, ctx) => {
           const intents: readonly SagaIntent[] = [
             {
-              type: 'dispatch',
-              command: 'billing.charge',
-              payload: { invoiceId: state.invoiceId, amount: 250 },
+              type: 'plugin-intent',
+              plugin_key: 'core',
+              action_name: 'dispatch',
+              interaction: 'fire_and_forget',
+              execution_payload: {
+                command: 'billing.charge',
+                payload: { invoiceId: state.invoiceId, amount: 250 },
+                aggregateId: 'billing-1'
+              },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
@@ -50,9 +56,15 @@ describe('S08 reducer output contract typing', () => {
               }
             },
             {
-              type: 'dispatch',
-              command: 'billing.notify',
-              payload: { invoiceId: state.invoiceId, channel: 'email' },
+              type: 'plugin-intent',
+              plugin_key: 'core',
+              action_name: 'dispatch',
+              interaction: 'fire_and_forget',
+              execution_payload: {
+                command: 'billing.notify',
+                payload: { invoiceId: state.invoiceId, channel: 'email' },
+                aggregateId: 'billing-1'
+              },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
@@ -60,9 +72,14 @@ describe('S08 reducer output contract typing', () => {
               }
             },
             {
-              type: 'schedule',
-              id: 'billing-reminder',
-              delay: 5_000,
+              type: 'plugin-intent',
+              plugin_key: 'core',
+              action_name: 'schedule',
+              interaction: 'fire_and_forget',
+              execution_payload: {
+                id: 'billing-reminder',
+                delay: 5_000
+              },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
@@ -70,14 +87,20 @@ describe('S08 reducer output contract typing', () => {
               }
             },
             {
-              type: 'cancel-schedule',
-              id: 'billing-reminder',
+              type: 'plugin-intent',
+              plugin_key: 'core',
+              action_name: 'cancelSchedule',
+              interaction: 'fire_and_forget',
+              execution_payload: {
+                id: 'billing-reminder'
+              },
               metadata: {
                 sagaId: 'saga-1',
                 correlationId: 'corr-1',
                 causationId: 'cause-4'
               }
             }
+
           ];
 
           const output: SagaReducerOutput<typeof state> = {
@@ -131,9 +154,15 @@ describe('S08 reducer output contract typing', () => {
           };
 
           const badDispatchIntent: SagaIntent = {
-            type: 'dispatch',
-            command: 'billing.charge',
-            payload: { invoiceId: 'inv-1', amount: '250' },
+            type: 'plugin-intent',
+            plugin_key: 'core',
+            action_name: 'dispatch',
+            interaction: 'fire_and_forget',
+            execution_payload: {
+              command: 'billing.charge',
+              payload: { invoiceId: 'inv-1', amount: '250' },
+              aggregateId: 'billing-1'
+            },
             metadata: {
               sagaId: 'saga-1',
               correlationId: 'corr-1',
@@ -142,10 +171,14 @@ describe('S08 reducer output contract typing', () => {
           };
 
           const badScheduleIntent: SagaIntent = {
-            type: 'schedule',
-            id: 'billing-reminder',
-            // @ts-expect-error schedule delay must be number
-            delay: '5000',
+            type: 'plugin-intent',
+            plugin_key: 'core',
+            action_name: 'schedule',
+            interaction: 'fire_and_forget',
+            execution_payload: {
+              id: 'billing-reminder',
+              delay: '5000'
+            },
             metadata: {
               sagaId: 'saga-1',
               correlationId: 'corr-1',

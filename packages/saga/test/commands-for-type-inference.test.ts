@@ -37,11 +37,11 @@ describe('R5 acceptance: ctx.commandsFor aggregate wrapper typing', () => {
           const chargeIntent = commands['billing.charge']('inv-1', 250);
           const notifyIntent = commands['billing.notify']('inv-1', 'email');
 
-          const commandName: 'billing.charge' = chargeIntent.command;
-          const payloadAmount: number = chargeIntent.payload.amount;
-          const aggregateId: string = chargeIntent.aggregateId;
+          const commandName: 'billing.charge' = chargeIntent.execution_payload.command;
+          const payloadAmount: number = chargeIntent.execution_payload.payload.amount;
+          const aggregateId: string = chargeIntent.execution_payload.aggregateId;
           const metadataSagaId: string = chargeIntent.metadata.sagaId;
-          const notifyChannel: 'email' | 'sms' = notifyIntent.payload.channel;
+          const notifyChannel: 'email' | 'sms' = notifyIntent.execution_payload.payload.channel;
           const eventInvoiceId: string = event.payload.invoiceId;
           state.attempts += 1;
 

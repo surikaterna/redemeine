@@ -82,9 +82,14 @@ describe('runtime executable saga handlers', () => {
     const intents = result.output.intents as readonly SagaIntent[];
     expect(intents).toEqual([
       {
-        type: 'schedule',
-        id: 'retry-timeout',
-        delay: 1_000,
+        type: 'plugin-intent',
+        plugin_key: 'core',
+        action_name: 'schedule',
+        interaction: 'fire_and_forget',
+        execution_payload: {
+          id: 'retry-timeout',
+          delay: 1_000
+        },
         metadata: {
           sagaId: 'saga-1',
           correlationId: 'corr-override',
@@ -133,8 +138,13 @@ describe('runtime executable saga handlers', () => {
     });
     expect(result.output.intents).toEqual([
       {
-        type: 'cancel-schedule',
-        id: 'retry-timeout',
+        type: 'plugin-intent',
+        plugin_key: 'core',
+        action_name: 'cancelSchedule',
+        interaction: 'fire_and_forget',
+        execution_payload: {
+          id: 'retry-timeout'
+        },
         metadata: {
           sagaId: 'saga-2',
           correlationId: 'corr-2',

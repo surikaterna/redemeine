@@ -50,6 +50,8 @@ describe('createSaga ctx schedule helper typing', () => {
           // @ts-expect-error id must be a string
           ctx.actions.core.cancelSchedule(123);
 
+          // @ts-expect-error cancelSchedule id must be string
+          ctx.actions.core.cancelSchedule(false);
         }
       })
       .build();
