@@ -166,17 +166,6 @@ Notes:
 - `createSaga.ts` defines typed saga reducers and intent contracts.
 - Runtime aggregate/projection/execution modules are intentionally internal and may change without semver guarantees.
 
-### Breaking change notice (R20)
-
-The following saga modules/helpers are no longer documented as public API and should be treated as internal runtime plumbing:
-
-- runtime aggregate/persistence adapters
-- runtime projections and event buffers
-- dedupe/replay execution helpers
-- router/worker runtime orchestration seams
-
-Consumers should depend on the public saga definition surface only (`createSaga`, retry helpers, registry helpers, canonical event names).
-
 As saga feature slices progress, these shared modules can be complemented by feature-first saga folders where appropriate.
 
 ## ADR: Typed-first Testing Pyramid and In-Memory Integration Depot
