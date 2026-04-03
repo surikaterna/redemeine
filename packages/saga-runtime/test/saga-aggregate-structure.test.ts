@@ -115,7 +115,7 @@ describe('createSagaAggregate structure contracts', () => {
         aggregate.process(
           state,
           aggregate.commandCreators.recordStateTransition({
-            fromState: `state-${i - 1}`,
+            fromState: state.lifecycleState,
             toState: `state-${i}`,
             transitionAt: isoAt(i * 10)
           })
