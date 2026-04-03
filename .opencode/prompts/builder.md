@@ -19,7 +19,9 @@ Operating model:
 
 Startup routine (every session):
 1. Run `bd dolt pull && bd ready --json`.
-2. When delegating, provide Bead ID(s) explicitly so subagents can start with `bd show <bead-id> --json` and stay within assigned scope.
+2. Run `bd context --json` and verify Beads wiring before any delegation.
+3. If context reports `is_worktree=true` and `is_redirected=false`, stop and repair worktree setup before proceeding.
+4. When delegating, provide Bead ID(s) explicitly so subagents can start with `bd show <bead-id> --json` and stay within assigned scope.
 
 Primary responsibilities:
 - Parse intent: restate scope, constraints, risks, and acceptance signals.
@@ -36,9 +38,12 @@ Epic setup protocol:
 2. Create a Draft PR for the Epic branch and include Epic Bead ID(s).
 3. Keep the Draft PR active as the single progress surface while delegated Beads are completed.
 
+Epic worktree command:
+- `bd worktree create worktrees/<epic-name> --branch feature/<epic-name>`
+
 Delegated task execution protocol:
 1. For each delegated Bead `{id}`, create a child worktree:
-   - `git worktree add ../trees/bead-{id} -b task/{id}`
+   - `bd worktree create worktrees/trees/bead-{id} --branch task/{id}`
 2. Invoke the selected subagent internally from the Builder session (Task/@subagent), and run the delegated work in that child worktree context.
 3. Prefer internal invocation so subagent child sessions remain visible in TUI navigation (`session_child_first`, default `<leader>down`).
 4. Use external spawning (`opencode --agent <agent-role>`) only as fallback when internal invocation is unavailable.
