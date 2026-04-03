@@ -6,6 +6,7 @@ export const createSagaDispatchContext = sagaPackage.createSagaDispatchContext a
 export const runSagaHandler = sagaPackage.runSagaHandler as any;
 export * from './createSagaAggregate';
 export * from './inboundRouter';
+export * from './referenceAdapters';
 export type {
   SagaSchedulerTriggerPolicyContract,
   SagaTriggerMisfirePolicy,
