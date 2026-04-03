@@ -6,8 +6,8 @@ import {
   defineRequestResponse,
   defineSagaPlugin,
   type CanonicalSagaIdentityInput,
-  type SagaPluginOneWayIntent,
-  type SagaPluginRequestIntent
+  type SagaCustomActionBuilderCtx,
+  type SagaPluginIntent
 } from '../src';
 
 const HELPER_IDENTITY: CanonicalSagaIdentityInput = {
@@ -32,15 +32,15 @@ const HelperPlugin = defineSagaPlugin({
     notify: defineOneWay((channel: 'audit' | 'ops', body: { invoiceId: string }) => ({ channel, body })),
     fetch: defineRequestResponse((url: string, headers?: Record<string, string>) => ({ url, headers })),
     customNotify: defineCustomAction({
-      action_kind: 'void',
-      build: (builderCtx, message: string) => {
+      interaction: 'fire_and_forget',
+      build: (builderCtx: SagaCustomActionBuilderCtx<{ message: string }>, message: string) => {
         builderCtx.createPending({ execution_payload: { message } });
         return { message };
       }
     }),
     customFetch: defineCustomAction({
-      action_kind: 'request_response',
-      build: (builderCtx, url: string) => {
+      interaction: 'request_response',
+      build: (builderCtx: SagaCustomActionBuilderCtx<{ url: string }>, url: string) => {
         builderCtx.createPending({ execution_payload: { url } });
         return { url };
       }
@@ -52,11 +52,11 @@ const LegacyPlugin = defineSagaPlugin({
   plugin_key: 'legacy',
   actions: {
     log: {
-      action_kind: 'void',
+      interaction: 'fire_and_forget',
       build: (message: string) => ({ message })
     },
     call: {
-      action_kind: 'request_response',
+      interaction: 'request_response',
       build: (url: string) => ({ url })
     }
   }
@@ -64,19 +64,19 @@ const LegacyPlugin = defineSagaPlugin({
 
 describe('helper api typing and retry token phases', () => {
   it('infers defineOneWay/defineRequestResponse/defineCustomAction helper APIs', () => {
-    const notifyKind: 'void' = HelperPlugin.actions.notify.action_kind;
-    const fetchKind: 'request_response' = HelperPlugin.actions.fetch.action_kind;
-    const customNotifyKind: 'void' = HelperPlugin.actions.customNotify.action_kind;
-    const customFetchKind: 'request_response' = HelperPlugin.actions.customFetch.action_kind;
+    const notifyKind: 'fire_and_forget' = HelperPlugin.actions.notify.interaction;
+    const fetchKind: 'request_response' = HelperPlugin.actions.fetch.interaction;
+    const customNotifyKind: 'fire_and_forget' = HelperPlugin.actions.customNotify.interaction;
+    const customFetchKind: 'request_response' = HelperPlugin.actions.customFetch.interaction;
 
     const notifyPayload = HelperPlugin.actions.notify.build('audit', { invoiceId: 'inv-1' });
     const fetchPayload = HelperPlugin.actions.fetch.build('https://api.example.com/invoices/inv-1');
     const customNotifyPayload = HelperPlugin.actions.customNotify.build('hello');
     const customFetchPayload = HelperPlugin.actions.customFetch.build('https://api.example.com/invoices/inv-2');
 
-    expect(notifyKind).toBe('void');
+    expect(notifyKind).toBe('fire_and_forget');
     expect(fetchKind).toBe('request_response');
-    expect(customNotifyKind).toBe('void');
+    expect(customNotifyKind).toBe('fire_and_forget');
     expect(customFetchKind).toBe('request_response');
     expect(notifyPayload.channel).toBe('audit');
     expect(fetchPayload.url).toContain('/invoices/');
@@ -103,7 +103,7 @@ describe('helper api typing and retry token phases', () => {
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
         created: (state, event, ctx) => {
-          const oneWay: SagaPluginOneWayIntent<'helpers', 'notify', { channel: 'audit' | 'ops'; body: { invoiceId: string } }> =
+          const oneWay: SagaPluginIntent<'helpers', 'notify', { channel: 'audit' | 'ops'; body: { invoiceId: string } }, 'fire_and_forget'> =
             ctx.actions.helpers.notify('audit', { invoiceId: event.payload.invoiceId });
           const customOneWay = ctx.actions.helpers.customNotify('note');
 
@@ -139,10 +139,10 @@ describe('helper api typing and retry token phases', () => {
           const responseStep = ctx.actions.helpers.fetch('https://api.example.com/half').onResponse(ctx.onResponse.ok);
 
           // @ts-expect-error incomplete chain cannot be treated as terminal intent
-          const incompleteIntent: SagaPluginRequestIntent = responseStep;
+          const incompleteIntent: SagaPluginIntent = responseStep;
 
           // @ts-expect-error request-response helper chain is required before terminal intent
-          const directIntent: SagaPluginRequestIntent = ctx.actions.helpers.fetch('https://api.example.com/direct');
+          const directIntent: SagaPluginIntent = ctx.actions.helpers.fetch('https://api.example.com/direct');
 
           // @ts-expect-error onResponse accepts response-phase token only
           ctx.actions.helpers.fetch('https://api.example.com/mismatch').onResponse(ctx.onError.fail);
@@ -155,14 +155,14 @@ describe('helper api typing and retry token phases', () => {
 
           // @ts-expect-error onError after onRetry still requires error-phase token
           responseStep.onRetry(ctx.onRetry.retry).onError(ctx.onRetry.retry);
-          expect(oneWay.type).toBe('plugin-one-way');
+          expect(oneWay.type).toBe('plugin-intent');
           expect(customOneWay.message).toBe('note');
           expect(noDataHandler).toBeUndefined();
           expect(withDataInvoiceId).toBe(event.payload.invoiceId);
           expect(withDataAttempt).toBe(1);
           expect(retryKey).toBe('retry');
           expect(legacyVoid.message).toBe('legacy-ok');
-          expect(legacyIntent.type).toBe('plugin-request');
+          expect(legacyIntent.type).toBe('plugin-intent');
 
           state.retries += 1;
         }

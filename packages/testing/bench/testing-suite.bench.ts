@@ -187,10 +187,10 @@ async function benchmarkSagaFixture(iterations: number): Promise<BenchResult> {
       started: (_state, event, ctx) => {
         const typedEvent = event as { payload: { id: string } };
         ctx.emit({
-          type: 'plugin-request',
+          type: 'plugin-intent',
           plugin_key: 'payments',
           action_name: 'capture',
-          action_kind: 'request_response',
+          interaction: 'request_response',
           execution_payload: { id: typedEvent.payload.id },
           routing_metadata: {
             response_handler_key: 'payment.capture.ok',

@@ -22,8 +22,8 @@ const InvoiceAggregate = {
   }
 } as const;
 
-describe('createSaga ctx schedule/retry helper typing', () => {
-  it('accepts valid schedule, cancelSchedule, and runActivity calls', () => {
+describe('createSaga ctx schedule helper typing', () => {
+  it('accepts valid schedule and cancelSchedule calls', () => {
     createSaga<{ attempted: number }>({ identity: INVOICE_SAGA_IDENTITY })
       .initialState(() => ({ attempted: 0 }))
       .on(InvoiceAggregate, {
@@ -31,17 +31,6 @@ describe('createSaga ctx schedule/retry helper typing', () => {
           ctx.actions.core.schedule('invoice-reminder', 5_000);
           ctx.actions.core.cancelSchedule('invoice-reminder');
 
-          await ctx.actions.core.runActivity(
-            'send-reminder',
-            () => Promise.resolve('ok'),
-            {
-              maxAttempts: 5,
-              initialBackoffMs: 250,
-              backoffCoefficient: 2,
-              maxBackoffMs: 5_000,
-              jitterCoefficient: 0.2
-            }
-          );
           state.attempted += 1;
         }
       })
@@ -61,21 +50,8 @@ describe('createSaga ctx schedule/retry helper typing', () => {
           // @ts-expect-error id must be a string
           ctx.actions.core.cancelSchedule(123);
 
-          // @ts-expect-error closure must be a function
-          ctx.actions.core.runActivity('send-reminder', 'not-a-function');
-
-          ctx.actions.core.runActivity('send-reminder', () => undefined, {
-            // @ts-expect-error retry policy must include numeric maxAttempts
-            maxAttempts: '3',
-            initialBackoffMs: 250,
-            backoffCoefficient: 2
-          });
-
-          // @ts-expect-error retry policy requires backoffCoefficient
-          ctx.actions.core.runActivity('send-reminder', () => undefined, {
-            maxAttempts: 3,
-            initialBackoffMs: 250
-          });
+          // @ts-expect-error cancelSchedule id must be string
+          ctx.actions.core.cancelSchedule(false);
         }
       })
       .build();

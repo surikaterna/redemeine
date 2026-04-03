@@ -5,7 +5,7 @@ import {
   defineSagaPlugin,
   runSagaHandler,
   type SagaAggregateEventByName,
-  type SagaPluginOneWayIntent
+  type SagaPluginIntent
 } from '../src';
 
 const NotifyPlugin = defineSagaPlugin({
@@ -26,11 +26,11 @@ const LegacyPlugin = defineSagaPlugin({
   plugin_key: 'legacy',
   actions: {
     log: {
-      action_kind: 'void',
+      interaction: 'fire_and_forget',
       build: (message: string) => ({ message })
     },
     call: {
-      action_kind: 'request_response',
+      interaction: 'request_response',
       build: (url: string) => ({ url })
     }
   }
@@ -83,7 +83,7 @@ describe('helper action runtime emission semantics', () => {
       { attempts: 0 },
       { type: 'invoice.created.event', payload: { invoiceId: 'inv-1' } } as SagaAggregateEventByName<typeof InvoiceAggregate, 'created'>,
       async (state, event, ctx) => {
-        const oneWayIntent: SagaPluginOneWayIntent<'notify', 'publish', { channel: string; body: { invoiceId: string } }> = ctx.actions.notify.publish(
+        const oneWayIntent: SagaPluginIntent<'notify', 'publish', { channel: string; body: { invoiceId: string } }, 'fire_and_forget'> = ctx.actions.notify.publish(
           'audit',
           { invoiceId: event.payload.invoiceId }
         );
@@ -107,7 +107,7 @@ describe('helper action runtime emission semantics', () => {
           .onResponse(ctx.onResponse['http.fetch.ok'])
           .onError(ctx.onError['http.fetch.fail']);
 
-        expect(oneWayIntent.type).toBe('plugin-one-way');
+        expect(oneWayIntent.type).toBe('plugin-intent');
         expect(noDataIntent.routing_metadata.handler_data).toBeUndefined();
         expect(duplicateNoDataIntent).toBe(noDataIntent);
         expect(retryIntent.routing_metadata.retry_handler_key).toBe('http.fetch.retry');
@@ -127,12 +127,12 @@ describe('helper action runtime emission semantics', () => {
     expect(output.state).toEqual({ attempts: 1 });
     expect(output.intents).toHaveLength(4);
     expect(output.intents[0]).toMatchObject({
-      type: 'plugin-one-way',
+      type: 'plugin-intent',
       plugin_key: 'notify',
       action_name: 'publish',
-      action_kind: 'void'
+      interaction: 'fire_and_forget'
     });
-    expect(output.intents.filter((intent) => intent.type === 'plugin-request')).toHaveLength(3);
+    expect(output.intents.filter((intent) => intent.type === 'plugin-intent' && intent.interaction === 'request_response')).toHaveLength(3);
   });
 
   it('preserves backward-compatible behavior for legacy raw descriptors', async () => {
@@ -164,9 +164,10 @@ describe('helper action runtime emission semantics', () => {
     expect(output.state).toEqual({ attempts: 1 });
     expect(output.intents).toHaveLength(1);
     expect(output.intents[0]).toMatchObject({
-      type: 'plugin-request',
+      type: 'plugin-intent',
       plugin_key: 'legacy',
-      action_name: 'call'
+      action_name: 'call',
+      interaction: 'request_response'
     });
   });
 });

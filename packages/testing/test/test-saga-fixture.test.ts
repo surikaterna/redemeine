@@ -51,10 +51,10 @@ describe('testSaga fixture', () => {
         started: (state, event, ctx) => {
           state.log.push(`started:${event.payload.id}`);
           ctx.emit({
-            type: 'plugin-request',
+            type: 'plugin-intent',
             plugin_key: 'payments',
             action_name: 'capture',
-            action_kind: 'request_response',
+            interaction: 'request_response',
             execution_payload: { id: event.payload.id },
             routing_metadata: {
               response_handler_key: 'payment.capture.ok',
@@ -70,10 +70,10 @@ describe('testSaga fixture', () => {
           state.attempts += 1;
           state.log.push(`ok:${String(response.payload)}`);
           ctx.emit({
-            type: 'plugin-request',
+            type: 'plugin-intent',
             plugin_key: 'payments',
             action_name: 'capture',
-            action_kind: 'request_response',
+            interaction: 'request_response',
             execution_payload: { id: 'retry-1' },
             routing_metadata: {
               response_handler_key: 'payment.capture.ok',
@@ -130,10 +130,10 @@ describe('testSaga fixture', () => {
         started: (state, event, ctx) => {
           state.seen.push(`event:${event.payload.id}`);
           ctx.emit({
-            type: 'plugin-request',
+            type: 'plugin-intent',
             plugin_key: 'payments',
             action_name: 'capture',
-            action_kind: 'request_response',
+            interaction: 'request_response',
             execution_payload: { id: `${event.payload.id}-first` },
             routing_metadata: {
               response_handler_key: 'payment.capture.ok',
@@ -144,10 +144,10 @@ describe('testSaga fixture', () => {
           });
 
           ctx.emit({
-            type: 'plugin-request',
+            type: 'plugin-intent',
             plugin_key: 'payments',
             action_name: 'capture',
-            action_kind: 'request_response',
+            interaction: 'request_response',
             execution_payload: { id: `${event.payload.id}-second` },
             routing_metadata: {
               response_handler_key: 'payment.capture.ok',
@@ -209,10 +209,10 @@ describe('testSaga fixture', () => {
       .on(PaymentAggregate, {
         started: (_state, event, ctx) => {
           ctx.emit({
-            type: 'plugin-request',
+            type: 'plugin-intent',
             plugin_key: 'payments',
             action_name: 'capture',
-            action_kind: 'request_response',
+            interaction: 'request_response',
             execution_payload: { id: event.payload.id },
             routing_metadata: {
               response_handler_key: 'payment.capture.ok',
