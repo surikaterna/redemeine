@@ -6,7 +6,8 @@ import {
   createInMemorySideEffectsPluginV1,
   createInMemoryTelemetryPluginV1,
   runReferenceAdapterFlowV1,
-  type SagaIntent
+  type SagaIntent,
+  type SagaRuntimeSideEffectResult
 } from '../src/referenceAdapters';
 
 const metadata = {
@@ -344,6 +345,7 @@ describe('reference adapters v1 integration', () => {
     expect(result.processedIntents).toBe(5);
     expect(result.scheduledTriggerIds).toEqual(['wake-up']);
     expect(result.persistedExecutions).toHaveLength(3);
+    expect(result.responseCorrelations).toHaveLength(3);
 
     const persisted = adapters.persistence.listIntentExecutionsBySagaId('saga-777');
     expect(persisted).toHaveLength(3);
@@ -356,5 +358,113 @@ describe('reference adapters v1 integration', () => {
     expect(telemetry.counters['saga.intent.executed']).toBe(3);
     expect(telemetry.counters['saga.intent.scheduled']).toBe(1);
     expect(telemetry.counters['saga.intent.cancelled_schedule']).toBe(1);
+  });
+
+  it('correlates concurrent outbound responses and failures by response reference', async () => {
+    const resolvers = new Map<string, (value: SagaRuntimeSideEffectResult) => void>();
+
+    const sideEffects = createInMemorySideEffectsPluginV1((intent) => new Promise((resolve) => {
+      const key = `${intent.type}:${intent.metadata.correlationId}`;
+      resolvers.set(key, resolve);
+    }));
+
+    const adapters = {
+      persistence: createInMemoryPersistencePluginV1(),
+      scheduler: createInMemorySchedulerPluginV1(),
+      sideEffects,
+      telemetry: createInMemoryTelemetryPluginV1()
+    };
+
+    const flow = runReferenceAdapterFlowV1(adapters, {
+      sagaId: 'saga-fanout-1',
+      nowIso: '2026-01-01T00:00:00.000Z',
+      intents: [
+        {
+          type: 'plugin-request',
+          plugin_key: 'payments',
+          action_name: 'authorize',
+          action_kind: 'request_response',
+          execution_payload: { amount: 100 },
+          routing_metadata: {
+            response_handler_key: 'payments.authorize.ok',
+            error_handler_key: 'payments.authorize.failed',
+            handler_data: { paymentId: 'pay-1' }
+          },
+          metadata: { ...metadata, correlationId: 'corr-a' }
+        },
+        {
+          type: 'plugin-request',
+          plugin_key: 'inventory',
+          action_name: 'reserve',
+          action_kind: 'request_response',
+          execution_payload: { sku: 'sku-1' },
+          routing_metadata: {
+            response_handler_key: 'inventory.reserve.ok',
+            error_handler_key: 'inventory.reserve.failed',
+            handler_data: { reservationId: 'res-1' }
+          },
+          metadata: { ...metadata, correlationId: 'corr-b' }
+        }
+      ]
+    });
+
+    await Promise.resolve();
+
+    resolvers.get('plugin-request:corr-b')?.({
+      status: 'failed',
+      responseRef: {
+        responseKey: 'inventory.reserve',
+        responseId: 'resp-b',
+        receivedAt: '2026-01-01T00:00:00.200Z'
+      },
+      error: 'inventory unavailable'
+    });
+
+    resolvers.get('plugin-request:corr-a')?.({
+      status: 'succeeded',
+      responseRef: {
+        responseKey: 'payments.authorize',
+        responseId: 'resp-a',
+        receivedAt: '2026-01-01T00:00:00.300Z'
+      }
+    });
+
+    const result = await flow;
+    expect(result.persistedExecutions).toHaveLength(2);
+    expect(result.responseCorrelations).toEqual([
+      {
+        executionId: 'saga-fanout-1:intent:1',
+        intentId: 'plugin-request:1',
+        status: 'succeeded',
+        responseRef: {
+          responseKey: 'payments.authorize',
+          responseId: 'resp-a',
+          receivedAt: '2026-01-01T00:00:00.300Z'
+        },
+        error: undefined
+      },
+      {
+        executionId: 'saga-fanout-1:intent:2',
+        intentId: 'plugin-request:2',
+        status: 'failed',
+        responseRef: {
+          responseKey: 'inventory.reserve',
+          responseId: 'resp-b',
+          receivedAt: '2026-01-01T00:00:00.200Z'
+        },
+        error: 'inventory unavailable'
+      }
+    ]);
+
+    const persisted = adapters.persistence.listIntentExecutionsBySagaId('saga-fanout-1');
+    expect(persisted).toHaveLength(2);
+    expect(persisted.find((entry) => entry.id === 'saga-fanout-1:intent:1')?.status).toBe('succeeded');
+    expect(persisted.find((entry) => entry.id === 'saga-fanout-1:intent:2')?.status).toBe('failed');
+    expect(persisted.find((entry) => entry.id === 'saga-fanout-1:intent:2')?.responseRef?.responseId).toBe('resp-b');
+
+    const telemetry = adapters.telemetry.snapshot();
+    expect(telemetry.counters['saga.intent.executed']).toBe(2);
+    expect(telemetry.counters['saga.intent.execution_succeeded']).toBe(1);
+    expect(telemetry.counters['saga.intent.execution_failed']).toBe(1);
   });
 });

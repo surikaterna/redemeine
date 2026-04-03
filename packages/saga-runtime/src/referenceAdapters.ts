@@ -204,6 +204,15 @@ export interface SagaRuntimeReferenceFlowResult {
   readonly processedIntents: number;
   readonly persistedExecutions: readonly string[];
   readonly scheduledTriggerIds: readonly string[];
+  readonly responseCorrelations: readonly SagaRuntimeResponseCorrelation[];
+}
+
+export interface SagaRuntimeResponseCorrelation {
+  readonly executionId: string;
+  readonly intentId: string;
+  readonly status: Extract<IntentExecutionStatus, 'succeeded' | 'failed'>;
+  readonly responseRef?: IntentExecutionResponseRef;
+  readonly error?: string;
 }
 
 export function createInMemoryPersistencePluginV1(): SagaRuntimePersistencePluginV1 {
@@ -514,8 +523,14 @@ export async function runReferenceAdapterFlowV1(
 ): Promise<SagaRuntimeReferenceFlowResult> {
   const persistedExecutionIds: string[] = [];
   const scheduledTriggerIds: string[] = [];
+  const responseCorrelations: SagaRuntimeResponseCorrelation[] = [];
   const nowIso = input.nowIso ?? new Date().toISOString();
   let sideEffectIndex = 0;
+  const sideEffectExecutions: Array<{
+    executionId: string;
+    intentId: string;
+    intent: SagaRuntimeSideEffectIntent;
+  }> = [];
 
   for (let index = 0; index < input.intents.length; index += 1) {
     const intent = input.intents[index];
@@ -565,12 +580,21 @@ export async function runReferenceAdapterFlowV1(
       createExecutionRecord(executionId, input.sagaId, intentId, nowIso, 'in_progress')
     );
 
-    const result = await adapters.sideEffects.execute(sideEffectIntent);
+    sideEffectExecutions.push({
+      executionId,
+      intentId,
+      intent: sideEffectIntent
+    });
+    persistedExecutionIds.push(executionId);
+  }
+
+  const completed = await Promise.all(sideEffectExecutions.map(async (execution) => {
+    const result = await adapters.sideEffects.execute(execution.intent);
     adapters.persistence.intentExecutionProjection.upsert(
       createExecutionRecord(
-        executionId,
+        execution.executionId,
         input.sagaId,
-        intentId,
+        execution.intentId,
         new Date().toISOString(),
         result.status,
         result.responseRef ?? null
@@ -585,16 +609,25 @@ export async function runReferenceAdapterFlowV1(
     );
     adapters.telemetry.event('saga.intent.executed', {
       sagaId: input.sagaId,
-      executionId,
+      executionId: execution.executionId,
       status: result.status
     });
 
-    persistedExecutionIds.push(executionId);
-  }
+    return {
+      executionId: execution.executionId,
+      intentId: execution.intentId,
+      status: result.status,
+      responseRef: result.responseRef,
+      error: result.error
+    };
+  }));
+
+  responseCorrelations.push(...completed);
 
   return {
     processedIntents: input.intents.length,
     persistedExecutions: persistedExecutionIds,
-    scheduledTriggerIds
+    scheduledTriggerIds,
+    responseCorrelations
   };
 }
