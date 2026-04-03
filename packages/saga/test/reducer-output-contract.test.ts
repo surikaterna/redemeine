@@ -77,16 +77,6 @@ describe('S08 reducer output contract typing', () => {
                 correlationId: 'corr-1',
                 causationId: 'cause-4'
               }
-            },
-            {
-              type: 'run-activity',
-              name: 'send-receipt',
-              closure: () => undefined,
-              metadata: {
-                sagaId: 'saga-1',
-                correlationId: 'corr-1',
-                causationId: 'cause-5'
-              }
             }
           ];
 

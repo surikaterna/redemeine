@@ -1,5 +1,4 @@
 import { createDraft, finishDraft, type Draft } from 'immer';
-import type { SagaRetryPolicy } from './RetryPolicy';
 import {
   normalizeSagaIdentity,
   type SagaIdentityInput
@@ -418,6 +417,13 @@ export interface SagaErrorCallbackEnvelope<TToken extends string = string, TErro
   readonly request: SagaExternalHandlerRequestContext;
 }
 
+/** Input shape for executable retry callbacks. */
+export interface SagaRetryCallbackEnvelope<TToken extends string = string, TRetry = unknown> {
+  readonly token: TToken;
+  readonly retry: TRetry;
+  readonly request: SagaExternalHandlerRequestContext;
+}
+
 /**
  * Helper for authoring plugin manifests with strong literal inference.
  */
@@ -463,9 +469,6 @@ export interface SagaCancelScheduleIntent {
   readonly id: string;
   readonly metadata: SagaIntentMetadata;
 }
-
-/** Function signature used for `run-activity` intent closures. */
-export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
 
 export type SagaPluginManifestList = readonly SagaPluginManifest[];
 
@@ -623,15 +626,6 @@ export type SagaPluginActionsContext<
   [TPlugin in TPlugins[number] as TPlugin['plugin_key']]: SagaPluginActionsForManifest<TPlugin, TBindings>;
 };
 
-/** Intent that delegates work to an activity function. */
-export interface SagaRunActivityIntent<TResult = unknown> {
-  readonly type: 'run-activity';
-  readonly name: string;
-  readonly closure: SagaActivityClosure<TResult>;
-  readonly retryPolicy?: SagaRetryPolicy;
-  readonly metadata: SagaIntentMetadata;
-}
-
 /** Intent that emits plugin-owned one-way action payloads immediately. */
 export interface SagaPluginOneWayIntent<
   TPluginKey extends string = string,
@@ -686,7 +680,6 @@ export type SagaIntent =
   | SagaDispatchIntentForCommand<string, unknown>
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
-  | SagaRunActivityIntent
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent;
 
@@ -823,14 +816,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   return commandIntents;
 }
 
-/** Typed helper used by saga handlers to create activity intents. */
-export type SagaRunActivity = <TResult = unknown>(
-  name: string,
-  closure: SagaActivityClosure<TResult>,
-  retryPolicy?: SagaRetryPolicy,
-  metadata?: Partial<SagaIntentMetadata>
-) => SagaRunActivityIntent<TResult>;
-
 /** Alias for aggregate-driven command dispatch helper. */
 export type SagaDispatchTo = <TAggregate extends SagaAggregateDefinition>(
   aggregateDef: TAggregate,
@@ -855,13 +840,6 @@ type SagaCoreCancelScheduleBuild = (
   metadata?: Partial<SagaIntentMetadata>
 ) => SagaCancelScheduleIntent;
 
-type SagaCoreRunActivityBuild = <TResult = unknown>(
-  name: string,
-  closure: SagaActivityClosure<TResult>,
-  retryPolicy?: SagaRetryPolicy,
-  metadata?: Partial<SagaIntentMetadata>
-) => SagaRunActivityIntent<TResult>;
-
 export type SagaCorePluginManifest = SagaPluginManifest<
   'core',
   {
@@ -869,7 +847,6 @@ export type SagaCorePluginManifest = SagaPluginManifest<
     readonly dispatchTo: SagaPluginVoidActionDescriptor;
     readonly schedule: SagaPluginVoidActionDescriptor;
     readonly cancelSchedule: SagaPluginVoidActionDescriptor;
-    readonly runActivity: SagaPluginVoidActionDescriptor;
   }
 >;
 
@@ -878,7 +855,6 @@ type SagaCoreActionsContext = {
   readonly dispatchTo: SagaDispatchTo;
   readonly schedule: SagaCoreScheduleBuild;
   readonly cancelSchedule: SagaCoreCancelScheduleBuild;
-  readonly runActivity: SagaRunActivity;
 };
 
 /** Base context exposed to saga handlers for intent emissions. */
@@ -894,7 +870,6 @@ export interface SagaIntentContextBase {
   dispatchTo: SagaDispatchTo;
   schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaScheduleIntent;
   cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaCancelScheduleIntent;
-  runActivity: SagaRunActivity;
 }
 
 /**
@@ -921,24 +896,6 @@ function createSagaCorePluginManifest(
     emitIntent,
     metadataOverride
   );
-
-  const runActivityBuild: SagaRunActivity = <TResult = unknown>(
-    name: string,
-    closure: SagaActivityClosure<TResult>,
-    retryPolicy?: SagaRetryPolicy,
-    metadataOverride?: Partial<SagaIntentMetadata>
-  ) => {
-    const intent: SagaRunActivityIntent<TResult> = {
-      type: 'run-activity',
-      name,
-      closure,
-      retryPolicy,
-      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-    };
-
-    emitIntent(intent);
-    return intent;
-  };
 
   return defineSagaPlugin({
     plugin_key: 'core',
@@ -981,11 +938,6 @@ function createSagaCorePluginManifest(
           return intent;
         },
         description: 'Cancel delayed saga wake-up'
-      },
-      runActivity: {
-        action_kind: 'void',
-        build: runActivityBuild,
-        description: 'Run saga activity closure'
       }
     },
     description: 'Built-in saga side-effect action manifests'
@@ -1156,12 +1108,6 @@ export function createSagaDispatchContext<
     ),
     schedule: (id, delay, metadataOverride) => actions.core.schedule(id, delay, metadataOverride),
     cancelSchedule: (id, metadataOverride) => actions.core.cancelSchedule(id, metadataOverride),
-    runActivity: <TResult = unknown>(
-      name: string,
-      closure: SagaActivityClosure<TResult>,
-      retryPolicy?: SagaRetryPolicy,
-      metadataOverride?: Partial<SagaIntentMetadata>
-    ) => actions.core.runActivity(name, closure, retryPolicy, metadataOverride),
     actions
   };
 }
