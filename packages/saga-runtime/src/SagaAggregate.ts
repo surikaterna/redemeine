@@ -33,9 +33,110 @@ export interface SagaIntentLifecycleRecord {
   intentId: string;
   intentType: string;
   stage: 'created' | 'scheduled' | 'dispatched' | 'acknowledged' | 'failed' | 'cancelled';
+  executionId?: string;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  responseRef?: IntentExecutionResponseRef | null;
   recordedAt: string;
   error?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRetryPolicySnapshot {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  backoffMultiplier?: number;
+  timeoutMs?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionResponseRef {
+  responseKey: string;
+  responseId: string;
+  receivedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type IntentExecutionStatus =
+  | 'created'
+  | 'scheduled'
+  | 'in_progress'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out';
+
+export interface IntentExecution {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status: IntentExecutionStatus;
+  attempt: number;
+  retryPolicySnapshot: IntentExecutionRetryPolicySnapshot | null;
+  responseRef: IntentExecutionResponseRef | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionCreateCommandPayload {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status?: IntentExecutionStatus;
+  attempt?: number;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  responseRef?: IntentExecutionResponseRef | null;
+  createdAt?: string;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRecordAttemptCommandPayload {
+  id: string;
+  attempt: number;
+  status?: IntentExecutionStatus;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRecordResponseRefCommandPayload {
+  id: string;
+  responseRef: IntentExecutionResponseRef;
+  status?: IntentExecutionStatus;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionMarkTerminalCommandPayload {
+  id: string;
+  status: Extract<IntentExecutionStatus, 'succeeded' | 'failed' | 'cancelled' | 'timed_out'>;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionProjectionRecord {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status: IntentExecutionStatus;
+  attempt: number;
+  retryPolicySnapshot: IntentExecutionRetryPolicySnapshot | null;
+  responseRef: IntentExecutionResponseRef | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionProjection {
+  getById(id: string): IntentExecutionProjectionRecord | null;
+  upsert(record: IntentExecutionProjectionRecord): void;
+}
+
+export interface SagaAggregateProjection {
+  getById(id: string): SagaAggregateState | null;
+  upsert(record: SagaAggregateState): void;
 }
 
 export interface SagaActivityLifecycleRecord {
@@ -49,7 +150,7 @@ export interface SagaActivityLifecycleRecord {
 }
 
 export interface SagaAggregateState {
-  sagaId: string | null;
+  id: string | null;
   sagaType: string | null;
   lifecycleState: 'idle' | 'active' | 'completed' | 'failed' | 'cancelled';
   createdAt: string | null;
@@ -70,7 +171,7 @@ export interface SagaAggregateState {
 }
 
 export interface SagaCreateInstanceCommandPayload {
-  sagaId: string;
+  id: string;
   sagaType: string;
   lifecycleState?: SagaAggregateState['lifecycleState'];
   createdAt?: string;
@@ -118,7 +219,7 @@ export interface SagaRecordActivityLifecycleCommandPayload {
 }
 
 export interface SagaInstanceCreatedEventPayload {
-  sagaId: string;
+  id: string;
   sagaType: string;
   lifecycleState: SagaAggregateState['lifecycleState'];
   createdAt: string;
@@ -155,7 +256,7 @@ const defaultRecentWindowLimits: SagaRecentWindowLimits = {
 };
 
 const createInitialState = (): SagaAggregateState => ({
-  sagaId: null,
+  id: null,
   sagaType: null,
   lifecycleState: 'idle',
   createdAt: null,
@@ -232,7 +333,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
   const built = createAggregate(aggregateName, initialState)
     .events({
       instanceCreated: (state, event: Event<SagaInstanceCreatedEventPayload>) => {
-        state.sagaId = event.payload.sagaId;
+        state.id = event.payload.id;
         state.sagaType = event.payload.sagaType;
         state.lifecycleState = event.payload.lifecycleState;
         state.createdAt = event.payload.createdAt;
@@ -267,7 +368,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
     })
     .commands((emit) => ({
       createInstance: (_state, payload: SagaCreateInstanceCommandPayload) => emit.instanceCreated({
-        sagaId: payload.sagaId,
+        id: payload.id,
         sagaType: payload.sagaType,
         lifecycleState: payload.lifecycleState ?? 'active',
         createdAt: toIso8601(payload.createdAt),
