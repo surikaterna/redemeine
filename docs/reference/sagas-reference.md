@@ -2,8 +2,6 @@
 
 This page is the quick reference for the **public** saga API exported from `@redemeine/saga`.
 
-> ⚠️ **Breaking change:** the public saga surface is now intentionally minimal.
-
 For generated API signatures, use `/docs/api/`.
 
 ## Public module overview
@@ -35,7 +33,7 @@ Saga identity is strict and has one canonical source of truth in `@redemeine/sag
 
 - Canonical identity derives from structured fields via `normalizeSagaIdentity`.
 - URN helpers are intentionally minimal: `deriveSagaUrn`, `deriveSagaInstanceUrn`, `parseSagaUrn`.
-- Legacy adapter/compat identity entrypoints were removed as a release-breaking cleanup.
+- Identity entrypoints are intentionally minimal and canonical.
 
 ### Structured source fields (required)
 
@@ -263,10 +261,8 @@ Core contracts:
   - `.onError(errorToken)` (terminal after retries exhausted/non-retryable)
 - `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` register executable handlers and define token namespaces with phase-safe typing.
 - Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
-- Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
-- `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
-- Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
-- `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, `plugin-one-way`, and `plugin-request`.
+- Built-ins remain available via `ctx.actions.core.*`.
+- `SagaIntent`: unified `plugin-intent` contract with explicit interaction semantics.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
 ### Handler registration and runtime maps
@@ -374,41 +370,22 @@ type SagaWireRecord = {
 };
 ```
 
-### Intent vs activity (explicit terminology)
+### Intent semantics (interaction-first)
 
-- **Intent**: a deterministic instruction emitted by saga logic (for example: dispatch command, schedule timer, cancel timer, plugin action intent).
-- **Activity**: the side-effecting execution unit that happens at runtime when an emitted intent is executed.
+- **Intent**: a deterministic instruction emitted by saga logic as a unified `plugin-intent`.
+- **Interaction**: the intent interaction mode used to model execution flow (`fire_and_forget` or `request_response`).
 
-In other words, the saga definition emits intents; runtime infrastructure may later execute activities.
+In other words, saga definitions emit interaction-typed intents, and runtime infrastructure executes those intents.
 
 > Out of scope for this reference: runtime worker/executor implementation details (queueing, polling, retries in workers, etc.).
 
-## Migration summary (breaking)
+## Unified intent model summary
 
-If you used older/expanded saga docs, migrate as follows:
+Current saga authoring model:
 
-- **Keep using:** `createSaga` and retry helpers.
-- **Use manifest-first builder form:** `createSaga<TState>({ name, plugins? })`.
-- **Define plugin manifests with helper-based actions:** `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
-- **Route request/response actions with durable named tokens:** `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
-- **Semantics reminder:** `withData` and `onRetry` are optional; `onError` is terminal after retries are exhausted or on non-retryable errors.
-- **Backwards compatibility:** legacy `action_kind` descriptors continue to work while migrating.
-- **Deferred scope:** `forCommands` ergonomics remain tracked separately.
-- **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
-- **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
-- **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
-- **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
-- **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.
-
-## Migration note (additive plugin action helpers)
-
-`@redemeine/saga` now also exports additive helper APIs for plugin manifests:
-
-- `defineOneWay(...)`
-- `defineRequestResponse(...)`
-- `defineCustomAction(...)`
-
-Compatibility note:
-
-- Existing raw descriptors with explicit `action_kind` (`'void'` / `'request_response'`) remain fully supported.
-- You can migrate incrementally by mixing helper-based and raw descriptors in the same plugin manifest.
+- Use `createSaga` with manifest-first plugin registration.
+- Define plugin actions with helper APIs: `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
+- Emit intents through a single `plugin-intent` contract with interaction semantics.
+- Route request/response interactions with durable named tokens: `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
+- Register executable handlers with `.onResponses(...)`, `.onErrors(...)`, and `.onRetries(...)`.
+- Use aggregate-typed handlers (`.on(Aggregate, handlers)`) and mutation-style state updates.
