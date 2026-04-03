@@ -49,7 +49,7 @@ describe('createSagaAggregate structure contracts', () => {
     const createEvent = aggregate.process(
       state,
       aggregate.commandCreators.createInstance({
-        sagaId: 'saga-1',
+        id: 'saga-1',
         sagaType: 'shipping',
         createdAt: createdAtInput
       })
@@ -105,7 +105,7 @@ describe('createSagaAggregate structure contracts', () => {
       aggregate.initialState,
       aggregate.process(
         aggregate.initialState,
-        aggregate.commandCreators.createInstance({ sagaId: 'saga-1', sagaType: 'shipping', createdAt: isoAt(0) })
+        aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(0) })
       )[0]
     );
 
@@ -115,7 +115,7 @@ describe('createSagaAggregate structure contracts', () => {
         aggregate.process(
           state,
           aggregate.commandCreators.recordStateTransition({
-            fromState: `state-${i - 1}`,
+            fromState: state.lifecycleState,
             toState: `state-${i}`,
             transitionAt: isoAt(i * 10)
           })

@@ -381,6 +381,82 @@ In other words, saga definitions emit interaction-typed intents, and runtime inf
 
 ## Unified intent model summary
 
+This model is interaction-first and uses a single `plugin-intent` contract
+(`fire_and_forget` or `request_response`) as the canonical outbound execution
+shape.
+
+## `createSaga` runtime contracts (v1, implemented)
+
+This section documents runtime behavior implemented in
+`@redemeine/saga-runtime` for saga definitions built with `createSaga(...)`.
+
+### Delivery contract
+
+- Inbound handler execution is deterministic per saga id when routed through
+  `createSagaInboundRouter(...)` (strict single-flight by default).
+- Outbound plugin intents are persisted as `in_progress` executions before
+  adapter execution and then updated to terminal status (`succeeded` /
+  `failed`) after completion.
+- Execution in `runReferenceAdapterFlowV1(...)` is concurrent (`Promise.all`)
+  for intents collected in one dispatch turn.
+- The runtime does **not** provide an `effectively_once` deduplication guarantee
+  by itself. Treat delivery as at-least-once unless your
+  plugin/persistence layer adds idempotency.
+
+### Ordering contract
+
+- **Inbound ordering:** commands/events for the same saga route in arrival
+  order by default (`resolveSingleFlightKey` defaults to `sagaId`).
+- **Cross-saga concurrency:** different saga ids may process concurrently.
+- **Outbound ordering:** intents are launched as parallel fan-out for a dispatch
+  turn; completion order is not guaranteed.
+- **Execution identity continuity:** `createSagaExecutionBridge(...)` allocates
+  monotonic per-saga intent ids (`<sagaId>:intent:<n>`) and reuses those ids
+  for persisted execution identity, preserving traceability across repeated
+  dispatches.
+
+### Waiting policy contract
+
+Inbound waiting policies are explicit in `createSagaInboundRouter(...)`:
+
+- `arrival_order` (default): no barrier gate; process as each item arrives.
+- `barrier_gated`: requires `coordination.stepId`; waits until
+  `coordination.barrierSize` arrivals for the same step key before releasing.
+
+Validation behavior:
+
+- Using `barrier_gated` without `coordination.stepId` throws:
+  `barrier_gated waiting policy requires coordination.stepId`.
+
+### Plugin touchpoints (runtime integration)
+
+`createSaga` remains definition-first. Runtime integration happens via bridge
+and adapters:
+
+- `createSagaExecutionBridge(...)`
+  - Resolves matching saga handlers from incoming domain events.
+  - Executes handler turns via `runSagaHandler(...)`.
+  - Captures emitted intents and records lifecycle entries in `SagaAggregate`.
+- `runReferenceAdapterFlowV1(...)`
+  - Routes `schedule` / `cancel-schedule` intents to scheduler adapter.
+  - Routes plugin intents to side-effects adapter.
+  - Writes execution projection updates through persistence adapter.
+  - Emits counters/events via telemetry adapter.
+
+Adapter/plugin interfaces used by this runtime contract:
+
+- `SagaRuntimePersistencePluginV1`
+- `SagaRuntimeSchedulerPluginV1`
+- `SagaRuntimeSideEffectsPluginV1`
+- `SagaRuntimeTelemetryPluginV1`
+
+For saga authors, plugin action contracts (`defineOneWay`,
+`defineRequestResponse`, `defineCustomAction`) stay definition-level, while
+execution semantics are provided by runtime adapters implementing these
+interfaces.
+
+## Migration summary (breaking)
+
 Current saga authoring model:
 
 - Use `createSaga` with manifest-first plugin registration.

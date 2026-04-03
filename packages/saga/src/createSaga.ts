@@ -1097,8 +1097,9 @@ function createPluginActionsContext(
 ): Record<string, Record<string, (...args: any[]) => unknown>> {
   const actionsContext: Record<string, Record<string, (...args: any[]) => unknown>> = Object.create(null);
 
-  for (const plugin of plugins) {
-    const pluginActions: Record<string, (...args: any[]) => unknown> = Object.create(null);
+  for (const plugin of composePluginManifestsWithPrecedence(plugins)) {
+    const pluginActions: Record<string, (...args: any[]) => unknown> =
+      actionsContext[plugin.plugin_key] ?? Object.create(null);
 
     for (const actionName of Object.keys(plugin.actions)) {
       const actionDescriptor = plugin.actions[actionName] as SagaPluginActionDescriptorWithHelperMetadata;
@@ -1197,6 +1198,32 @@ function createPluginActionsContext(
   }
 
   return actionsContext;
+}
+
+function composePluginManifestsWithPrecedence(plugins: SagaPluginManifestList): SagaPluginManifestList {
+  const composed = new Map<string, SagaPluginManifest>();
+
+  for (const plugin of plugins) {
+    const existing = composed.get(plugin.plugin_key);
+    if (existing === undefined) {
+      composed.set(plugin.plugin_key, {
+        ...plugin,
+        actions: { ...plugin.actions }
+      });
+      continue;
+    }
+
+    composed.set(plugin.plugin_key, {
+      ...existing,
+      ...plugin,
+      actions: {
+        ...existing.actions,
+        ...plugin.actions
+      }
+    });
+  }
+
+  return Array.from(composed.values());
 }
 
 function createResponseHandlerTokenNamespace<
@@ -1704,7 +1731,7 @@ function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>)
 function createSagaPluginRegistry<TPlugins extends SagaPluginManifestList>(
   plugins: TPlugins
 ): SagaPluginRegistryFromManifests<TPlugins> {
-  return plugins.map((plugin) => ({
+  return composePluginManifestsWithPrecedence(plugins).map((plugin) => ({
     plugin_key: plugin.plugin_key,
     plugin_kind: 'manifest',
     action_names: Object.keys(plugin.actions),
