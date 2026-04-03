@@ -8,6 +8,14 @@ export * from './createSagaAggregate';
 export * from './inboundRouter';
 export * from './referenceAdapters';
 export * from './schedulerPolicyEvaluator';
+export {
+  createRuntimeAuditLifecycleReadModel,
+  type IntentExecutionLifecycleHistoryEntry,
+  type LifecycleHistoryQuery,
+  type LifecycleHistoryQueryResult,
+  type RuntimeAuditLifecycleReadModel,
+  type SagaLifecycleHistoryEntry
+} from './runtimeAuditProjections';
 export type {
   RuntimeAuditActor,
   RuntimeAuditCategory,
