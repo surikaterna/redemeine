@@ -8,6 +8,29 @@ export * from './createSagaAggregate';
 export * from './inboundRouter';
 export * from './referenceAdapters';
 export type {
+  RuntimeAuditActor,
+  RuntimeAuditCategory,
+  RuntimeAuditCursor,
+  RuntimeAuditQuery,
+  RuntimeAuditQueryResult,
+  RuntimeAuditReaderContract,
+  RuntimeAuditRecord,
+  RuntimeAuditReference,
+  RuntimeAuditWriterContract,
+  RuntimeIntentExecutionQuery,
+  RuntimeIntentExecutionQueryResult,
+  RuntimeIntentExecutionReadModel,
+  RuntimeObservabilityReadApiContract,
+  RuntimeReadModelContract,
+  RuntimeReadModelWindowRequest,
+  RuntimeSagaReadModel,
+  RuntimeTelemetryContext,
+  RuntimeTelemetryKind,
+  RuntimeTelemetryLevel,
+  RuntimeTelemetryPublisherContract,
+  RuntimeTelemetryRecord
+} from './runtimeObservabilityContracts';
+export type {
   SagaSchedulerTriggerPolicyContract,
   SagaTriggerMisfirePolicy,
   SagaTriggerMisfirePolicyCatchUpAll,
