@@ -12,6 +12,7 @@ export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
 type AnyFunction = (...args: any[]) => unknown;
 const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
+const SAGA_ACTION_RUNTIME_EMITTER = '__saga_action_runtime_emitter';
 
 type SagaHelperEmissionMode = 'fire_and_forget' | 'request_response';
 
@@ -41,7 +42,20 @@ export type SagaPluginActionDescriptor<
 
 type SagaPluginActionDescriptorWithHelperMetadata = SagaPluginActionDescriptor & {
   readonly [SAGA_HELPER_EMISSION_MODE]?: SagaHelperEmissionMode;
+  readonly [SAGA_ACTION_RUNTIME_EMITTER]?: SagaPluginActionRuntimeEmitter<unknown, unknown>;
 };
+
+type SagaPluginActionRuntimeEmitterContext = {
+  readonly plugin_key: string;
+  readonly action_name: string;
+  readonly metadata: SagaIntentMetadata;
+  emitIntent: (intent: SagaIntent) => void;
+};
+
+type SagaPluginActionRuntimeEmitter<TExecutionPayload, TResult> = (
+  executionPayload: TExecutionPayload,
+  context: SagaPluginActionRuntimeEmitterContext
+) => TResult;
 
 type SagaOneWayHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
   SagaPluginFireAndForgetActionDescriptor<TBuild> & {
@@ -797,7 +811,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   aggregateDef: TAggregate,
   aggregateId: string,
   metadata: SagaIntentMetadata,
-  emitIntent: (intent: SagaIntent) => void,
   metadataOverride?: Partial<SagaIntentMetadata>
 ): SagaCommandsFor<TAggregate> {
   const commandIntents = {} as SagaCommandsFor<TAggregate>;
@@ -814,8 +827,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
         metadataOverride,
         aggregateId
       );
-
-      emitIntent(intent);
       return intent;
     };
   }
@@ -900,9 +911,30 @@ function createSagaCorePluginManifest(
     aggregateDef,
     aggregateId,
     metadata,
-    emitIntent,
     metadataOverride
   );
+
+  const emitAndReturnIntent = <TIntent extends SagaIntent>(intent: TIntent): TIntent => {
+    emitIntent(intent);
+    return intent;
+  };
+
+  const emitDispatchCommands = <TAggregate extends SagaAggregateDefinition>(
+    commandIntents: SagaCommandsFor<TAggregate>
+  ): SagaCommandsFor<TAggregate> => {
+    const emittedCommands = {} as SagaCommandsFor<TAggregate>;
+
+    for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
+      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName];
+      (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
+        const intent = createIntent(...args);
+        emitIntent(intent);
+        return intent;
+      };
+    }
+
+    return emittedCommands;
+  };
 
   return defineSagaPlugin({
     plugin_key: 'core',
@@ -910,11 +942,17 @@ function createSagaCorePluginManifest(
       dispatch: {
         interaction: 'fire_and_forget',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Aggregate command dispatch helper'
       },
       dispatchTo: {
         interaction: 'fire_and_forget',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Alias for aggregate command dispatch helper'
       },
       schedule: {
@@ -928,10 +966,9 @@ function createSagaCorePluginManifest(
             execution_payload: { id, delay },
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
           };
-
-          emitIntent(intent);
           return intent;
         },
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
         description: 'Schedule delayed saga wake-up'
       },
       cancelSchedule: {
@@ -945,10 +982,9 @@ function createSagaCorePluginManifest(
             execution_payload: { id },
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
           };
-
-          emitIntent(intent);
           return intent;
         },
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
         description: 'Cancel delayed saga wake-up'
       }
     },
@@ -1028,6 +1064,16 @@ function createPluginActionsContext(
 
       pluginActions[actionName] = (...args: any[]) => {
         const executionPayload = actionDescriptor.build(...args);
+        const runtimeEmitter = actionDescriptor[SAGA_ACTION_RUNTIME_EMITTER];
+
+        if (runtimeEmitter !== undefined) {
+          return runtimeEmitter(executionPayload, {
+            plugin_key: plugin.plugin_key,
+            action_name: actionName,
+            metadata,
+            emitIntent
+          });
+        }
 
         if (actionDescriptor[SAGA_HELPER_EMISSION_MODE] !== 'fire_and_forget') {
           return executionPayload;
