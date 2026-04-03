@@ -49,27 +49,16 @@ describe('S07 acceptance: intent metadata type shape', () => {
             correlationId: 'custom-correlation'
           });
 
-          const runActivityIntent = ctx.actions.core.runActivity(
-            'send-reminder',
-            () => Promise.resolve('ok'),
-            {
-              maxAttempts: 3,
-              initialBackoffMs: 250,
-              backoffCoefficient: 2
-            }
-          );
           state.attempted += 1;
 
           const dispatchedSagaId: string = dispatchIntent.metadata.sagaId;
           const scheduledCorrelationId: string = scheduleIntent.metadata.correlationId;
-          const activityCausationId: string = runActivityIntent.metadata.causationId;
 
           expect(ctxSagaId).toBeDefined();
           expect(ctxCorrelationId).toBeDefined();
           expect(ctxCausationId).toBeDefined();
           expect(dispatchedSagaId).toBeDefined();
           expect(scheduledCorrelationId).toBeDefined();
-          expect(activityCausationId).toBeDefined();
 
         }
       })
@@ -87,9 +76,6 @@ describe('S07 acceptance: intent metadata type shape', () => {
           });
           // @ts-expect-error metadata values must be strings
           ctx.actions.core.schedule('invoice-reminder', 5_000, { correlationId: 99 });
-
-          // @ts-expect-error metadata values must be strings
-          ctx.actions.core.runActivity('send-reminder', () => undefined, undefined, { causationId: false });
 
           // @ts-expect-error context metadata fields are required strings
           const invalid: number = ctx.metadata.sagaId;

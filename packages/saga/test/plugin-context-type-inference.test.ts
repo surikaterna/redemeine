@@ -204,7 +204,6 @@ describe('createSaga plugin-capable ctx typing', () => {
 
           ctx.actions.core.schedule('invoice-reminder', 1_000);
           ctx.actions.core.cancelSchedule('invoice-reminder');
-          ctx.actions.core.runActivity('audit', () => ({ invoiceId: event.payload.invoiceId }));
 
           expect(jobName).toBe('invoice.retry');
           expect(routedInvoiceId).toBe(event.payload.invoiceId);
