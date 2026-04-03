@@ -82,21 +82,24 @@ export const BillingSaga = createSaga<BillingSagaState>({
   name: 'billing-saga',
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseDefinitions({
-    billingFetchRetrying: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'retry'
-    },
-    billingFetchSucceeded: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'response'
-    },
-    billingFetchFailed: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'error'
+  .onResponses({
+    billingFetchSucceeded: (state, response, ctx) => {
+      state.settled = true;
+      state.attempts += Number(response.payload?.attempt ?? 0);
+      ctx.actions.core.cancelSchedule('invoice-timeout');
+    }
+  })
+  .onErrors({
+    billingFetchFailed: (state, error, ctx) => {
+      state.settled = false;
+      state.attempts += 1;
+      ctx.actions.core.schedule('invoice-timeout', 5_000);
+      void error.error;
+    }
+  })
+  .onRetries({
+    billingFetchRetrying: state => {
+      state.attempts += 1;
     }
   })
   .initialState(() => ({ attempts: 0, settled: false }))
@@ -129,21 +132,6 @@ export const BillingSaga = createSaga<BillingSagaState>({
       ctx.actions.core.schedule('invoice-timeout', 5_000);
     }
   })
-  .onResponses({
-    billingFetchSucceeded: (state, response, ctx) => {
-      state.settled = true;
-      state.attempts += Number(response.payload?.attempt ?? 0);
-      ctx.actions.core.cancelSchedule('invoice-timeout');
-    }
-  })
-  .onErrors({
-    billingFetchFailed: (state, error, ctx) => {
-      state.settled = false;
-      state.attempts += 1;
-      ctx.actions.core.schedule('invoice-timeout', 5_000);
-      void error.error;
-    }
-  })
   .build();
 ```
 
@@ -157,12 +145,8 @@ For `defineRequestResponse(...)`, remember lifecycle semantics:
 - `onRetry(...)` is optional.
 - `onError(...)` is terminal and runs only when retries are exhausted or the error is non-retryable.
 
-Executable response/error handlers are registered separately with `.onResponses(...)` and `.onErrors(...)`. These runtime maps are not persisted; they are attached at build time for in-process execution.
-
-Concretely:
-
-- Persisted map: `response_handlers` (from `responseDefinitions(...)`).
-- Runtime-only maps: `executable_response_handlers` and `executable_error_handlers` (from `.onResponses(...)` / `.onErrors(...)`).
+Executable response/error/retry handlers are registered with `.onResponses(...)`, `.onErrors(...)`, and `.onRetries(...)`.
+These registrations are also the token namespace source for `ctx.onResponse.*`, `ctx.onError.*`, and `ctx.onRetry.*`.
 
 ## Deterministic testing chain with invokeResponse / invokeError
 

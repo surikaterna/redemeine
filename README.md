@@ -325,7 +325,7 @@ Assertions: * .expectEvents(events): Deep-equals the array of typed events retur
 .expectError(ErrorClass, message?): Asserts that the command handler threw the expected Domain Error (Invariant Violation).
 
 2. The Saga Tester (testSaga)
-Provide a fluent fixture that executes a Saga's .on() or .responseDefinitions() and captures the resulting infrastructure Intents.
+Provide a fluent fixture that executes a Saga's .on() and handler registrations (.onResponses() / .onErrors() / .onRetries()) and captures the resulting infrastructure Intents.
 
 API: testSaga(sagaDef)
 
@@ -335,7 +335,7 @@ Event Injection: .receiveEvent(event) triggers the main reducer.
 
 Response/Error Injection: .invokeResponse(token, payload) and .invokeError(token, payload) allow the developer to simulate the framework routing an external worker's response back to the Saga, including the serialized passThroughContext.
 
-Token bindings come from `responseDefinitions(...)` (persisted as `response_handlers`), while executable callbacks registered through `.onResponses(...)` / `.onErrors(...)` are runtime-only maps (`executable_response_handlers` / `executable_error_handlers`).
+Token namespaces come from `.onResponses(...)` / `.onErrors(...)` / `.onRetries(...)`, and those same registrations provide the executable handler maps.
 
 Determinism: invoke calls dequeue pending requests in FIFO order per token, so chained `.invokeError(...)` / `.invokeResponse(...)` sequences are stable and repeatable.
 

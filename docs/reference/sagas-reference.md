@@ -196,21 +196,24 @@ const saga = createSaga<InvoiceSagaState>({
   },
   plugins: [InfraPlugin, HttpPlugin] as const
 })
-  .responseDefinitions({
-    invoiceFetchRetrying: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'retry'
-    },
-    invoiceFetchSucceeded: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'response'
-    },
-    invoiceFetchFailed: {
-      plugin_key: 'http',
-      action_name: 'get',
-      phase: 'error'
+  .onResponses({
+    invoiceFetchSucceeded: (state, response, ctx) => {
+      state.settled = true;
+      ctx.actions.core.cancelSchedule('invoice-reminder');
+      state.attempted += Number(response.payload?.attempt ?? 0);
+    }
+  })
+  .onErrors({
+    invoiceFetchFailed: (state, error, ctx) => {
+      state.settled = false;
+      state.attempted += 1;
+      ctx.actions.core.schedule('invoice-retry', 5_000);
+      void error.error;
+    }
+  })
+  .onRetries({
+    invoiceFetchRetrying: state => {
+      state.attempted += 1;
     }
   })
   .initialState(() => ({ attempted: 0, settled: false }))
@@ -242,21 +245,6 @@ const saga = createSaga<InvoiceSagaState>({
       ctx.actions.core.schedule('invoice-reminder', 5_000);
     }
   })
-  .onResponses({
-    invoiceFetchSucceeded: (state, response, ctx) => {
-      state.settled = true;
-      ctx.actions.core.cancelSchedule('invoice-reminder');
-      state.attempted += Number(response.payload?.attempt ?? 0);
-    }
-  })
-  .onErrors({
-    invoiceFetchFailed: (state, error, ctx) => {
-      state.settled = false;
-      state.attempted += 1;
-      ctx.actions.core.schedule('invoice-retry', 5_000);
-      void error.error;
-    }
-  })
   .build();
 ```
 
@@ -273,8 +261,7 @@ Core contracts:
   - `.onRetry(retryToken)` (optional)
   - `.onResponse(responseToken)`
   - `.onError(errorToken)` (terminal after retries exhausted/non-retryable)
-- `responseDefinitions(...)` declares durable token bindings (`plugin_key`, `action_name`, `phase`).
-- `onResponses(...)` and `onErrors(...)` attach executable handlers to those tokens with phase-safe typing.
+- `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` register executable handlers and define token namespaces with phase-safe typing.
 - Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
 - Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
 - `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
@@ -282,11 +269,11 @@ Core contracts:
 - `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
-### Persistence model vs runtime executable maps
+### Handler registration and runtime maps
 
-- `saga.response_handlers` is the persisted/wire-safe definition map and is the only routing metadata that must survive restarts.
-- `saga.executable_response_handlers` and `saga.executable_error_handlers` are runtime-only executable function maps derived from `onResponses(...)` / `onErrors(...)`.
-- Runtime helpers (`runSagaResponseHandler` / `runSagaErrorHandler`) resolve tokens through `response_handlers` first, then execute runtime handlers when registered.
+- `saga.responseHandlers`, `saga.errorHandlers`, and `saga.retryHandlers` are the registered executable function maps.
+- Token namespaces (`ctx.onResponse.*`, `ctx.onError.*`, `ctx.onRetry.*`) are derived from these registrations and are phase-branded.
+- Runtime helpers (`runSagaResponseHandler` / `runSagaErrorHandler`) resolve and execute against those maps.
 
 ## Deterministic `testSaga` invoke chain
 

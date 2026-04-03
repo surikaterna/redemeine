@@ -89,32 +89,16 @@ describe('helper api typing and retry token phases', () => {
       identity: HELPER_IDENTITY,
       plugins: [HelperPlugin, LegacyPlugin] as const
     })
-      .responseDefinitions({
-        ok: {
-          plugin_key: 'helpers',
-          action_name: 'fetch',
-          phase: 'response'
-        },
-        fail: {
-          plugin_key: 'helpers',
-          action_name: 'fetch',
-          phase: 'error'
-        },
-        retry: {
-          plugin_key: 'helpers',
-          action_name: 'fetch',
-          phase: 'retry'
-        },
-        legacyOk: {
-          plugin_key: 'legacy',
-          action_name: 'call',
-          phase: 'response'
-        },
-        legacyFail: {
-          plugin_key: 'legacy',
-          action_name: 'call',
-          phase: 'error'
-        }
+      .onResponses({
+        ok: () => undefined,
+        legacyOk: () => undefined
+      })
+      .onErrors({
+        fail: () => undefined,
+        legacyFail: () => undefined
+      })
+      .onRetries({
+        retry: () => undefined
       })
       .initialState(() => ({ retries: 0 }))
       .on(InvoiceAggregate, {
@@ -171,21 +155,6 @@ describe('helper api typing and retry token phases', () => {
 
           // @ts-expect-error onError after onRetry still requires error-phase token
           responseStep.onRetry(ctx.onRetry.retry).onError(ctx.onRetry.retry);
-
-          createSaga({
-            identity: {
-              namespace: 'plugins',
-              name: 'invalid_retry_phase',
-              version: 1
-            },
-            plugins: [HelperPlugin] as const
-          })
-            .responseDefinitions({
-              // @ts-expect-error phase must be response|error|retry
-              invalid: { plugin_key: 'helpers', action_name: 'fetch', phase: 'retrying' }
-            })
-            .build();
-
           expect(oneWay.type).toBe('plugin-one-way');
           expect(customOneWay.message).toBe('note');
           expect(noDataHandler).toBeUndefined();
