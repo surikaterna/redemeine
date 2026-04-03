@@ -9,7 +9,6 @@ import {
   type SagaIntent,
   type SagaIntentMetadata,
   type SagaPluginManifestList,
-  type SagaPluginRequestIntent,
   type SagaReducerOutput,
   type SagaResponseHandlerTokenBinding,
   type SagaResponseHandlerTokenBindings,
@@ -36,6 +35,20 @@ type TestSagaQueuedRequest = {
     readonly correlationId: string;
     readonly causationId: string;
   };
+};
+
+type RequestResponsePluginIntent = {
+  readonly type?: string;
+  readonly interaction?: string;
+  readonly plugin_key?: string;
+  readonly plugin?: string;
+  readonly action_name?: string;
+  readonly action?: string;
+  readonly routing_metadata?: {
+    readonly response_handler_key?: string;
+    readonly error_handler_key?: string;
+  };
+  readonly metadata?: Partial<SagaIntentMetadata>;
 };
 
 export type TestSagaInvokeFailureReason =
@@ -163,32 +176,51 @@ function enqueuePluginRequests(
   nextRequestId: { current: number }
 ): void {
   for (const intent of intents) {
-    if (intent.type !== 'plugin-request') {
+    const maybeIntent = intent as unknown as RequestResponsePluginIntent;
+    const isUnifiedRequest = maybeIntent.type === 'plugin-intent' && maybeIntent.interaction === 'request_response';
+    const isLegacyRequest = maybeIntent.type === 'plugin-request';
+
+    if (!isUnifiedRequest && !isLegacyRequest) {
       continue;
     }
 
-    const pluginRequest = intent as SagaPluginRequestIntent;
+    const pluginRequest = intent as RequestResponsePluginIntent;
+    const responseToken = pluginRequest.routing_metadata?.response_handler_key;
+    const errorToken = pluginRequest.routing_metadata?.error_handler_key;
+    const pluginKey = pluginRequest.plugin_key ?? pluginRequest.plugin;
+    const actionName = pluginRequest.action_name ?? pluginRequest.action;
+
+    if (
+      responseToken === undefined ||
+      errorToken === undefined ||
+      pluginKey === undefined ||
+      actionName === undefined
+    ) {
+      continue;
+    }
+
+    const metadata = resolveMetadata(pluginRequest.metadata);
     const requestId = ++nextRequestId.current;
 
     const requestBase = {
-      plugin_key: pluginRequest.plugin_key,
-      action_name: pluginRequest.action_name,
-      sagaId: pluginRequest.metadata.sagaId,
-      correlationId: pluginRequest.metadata.correlationId,
-      causationId: pluginRequest.metadata.causationId
+      plugin_key: pluginKey,
+      action_name: actionName,
+      sagaId: metadata.sagaId,
+      correlationId: metadata.correlationId,
+      causationId: metadata.causationId
     };
 
     const responseItem: TestSagaQueuedRequest = {
       requestId,
-      token: pluginRequest.routing_metadata.response_handler_key,
-      peerToken: pluginRequest.routing_metadata.error_handler_key,
+      token: responseToken,
+      peerToken: errorToken,
       request: requestBase
     };
 
     const errorItem: TestSagaQueuedRequest = {
       requestId,
-      token: pluginRequest.routing_metadata.error_handler_key,
-      peerToken: pluginRequest.routing_metadata.response_handler_key,
+      token: errorToken,
+      peerToken: responseToken,
       request: requestBase
     };
 
