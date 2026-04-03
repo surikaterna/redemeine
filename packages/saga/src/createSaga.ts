@@ -3,6 +3,7 @@ import {
   normalizeSagaIdentity,
   type SagaIdentityInput
 } from './identity';
+import type { SagaRetryPolicy } from './RetryPolicy';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
@@ -434,7 +435,7 @@ export interface SagaErrorCallbackEnvelope<TToken extends string = string, TErro
 /** Input shape for executable retry callbacks. */
 export interface SagaRetryCallbackEnvelope<TToken extends string = string, TPayload = unknown> {
   readonly token: TToken;
-  readonly payload: TPayload;
+  readonly payload?: TPayload;
   readonly request: SagaExternalHandlerRequestContext;
 }
 
@@ -572,11 +573,10 @@ type SagaRequestActionChainPostResponseStep<
   >;
   onError: <TErrorHandlerKey extends TErrorToken<SagaErrorTokenKey<TBindings>>>(
     token: TErrorHandlerKey
-  ) => SagaPluginIntent<
+  ) => SagaPluginRequestIntentHandle<
     TPluginKey,
     TActionName,
     TExecutionPayload,
-    'request_response',
     SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData>
   >;
 };
@@ -592,11 +592,10 @@ type SagaRequestActionChainOnErrorStepWithRetry<
 > = {
   onError: <TErrorHandlerKey extends TErrorToken<SagaErrorTokenKey<TBindings>>>(
     token: TErrorHandlerKey
-  ) => SagaPluginIntent<
+  ) => SagaPluginRequestIntentHandle<
     TPluginKey,
     TActionName,
     TExecutionPayload,
-    'request_response',
     SagaPluginRequestRoutingMetadata<TResponseHandlerKey, TErrorHandlerKey, THandlerData, TRetryHandlerKey>
   >;
 };
@@ -616,11 +615,10 @@ type SagaPluginActionContextForManifestAction<
       TBindings
     >
   : TAction extends { readonly [SAGA_HELPER_EMISSION_MODE]: 'fire_and_forget' }
-    ? (...args: SagaPluginActionArguments<TAction>) => SagaPluginIntent<
+    ? (...args: SagaPluginActionArguments<TAction>) => SagaPluginOneWayIntentHandle<
       TPluginKey,
       TActionName,
-      SagaPluginActionExecutionPayload<TAction>,
-      'fire_and_forget'
+      SagaPluginActionExecutionPayload<TAction>
     >
     : (...args: SagaPluginActionArguments<TAction>) => SagaPluginActionExecutionPayload<TAction>;
 
@@ -643,6 +641,26 @@ export type SagaPluginActionsContext<
   [TPlugin in TPlugins[number] as TPlugin['plugin_key']]: SagaPluginActionsForManifest<TPlugin, TBindings>;
 };
 
+/** Compensation callback entry appended to emitted plugin intent handles. */
+export interface SagaIntentCompensationEntry<
+  TToken extends string = string,
+  TPayload = unknown
+> {
+  readonly token: TToken;
+  readonly payload: TPayload;
+}
+
+export interface SagaPluginOneWayIntentHandle<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> extends SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'fire_and_forget'> {
+  retryPolicy: (policy: SagaRetryPolicy) => SagaPluginOneWayIntentHandle<TPluginKey, TActionName, TExecutionPayload>;
+  onCompensation: <TToken extends string, TPayload>(
+    token: TToken,
+    payload: TPayload
+  ) => SagaPluginOneWayIntentHandle<TPluginKey, TActionName, TExecutionPayload>;
+}
 /** Routing metadata used by plugin request-response intents. */
 export interface SagaPluginRequestRoutingMetadata<
   TResponseHandlerKey extends string = string,
@@ -671,12 +689,42 @@ export type SagaPluginIntent<
   readonly action_name: TActionName;
   readonly interaction: TInteraction;
   readonly execution_payload: TExecutionPayload;
+  readonly retry_policy_override?: SagaRetryPolicy;
+  readonly compensation?: readonly SagaIntentCompensationEntry[];
   readonly metadata: SagaIntentMetadata;
 } & (
   TInteraction extends 'request_response'
     ? { readonly routing_metadata: TRoutingMetadata }
     : { readonly routing_metadata?: never }
 );
+
+export type SagaPluginOneWayIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> = SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'fire_and_forget'>;
+
+export type SagaPluginRequestIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> = SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'request_response', TRoutingMetadata>;
+
+export interface SagaPluginRequestIntentHandle<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> extends SagaPluginRequestIntent<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata> {
+  retryPolicy: (
+    policy: SagaRetryPolicy
+  ) => SagaPluginRequestIntentHandle<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata>;
+  onCompensation: <TToken extends string, TPayload>(
+    token: TToken,
+    payload: TPayload
+  ) => SagaPluginRequestIntentHandle<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata>;
+}
 
 /** Full intent union emitted by saga handlers. */
 export type SagaIntent = SagaPluginIntent;
@@ -875,6 +923,56 @@ type SagaCoreActionsContext = {
   readonly cancelSchedule: SagaCoreCancelScheduleBuild;
 };
 
+function attachPluginIntentOverrides(intent: SagaPluginOneWayIntent): SagaPluginOneWayIntentHandle;
+function attachPluginIntentOverrides(intent: SagaPluginRequestIntent): SagaPluginRequestIntentHandle;
+function attachPluginIntentOverrides(
+  intent: SagaPluginOneWayIntent | SagaPluginRequestIntent
+): SagaPluginOneWayIntentHandle | SagaPluginRequestIntentHandle {
+  if (intent.interaction === 'fire_and_forget') {
+    const handle = intent as SagaPluginOneWayIntentHandle & {
+      retry_policy_override?: SagaRetryPolicy;
+      compensation?: SagaIntentCompensationEntry[];
+    };
+
+    handle.retryPolicy = (policy: SagaRetryPolicy) => {
+      handle.retry_policy_override = policy;
+      return handle;
+    };
+
+    handle.onCompensation = (token, payload) => {
+      if (handle.compensation === undefined) {
+        handle.compensation = [];
+      }
+
+      handle.compensation.push({ token, payload });
+      return handle;
+    };
+
+    return handle;
+  }
+
+  const handle = intent as SagaPluginRequestIntentHandle & {
+    retry_policy_override?: SagaRetryPolicy;
+    compensation?: SagaIntentCompensationEntry[];
+  };
+
+  handle.retryPolicy = (policy: SagaRetryPolicy) => {
+    handle.retry_policy_override = policy;
+    return handle;
+  };
+
+  handle.onCompensation = (token, payload) => {
+    if (handle.compensation === undefined) {
+      handle.compensation = [];
+    }
+
+    handle.compensation.push({ token, payload });
+    return handle;
+  };
+
+  return handle;
+}
+
 /** Base context exposed to saga handlers for intent emissions. */
 export interface SagaIntentContextBase {
   readonly metadata: SagaIntentMetadata;
@@ -1008,19 +1106,19 @@ function createPluginActionsContext(
       if (actionDescriptor.interaction === 'request_response') {
         pluginActions[actionName] = (...args: any[]) => {
           const executionPayload = actionDescriptor.build(...args);
-          let terminalIntent: SagaPluginIntent<string, string, unknown, 'request_response'> | undefined;
+          let terminalIntent: SagaPluginRequestIntentHandle | undefined;
 
           const createIntent = (
             handlerData: unknown,
             responseHandlerKey: string,
             errorHandlerKey: string,
             retryHandlerKey?: string
-          ) => {
+          ): SagaPluginRequestIntentHandle => {
             if (terminalIntent !== undefined) {
               return terminalIntent;
             }
 
-            const intent: SagaPluginIntent<string, string, unknown, 'request_response'> = {
+            const intent: SagaPluginRequestIntent<string, string, unknown> = {
               type: 'plugin-intent',
               plugin_key: plugin.plugin_key,
               action_name: actionName,
@@ -1035,9 +1133,10 @@ function createPluginActionsContext(
               metadata
             };
 
-            emitIntent(intent);
-            terminalIntent = intent;
-            return intent;
+            const handle = attachPluginIntentOverrides(intent);
+            emitIntent(handle);
+            terminalIntent = handle;
+            return handle;
           };
 
           const createResponseChain = (handlerData: unknown) => ({
@@ -1088,8 +1187,9 @@ function createPluginActionsContext(
           metadata
         };
 
-        emitIntent(intent);
-        return intent;
+        const handle = attachPluginIntentOverrides(intent);
+        emitIntent(handle);
+        return handle;
       };
     }
 

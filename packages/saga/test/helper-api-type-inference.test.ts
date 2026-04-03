@@ -122,10 +122,25 @@ describe('helper api typing and retry token phases', () => {
             .onRetry(ctx.onRetry.retry)
             .onError(ctx.onError.fail);
 
+          const oneWayOverride = ctx.actions.helpers
+            .notify('ops', { invoiceId: event.payload.invoiceId })
+            .retryPolicy({ maxAttempts: 2, initialBackoffMs: 50, backoffCoefficient: 2 })
+            .onCompensation('helpers.notify.undo', { invoiceId: event.payload.invoiceId });
+          const requestOverride = ctx.actions.helpers
+            .fetch('https://api.example.com/with-overrides')
+            .onResponse(ctx.onResponse.ok)
+            .onError(ctx.onError.fail)
+            .retryPolicy({ maxAttempts: 3, initialBackoffMs: 100, backoffCoefficient: 2 })
+            .onCompensation('helpers.fetch.undo', { invoiceId: event.payload.invoiceId });
+
           const noDataHandler: undefined = noDataIntent.routing_metadata.handler_data;
           const withDataInvoiceId: string = withDataIntent.routing_metadata.handler_data.invoiceId;
           const withDataAttempt: number = withDataIntent.routing_metadata.handler_data.attempt;
           const retryKey: 'retry' = withRetryIntent.routing_metadata.retry_handler_key!;
+          const oneWayMaxAttempts: number = oneWayOverride.retry_policy_override!.maxAttempts;
+          const oneWayCompToken: string = oneWayOverride.compensation![0]!.token;
+          const requestMaxAttempts: number = requestOverride.retry_policy_override!.maxAttempts;
+          const requestCompToken: string = requestOverride.compensation![0]!.token;
 
           const legacyVoid = ctx.actions.legacy.log('legacy-ok');
           const legacyIntent = ctx.actions.legacy
@@ -161,6 +176,10 @@ describe('helper api typing and retry token phases', () => {
           expect(withDataInvoiceId).toBe(event.payload.invoiceId);
           expect(withDataAttempt).toBe(1);
           expect(retryKey).toBe('retry');
+          expect(oneWayMaxAttempts).toBe(2);
+          expect(oneWayCompToken).toBe('helpers.notify.undo');
+          expect(requestMaxAttempts).toBe(3);
+          expect(requestCompToken).toBe('helpers.fetch.undo');
           expect(legacyVoid.message).toBe('legacy-ok');
           expect(legacyIntent.type).toBe('plugin-intent');
 
