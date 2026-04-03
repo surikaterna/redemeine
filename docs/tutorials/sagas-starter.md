@@ -176,7 +176,7 @@ fixture
 
 Because pending plugin requests are queued per token, repeated `.invokeError(...)` / `.invokeResponse(...)` calls are deterministic (FIFO within each token queue).
 
-## 4) Add retry policy to activity intents
+## 4) Add retry policy helpers
 
 ```ts
 import {
@@ -192,19 +192,18 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<BillingSagaState>('billing-saga')
+const sagaWithScheduling = createSaga<BillingSagaState>('billing-saga')
   .initialState(() => ({ attempts: 0, settled: false }))
   .on(BillingAggregate, {
     created: (state, event, ctx) => {
-      ctx.runActivity('charge-card', async () => {
-        // external call
-      }, policy);
+      // application runtime can reuse this policy for retries
+      ctx.actions.core.schedule(`retry-${event.payload.invoiceId}`, policy.initialBackoffMs);
     }
   })
   .build();
 ```
 
-`ctx.runActivity(...)` keeps retries explicit and typed while the runtime handles scheduling/execution internally.
+`validateRetryPolicy(...)` keeps retry parameters explicit and typed so scheduling/execution layers can apply them consistently.
 
 ## 5) Keep integration boundaries explicit
 

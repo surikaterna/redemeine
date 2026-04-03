@@ -266,7 +266,7 @@ Core contracts:
 - Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
 - `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
 - Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
-- `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
+- `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, `plugin-one-way`, and `plugin-request`.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
 ### Handler registration and runtime maps
@@ -376,8 +376,8 @@ type SagaWireRecord = {
 
 ### Intent vs activity (explicit terminology)
 
-- **Intent**: a deterministic instruction emitted by saga logic (for example: dispatch command, schedule timer, cancel timer, run activity).
-- **Activity**: the side-effecting execution unit that happens at runtime when a `runActivity` intent is executed.
+- **Intent**: a deterministic instruction emitted by saga logic (for example: dispatch command, schedule timer, cancel timer, plugin action intent).
+- **Activity**: the side-effecting execution unit that happens at runtime when an emitted intent is executed.
 
 In other words, the saga definition emits intents; runtime infrastructure may later execute activities.
 
