@@ -13,6 +13,7 @@ export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
 type AnyFunction = (...args: any[]) => unknown;
 const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
+const SAGA_ACTION_RUNTIME_EMITTER = '__saga_action_runtime_emitter';
 
 type SagaHelperEmissionMode = 'one_way' | 'request_response';
 
@@ -42,7 +43,20 @@ export type SagaPluginActionDescriptor<
 
 type SagaPluginActionDescriptorWithHelperMetadata = SagaPluginActionDescriptor & {
   readonly [SAGA_HELPER_EMISSION_MODE]?: SagaHelperEmissionMode;
+  readonly [SAGA_ACTION_RUNTIME_EMITTER]?: SagaPluginActionRuntimeEmitter<unknown, unknown>;
 };
+
+type SagaPluginActionRuntimeEmitterContext = {
+  readonly plugin_key: string;
+  readonly action_name: string;
+  readonly metadata: SagaIntentMetadata;
+  emitIntent: (intent: SagaIntent) => void;
+};
+
+type SagaPluginActionRuntimeEmitter<TExecutionPayload, TResult> = (
+  executionPayload: TExecutionPayload,
+  context: SagaPluginActionRuntimeEmitterContext
+) => TResult;
 
 type SagaOneWayHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
   SagaPluginVoidActionDescriptor<TBuild> & {
@@ -415,6 +429,13 @@ export interface SagaResponseCallbackEnvelope<TToken extends string = string, TP
 export interface SagaErrorCallbackEnvelope<TToken extends string = string, TError = unknown> {
   readonly token: TToken;
   readonly error: TError;
+  readonly request: SagaExternalHandlerRequestContext;
+}
+
+/** Input shape for executable retry callbacks. */
+export interface SagaRetryCallbackEnvelope<TToken extends string = string, TPayload = unknown> {
+  readonly token: TToken;
+  readonly payload: TPayload;
   readonly request: SagaExternalHandlerRequestContext;
 }
 
@@ -797,7 +818,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   aggregateDef: TAggregate,
   aggregateId: string,
   metadata: SagaIntentMetadata,
-  emitIntent: (intent: SagaIntent) => void,
   metadataOverride?: Partial<SagaIntentMetadata>
 ): SagaCommandsFor<TAggregate> {
   const commandIntents = {} as SagaCommandsFor<TAggregate>;
@@ -814,8 +834,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
         metadataOverride,
         aggregateId
       );
-
-      emitIntent(intent);
       return intent;
     };
   }
@@ -918,7 +936,6 @@ function createSagaCorePluginManifest(
     aggregateDef,
     aggregateId,
     metadata,
-    emitIntent,
     metadataOverride
   );
 
@@ -928,16 +945,35 @@ function createSagaCorePluginManifest(
     retryPolicy?: SagaRetryPolicy,
     metadataOverride?: Partial<SagaIntentMetadata>
   ) => {
-    const intent: SagaRunActivityIntent<TResult> = {
+    return {
       type: 'run-activity',
       name,
       closure,
       retryPolicy,
       metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
     };
+  };
 
+  const emitAndReturnIntent = <TIntent extends SagaIntent>(intent: TIntent): TIntent => {
     emitIntent(intent);
     return intent;
+  };
+
+  const emitDispatchCommands = <TAggregate extends SagaAggregateDefinition>(
+    commandIntents: SagaCommandsFor<TAggregate>
+  ): SagaCommandsFor<TAggregate> => {
+    const emittedCommands = {} as SagaCommandsFor<TAggregate>;
+
+    for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
+      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName];
+      (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
+        const intent = createIntent(...args);
+        emitIntent(intent);
+        return intent;
+      };
+    }
+
+    return emittedCommands;
   };
 
   return defineSagaPlugin({
@@ -946,45 +982,46 @@ function createSagaCorePluginManifest(
       dispatch: {
         action_kind: 'void',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Aggregate command dispatch helper'
       },
       dispatchTo: {
         action_kind: 'void',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Alias for aggregate command dispatch helper'
       },
       schedule: {
         action_kind: 'void',
-        build: (id, delay, metadataOverride) => {
-          const intent: SagaScheduleIntent = {
+        build: (id, delay, metadataOverride) => ({
             type: 'schedule',
             id,
             delay,
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-          };
-
-          emitIntent(intent);
-          return intent;
-        },
+          }),
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent: SagaScheduleIntent) => emitAndReturnIntent(intent),
         description: 'Schedule delayed saga wake-up'
       },
       cancelSchedule: {
         action_kind: 'void',
-        build: (id, metadataOverride) => {
-          const intent: SagaCancelScheduleIntent = {
+        build: (id, metadataOverride) => ({
             type: 'cancel-schedule',
             id,
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-          };
-
-          emitIntent(intent);
-          return intent;
-        },
+          }),
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent: SagaCancelScheduleIntent) => emitAndReturnIntent(intent),
         description: 'Cancel delayed saga wake-up'
       },
       runActivity: {
         action_kind: 'void',
         build: runActivityBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: <TResult>(
+          intent: SagaRunActivityIntent<TResult>
+        ) => emitAndReturnIntent(intent),
         description: 'Run saga activity closure'
       }
     },
@@ -1064,6 +1101,16 @@ function createPluginActionsContext(
 
       pluginActions[actionName] = (...args: any[]) => {
         const executionPayload = actionDescriptor.build(...args);
+        const runtimeEmitter = actionDescriptor[SAGA_ACTION_RUNTIME_EMITTER];
+
+        if (runtimeEmitter !== undefined) {
+          return runtimeEmitter(executionPayload, {
+            plugin_key: plugin.plugin_key,
+            action_name: actionName,
+            metadata,
+            emitIntent
+          });
+        }
 
         if (actionDescriptor[SAGA_HELPER_EMISSION_MODE] !== 'one_way') {
           return executionPayload;

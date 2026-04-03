@@ -73,7 +73,6 @@ export {
   type SagaPluginRequestRoutingMetadata,
   type SagaPluginRequestResponseActionDescriptor,
   type SagaPluginRequestResponseActionNames,
-  type SagaRetryTokenKey,
   type SagaCustomActionBuilderCtx,
   type SagaCustomActionPendingState,
   type SagaCustomOneWayActionDefinition,
