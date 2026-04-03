@@ -107,6 +107,13 @@ export {
   type SagaStartPolicyRestart
 } from './startPolicy';
 export {
+  type SagaSchedulerTriggerPolicyContract,
+  type SagaTriggerMisfirePolicy,
+  type SagaTriggerMisfirePolicyCatchUpAll,
+  type SagaTriggerMisfirePolicyCatchUpBounded,
+  type SagaTriggerMisfirePolicyLatestOnly,
+  type SagaTriggerMisfirePolicySkipUntilNext,
+  type SagaTriggerRestartPolicy,
   type SagaTriggerStartContract
 } from './triggerContracts';
 export {

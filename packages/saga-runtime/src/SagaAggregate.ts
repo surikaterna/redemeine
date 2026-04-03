@@ -33,9 +33,110 @@ export interface SagaIntentLifecycleRecord {
   intentId: string;
   intentType: string;
   stage: 'created' | 'scheduled' | 'dispatched' | 'acknowledged' | 'failed' | 'cancelled';
+  executionId?: string;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  responseRef?: IntentExecutionResponseRef | null;
   recordedAt: string;
   error?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRetryPolicySnapshot {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  backoffMultiplier?: number;
+  timeoutMs?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionResponseRef {
+  responseKey: string;
+  responseId: string;
+  receivedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type IntentExecutionStatus =
+  | 'created'
+  | 'scheduled'
+  | 'in_progress'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out';
+
+export interface IntentExecution {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status: IntentExecutionStatus;
+  attempt: number;
+  retryPolicySnapshot: IntentExecutionRetryPolicySnapshot | null;
+  responseRef: IntentExecutionResponseRef | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionCreateCommandPayload {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status?: IntentExecutionStatus;
+  attempt?: number;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  responseRef?: IntentExecutionResponseRef | null;
+  createdAt?: string;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRecordAttemptCommandPayload {
+  id: string;
+  attempt: number;
+  status?: IntentExecutionStatus;
+  retryPolicySnapshot?: IntentExecutionRetryPolicySnapshot | null;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionRecordResponseRefCommandPayload {
+  id: string;
+  responseRef: IntentExecutionResponseRef;
+  status?: IntentExecutionStatus;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionMarkTerminalCommandPayload {
+  id: string;
+  status: Extract<IntentExecutionStatus, 'succeeded' | 'failed' | 'cancelled' | 'timed_out'>;
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionProjectionRecord {
+  id: string;
+  sagaId: string;
+  intentId: string;
+  status: IntentExecutionStatus;
+  attempt: number;
+  retryPolicySnapshot: IntentExecutionRetryPolicySnapshot | null;
+  responseRef: IntentExecutionResponseRef | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntentExecutionProjection {
+  getById(id: string): IntentExecutionProjectionRecord | null;
+  upsert(record: IntentExecutionProjectionRecord): void;
+}
+
+export interface SagaAggregateProjection {
+  getById(id: string): SagaAggregateState | null;
+  upsert(record: SagaAggregateState): void;
 }
 
 export interface SagaActivityLifecycleRecord {
@@ -49,7 +150,7 @@ export interface SagaActivityLifecycleRecord {
 }
 
 export interface SagaAggregateState {
-  sagaId: string | null;
+  id: string | null;
   sagaType: string | null;
   lifecycleState: 'idle' | 'active' | 'completed' | 'failed' | 'cancelled';
   createdAt: string | null;
@@ -70,7 +171,7 @@ export interface SagaAggregateState {
 }
 
 export interface SagaCreateInstanceCommandPayload {
-  sagaId: string;
+  id: string;
   sagaType: string;
   lifecycleState?: SagaAggregateState['lifecycleState'];
   createdAt?: string;
@@ -118,7 +219,7 @@ export interface SagaRecordActivityLifecycleCommandPayload {
 }
 
 export interface SagaInstanceCreatedEventPayload {
-  sagaId: string;
+  id: string;
   sagaType: string;
   lifecycleState: SagaAggregateState['lifecycleState'];
   createdAt: string;
@@ -141,6 +242,26 @@ export interface SagaActivityLifecycleRecordedEventPayload {
   record: SagaActivityLifecycleRecord;
 }
 
+export type SagaTransitionInvariantCode =
+  | 'saga_instance_not_created'
+  | 'saga_instance_already_created'
+  | 'saga_transition_from_state_mismatch'
+  | 'saga_transition_noop'
+  | 'saga_transition_from_terminal_state';
+
+export class SagaTransitionInvariantError extends Error {
+  readonly code: SagaTransitionInvariantCode;
+
+  readonly details: Record<string, unknown>;
+
+  constructor(code: SagaTransitionInvariantCode, message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = 'SagaTransitionInvariantError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export interface CreateSagaAggregateOptions {
   aggregateName?: string;
   initialState?: Partial<SagaAggregateState>;
@@ -155,7 +276,7 @@ const defaultRecentWindowLimits: SagaRecentWindowLimits = {
 };
 
 const createInitialState = (): SagaAggregateState => ({
-  sagaId: null,
+  id: null,
   sagaType: null,
   lifecycleState: 'idle',
   createdAt: null,
@@ -205,6 +326,27 @@ const toIso8601 = (value?: string): string => {
 
 const toSnakeCase = (value: string): string => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
+const isTerminalLifecycleState = (state: string): boolean => state === 'completed' || state === 'failed' || state === 'cancelled';
+
+type SagaInvariantStateView = Readonly<Pick<SagaAggregateState, 'id' | 'lifecycleState' | 'transitionVersion'>>;
+
+const requireCreatedInstance = (state: SagaInvariantStateView, command: string): void => {
+  if (state.id) {
+    return;
+  }
+
+  throw new SagaTransitionInvariantError(
+    'saga_instance_not_created',
+    `${command} rejected: saga instance must be created first`,
+    {
+      command,
+      sagaId: state.id,
+      currentState: state.lifecycleState,
+      transitionVersion: state.transitionVersion
+    }
+  );
+};
+
 export function createSagaAggregate<TAggregateName extends string = 'saga'>(
   options: CreateSagaAggregateOptions & { aggregateName?: TAggregateName } = {}
 ) {
@@ -232,7 +374,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
   const built = createAggregate(aggregateName, initialState)
     .events({
       instanceCreated: (state, event: Event<SagaInstanceCreatedEventPayload>) => {
-        state.sagaId = event.payload.sagaId;
+        state.id = event.payload.id;
         state.sagaType = event.payload.sagaType;
         state.lifecycleState = event.payload.lifecycleState;
         state.createdAt = event.payload.createdAt;
@@ -266,37 +408,113 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
       }
     })
     .commands((emit) => ({
-      createInstance: (_state, payload: SagaCreateInstanceCommandPayload) => emit.instanceCreated({
-        sagaId: payload.sagaId,
-        sagaType: payload.sagaType,
-        lifecycleState: payload.lifecycleState ?? 'active',
-        createdAt: toIso8601(payload.createdAt),
-        metadata: payload.metadata
-      }),
-      observeSourceEvent: (_state, payload: SagaObserveSourceEventCommandPayload) => emit.sourceEventObserved({
+      createInstance: (state, payload: SagaCreateInstanceCommandPayload) => {
+        if (state.id) {
+          throw new SagaTransitionInvariantError(
+            'saga_instance_already_created',
+            'createInstance rejected: saga instance already exists',
+            {
+              command: 'createInstance',
+              sagaId: state.id,
+              currentState: state.lifecycleState,
+              transitionVersion: state.transitionVersion
+            }
+          );
+        }
+
+        return emit.instanceCreated({
+          id: payload.id,
+          sagaType: payload.sagaType,
+          lifecycleState: payload.lifecycleState ?? 'active',
+          createdAt: toIso8601(payload.createdAt),
+          metadata: payload.metadata
+        });
+      },
+      observeSourceEvent: (state, payload: SagaObserveSourceEventCommandPayload) => {
+        requireCreatedInstance(state, 'observeSourceEvent');
+
+        return emit.sourceEventObserved({
         record: {
           ...payload,
           observedAt: toIso8601(payload.observedAt)
         }
-      }),
-      recordStateTransition: (_state, payload: SagaRecordStateTransitionCommandPayload) => emit.stateTransitioned({
-        record: {
-          ...payload,
-          transitionAt: toIso8601(payload.transitionAt)
+      });
+      },
+      recordStateTransition: (state, payload: SagaRecordStateTransitionCommandPayload) => {
+        requireCreatedInstance(state, 'recordStateTransition');
+
+        if (isTerminalLifecycleState(state.lifecycleState)) {
+          throw new SagaTransitionInvariantError(
+            'saga_transition_from_terminal_state',
+            'recordStateTransition rejected: terminal saga state cannot transition',
+            {
+              command: 'recordStateTransition',
+              sagaId: state.id,
+              fromState: payload.fromState,
+              toState: payload.toState,
+              currentState: state.lifecycleState,
+              transitionVersion: state.transitionVersion
+            }
+          );
         }
-      }),
-      recordIntentLifecycle: (_state, payload: SagaRecordIntentLifecycleCommandPayload) => emit.intentLifecycleRecorded({
+
+        if (payload.fromState !== state.lifecycleState) {
+          throw new SagaTransitionInvariantError(
+            'saga_transition_from_state_mismatch',
+            'recordStateTransition rejected: fromState does not match current lifecycle state',
+            {
+              command: 'recordStateTransition',
+              sagaId: state.id,
+              fromState: payload.fromState,
+              toState: payload.toState,
+              currentState: state.lifecycleState,
+              transitionVersion: state.transitionVersion
+            }
+          );
+        }
+
+        if (payload.fromState === payload.toState) {
+          throw new SagaTransitionInvariantError(
+            'saga_transition_noop',
+            'recordStateTransition rejected: fromState and toState must differ',
+            {
+              command: 'recordStateTransition',
+              sagaId: state.id,
+              fromState: payload.fromState,
+              toState: payload.toState,
+              currentState: state.lifecycleState,
+              transitionVersion: state.transitionVersion
+            }
+          );
+        }
+
+        return emit.stateTransitioned({
+          record: {
+            ...payload,
+            transitionAt: toIso8601(payload.transitionAt)
+          }
+        });
+      },
+      recordIntentLifecycle: (state, payload: SagaRecordIntentLifecycleCommandPayload) => {
+        requireCreatedInstance(state, 'recordIntentLifecycle');
+
+        return emit.intentLifecycleRecorded({
         record: {
           ...payload,
           recordedAt: toIso8601(payload.recordedAt)
         }
-      }),
-      recordActivityLifecycle: (_state, payload: SagaRecordActivityLifecycleCommandPayload) => emit.activityLifecycleRecorded({
+      });
+      },
+      recordActivityLifecycle: (state, payload: SagaRecordActivityLifecycleCommandPayload) => {
+        requireCreatedInstance(state, 'recordActivityLifecycle');
+
+        return emit.activityLifecycleRecorded({
         record: {
           ...payload,
           recordedAt: toIso8601(payload.recordedAt)
         }
-      })
+      });
+      }
     }))
     .overrideEventNames({
       instanceCreated: `${aggregateName}.${toSnakeCase('instanceCreated')}.event`,
