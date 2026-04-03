@@ -7,6 +7,14 @@ export const runSagaHandler = sagaPackage.runSagaHandler as any;
 export * from './createSagaAggregate';
 export * from './inboundRouter';
 export * from './referenceAdapters';
+export {
+  createRuntimeAuditLifecycleReadModel,
+  type IntentExecutionLifecycleHistoryEntry,
+  type LifecycleHistoryQuery,
+  type LifecycleHistoryQueryResult,
+  type RuntimeAuditLifecycleReadModel,
+  type SagaLifecycleHistoryEntry
+} from './runtimeAuditProjections';
 export type {
   RuntimeAuditActor,
   RuntimeAuditCategory,
