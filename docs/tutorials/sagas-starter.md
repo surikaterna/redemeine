@@ -2,8 +2,6 @@
 
 This starter walks through the minimum moving parts for building a helper-first, event-sourced saga in Redemeine.
 
-> ⚠️ **Breaking change:** this tutorial now focuses on the manifest-first saga definition API (`createSaga({ name, plugins? })`).
-
 You will:
 
 1. Define saga state.
@@ -51,7 +49,6 @@ export const HttpPlugin = defineSagaPlugin({
 });
 ```
 
-Backward compatibility note: legacy `action_kind` descriptors still work while migrating existing plugins.
 `forCommands` ergonomics are explicitly deferred from this helper rollout.
 
 ## 3) Build the saga definition (canonical mixed-action example)
@@ -176,11 +173,11 @@ fixture
 
 Because pending plugin requests are queued per token, repeated `.invokeError(...)` / `.invokeResponse(...)` calls are deterministic (FIFO within each token queue).
 
-## 4) Add retry policy to activity intents
+## 4) Validate retry policy values
 
 ```ts
 import {
-  createSaga,
+  computeNextAttemptAt,
   validateRetryPolicy
 } from '@redemeine/saga';
 
@@ -192,19 +189,10 @@ const policy = validateRetryPolicy({
   jitterCoefficient: 0.2
 });
 
-const sagaWithActivity = createSaga<BillingSagaState>('billing-saga')
-  .initialState(() => ({ attempts: 0, settled: false }))
-  .on(BillingAggregate, {
-    created: (state, event, ctx) => {
-      ctx.runActivity('charge-card', async () => {
-        // external call
-      }, policy);
-    }
-  })
-  .build();
+const nextAttemptAt = computeNextAttemptAt(policy, 2, Date.now());
 ```
 
-`ctx.runActivity(...)` keeps retries explicit and typed while the runtime handles scheduling/execution internally.
+Use these helpers to keep retry configuration deterministic and validated.
 
 ## 5) Keep integration boundaries explicit
 
@@ -212,7 +200,7 @@ Saga definitions are pure contracts: they describe state transitions and emitted
 
 Definition-only scope reminder: plugin runtime execution is intentionally out of scope for this API layer.
 
-### SagaAggregate terminology (intent vs activity)
+### SagaAggregate terminology (interaction-first)
 
 When persisting saga progress as a structure-only `SagaAggregate` model, keep these terms distinct:
 
@@ -221,8 +209,8 @@ When persisting saga progress as a structure-only `SagaAggregate` model, keep th
 - Event/command `type` values on the wire are snake_case.
 - Timestamps are ISO8601 strings.
 - Recent transitions/events/activities are compact bounded windows with separate totals.
-- **Intent** means the declarative instruction produced by saga logic.
-- **Activity** means the runtime side effect that executes from a prior intent.
+- **Intent** means the declarative `plugin-intent` instruction produced by saga logic.
+- **Interaction** means how an intent is modeled and routed (`fire_and_forget` or `request_response`).
 
 Runtime worker/executor implementation is intentionally out of scope for this tutorial.
 

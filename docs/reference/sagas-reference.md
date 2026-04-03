@@ -2,8 +2,6 @@
 
 This page is the quick reference for the **public** saga API exported from `@redemeine/saga`.
 
-> ⚠️ **Breaking change:** the public saga surface is now intentionally minimal.
-
 For generated API signatures, use `/docs/api/`.
 
 ## Public module overview
@@ -35,7 +33,7 @@ Saga identity is strict and has one canonical source of truth in `@redemeine/sag
 
 - Canonical identity derives from structured fields via `normalizeSagaIdentity`.
 - URN helpers are intentionally minimal: `deriveSagaUrn`, `deriveSagaInstanceUrn`, `parseSagaUrn`.
-- Legacy adapter/compat identity entrypoints were removed as a release-breaking cleanup.
+- Identity entrypoints are intentionally minimal and canonical.
 
 ### Structured source fields (required)
 
@@ -263,10 +261,8 @@ Core contracts:
   - `.onError(errorToken)` (terminal after retries exhausted/non-retryable)
 - `onResponses(...)`, `onErrors(...)`, and `onRetries(...)` register executable handlers and define token namespaces with phase-safe typing.
 - Routing is persisted with named tokens only (`response_handler_key`, `error_handler_key`, `handler_data`) for restart safety; inline callback persistence is not supported.
-- Existing `action_kind`-descriptor manifests remain supported for backward compatibility.
-- `forCommands` helper ergonomics are intentionally deferred and out of scope for this change.
-- Built-ins remain available via `ctx.actions.core.*` (and legacy base helpers like `ctx.schedule(...)`).
-- `SagaIntent`: union of `dispatch`, `schedule`, `cancel-schedule`, and `run-activity`.
+- Built-ins remain available via `ctx.actions.core.*`.
+- `SagaIntent`: unified `plugin-intent` contract with explicit interaction semantics.
 - `SagaIntentMetadata`: `sagaId`, `correlationId`, `causationId` attached to all intents.
 
 ### Handler registration and runtime maps
@@ -374,47 +370,68 @@ type SagaWireRecord = {
 };
 ```
 
-### Intent vs activity (explicit terminology)
+### Intent semantics (interaction-first)
 
-- **Intent**: a deterministic instruction emitted by saga logic (for example: dispatch command, schedule timer, cancel timer, run activity).
-- **Activity**: the side-effecting execution unit that happens at runtime when a `runActivity` intent is executed.
+- **Intent**: a deterministic instruction emitted by saga logic as a unified `plugin-intent`.
+- **Interaction**: the intent interaction mode used to model execution flow (`fire_and_forget` or `request_response`).
 
-In other words, the saga definition emits intents; runtime infrastructure may later execute activities.
+In other words, saga definitions emit interaction-typed intents, and runtime infrastructure executes those intents.
 
 > Out of scope for this reference: runtime worker/executor implementation details (queueing, polling, retries in workers, etc.).
 
+## Unified intent model summary
+
+This model is interaction-first and uses a single `plugin-intent` contract
+(`fire_and_forget` or `request_response`) as the canonical outbound execution
+shape.
+
 ## `createSaga` runtime contracts (v1, implemented)
 
-This section documents the runtime behavior currently implemented in `@redemeine/saga-runtime` for saga definitions built with `createSaga(...)`.
+This section documents runtime behavior implemented in
+`@redemeine/saga-runtime` for saga definitions built with `createSaga(...)`.
 
 ### Delivery contract
 
-- Inbound handler execution is deterministic per saga id when routed through `createSagaInboundRouter(...)` (strict single-flight by default).
-- Outbound side-effect intents (`plugin-one-way`, `plugin-request`, `run-activity`) are persisted as `in_progress` executions before execution and then updated to terminal status (`succeeded` / `failed`) after completion.
-- Side-effect execution in `runReferenceAdapterFlowV1(...)` is concurrent (`Promise.all`) for intents collected in one dispatch turn.
-- The runtime currently does **not** provide an `effectively_once` deduplication guarantee by itself. Treat delivery as at-least-once unless your plugin/persistence layer adds idempotency.
+- Inbound handler execution is deterministic per saga id when routed through
+  `createSagaInboundRouter(...)` (strict single-flight by default).
+- Outbound plugin intents are persisted as `in_progress` executions before
+  adapter execution and then updated to terminal status (`succeeded` /
+  `failed`) after completion.
+- Execution in `runReferenceAdapterFlowV1(...)` is concurrent (`Promise.all`)
+  for intents collected in one dispatch turn.
+- The runtime does **not** provide an `effectively_once` deduplication guarantee
+  by itself. Treat delivery as at-least-once unless your
+  plugin/persistence layer adds idempotency.
 
 ### Ordering contract
 
-- **Inbound ordering:** commands/events for the same saga route in arrival order by default (`resolveSingleFlightKey` defaults to `sagaId`).
+- **Inbound ordering:** commands/events for the same saga route in arrival
+  order by default (`resolveSingleFlightKey` defaults to `sagaId`).
 - **Cross-saga concurrency:** different saga ids may process concurrently.
-- **Outbound ordering:** side-effects are launched as parallel fan-out for a dispatch turn; completion order is not guaranteed.
-- **Execution identity continuity:** `createSagaExecutionBridge(...)` allocates monotonic per-saga intent ids (`<sagaId>:intent:<n>`) and reuses those ids for persisted side-effect execution identity, preserving traceability across repeated dispatches.
+- **Outbound ordering:** intents are launched as parallel fan-out for a dispatch
+  turn; completion order is not guaranteed.
+- **Execution identity continuity:** `createSagaExecutionBridge(...)` allocates
+  monotonic per-saga intent ids (`<sagaId>:intent:<n>`) and reuses those ids
+  for persisted execution identity, preserving traceability across repeated
+  dispatches.
 
 ### Waiting policy contract
 
 Inbound waiting policies are explicit in `createSagaInboundRouter(...)`:
 
-- `arrival_order` (default): no barrier gate, process as each item arrives.
-- `barrier_gated`: requires `coordination.stepId`; waits until `coordination.barrierSize` arrivals for the same step key before releasing.
+- `arrival_order` (default): no barrier gate; process as each item arrives.
+- `barrier_gated`: requires `coordination.stepId`; waits until
+  `coordination.barrierSize` arrivals for the same step key before releasing.
 
 Validation behavior:
 
-- Using `barrier_gated` without `coordination.stepId` throws: `barrier_gated waiting policy requires coordination.stepId`.
+- Using `barrier_gated` without `coordination.stepId` throws:
+  `barrier_gated waiting policy requires coordination.stepId`.
 
 ### Plugin touchpoints (runtime integration)
 
-`createSaga` remains definition-first. Runtime integration happens via bridge + adapters:
+`createSaga` remains definition-first. Runtime integration happens via bridge
+and adapters:
 
 - `createSagaExecutionBridge(...)`
   - Resolves matching saga handlers from incoming domain events.
@@ -422,45 +439,29 @@ Validation behavior:
   - Captures emitted intents and records lifecycle entries in `SagaAggregate`.
 - `runReferenceAdapterFlowV1(...)`
   - Routes `schedule` / `cancel-schedule` intents to scheduler adapter.
-  - Routes side-effect intents to side-effects adapter.
+  - Routes plugin intents to side-effects adapter.
   - Writes execution projection updates through persistence adapter.
   - Emits counters/events via telemetry adapter.
 
-Adapter/plugin interfaces used by the runtime contract:
+Adapter/plugin interfaces used by this runtime contract:
 
 - `SagaRuntimePersistencePluginV1`
 - `SagaRuntimeSchedulerPluginV1`
 - `SagaRuntimeSideEffectsPluginV1`
 - `SagaRuntimeTelemetryPluginV1`
 
-For saga authors this means plugin action contracts (`defineOneWay`, `defineRequestResponse`, `defineCustomAction`) stay definition-level, while execution semantics are provided by runtime adapters implementing the interfaces above.
+For saga authors, plugin action contracts (`defineOneWay`,
+`defineRequestResponse`, `defineCustomAction`) stay definition-level, while
+execution semantics are provided by runtime adapters implementing these
+interfaces.
 
 ## Migration summary (breaking)
 
-If you used older/expanded saga docs, migrate as follows:
+Current saga authoring model:
 
-- **Keep using:** `createSaga` and retry helpers.
-- **Use manifest-first builder form:** `createSaga<TState>({ name, plugins? })`.
-- **Define plugin manifests with helper-based actions:** `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
-- **Route request/response actions with durable named tokens:** `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
-- **Semantics reminder:** `withData` and `onRetry` are optional; `onError` is terminal after retries are exhausted or on non-retryable errors.
-- **Backwards compatibility:** legacy `action_kind` descriptors continue to work while migrating.
-- **Deferred scope:** `forCommands` ergonomics remain tracked separately.
-- **Use aggregate-typed handlers:** `.on(Aggregate, handlers)`.
-- **Use mutation-style handlers:** update saga state directly in handler scope (Immer semantics).
-- **Use typed dispatch factories:** `ctx.actions.core.dispatch(...)` / `dispatchTo.<commandCreator>(...)`.
-- **Stop using as public imports:** registry/event taxonomy modules and runtime persistence/execution internals.
-- **Treat internals as unstable:** anything outside package entry exports (for example `@redemeine/saga` and `@redemeine/saga-runtime`) is implementation detail.
-
-## Migration note (additive plugin action helpers)
-
-`@redemeine/saga` now also exports additive helper APIs for plugin manifests:
-
-- `defineOneWay(...)`
-- `defineRequestResponse(...)`
-- `defineCustomAction(...)`
-
-Compatibility note:
-
-- Existing raw descriptors with explicit `action_kind` (`'void'` / `'request_response'`) remain fully supported.
-- You can migrate incrementally by mixing helper-based and raw descriptors in the same plugin manifest.
+- Use `createSaga` with manifest-first plugin registration.
+- Define plugin actions with helper APIs: `defineOneWay`, `defineRequestResponse`, `defineCustomAction`.
+- Emit intents through a single `plugin-intent` contract with interaction semantics.
+- Route request/response interactions with durable named tokens: `.withData(...)? .onRetry(...)? .onResponse(token).onError(token)`.
+- Register executable handlers with `.onResponses(...)`, `.onErrors(...)`, and `.onRetries(...)`.
+- Use aggregate-typed handlers (`.on(Aggregate, handlers)`) and mutation-style state updates.
