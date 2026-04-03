@@ -373,3 +373,11 @@ Strict Purity: The entire @redemeine/testing suite can be executed on a machine 
 Depot End-to-End: An integration test successfully dispatches a Command, which emits an Event, which updates an in-memory Projection, all within a single createTestDepot instance.
 
 ## Plugins for opentelemetry in runtimes
+
+## Saga Runtime v1 follow-up notes
+
+- Consider replacing local `SagaDefinitionLike` with a shared type boundary from `@redemeine/saga` (for example `Pick<SagaDefinition, ...>`) to reduce drift risk while keeping runtime internals decoupled.
+- Prefer persisting source-event references by default (`eventId`, `type`, `aggregateId`, `sequence`, `correlation`, `causation`, `timestamp`), with an optional redacted payload snapshot only when audit/debug needs justify it.
+- Keep `SagaAggregate` as the authoritative write model, and consider adding a `createMirage`-style DX overlay/facade for bridge ergonomics without allowing invariant bypass.
+- Consider durable per-saga inbound inbox/queue semantics (persist-before-ack, idempotency keys, replay-safe drains) so queued inbound work survives server restarts.
+- Clarify the `referenceAdapters` API boundary by separating stable SPI contracts from in-memory reference implementations and test-harness surfaces.
