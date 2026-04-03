@@ -1,9 +1,9 @@
 import { createDraft, finishDraft, type Draft } from 'immer';
-import type { SagaRetryPolicy } from './RetryPolicy';
 import {
   normalizeSagaIdentity,
   type SagaIdentityInput
 } from './identity';
+import type { SagaRetryPolicy } from './RetryPolicy';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
@@ -13,15 +13,16 @@ export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
 type AnyFunction = (...args: any[]) => unknown;
 const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
+const SAGA_ACTION_RUNTIME_EMITTER = '__saga_action_runtime_emitter';
 
-type SagaHelperEmissionMode = 'one_way' | 'request_response';
+type SagaHelperEmissionMode = 'fire_and_forget' | 'request_response';
 
-export type SagaPluginActionKind = 'void' | 'request_response';
+export type SagaPluginInteraction = 'fire_and_forget' | 'request_response';
 
-export type SagaPluginVoidActionDescriptor<
+export type SagaPluginFireAndForgetActionDescriptor<
   TBuild extends AnyFunction = AnyFunction
 > = {
-  readonly action_kind: 'void';
+  readonly interaction: 'fire_and_forget';
   readonly build: TBuild;
   readonly description?: string;
 };
@@ -29,7 +30,7 @@ export type SagaPluginVoidActionDescriptor<
 export type SagaPluginRequestResponseActionDescriptor<
   TBuild extends AnyFunction = AnyFunction
 > = {
-  readonly action_kind: 'request_response';
+  readonly interaction: 'request_response';
   readonly build: TBuild;
   readonly description?: string;
 };
@@ -37,16 +38,29 @@ export type SagaPluginRequestResponseActionDescriptor<
 export type SagaPluginActionDescriptor<
   TBuild extends AnyFunction = AnyFunction
 > =
-  | SagaPluginVoidActionDescriptor<TBuild>
+  | SagaPluginFireAndForgetActionDescriptor<TBuild>
   | SagaPluginRequestResponseActionDescriptor<TBuild>;
 
 type SagaPluginActionDescriptorWithHelperMetadata = SagaPluginActionDescriptor & {
   readonly [SAGA_HELPER_EMISSION_MODE]?: SagaHelperEmissionMode;
+  readonly [SAGA_ACTION_RUNTIME_EMITTER]?: SagaPluginActionRuntimeEmitter<unknown, unknown>;
 };
 
+type SagaPluginActionRuntimeEmitterContext = {
+  readonly plugin_key: string;
+  readonly action_name: string;
+  readonly metadata: SagaIntentMetadata;
+  emitIntent: (intent: SagaIntent) => void;
+};
+
+type SagaPluginActionRuntimeEmitter<TExecutionPayload, TResult> = (
+  executionPayload: TExecutionPayload,
+  context: SagaPluginActionRuntimeEmitterContext
+) => TResult;
+
 type SagaOneWayHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
-  SagaPluginVoidActionDescriptor<TBuild> & {
-    readonly [SAGA_HELPER_EMISSION_MODE]: 'one_way';
+  SagaPluginFireAndForgetActionDescriptor<TBuild> & {
+    readonly [SAGA_HELPER_EMISSION_MODE]: 'fire_and_forget';
   };
 
 type SagaRequestResponseHelperActionDescriptor<TBuild extends AnyFunction = AnyFunction> =
@@ -115,20 +129,20 @@ export type SagaPluginActionArguments<TAction extends SagaPluginActionDescriptor
 export type SagaPluginActionExecutionPayload<TAction extends SagaPluginActionDescriptor> =
   ReturnType<SagaPluginActionBuild<TAction>>;
 
-export type SagaPluginActionNamesByKind<
+export type SagaPluginActionNamesByInteraction<
   TPlugin extends SagaPluginManifest,
-  TKind extends SagaPluginActionKind
+  TInteraction extends SagaPluginInteraction
 > = {
-  [TActionName in keyof TPlugin['actions'] & string]: TPlugin['actions'][TActionName]['action_kind'] extends TKind
+  [TActionName in keyof TPlugin['actions'] & string]: TPlugin['actions'][TActionName]['interaction'] extends TInteraction
     ? TActionName
     : never;
 }[keyof TPlugin['actions'] & string];
 
-export type SagaPluginVoidActionNames<TPlugin extends SagaPluginManifest> =
-  SagaPluginActionNamesByKind<TPlugin, 'void'>;
+export type SagaPluginFireAndForgetActionNames<TPlugin extends SagaPluginManifest> =
+  SagaPluginActionNamesByInteraction<TPlugin, 'fire_and_forget'>;
 
 export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
-  SagaPluginActionNamesByKind<TPlugin, 'request_response'>;
+  SagaPluginActionNamesByInteraction<TPlugin, 'request_response'>;
 
 export type SagaResponseHandlerPhase = 'response' | 'error' | 'retry';
 
@@ -261,7 +275,7 @@ export interface SagaCustomOneWayActionDefinition<
   TArgs extends unknown[] = unknown[],
   TExecutionPayload = unknown
 > {
-  readonly action_kind: 'void';
+  readonly interaction: 'fire_and_forget';
   readonly build: (
     builderCtx: SagaCustomActionBuilderCtx<TExecutionPayload, SagaPluginRequestRoutingMetadata>,
     ...args: TArgs
@@ -274,7 +288,7 @@ export interface SagaCustomRequestResponseActionDefinition<
   TExecutionPayload = unknown,
   TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
 > {
-  readonly action_kind: 'request_response';
+  readonly interaction: 'request_response';
   readonly build: (
     builderCtx: SagaCustomActionBuilderCtx<TExecutionPayload, TRoutingMetadata>,
     ...args: TArgs
@@ -300,9 +314,9 @@ export function defineOneWay<TBuild extends AnyFunction>(
 ): SagaOneWayHelperActionDescriptor<TBuild> {
   const normalized = normalizeActionDefinition(input);
   return {
-    action_kind: 'void',
+    interaction: 'fire_and_forget',
     build: normalized.build,
-    [SAGA_HELPER_EMISSION_MODE]: 'one_way',
+    [SAGA_HELPER_EMISSION_MODE]: 'fire_and_forget',
     ...(normalized.description === undefined ? {} : { description: normalized.description })
   };
 }
@@ -313,7 +327,7 @@ export function defineRequestResponse<TBuild extends AnyFunction>(
 ): SagaRequestResponseHelperActionDescriptor<TBuild> {
   const normalized = normalizeActionDefinition(input);
   return {
-    action_kind: 'request_response',
+    interaction: 'request_response',
     build: normalized.build,
     [SAGA_HELPER_EMISSION_MODE]: 'request_response',
     ...(normalized.description === undefined ? {} : { description: normalized.description })
@@ -364,7 +378,7 @@ export function defineCustomAction<
   TExecutionPayload
 >(
   definition: SagaCustomOneWayActionDefinition<TArgs, TExecutionPayload>
-): SagaPluginVoidActionDescriptor<(...args: TArgs) => TExecutionPayload>;
+): SagaPluginFireAndForgetActionDescriptor<(...args: TArgs) => TExecutionPayload>;
 export function defineCustomAction<
   TArgs extends unknown[],
   TExecutionPayload,
@@ -382,7 +396,7 @@ export function defineCustomAction(
     return snapshot.execution_payload === undefined ? output : snapshot.execution_payload;
   };
 
-  if (definition.action_kind === 'void') {
+  if (definition.interaction === 'fire_and_forget') {
     return defineOneWay({
       build,
       ...(definition.description === undefined ? {} : { description: definition.description })
@@ -415,6 +429,13 @@ export interface SagaResponseCallbackEnvelope<TToken extends string = string, TP
 export interface SagaErrorCallbackEnvelope<TToken extends string = string, TError = unknown> {
   readonly token: TToken;
   readonly error: TError;
+  readonly request: SagaExternalHandlerRequestContext;
+}
+
+/** Input shape for executable retry callbacks. */
+export interface SagaRetryCallbackEnvelope<TToken extends string = string, TPayload = unknown> {
+  readonly token: TToken;
+  readonly payload?: TPayload;
   readonly request: SagaExternalHandlerRequestContext;
 }
 
@@ -463,9 +484,6 @@ export interface SagaCancelScheduleIntent {
   readonly id: string;
   readonly metadata: SagaIntentMetadata;
 }
-
-/** Function signature used for `run-activity` intent closures. */
-export type SagaActivityClosure<TResult = unknown> = () => TResult | Promise<TResult>;
 
 export type SagaPluginManifestList = readonly SagaPluginManifest[];
 
@@ -555,7 +573,7 @@ type SagaRequestActionChainPostResponseStep<
   >;
   onError: <TErrorHandlerKey extends TErrorToken<SagaErrorTokenKey<TBindings>>>(
     token: TErrorHandlerKey
-  ) => SagaPluginRequestIntent<
+  ) => SagaPluginRequestIntentHandle<
     TPluginKey,
     TActionName,
     TExecutionPayload,
@@ -574,7 +592,7 @@ type SagaRequestActionChainOnErrorStepWithRetry<
 > = {
   onError: <TErrorHandlerKey extends TErrorToken<SagaErrorTokenKey<TBindings>>>(
     token: TErrorHandlerKey
-  ) => SagaPluginRequestIntent<
+  ) => SagaPluginRequestIntentHandle<
     TPluginKey,
     TActionName,
     TExecutionPayload,
@@ -587,7 +605,7 @@ type SagaPluginActionContextForManifestAction<
   TActionName extends string,
   TAction extends SagaPluginActionDescriptor,
   TBindings extends SagaResponseHandlerTokenBindings
-> = TAction['action_kind'] extends 'request_response'
+> = TAction['interaction'] extends 'request_response'
   ? (
       ...args: SagaPluginActionArguments<TAction>
     ) => SagaRequestActionChainWithDataStep<
@@ -596,8 +614,8 @@ type SagaPluginActionContextForManifestAction<
       SagaPluginActionExecutionPayload<TAction>,
       TBindings
     >
-  : TAction extends { readonly [SAGA_HELPER_EMISSION_MODE]: 'one_way' }
-    ? (...args: SagaPluginActionArguments<TAction>) => SagaPluginOneWayIntent<
+  : TAction extends { readonly [SAGA_HELPER_EMISSION_MODE]: 'fire_and_forget' }
+    ? (...args: SagaPluginActionArguments<TAction>) => SagaPluginOneWayIntentHandle<
       TPluginKey,
       TActionName,
       SagaPluginActionExecutionPayload<TAction>
@@ -623,29 +641,26 @@ export type SagaPluginActionsContext<
   [TPlugin in TPlugins[number] as TPlugin['plugin_key']]: SagaPluginActionsForManifest<TPlugin, TBindings>;
 };
 
-/** Intent that delegates work to an activity function. */
-export interface SagaRunActivityIntent<TResult = unknown> {
-  readonly type: 'run-activity';
-  readonly name: string;
-  readonly closure: SagaActivityClosure<TResult>;
-  readonly retryPolicy?: SagaRetryPolicy;
-  readonly metadata: SagaIntentMetadata;
+/** Compensation callback entry appended to emitted plugin intent handles. */
+export interface SagaIntentCompensationEntry<
+  TToken extends string = string,
+  TPayload = unknown
+> {
+  readonly token: TToken;
+  readonly payload: TPayload;
 }
 
-/** Intent that emits plugin-owned one-way action payloads immediately. */
-export interface SagaPluginOneWayIntent<
+export interface SagaPluginOneWayIntentHandle<
   TPluginKey extends string = string,
   TActionName extends string = string,
   TExecutionPayload = unknown
-> {
-  readonly type: 'plugin-one-way';
-  readonly plugin_key: TPluginKey;
-  readonly action_name: TActionName;
-  readonly action_kind: 'void';
-  readonly execution_payload: TExecutionPayload;
-  readonly metadata: SagaIntentMetadata;
+> extends SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'fire_and_forget'> {
+  retryPolicy: (policy: SagaRetryPolicy) => SagaPluginOneWayIntentHandle<TPluginKey, TActionName, TExecutionPayload>;
+  onCompensation: <TToken extends string, TPayload>(
+    token: TToken,
+    payload: TPayload
+  ) => SagaPluginOneWayIntentHandle<TPluginKey, TActionName, TExecutionPayload>;
 }
-
 /** Routing metadata used by plugin request-response intents. */
 export interface SagaPluginRequestRoutingMetadata<
   TResponseHandlerKey extends string = string,
@@ -660,35 +675,59 @@ export interface SagaPluginRequestRoutingMetadata<
 }
 
 /**
- * Intent that requests plugin execution for request-response actions.
- *
- * `execution_payload` is plugin-owned and intentionally opaque to the saga
- * framework. Routing keys and handler data are carried separately in
- * `routing_metadata` for deterministic response/error dispatch.
+ * Unified intent that requests plugin execution.
  */
-export interface SagaPluginRequestIntent<
+export type SagaPluginIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown,
+  TInteraction extends SagaPluginInteraction = SagaPluginInteraction,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> = {
+  readonly type: 'plugin-intent';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly interaction: TInteraction;
+  readonly execution_payload: TExecutionPayload;
+  readonly retry_policy_override?: SagaRetryPolicy;
+  readonly compensation?: readonly SagaIntentCompensationEntry[];
+  readonly metadata: SagaIntentMetadata;
+} & (
+  TInteraction extends 'request_response'
+    ? { readonly routing_metadata: TRoutingMetadata }
+    : { readonly routing_metadata?: never }
+);
+
+export type SagaPluginOneWayIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> = SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'fire_and_forget'>;
+
+export type SagaPluginRequestIntent<
   TPluginKey extends string = string,
   TActionName extends string = string,
   TExecutionPayload = unknown,
   TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
-> {
-  readonly type: 'plugin-request';
-  readonly plugin_key: TPluginKey;
-  readonly action_name: TActionName;
-  readonly action_kind: 'request_response';
-  readonly execution_payload: TExecutionPayload;
-  readonly routing_metadata: TRoutingMetadata;
-  readonly metadata: SagaIntentMetadata;
+> = SagaPluginIntent<TPluginKey, TActionName, TExecutionPayload, 'request_response', TRoutingMetadata>;
+
+export interface SagaPluginRequestIntentHandle<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown,
+  TRoutingMetadata extends SagaPluginRequestRoutingMetadata = SagaPluginRequestRoutingMetadata
+> extends SagaPluginRequestIntent<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata> {
+  retryPolicy: (
+    policy: SagaRetryPolicy
+  ) => SagaPluginRequestIntentHandle<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata>;
+  onCompensation: <TToken extends string, TPayload>(
+    token: TToken,
+    payload: TPayload
+  ) => SagaPluginRequestIntentHandle<TPluginKey, TActionName, TExecutionPayload, TRoutingMetadata>;
 }
 
 /** Full intent union emitted by saga handlers. */
-export type SagaIntent =
-  | SagaDispatchIntentForCommand<string, unknown>
-  | SagaScheduleIntent
-  | SagaCancelScheduleIntent
-  | SagaRunActivityIntent
-  | SagaPluginOneWayIntent
-  | SagaPluginRequestIntent;
+export type SagaIntent = SagaPluginIntent;
 
 /** Command envelope shape emitted by aggregate command creators. */
 export interface SagaAggregateCommandEnvelope {
@@ -749,7 +788,16 @@ export type SagaAggregateEventByName<
 type SagaCommandIntentFactoryFromCreator<TCreator, TCommandName extends string> =
   TCreator extends (...args: infer TArgs) => infer TEnvelope
     ? TEnvelope extends { payload: infer TPayload }
-      ? (...args: TArgs) => SagaDispatchIntentForCommand<TCommandName, TPayload> & { readonly aggregateId: string }
+      ? (...args: TArgs) => SagaPluginIntent<
+        'core',
+        'dispatch',
+        {
+          readonly command: TCommandName;
+          readonly payload: TPayload;
+          readonly aggregateId: string;
+        },
+        'fire_and_forget'
+      >
       : never
     : never;
 
@@ -778,12 +826,26 @@ function createSagaDispatchIntentFromEnvelope<TCommandName extends string, TPayl
   metadata: SagaIntentMetadata,
   metadataOverride?: Partial<SagaIntentMetadata>,
   aggregateId?: string
-): SagaDispatchIntentForCommand<TCommandName, TPayload> {
+): SagaPluginIntent<
+  'core',
+  'dispatch',
+  {
+    readonly command: TCommandName;
+    readonly payload: TPayload;
+    readonly aggregateId: string;
+  },
+  'fire_and_forget'
+> {
   return {
-    type: 'dispatch',
-    command,
-    payload: envelope.payload,
-    aggregateId,
+    type: 'plugin-intent',
+    plugin_key: 'core',
+    action_name: 'dispatch',
+    interaction: 'fire_and_forget',
+    execution_payload: {
+      command,
+      payload: envelope.payload,
+      aggregateId: aggregateId ?? 'unknown-aggregate-id'
+    },
     metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
   };
 }
@@ -797,7 +859,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   aggregateDef: TAggregate,
   aggregateId: string,
   metadata: SagaIntentMetadata,
-  emitIntent: (intent: SagaIntent) => void,
   metadataOverride?: Partial<SagaIntentMetadata>
 ): SagaCommandsFor<TAggregate> {
   const commandIntents = {} as SagaCommandsFor<TAggregate>;
@@ -814,22 +875,12 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
         metadataOverride,
         aggregateId
       );
-
-      emitIntent(intent);
       return intent;
     };
   }
 
   return commandIntents;
 }
-
-/** Typed helper used by saga handlers to create activity intents. */
-export type SagaRunActivity = <TResult = unknown>(
-  name: string,
-  closure: SagaActivityClosure<TResult>,
-  retryPolicy?: SagaRetryPolicy,
-  metadata?: Partial<SagaIntentMetadata>
-) => SagaRunActivityIntent<TResult>;
 
 /** Alias for aggregate-driven command dispatch helper. */
 export type SagaDispatchTo = <TAggregate extends SagaAggregateDefinition>(
@@ -848,28 +899,20 @@ type SagaCoreScheduleBuild = (
   id: string,
   delay: number,
   metadata?: Partial<SagaIntentMetadata>
-) => SagaScheduleIntent;
+) => SagaPluginIntent<'core', 'schedule', { readonly id: string; readonly delay: number }, 'fire_and_forget'>;
 
 type SagaCoreCancelScheduleBuild = (
   id: string,
   metadata?: Partial<SagaIntentMetadata>
-) => SagaCancelScheduleIntent;
-
-type SagaCoreRunActivityBuild = <TResult = unknown>(
-  name: string,
-  closure: SagaActivityClosure<TResult>,
-  retryPolicy?: SagaRetryPolicy,
-  metadata?: Partial<SagaIntentMetadata>
-) => SagaRunActivityIntent<TResult>;
+) => SagaPluginIntent<'core', 'cancelSchedule', { readonly id: string }, 'fire_and_forget'>;
 
 export type SagaCorePluginManifest = SagaPluginManifest<
   'core',
   {
-    readonly dispatch: SagaPluginVoidActionDescriptor;
-    readonly dispatchTo: SagaPluginVoidActionDescriptor;
-    readonly schedule: SagaPluginVoidActionDescriptor;
-    readonly cancelSchedule: SagaPluginVoidActionDescriptor;
-    readonly runActivity: SagaPluginVoidActionDescriptor;
+    readonly dispatch: SagaPluginFireAndForgetActionDescriptor;
+    readonly dispatchTo: SagaPluginFireAndForgetActionDescriptor;
+    readonly schedule: SagaPluginFireAndForgetActionDescriptor;
+    readonly cancelSchedule: SagaPluginFireAndForgetActionDescriptor;
   }
 >;
 
@@ -878,8 +921,57 @@ type SagaCoreActionsContext = {
   readonly dispatchTo: SagaDispatchTo;
   readonly schedule: SagaCoreScheduleBuild;
   readonly cancelSchedule: SagaCoreCancelScheduleBuild;
-  readonly runActivity: SagaRunActivity;
 };
+
+function attachPluginIntentOverrides(intent: SagaPluginOneWayIntent): SagaPluginOneWayIntentHandle;
+function attachPluginIntentOverrides(intent: SagaPluginRequestIntent): SagaPluginRequestIntentHandle;
+function attachPluginIntentOverrides(
+  intent: SagaPluginOneWayIntent | SagaPluginRequestIntent
+): SagaPluginOneWayIntentHandle | SagaPluginRequestIntentHandle {
+  if (intent.interaction === 'fire_and_forget') {
+    const handle = intent as SagaPluginOneWayIntentHandle & {
+      retry_policy_override?: SagaRetryPolicy;
+      compensation?: SagaIntentCompensationEntry[];
+    };
+
+    handle.retryPolicy = (policy: SagaRetryPolicy) => {
+      handle.retry_policy_override = policy;
+      return handle;
+    };
+
+    handle.onCompensation = (token, payload) => {
+      if (handle.compensation === undefined) {
+        handle.compensation = [];
+      }
+
+      handle.compensation.push({ token, payload });
+      return handle;
+    };
+
+    return handle;
+  }
+
+  const handle = intent as SagaPluginRequestIntentHandle & {
+    retry_policy_override?: SagaRetryPolicy;
+    compensation?: SagaIntentCompensationEntry[];
+  };
+
+  handle.retryPolicy = (policy: SagaRetryPolicy) => {
+    handle.retry_policy_override = policy;
+    return handle;
+  };
+
+  handle.onCompensation = (token, payload) => {
+    if (handle.compensation === undefined) {
+      handle.compensation = [];
+    }
+
+    handle.compensation.push({ token, payload });
+    return handle;
+  };
+
+  return handle;
+}
 
 /** Base context exposed to saga handlers for intent emissions. */
 export interface SagaIntentContextBase {
@@ -892,9 +984,8 @@ export interface SagaIntentContextBase {
     metadata?: Partial<SagaIntentMetadata>
   ) => SagaCommandsFor<TAggregate>;
   dispatchTo: SagaDispatchTo;
-  schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaScheduleIntent;
-  cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaCancelScheduleIntent;
-  runActivity: SagaRunActivity;
+  schedule: (id: string, delay: number, metadata?: Partial<SagaIntentMetadata>) => SagaPluginIntent<'core', 'schedule', { readonly id: string; readonly delay: number }, 'fire_and_forget'>;
+  cancelSchedule: (id: string, metadata?: Partial<SagaIntentMetadata>) => SagaPluginIntent<'core', 'cancelSchedule', { readonly id: string }, 'fire_and_forget'>;
 }
 
 /**
@@ -918,74 +1009,81 @@ function createSagaCorePluginManifest(
     aggregateDef,
     aggregateId,
     metadata,
-    emitIntent,
     metadataOverride
   );
 
-  const runActivityBuild: SagaRunActivity = <TResult = unknown>(
-    name: string,
-    closure: SagaActivityClosure<TResult>,
-    retryPolicy?: SagaRetryPolicy,
-    metadataOverride?: Partial<SagaIntentMetadata>
-  ) => {
-    const intent: SagaRunActivityIntent<TResult> = {
-      type: 'run-activity',
-      name,
-      closure,
-      retryPolicy,
-      metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
-    };
-
+  const emitAndReturnIntent = <TIntent extends SagaIntent>(intent: TIntent): TIntent => {
     emitIntent(intent);
     return intent;
+  };
+
+  const emitDispatchCommands = <TAggregate extends SagaAggregateDefinition>(
+    commandIntents: SagaCommandsFor<TAggregate>
+  ): SagaCommandsFor<TAggregate> => {
+    const emittedCommands = {} as SagaCommandsFor<TAggregate>;
+
+    for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
+      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName];
+      (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
+        const intent = createIntent(...args);
+        emitIntent(intent);
+        return intent;
+      };
+    }
+
+    return emittedCommands;
   };
 
   return defineSagaPlugin({
     plugin_key: 'core',
     actions: {
       dispatch: {
-        action_kind: 'void',
+        interaction: 'fire_and_forget',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Aggregate command dispatch helper'
       },
       dispatchTo: {
-        action_kind: 'void',
+        interaction: 'fire_and_forget',
         build: dispatchBuild,
+        [SAGA_ACTION_RUNTIME_EMITTER]: (
+          commandIntents: SagaCommandsFor<SagaAggregateDefinition>
+        ) => emitDispatchCommands(commandIntents),
         description: 'Alias for aggregate command dispatch helper'
       },
       schedule: {
-        action_kind: 'void',
+        interaction: 'fire_and_forget',
         build: (id, delay, metadataOverride) => {
-          const intent: SagaScheduleIntent = {
-            type: 'schedule',
-            id,
-            delay,
+          const intent: SagaPluginIntent<'core', 'schedule', { readonly id: string; readonly delay: number }, 'fire_and_forget'> = {
+            type: 'plugin-intent',
+            plugin_key: 'core',
+            action_name: 'schedule',
+            interaction: 'fire_and_forget',
+            execution_payload: { id, delay },
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
           };
-
-          emitIntent(intent);
           return intent;
         },
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
         description: 'Schedule delayed saga wake-up'
       },
       cancelSchedule: {
-        action_kind: 'void',
+        interaction: 'fire_and_forget',
         build: (id, metadataOverride) => {
-          const intent: SagaCancelScheduleIntent = {
-            type: 'cancel-schedule',
-            id,
+          const intent: SagaPluginIntent<'core', 'cancelSchedule', { readonly id: string }, 'fire_and_forget'> = {
+            type: 'plugin-intent',
+            plugin_key: 'core',
+            action_name: 'cancelSchedule',
+            interaction: 'fire_and_forget',
+            execution_payload: { id },
             metadata: mergeSagaIntentMetadata(metadata, metadataOverride)
           };
-
-          emitIntent(intent);
           return intent;
         },
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
         description: 'Cancel delayed saga wake-up'
-      },
-      runActivity: {
-        action_kind: 'void',
-        build: runActivityBuild,
-        description: 'Run saga activity closure'
       }
     },
     description: 'Built-in saga side-effect action manifests'
@@ -1005,26 +1103,26 @@ function createPluginActionsContext(
     for (const actionName of Object.keys(plugin.actions)) {
       const actionDescriptor = plugin.actions[actionName] as SagaPluginActionDescriptorWithHelperMetadata;
 
-      if (actionDescriptor.action_kind === 'request_response') {
+      if (actionDescriptor.interaction === 'request_response') {
         pluginActions[actionName] = (...args: any[]) => {
           const executionPayload = actionDescriptor.build(...args);
-          let terminalIntent: SagaPluginRequestIntent | undefined;
+          let terminalIntent: SagaPluginRequestIntentHandle | undefined;
 
           const createIntent = (
             handlerData: unknown,
             responseHandlerKey: string,
             errorHandlerKey: string,
             retryHandlerKey?: string
-          ) => {
+          ): SagaPluginRequestIntentHandle => {
             if (terminalIntent !== undefined) {
               return terminalIntent;
             }
 
-            const intent: SagaPluginRequestIntent = {
-              type: 'plugin-request',
+            const intent: SagaPluginRequestIntent<string, string, unknown> = {
+              type: 'plugin-intent',
               plugin_key: plugin.plugin_key,
               action_name: actionName,
-              action_kind: 'request_response',
+              interaction: 'request_response',
               execution_payload: executionPayload,
               routing_metadata: {
                 response_handler_key: responseHandlerKey,
@@ -1035,9 +1133,10 @@ function createPluginActionsContext(
               metadata
             };
 
-            emitIntent(intent);
-            terminalIntent = intent;
-            return intent;
+            const handle = attachPluginIntentOverrides(intent);
+            emitIntent(handle);
+            terminalIntent = handle;
+            return handle;
           };
 
           const createResponseChain = (handlerData: unknown) => ({
@@ -1064,22 +1163,33 @@ function createPluginActionsContext(
 
       pluginActions[actionName] = (...args: any[]) => {
         const executionPayload = actionDescriptor.build(...args);
+        const runtimeEmitter = actionDescriptor[SAGA_ACTION_RUNTIME_EMITTER];
 
-        if (actionDescriptor[SAGA_HELPER_EMISSION_MODE] !== 'one_way') {
+        if (runtimeEmitter !== undefined) {
+          return runtimeEmitter(executionPayload, {
+            plugin_key: plugin.plugin_key,
+            action_name: actionName,
+            metadata,
+            emitIntent
+          });
+        }
+
+        if (actionDescriptor[SAGA_HELPER_EMISSION_MODE] !== 'fire_and_forget') {
           return executionPayload;
         }
 
-        const intent: SagaPluginOneWayIntent = {
-          type: 'plugin-one-way',
+        const intent: SagaPluginIntent<string, string, unknown, 'fire_and_forget'> = {
+          type: 'plugin-intent',
           plugin_key: plugin.plugin_key,
           action_name: actionName,
-          action_kind: 'void',
+          interaction: 'fire_and_forget',
           execution_payload: executionPayload,
           metadata
         };
 
-        emitIntent(intent);
-        return intent;
+        const handle = attachPluginIntentOverrides(intent);
+        emitIntent(handle);
+        return handle;
       };
     }
 
@@ -1156,12 +1266,6 @@ export function createSagaDispatchContext<
     ),
     schedule: (id, delay, metadataOverride) => actions.core.schedule(id, delay, metadataOverride),
     cancelSchedule: (id, metadataOverride) => actions.core.cancelSchedule(id, metadataOverride),
-    runActivity: <TResult = unknown>(
-      name: string,
-      closure: SagaActivityClosure<TResult>,
-      retryPolicy?: SagaRetryPolicy,
-      metadataOverride?: Partial<SagaIntentMetadata>
-    ) => actions.core.runActivity(name, closure, retryPolicy, metadataOverride),
     actions
   };
 }
