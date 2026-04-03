@@ -144,4 +144,30 @@ describe('scheduler policy evaluator', () => {
       }
     ]);
   });
+
+  it('enforces anti-starvation across tenants under weighted fairness pressure', () => {
+    const hotCandidates = Array.from({ length: 12 }, (_, index) =>
+      candidate(`h-${index + 1}`, 'tenant-hot', 100 - index, `2026-01-01T00:00:${String(index + 1).padStart(2, '0')}.000Z`)
+    );
+    const coldCandidates = Array.from({ length: 4 }, (_, index) =>
+      candidate(`c-${index + 1}`, 'tenant-cold', 10 - index, `2026-01-01T00:01:${String(index + 1).padStart(2, '0')}.000Z`)
+    );
+
+    const result = evaluateSchedulerPolicy({
+      maxDecisions: 8,
+      candidates: [...hotCandidates, ...coldCandidates],
+      tenantPolicies: {
+        'tenant-hot': { fairnessWeight: 100, rateLimit: { limit: 100 } },
+        'tenant-cold': { fairnessWeight: 1, rateLimit: { limit: 100 } }
+      }
+    });
+
+    const selectedByTenant = result.selected.reduce<Record<string, number>>((acc, entry) => {
+      acc[entry.candidate.tenantId] = (acc[entry.candidate.tenantId] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    expect(selectedByTenant['tenant-cold']).toBeGreaterThanOrEqual(1);
+    expect(result.selected.some((entry) => entry.candidate.tenantId === 'tenant-cold')).toBe(true);
+  });
 });
