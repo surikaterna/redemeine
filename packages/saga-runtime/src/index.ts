@@ -5,6 +5,7 @@ const sagaPackage = require('@redemeine/saga');
 export const createSagaDispatchContext = sagaPackage.createSagaDispatchContext as any;
 export const runSagaHandler = sagaPackage.runSagaHandler as any;
 export * from './createSagaAggregate';
+export * from './sagaExecutionBridge';
 export * from './inboundRouter';
 export * from './referenceAdapters';
 export * from './schedulerPolicyEvaluator';

@@ -189,6 +189,15 @@ export interface SagaRuntimeReferenceFlowInput {
   readonly intents: readonly SagaIntent[];
   readonly schedulerPolicy?: SagaSchedulerTriggerPolicyContract;
   readonly nowIso?: string;
+  readonly resolveExecutionIdentity?: (input: {
+    readonly sagaId: string;
+    readonly intent: SagaRuntimeSideEffectIntent;
+    readonly intentIndex: number;
+    readonly sideEffectIndex: number;
+  }) => {
+    readonly executionId: string;
+    readonly intentId: string;
+  };
 }
 
 export interface SagaRuntimeReferenceFlowResult {
@@ -506,6 +515,7 @@ export async function runReferenceAdapterFlowV1(
   const persistedExecutionIds: string[] = [];
   const scheduledTriggerIds: string[] = [];
   const nowIso = input.nowIso ?? new Date().toISOString();
+  let sideEffectIndex = 0;
 
   for (let index = 0; index < input.intents.length; index += 1) {
     const intent = input.intents[index];
@@ -541,8 +551,15 @@ export async function runReferenceAdapterFlowV1(
       continue;
     }
 
-    const executionId = `${input.sagaId}:intent:${index + 1}`;
-    const intentId = `${sideEffectIntent.type}:${index + 1}`;
+    sideEffectIndex += 1;
+    const resolvedIdentity = input.resolveExecutionIdentity?.({
+      sagaId: input.sagaId,
+      intent: sideEffectIntent,
+      intentIndex: index,
+      sideEffectIndex
+    });
+    const executionId = resolvedIdentity?.executionId ?? `${input.sagaId}:intent:${index + 1}`;
+    const intentId = resolvedIdentity?.intentId ?? `${sideEffectIntent.type}:${index + 1}`;
 
     adapters.persistence.intentExecutionProjection.upsert(
       createExecutionRecord(executionId, input.sagaId, intentId, nowIso, 'in_progress')
