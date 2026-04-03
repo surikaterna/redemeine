@@ -86,7 +86,14 @@ describe('helper action runtime emission semantics', () => {
         const oneWayIntent: SagaPluginOneWayIntent<'notify', 'publish', { channel: string; body: { invoiceId: string } }> = ctx.actions.notify.publish(
           'audit',
           { invoiceId: event.payload.invoiceId }
-        );
+        )
+          .retryPolicy({
+            maxAttempts: 2,
+            initialBackoffMs: 100,
+            backoffCoefficient: 2
+          })
+          .onCompensation('notify.undo', { invoiceId: event.payload.invoiceId, step: 1 })
+          .onCompensation('notify.audit', { invoiceId: event.payload.invoiceId, step: 2 });
 
         const noDataStep = ctx.actions.http
           .fetch('https://api.example.com/invoices/inv-1')
@@ -99,7 +106,14 @@ describe('helper action runtime emission semantics', () => {
           .fetch('https://api.example.com/invoices/inv-1/retry')
           .onResponse(ctx.onResponse['http.fetch.ok'])
           .onRetry(ctx.onRetry['http.fetch.retry'])
-          .onError(ctx.onError['http.fetch.fail']);
+          .onError(ctx.onError['http.fetch.fail'])
+          .retryPolicy({
+            maxAttempts: 4,
+            initialBackoffMs: 250,
+            backoffCoefficient: 2
+          })
+          .onCompensation('http.fetch.undo', { invoiceId: event.payload.invoiceId, step: 1 })
+          .onCompensation('http.fetch.audit', { invoiceId: event.payload.invoiceId, step: 2 });
 
         const withDataIntent = ctx.actions.http
           .fetch('https://api.example.com/invoices/inv-1/data')
@@ -108,9 +122,27 @@ describe('helper action runtime emission semantics', () => {
           .onError(ctx.onError['http.fetch.fail']);
 
         expect(oneWayIntent.type).toBe('plugin-one-way');
+        expect(oneWayIntent.retry_policy_override).toEqual({
+          maxAttempts: 2,
+          initialBackoffMs: 100,
+          backoffCoefficient: 2
+        });
+        expect(oneWayIntent.compensation).toEqual([
+          { token: 'notify.undo', payload: { invoiceId: 'inv-1', step: 1 } },
+          { token: 'notify.audit', payload: { invoiceId: 'inv-1', step: 2 } }
+        ]);
         expect(noDataIntent.routing_metadata.handler_data).toBeUndefined();
         expect(duplicateNoDataIntent).toBe(noDataIntent);
         expect(retryIntent.routing_metadata.retry_handler_key).toBe('http.fetch.retry');
+        expect(retryIntent.retry_policy_override).toEqual({
+          maxAttempts: 4,
+          initialBackoffMs: 250,
+          backoffCoefficient: 2
+        });
+        expect(retryIntent.compensation).toEqual([
+          { token: 'http.fetch.undo', payload: { invoiceId: 'inv-1', step: 1 } },
+          { token: 'http.fetch.audit', payload: { invoiceId: 'inv-1', step: 2 } }
+        ]);
         expect(withDataIntent.routing_metadata.handler_data).toEqual({ invoiceId: 'inv-1', attempt: 1 });
 
         state.attempts += 1;

@@ -122,6 +122,15 @@ describe('S07 acceptance: intent metadata type shape', () => {
         url: 'https://api.example.com/invoices/inv-2'
       },
       routing_metadata: routing,
+      retry_policy_override: {
+        maxAttempts: 3,
+        initialBackoffMs: 100,
+        backoffCoefficient: 2
+      },
+      compensation: [
+        { token: 'http.get.undo', payload: { invoiceId: 'inv-2', step: 1 } },
+        { token: 'http.get.audit', payload: { invoiceId: 'inv-2', step: 2 } }
+      ],
       metadata: {
         sagaId: 'saga-2',
         correlationId: 'corr-2',
