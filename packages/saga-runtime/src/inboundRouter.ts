@@ -21,6 +21,14 @@ export interface SagaInboundAggregate<
 export interface SagaInboundRouteInput<TCommand extends SagaInboundCommand = SagaInboundCommand> {
   readonly sagaId: string;
   readonly command: TCommand;
+  readonly coordination?: SagaInboundStepCoordination;
+}
+
+export type SagaStepWaitingPolicy = 'arrival_order' | 'barrier_gated';
+
+export interface SagaInboundStepCoordination {
+  readonly stepId: string;
+  readonly barrierSize?: number;
 }
 
 export interface SagaInboundRouteResult<TState, TEvent extends SagaInboundEvent = SagaInboundEvent> {
@@ -41,8 +49,36 @@ export interface SagaInboundRouterOptions<
   readonly setSagaState?: (sagaId: string, state: TState) => void;
   readonly createInitialSagaState?: (sagaId: string) => TState;
   readonly resolveSingleFlightKey?: (input: SagaInboundRouteInput<TCommand>) => string;
+  readonly resolveWaitingPolicy?: (input: SagaInboundRouteInput<TCommand>) => SagaStepWaitingPolicy;
   readonly beforeProcess?: (input: SagaInboundRouteInput<TCommand>) => Promise<void> | void;
 }
+
+interface BarrierGate {
+  readonly wait: Promise<void>;
+  readonly arrived: number;
+  readonly required: number;
+  readonly release: () => void;
+  readonly released: boolean;
+}
+
+const createBarrierGate = (required: number): BarrierGate => {
+  let released = false;
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = () => {
+      released = true;
+      resolve();
+    };
+  });
+
+  return {
+    wait,
+    arrived: 0,
+    required,
+    release,
+    released
+  };
+};
 
 /**
  * Deterministic inbound router with strict per-saga single-flight by default.
@@ -71,11 +107,15 @@ export class SagaInboundRouter<
 
   private readonly resolveSingleFlightKey: (input: SagaInboundRouteInput<TCommand>) => string;
 
+  private readonly resolveWaitingPolicy: (input: SagaInboundRouteInput<TCommand>) => SagaStepWaitingPolicy;
+
   private readonly beforeProcess?: (input: SagaInboundRouteInput<TCommand>) => Promise<void> | void;
 
   private inboundSequence = 0;
 
   private readonly sagaSequenceBySaga = new Map<string, number>();
+
+  private readonly barrierByStepKey = new Map<string, BarrierGate>();
 
   constructor(options: SagaInboundRouterOptions<TState, TCommand, TEvent>) {
     this.aggregate = options.aggregate;
@@ -83,6 +123,7 @@ export class SagaInboundRouter<
     this.setSagaState = options.setSagaState;
     this.createInitialSagaState = options.createInitialSagaState ?? (() => this.aggregate.initialState);
     this.resolveSingleFlightKey = options.resolveSingleFlightKey ?? ((input) => input.sagaId);
+    this.resolveWaitingPolicy = options.resolveWaitingPolicy ?? (() => 'arrival_order');
     this.beforeProcess = options.beforeProcess;
   }
 
@@ -92,9 +133,12 @@ export class SagaInboundRouter<
 
   async route(input: SagaInboundRouteInput<TCommand>): Promise<SagaInboundRouteResult<TState, TEvent>> {
     const key = this.resolveSingleFlightKey(input);
+    const waitingPolicy = this.resolveWaitingPolicy(input);
+    const coordinationGate = this.resolveCoordinationGate(input, key, waitingPolicy);
     const previous = this.inFlightByKey.get(key) ?? Promise.resolve();
 
     const run = async (): Promise<SagaInboundRouteResult<TState, TEvent>> => {
+      await coordinationGate;
       await this.beforeProcess?.(input);
 
       const currentState = this.getState(input.sagaId) ?? this.createInitialSagaState(input.sagaId);
@@ -137,6 +181,40 @@ export class SagaInboundRouter<
     task.then(clearIfCurrent, clearIfCurrent);
 
     return task;
+  }
+
+  private resolveCoordinationGate(
+    input: SagaInboundRouteInput<TCommand>,
+    singleFlightKey: string,
+    waitingPolicy: SagaStepWaitingPolicy
+  ): Promise<void> {
+    if (waitingPolicy === 'arrival_order') {
+      return Promise.resolve();
+    }
+
+    const stepId = input.coordination?.stepId;
+    if (!stepId) {
+      throw new Error('barrier_gated waiting policy requires coordination.stepId');
+    }
+
+    const required = Math.max(1, Math.floor(input.coordination?.barrierSize ?? 1));
+    const barrierKey = `${singleFlightKey}::${stepId}`;
+    const current = this.barrierByStepKey.get(barrierKey) ?? createBarrierGate(required);
+    const nextArrived = current.arrived + 1;
+    const next: BarrierGate = {
+      ...current,
+      arrived: nextArrived,
+      required: current.required
+    };
+
+    this.barrierByStepKey.set(barrierKey, next);
+
+    if (nextArrived >= next.required && !next.released) {
+      next.release();
+      this.barrierByStepKey.delete(barrierKey);
+    }
+
+    return next.wait;
   }
 }
 

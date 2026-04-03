@@ -124,6 +124,94 @@ describe('saga inbound router', () => {
     await sagaA;
   });
 
+  it('supports configurable arrival_order waiting policy', async () => {
+    const aggregate = createSagaAggregate({ aggregateName: 'saga' });
+    const observedOrder: string[] = [];
+
+    const router = createSagaInboundRouter({
+      aggregate,
+      resolveWaitingPolicy: () => 'arrival_order',
+      beforeProcess: (input) => {
+        observedOrder.push(input.command.type);
+      }
+    });
+
+    const sagaId = 'saga-arrival-order-1';
+    const createResult = await router.route({
+      sagaId,
+      command: aggregate.commandCreators.createInstance({ id: sagaId, sagaType: 'shipping', createdAt: isoAt(1) }),
+      coordination: { stepId: 'fan-in', barrierSize: 2 }
+    });
+
+    const observeResult = await router.route({
+      sagaId,
+      command: aggregate.commandCreators.observeSourceEvent({ eventType: 'order.created.event', observedAt: isoAt(2) }),
+      coordination: { stepId: 'fan-in', barrierSize: 2 }
+    });
+
+    expect(observedOrder).toEqual([
+      'saga.create_instance.command',
+      'saga.observe_source_event.command'
+    ]);
+    expect(createResult.sagaSequence).toBe(1);
+    expect(observeResult.sagaSequence).toBe(2);
+  });
+
+  it('supports barrier_gated waiting policy for coordinated fan-in', async () => {
+    const aggregate = createSagaAggregate({ aggregateName: 'saga' });
+    const observedOrder: string[] = [];
+
+    const router = createSagaInboundRouter({
+      aggregate,
+      resolveWaitingPolicy: () => 'barrier_gated',
+      beforeProcess: (input) => {
+        observedOrder.push(input.command.type);
+      }
+    });
+
+    const sagaId = 'saga-barrier-1';
+    const first = router.route({
+      sagaId,
+      command: aggregate.commandCreators.createInstance({ id: sagaId, sagaType: 'shipping', createdAt: isoAt(1) }),
+      coordination: { stepId: 'shipping-fan-in', barrierSize: 2 }
+    });
+
+    await Promise.resolve();
+    expect(observedOrder).toEqual([]);
+
+    const second = router.route({
+      sagaId,
+      command: aggregate.commandCreators.observeSourceEvent({ eventType: 'order.created.event', observedAt: isoAt(2) }),
+      coordination: { stepId: 'shipping-fan-in', barrierSize: 2 }
+    });
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(observedOrder).toEqual([
+      'saga.create_instance.command',
+      'saga.observe_source_event.command'
+    ]);
+    expect([firstResult.inboundSequence, secondResult.inboundSequence]).toEqual([1, 2]);
+  });
+
+  it('rejects barrier_gated policy when coordination step id is missing', async () => {
+    const aggregate = createSagaAggregate({ aggregateName: 'saga' });
+    const router = createSagaInboundRouter({
+      aggregate,
+      resolveWaitingPolicy: () => 'barrier_gated'
+    });
+
+    await expect(
+      router.route({
+        sagaId: 'saga-barrier-missing-step',
+        command: aggregate.commandCreators.createInstance({
+          id: 'saga-barrier-missing-step',
+          sagaType: 'shipping',
+          createdAt: isoAt(1)
+        })
+      })
+    ).rejects.toThrow('barrier_gated waiting policy requires coordination.stepId');
+  });
+
   it('propagates SagaAggregate invariant rejections through serialized routing', async () => {
     const aggregate = createSagaAggregate({ aggregateName: 'saga' });
     const router = createSagaInboundRouter({ aggregate });
