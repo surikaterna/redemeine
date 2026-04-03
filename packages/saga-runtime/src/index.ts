@@ -7,6 +7,7 @@ export const runSagaHandler = sagaPackage.runSagaHandler as any;
 export * from './createSagaAggregate';
 export * from './inboundRouter';
 export * from './referenceAdapters';
+export * from './schedulerPolicyEvaluator';
 export type {
   RuntimeAuditActor,
   RuntimeAuditCategory,
