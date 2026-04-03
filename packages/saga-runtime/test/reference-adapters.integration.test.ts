@@ -78,6 +78,163 @@ describe('reference adapters v1 integration', () => {
     expect(scheduler.listScheduled().map((entry) => entry.id)).toEqual(['trigger-a', 'trigger-b']);
     expect(scheduler.drainDue('2026-01-01T00:00:02.000Z').map((entry) => entry.id)).toEqual(['trigger-a']);
     expect(scheduler.listScheduled().map((entry) => entry.id)).toEqual(['trigger-b']);
+    expect(scheduler.listPolicyOutcomes()).toEqual([
+      expect.objectContaining({
+        triggerId: 'trigger-a',
+        outcome: expect.objectContaining({
+          misfireMode: 'catch_up_bounded',
+          wasMisfire: true,
+          dueCount: 1,
+          executedCount: 1,
+          skippedCount: 0,
+          restartMode: 'graceful',
+          restartReason: 'overlap'
+        })
+      })
+    ]);
+  });
+
+  it('applies catch_up_all by replaying all due interval occurrences deterministically', () => {
+    const scheduler = createInMemorySchedulerPluginV1();
+
+    scheduler.schedule({
+      id: 'trigger-catch-all',
+      sagaId: 'saga-777',
+      runAt: '2026-01-01T00:00:01.000Z',
+      metadata: { intervalMs: 1000 },
+      policy: {
+        restart: { mode: 'force', reason: 'restart for overlap' },
+        misfire: { mode: 'catch_up_all' }
+      }
+    });
+
+    const drained = scheduler.drainDue('2026-01-01T00:00:04.000Z');
+    expect(drained.map((entry) => entry.id)).toEqual([
+      'trigger-catch-all:exec:1',
+      'trigger-catch-all:exec:2',
+      'trigger-catch-all:exec:3',
+      'trigger-catch-all:exec:4'
+    ]);
+    expect(drained.map((entry) => entry.execution?.scheduledFor)).toEqual([
+      '2026-01-01T00:00:01.000Z',
+      '2026-01-01T00:00:02.000Z',
+      '2026-01-01T00:00:03.000Z',
+      '2026-01-01T00:00:04.000Z'
+    ]);
+    expect(scheduler.listScheduled().map((entry) => entry.id)).toEqual(['trigger-catch-all']);
+    expect(scheduler.listScheduled()[0]?.runAt).toBe('2026-01-01T00:00:05.000Z');
+    expect(scheduler.listPolicyOutcomes()).toEqual([
+      expect.objectContaining({
+        triggerId: 'trigger-catch-all',
+        outcome: expect.objectContaining({
+          misfireMode: 'catch_up_all',
+          wasMisfire: true,
+          dueCount: 4,
+          executedCount: 4,
+          skippedCount: 0,
+          restartMode: 'force',
+          restartReason: 'restart for overlap',
+          nextRunAt: '2026-01-01T00:00:05.000Z'
+        })
+      })
+    ]);
+  });
+
+  it('applies catch_up_bounded by limiting replay to configured maximum', () => {
+    const scheduler = createInMemorySchedulerPluginV1();
+
+    scheduler.schedule({
+      id: 'trigger-catch-bounded',
+      sagaId: 'saga-777',
+      runAt: '2026-01-01T00:00:01.000Z',
+      metadata: { intervalMs: 1000 },
+      policy: {
+        misfire: { mode: 'catch_up_bounded', maxCatchUpCount: 2 }
+      }
+    });
+
+    const drained = scheduler.drainDue('2026-01-01T00:00:04.000Z');
+    expect(drained.map((entry) => entry.id)).toEqual([
+      'trigger-catch-bounded:exec:1',
+      'trigger-catch-bounded:exec:2'
+    ]);
+    expect(drained.map((entry) => entry.execution?.scheduledFor)).toEqual([
+      '2026-01-01T00:00:01.000Z',
+      '2026-01-01T00:00:02.000Z'
+    ]);
+    expect(scheduler.listPolicyOutcomes()).toEqual([
+      expect.objectContaining({
+        triggerId: 'trigger-catch-bounded',
+        outcome: expect.objectContaining({
+          misfireMode: 'catch_up_bounded',
+          dueCount: 4,
+          executedCount: 2,
+          skippedCount: 2,
+          nextRunAt: '2026-01-01T00:00:05.000Z'
+        })
+      })
+    ]);
+  });
+
+  it('applies latest_only by executing only the latest due occurrence', () => {
+    const scheduler = createInMemorySchedulerPluginV1();
+
+    scheduler.schedule({
+      id: 'trigger-latest-only',
+      sagaId: 'saga-777',
+      runAt: '2026-01-01T00:00:01.000Z',
+      metadata: { intervalMs: 1000 },
+      policy: {
+        misfire: { mode: 'latest_only' }
+      }
+    });
+
+    const drained = scheduler.drainDue('2026-01-01T00:00:04.000Z');
+    expect(drained.map((entry) => entry.id)).toEqual(['trigger-latest-only']);
+    expect(drained.map((entry) => entry.execution?.scheduledFor)).toEqual(['2026-01-01T00:00:04.000Z']);
+    expect(scheduler.listPolicyOutcomes()).toEqual([
+      expect.objectContaining({
+        triggerId: 'trigger-latest-only',
+        outcome: expect.objectContaining({
+          misfireMode: 'latest_only',
+          dueCount: 4,
+          executedCount: 1,
+          skippedCount: 3,
+          nextRunAt: '2026-01-01T00:00:05.000Z'
+        })
+      })
+    ]);
+  });
+
+  it('applies skip_until_next by dropping due occurrences and advancing schedule', () => {
+    const scheduler = createInMemorySchedulerPluginV1();
+
+    scheduler.schedule({
+      id: 'trigger-skip-next',
+      sagaId: 'saga-777',
+      runAt: '2026-01-01T00:00:01.000Z',
+      metadata: { intervalMs: 1000 },
+      policy: {
+        misfire: { mode: 'skip_until_next' }
+      }
+    });
+
+    const drained = scheduler.drainDue('2026-01-01T00:00:04.000Z');
+    expect(drained).toEqual([]);
+    expect(scheduler.listScheduled().map((entry) => entry.id)).toEqual(['trigger-skip-next']);
+    expect(scheduler.listScheduled()[0]?.runAt).toBe('2026-01-01T00:00:05.000Z');
+    expect(scheduler.listPolicyOutcomes()).toEqual([
+      expect.objectContaining({
+        triggerId: 'trigger-skip-next',
+        outcome: expect.objectContaining({
+          misfireMode: 'skip_until_next',
+          dueCount: 4,
+          executedCount: 0,
+          skippedCount: 4,
+          nextRunAt: '2026-01-01T00:00:05.000Z'
+        })
+      })
+    ]);
   });
 
   it('executes side effects and captures handled intents', async () => {

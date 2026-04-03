@@ -106,6 +106,33 @@ export interface SagaRuntimeScheduledTrigger {
   readonly runAt: string;
   readonly policy?: SagaSchedulerTriggerPolicyContract;
   readonly metadata?: Record<string, unknown>;
+  readonly execution?: SagaRuntimeScheduledTriggerExecution;
+  readonly policyOutcome?: SagaRuntimeSchedulerPolicyOutcome;
+}
+
+export interface SagaRuntimeScheduledTriggerExecution {
+  readonly triggerId: string;
+  readonly ordinal: number;
+  readonly scheduledFor: string;
+}
+
+export interface SagaRuntimeSchedulerPolicyOutcome {
+  readonly drainedAt: string;
+  readonly wasMisfire: boolean;
+  readonly misfireMode: SagaTriggerMisfirePolicy['mode'];
+  readonly dueCount: number;
+  readonly executedCount: number;
+  readonly skippedCount: number;
+  readonly restartMode?: 'graceful' | 'force';
+  readonly restartReason?: string;
+  readonly nextRunAt?: string;
+}
+
+export interface SagaRuntimeSchedulerPolicyOutcomeRecord {
+  readonly triggerId: string;
+  readonly sagaId: string;
+  readonly runAt: string;
+  readonly outcome: SagaRuntimeSchedulerPolicyOutcome;
 }
 
 export interface SagaRuntimeSchedulerPluginV1 {
@@ -113,6 +140,7 @@ export interface SagaRuntimeSchedulerPluginV1 {
   cancel(id: string): boolean;
   listScheduled(): readonly SagaRuntimeScheduledTrigger[];
   drainDue(nowIso: string): readonly SagaRuntimeScheduledTrigger[];
+  listPolicyOutcomes(): readonly SagaRuntimeSchedulerPolicyOutcomeRecord[];
 }
 
 export type SagaRuntimeSideEffectIntent =
@@ -202,6 +230,118 @@ export function createInMemoryPersistencePluginV1(): SagaRuntimePersistencePlugi
 
 export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 {
   const scheduled = new Map<string, SagaRuntimeScheduledTrigger>();
+  const policyOutcomes: SagaRuntimeSchedulerPolicyOutcomeRecord[] = [];
+
+  const toFinitePositiveInteger = (value: unknown): number | undefined => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return undefined;
+    }
+
+    const normalized = Math.floor(value);
+    return normalized > 0 ? normalized : undefined;
+  };
+
+  const parseTriggerIntervalMs = (trigger: SagaRuntimeScheduledTrigger): number | undefined => {
+    const intervalFromMetadata = trigger.metadata?.['intervalMs'];
+    return toFinitePositiveInteger(intervalFromMetadata);
+  };
+
+  const buildDueOccurrences = (
+    runAtMs: number,
+    nowMs: number,
+    intervalMs: number | undefined
+  ): readonly string[] => {
+    const maxDueCount = typeof intervalMs === 'number'
+      ? Math.floor((nowMs - runAtMs) / intervalMs) + 1
+      : 1;
+
+    const dueCount = Math.max(1, maxDueCount);
+    const due: string[] = [];
+
+    for (let index = 0; index < dueCount; index += 1) {
+      const scheduledForMs = typeof intervalMs === 'number'
+        ? runAtMs + (index * intervalMs)
+        : runAtMs;
+
+      due.push(new Date(scheduledForMs).toISOString());
+    }
+
+    return due;
+  };
+
+  const resolveMisfireExecution = (
+    trigger: SagaRuntimeScheduledTrigger,
+    nowIso: string
+  ): {
+    readonly executions: readonly SagaRuntimeScheduledTrigger[];
+    readonly outcome: SagaRuntimeSchedulerPolicyOutcome;
+  } => {
+    const runAtMs = Date.parse(trigger.runAt);
+    const nowMs = Date.parse(nowIso);
+    const intervalMs = parseTriggerIntervalMs(trigger);
+    const dueOccurrences = buildDueOccurrences(runAtMs, nowMs, intervalMs);
+    const wasMisfire = nowMs > runAtMs;
+    const misfirePolicy = trigger.policy?.misfire;
+    const misfireMode = misfirePolicy?.mode ?? 'latest_only';
+
+    let scheduledForToExecute: readonly string[] = dueOccurrences;
+
+    if (wasMisfire) {
+      if (misfireMode === 'skip_until_next') {
+        scheduledForToExecute = [];
+      } else if (misfireMode === 'latest_only') {
+        scheduledForToExecute = [dueOccurrences[dueOccurrences.length - 1]];
+      } else if (misfireMode === 'catch_up_bounded') {
+        const bounded = toFinitePositiveInteger(
+          misfirePolicy && misfirePolicy.mode === 'catch_up_bounded'
+            ? misfirePolicy.maxCatchUpCount
+            : undefined
+        ) ?? 1;
+        scheduledForToExecute = dueOccurrences.slice(0, bounded);
+      }
+    } else {
+      scheduledForToExecute = [dueOccurrences[0]];
+    }
+
+    const nextRunAt = typeof intervalMs === 'number'
+      ? new Date(runAtMs + (dueOccurrences.length * intervalMs)).toISOString()
+      : undefined;
+
+    const outcome: SagaRuntimeSchedulerPolicyOutcome = {
+      drainedAt: nowIso,
+      wasMisfire,
+      misfireMode,
+      dueCount: dueOccurrences.length,
+      executedCount: scheduledForToExecute.length,
+      skippedCount: dueOccurrences.length - scheduledForToExecute.length,
+      restartMode: trigger.policy?.restart?.mode,
+      restartReason: trigger.policy?.restart?.reason,
+      nextRunAt
+    };
+
+    const executions = scheduledForToExecute.map((scheduledFor, index, list) => {
+      const executionId = list.length > 1
+        ? `${trigger.id}:exec:${index + 1}`
+        : trigger.id;
+
+      return {
+        ...trigger,
+        id: executionId,
+        runAt: scheduledFor,
+        execution: {
+          triggerId: trigger.id,
+          ordinal: index + 1,
+          scheduledFor
+        },
+        policyOutcome: outcome
+      };
+    });
+
+    return {
+      executions,
+      outcome
+    };
+  };
 
   return {
     schedule(trigger) {
@@ -216,13 +356,43 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
     drainDue(nowIso) {
       const due = Array.from(scheduled.values())
         .filter((trigger) => trigger.runAt <= nowIso)
-        .sort((a, b) => a.runAt.localeCompare(b.runAt));
+        .sort((a, b) => {
+          const runAtCompare = a.runAt.localeCompare(b.runAt);
+          if (runAtCompare !== 0) {
+            return runAtCompare;
+          }
+
+          return a.id.localeCompare(b.id);
+        });
+
+      const drained: SagaRuntimeScheduledTrigger[] = [];
 
       for (const trigger of due) {
-        scheduled.delete(trigger.id);
+        const { executions, outcome } = resolveMisfireExecution(trigger, nowIso);
+
+        policyOutcomes.push({
+          triggerId: trigger.id,
+          sagaId: trigger.sagaId,
+          runAt: trigger.runAt,
+          outcome
+        });
+
+        if (outcome.nextRunAt) {
+          scheduled.set(trigger.id, {
+            ...trigger,
+            runAt: outcome.nextRunAt
+          });
+        } else {
+          scheduled.delete(trigger.id);
+        }
+
+        drained.push(...executions);
       }
 
-      return due;
+      return drained;
+    },
+    listPolicyOutcomes() {
+      return policyOutcomes;
     }
   };
 }
