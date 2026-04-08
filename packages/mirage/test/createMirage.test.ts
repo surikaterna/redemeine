@@ -1,7 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate, createEntity } from '@redemeine/aggregate';
 import { createMirage, createLegacyAggregateBridge } from '../src/createMirage';
-import { Event, RedemeinePlugin } from '@redemeine/kernel';
+import { Event, RedemeinePlugin, type CanonicalInspectionEnvelope } from '@redemeine/kernel';
 
 interface TestState {
     value: number;
@@ -483,6 +483,70 @@ describe('Mirage tests', () => {
         await mirage.increment(1);
 
         expect(order).toEqual(['builder', 'runtime']);
+    });
+
+    test('emits canonical inspection envelope for command ingress and hydration compatibility mapping', async () => {
+        type InspectState = { value: number };
+
+        const aggregate = createAggregate<InspectState, 'inspect'>('inspect', { value: 0 })
+            .events({
+                added: (state: InspectState, event: Event<{ amount: number }>) => {
+                    state.value += event.payload.amount;
+                }
+            })
+            .commands((emit) => ({
+                add: (_state: InspectState, amount: number) => emit.added({ amount })
+            }))
+            .build();
+
+        const inspectionEvents: CanonicalInspectionEnvelope[] = [];
+        const inspection = (event: CanonicalInspectionEnvelope) => {
+            inspectionEvents.push(event);
+        };
+
+        const mirage = await createMirage(aggregate, 'inspect-1', {
+            events: [
+                {
+                    id: 'evt-1',
+                    type: 'inspect.added.event',
+                    payload: { amount: 2 },
+                    metadata: { correlationId: 'corr-hydrate' }
+                }
+            ],
+            inspection
+        });
+
+        await mirage.add(3);
+
+        const hydrationHook = inspectionEvents.find((event) => event.hook === 'event.hydration');
+        const commandHook = inspectionEvents.find((event) => event.hook === 'command.ingress');
+
+        expect(hydrationHook).toMatchObject({
+            schema: 'redemeine.inspection/v1',
+            runtime: 'mirage',
+            compatibility: {
+                legacyHook: 'onHydrateEvent'
+            },
+            ids: {
+                aggregateId: 'inspect-1',
+                eventType: 'inspect.added.event',
+                correlationId: 'corr-hydrate'
+            }
+        });
+
+        expect(commandHook).toMatchObject({
+            schema: 'redemeine.inspection/v1',
+            runtime: 'mirage',
+            compatibility: {
+                legacyHook: 'onBeforeCommand'
+            },
+            ids: {
+                aggregateId: 'inspect-1'
+            },
+            payload: {
+                commandType: 'inspect.add.command'
+            }
+        });
     });
 
 });

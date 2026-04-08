@@ -6,6 +6,12 @@ import type {
   IntentExecutionStatus,
   IntentExecutionResponseRef
 } from './SagaAggregate';
+import {
+  emitCanonicalInspection,
+  resolveInspectionCorrelationId,
+  type InspectionEventPublisher
+} from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 export type SagaTriggerMisfirePolicy =
   | { readonly mode: 'catch_up_all' }
@@ -189,6 +195,8 @@ export interface SagaRuntimeReferenceFlowInput {
   readonly intents: readonly SagaIntent[];
   readonly schedulerPolicy?: SagaSchedulerTriggerPolicyContract;
   readonly nowIso?: string;
+  readonly inspection?: InspectionEventPublisher;
+  readonly telemetryAdapterId?: string;
   readonly resolveExecutionIdentity?: (input: {
     readonly sagaId: string;
     readonly intent: SagaRuntimeSideEffectIntent;
@@ -521,6 +529,7 @@ export async function runReferenceAdapterFlowV1(
   adapters: SagaRuntimeReferenceAdapters,
   input: SagaRuntimeReferenceFlowInput
 ): Promise<SagaRuntimeReferenceFlowResult> {
+  const telemetry = createTelemetryFacade(input.telemetryAdapterId);
   const persistedExecutionIds: string[] = [];
   const scheduledTriggerIds: string[] = [];
   const responseCorrelations: SagaRuntimeResponseCorrelation[] = [];
@@ -536,7 +545,7 @@ export async function runReferenceAdapterFlowV1(
     const intent = input.intents[index];
     adapters.telemetry.count('saga.intent.received');
 
-    const schedule = asScheduleIntent(intent);
+      const schedule = asScheduleIntent(intent);
     if (schedule) {
       const runAt = new Date(Date.parse(nowIso) + schedule.delay).toISOString();
       adapters.scheduler.schedule({
@@ -549,6 +558,43 @@ export async function runReferenceAdapterFlowV1(
       adapters.telemetry.count('saga.intent.scheduled');
       adapters.telemetry.event('saga.schedule.created', { sagaId: input.sagaId, intentId: schedule.id });
       scheduledTriggerIds.push(schedule.id);
+      await emitCanonicalInspection(input.inspection, {
+        hook: 'outbox.enqueue',
+        runtime: 'saga-runtime',
+        boundary: 'scheduler.queue',
+        ids: {
+          sagaId: input.sagaId,
+          intentId: schedule.id,
+          correlationId: resolveInspectionCorrelationId(schedule.metadata.correlationId, `${input.sagaId}:${schedule.id}:outbox.enqueue`),
+          causationId: schedule.metadata.causationId
+        },
+        payload: {
+          mode: 'schedule',
+          runAt,
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: telemetry.extract({
+              correlationId: schedule.metadata.correlationId,
+              causationId: schedule.metadata.causationId
+            }).values ?? {},
+            propagatedCarrier: telemetry.inject(
+              telemetry.extract({
+                correlationId: schedule.metadata.correlationId,
+                causationId: schedule.metadata.causationId
+              }),
+              {}
+            )
+          }
+        },
+        compatibility: {
+          legacyHook: 'runtime.telemetry',
+          legacyContext: {
+            event: 'saga.schedule.created',
+            sagaId: input.sagaId,
+            intentId: schedule.id
+          }
+        }
+      });
       continue;
     }
 
@@ -589,6 +635,72 @@ export async function runReferenceAdapterFlowV1(
   }
 
   const completed = await Promise.all(sideEffectExecutions.map(async (execution) => {
+    const executionContext = telemetry.extract({
+      correlationId: execution.intent.metadata.correlationId,
+      causationId: execution.intent.metadata.causationId
+    });
+    const executionCarrier = telemetry.inject(executionContext, {});
+
+    await emitCanonicalInspection(input.inspection, {
+      hook: 'outbox.dequeue',
+      runtime: 'saga-runtime',
+      boundary: 'adapter.side_effect',
+      ids: {
+        sagaId: input.sagaId,
+        intentId: execution.intentId,
+        executionId: execution.executionId,
+        correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:outbox.dequeue`),
+        causationId: execution.intent.metadata.causationId
+      },
+      payload: {
+        intentType: execution.intent.type,
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
+      },
+      compatibility: {
+        legacyHook: 'runtime.telemetry',
+        legacyContext: {
+          event: 'saga.intent.dequeued',
+          executionId: execution.executionId,
+          intentId: execution.intentId
+        }
+      }
+    });
+
+    await emitCanonicalInspection(input.inspection, {
+      hook: 'side_effect.execution',
+      runtime: 'saga-runtime',
+      boundary: 'adapter.side_effect',
+      ids: {
+        sagaId: input.sagaId,
+        intentId: execution.intentId,
+        executionId: execution.executionId,
+        correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:side_effect.execution`),
+        causationId: execution.intent.metadata.causationId
+      },
+      payload: {
+        intentType: execution.intent.type,
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
+      },
+      compatibility: {
+        legacyHook: 'runtime.telemetry',
+        legacyContext: {
+          event: 'saga.intent.executed',
+          executionId: execution.executionId,
+          intentId: execution.intentId
+        }
+      }
+    });
+
     const result = await adapters.sideEffects.execute(execution.intent);
     adapters.persistence.intentExecutionProjection.upsert(
       createExecutionRecord(
@@ -612,6 +724,40 @@ export async function runReferenceAdapterFlowV1(
       executionId: execution.executionId,
       status: result.status
     });
+
+    if (result.status === 'failed') {
+      await emitCanonicalInspection(input.inspection, {
+        hook: 'retry.dead_letter',
+        runtime: 'saga-runtime',
+        boundary: 'adapter.side_effect',
+        ids: {
+          sagaId: input.sagaId,
+          intentId: execution.intentId,
+          executionId: execution.executionId,
+          correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:retry.dead_letter`),
+          causationId: execution.intent.metadata.causationId
+        },
+        payload: {
+          attempts: 1,
+          terminal: true,
+          reason: result.error ?? 'failed_without_retry_policy',
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: executionContext.values ?? {},
+            propagatedCarrier: executionCarrier
+          }
+        },
+        compatibility: {
+          legacyHook: 'runtime.telemetry',
+          legacyContext: {
+            event: 'saga.intent.dead_lettered',
+            executionId: execution.executionId,
+            intentId: execution.intentId,
+            status: result.status
+          }
+        }
+      });
+    }
 
     return {
       executionId: execution.executionId,

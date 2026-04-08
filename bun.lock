@@ -53,12 +53,19 @@
       "dependencies": {
         "@redemeine/aggregate": "workspace:*",
         "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
       },
+    },
+    "packages/otel": {
+      "name": "@redemeine/otel",
+      "version": "0.1.0",
     },
     "packages/projection": {
       "name": "@redemeine/projection",
       "version": "0.1.0",
       "dependencies": {
+        "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
         "immer": "^10.2.0",
       },
     },
@@ -79,6 +86,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@redemeine/aggregate": "workspace:*",
+        "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
         "@redemeine/saga": "workspace:*",
       },
     },
@@ -295,6 +304,8 @@
     "@redemeine/kernel": ["@redemeine/kernel@workspace:packages/kernel"],
 
     "@redemeine/mirage": ["@redemeine/mirage@workspace:packages/mirage"],
+
+    "@redemeine/otel": ["@redemeine/otel@workspace:packages/otel"],
 
     "@redemeine/projection": ["@redemeine/projection@workspace:packages/projection"],
 
