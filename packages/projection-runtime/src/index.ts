@@ -31,3 +31,20 @@ export type {
   ProjectionVersionAvailableNotification,
   VersionNotifierContract
 } from './contracts/versionNotifier';
+
+export {
+  InMemoryProjectionPersistenceAdapter,
+  persistProjectedState
+} from './persistence/InMemoryProjectionPersistenceAdapter';
+
+export {
+  buildProjectionMetadata,
+  withProjectionMetadata
+} from './persistence/metadata';
+
+export {
+  resolveProjectionPersistence,
+  type ProjectionPersistenceCapabilities,
+  type ProjectionPersistenceMode,
+  type ResolvedProjectionPersistence
+} from './persistence/modeSelection';
