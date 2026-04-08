@@ -63,6 +63,20 @@ export {
 } from './cursor/InMemoryCursorStoreAdapter';
 
 export {
+  ProjectionDaemon,
+  InMemoryProjectionStore
+} from './ProjectionDaemon';
+
+export type {
+  ProjectionDaemonOptions,
+  BatchStats,
+  IProjectionStore,
+  IEventSubscription,
+  EventBatch,
+  ProjectionEvent
+} from './ProjectionDaemon';
+
+export {
   InMemoryVersionNotifierAdapter,
   projectionVersionNotificationKey
 } from './notifier/InMemoryVersionNotifierAdapter';

@@ -6,8 +6,9 @@
     "paths": {
       "@redemeine/mirage": ["../mirage/src/index.ts"],
       "@redemeine/projection": ["../projection/src/index.ts"],
+      "@redemeine/projection-runtime": ["../projection-runtime/src/index.ts"],
       "@redemeine/saga": ["../saga/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "../mirage/src/**/*.ts", "../projection/src/**/*.ts", "../saga/src/**/*.ts"]
+  "include": ["src/**/*.ts", "../mirage/src/**/*.ts", "../projection/src/**/*.ts", "../projection-runtime/src/**/*.ts", "../saga/src/**/*.ts"]
 }

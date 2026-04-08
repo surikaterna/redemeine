@@ -1,7 +1,4 @@
 export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
-export type { IProjectionStore } from './IProjectionStore';
-export type { IEventSubscription } from './IEventSubscription';
-export type { IProjectionLinkStore } from './IProjectionLinkStore';
 export {
   createProjection
 } from './createProjection';
@@ -18,7 +15,3 @@ export type {
   ProjectionDefinition,
   ProjectionBuilder
 } from './createProjection';
-export { InMemoryProjectionStore } from './InMemoryProjectionStore';
-export { InMemoryProjectionLinkStore } from './InMemoryProjectionLinkStore';
-export { ProjectionDaemon } from './ProjectionDaemon';
-export type { ProjectionDaemonOptions, BatchStats } from './ProjectionDaemon';
