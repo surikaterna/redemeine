@@ -57,3 +57,12 @@ export {
   type ProjectionPersistenceMode,
   type ResolvedProjectionPersistence
 } from './persistence/modeSelection';
+
+export {
+  InMemoryCursorStoreAdapter
+} from './cursor/InMemoryCursorStoreAdapter';
+
+export {
+  InMemoryVersionNotifierAdapter,
+  projectionVersionNotificationKey
+} from './notifier/InMemoryVersionNotifierAdapter';

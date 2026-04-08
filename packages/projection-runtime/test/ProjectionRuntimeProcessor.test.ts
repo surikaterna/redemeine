@@ -1,5 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  InMemoryCursorStoreAdapter,
+  InMemoryProjectionPersistenceAdapter,
+  InMemoryVersionNotifierAdapter,
   ProjectionRuntimeProcessor,
   type CommitFeedBatch,
   type CommitFeedContract,
@@ -11,7 +14,8 @@ import {
   type ProjectionCommit,
   type ProjectionCursor,
   type ProjectionReadContract,
-  type DocumentProjectionPersistenceContract
+  type DocumentProjectionPersistenceContract,
+  projectionVersionNotificationKey
 } from '../src';
 
 type TestState = {
@@ -185,9 +189,9 @@ describe('ProjectionRuntimeProcessor', () => {
     const invoiceB = persistence.getDocument('join-fanout', 'invoice-b');
     const ghost = persistence.getDocument('join-fanout', 'customer-missing');
 
-    expect(invoiceA?._projection.version).toBe(2);
+    expect(invoiceA?._projection.version).toBe(1);
     expect(invoiceA?.customerName).toBe('Nora');
-    expect(invoiceB?._projection.version).toBe(2);
+    expect(invoiceB?._projection.version).toBe(1);
     expect(invoiceB?.customerName).toBe('Nora');
     expect(ghost).toBeNull();
     expect(cursorStore.saves).toHaveLength(1);
@@ -218,16 +222,79 @@ describe('ProjectionRuntimeProcessor', () => {
 
   it('does not advance cursor when persistence fails', async () => {
     const cursorStore = new InMemoryCursorStore();
+    const notifier = new InMemoryVersionNotifierAdapter();
 
     const processor = new ProjectionRuntimeProcessor({
       projection: createProjectionDefinition('cursor-failure'),
       commitFeed: new InMemoryCommitFeed([createCommit(1, 'order', 'order-1', 'order.created', {})]),
       cursorStore,
       linkStore: new InMemoryLinkStore(),
-      persistence: new InMemoryDocumentPersistence(true)
+      persistence: new InMemoryDocumentPersistence(true),
+      versionNotifier: notifier
     });
 
     await expect(processor.processNextBatch()).rejects.toThrow('persist failed');
     expect(cursorStore.saves).toHaveLength(0);
+    expect(notifier.getNotifications()).toEqual([]);
+  });
+
+  it('emits version notifications in monotonic order per document', async () => {
+    const notifier = new InMemoryVersionNotifierAdapter();
+    const persistence = new InMemoryProjectionPersistenceAdapter();
+    const cursorStore = new InMemoryCursorStoreAdapter();
+
+    const processor = new ProjectionRuntimeProcessor({
+      projection: createProjectionDefinition('notification-order'),
+      commitFeed: new InMemoryCommitFeed([
+        createCommit(1, 'order', 'order-1', 'order.created', { amount: 1 }),
+        createCommit(2, 'order', 'order-1', 'order.updated', { amount: 2 }),
+        createCommit(3, 'order', 'order-2', 'order.created', { amount: 3 }),
+        createCommit(4, 'order', 'order-2', 'order.updated', { amount: 4 })
+      ]),
+      cursorStore,
+      linkStore: new InMemoryLinkStore(),
+      persistence,
+      versionNotifier: notifier,
+      batchSize: 1
+    });
+
+    await processor.processNextBatch();
+    await processor.processNextBatch();
+    await processor.processNextBatch();
+    await processor.processNextBatch();
+
+    const keys = notifier.getNotifications().map(projectionVersionNotificationKey);
+    expect(keys).toEqual([
+      'notification-order:order-1:1',
+      'notification-order:order-1:2',
+      'notification-order:order-2:1',
+      'notification-order:order-2:2'
+    ]);
+  });
+
+  it('keeps global cursor storage separate from projection documents', async () => {
+    const persistence = new InMemoryProjectionPersistenceAdapter();
+    const cursorStore = new InMemoryCursorStoreAdapter();
+
+    const processor = new ProjectionRuntimeProcessor({
+      projection: createProjectionDefinition('cursor-separation'),
+      commitFeed: new InMemoryCommitFeed([createCommit(1, 'order', 'order-1', 'order.created', { amount: 10 })]),
+      cursorStore,
+      linkStore: new InMemoryLinkStore(),
+      persistence
+    });
+
+    await processor.processNextBatch();
+
+    const storedDocuments = persistence.getStoredDocuments();
+    const storedKeys = Array.from(storedDocuments.keys());
+    expect(storedKeys).toEqual(['cursor-separation::order-1']);
+
+    const cursorSnapshot = cursorStore.getSnapshot();
+    expect(cursorSnapshot.get('cursor-separation')?.checkpoint.sequence).toBe(1);
+
+    const document = persistence.getDocumentSnapshot('cursor-separation', 'order-1');
+    expect(document?._projection.documentId).toBe('order-1');
+    expect((document as Record<string, unknown>)?.checkpoint).toBeUndefined();
   });
 });
