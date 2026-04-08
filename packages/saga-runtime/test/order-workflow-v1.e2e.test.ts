@@ -18,7 +18,7 @@ import {
 
 const isoAt = (secondsOffset: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, secondsOffset)).toISOString();
 
-const sideEffectIntentTypes = new Set<SagaIntent['type']>(['plugin-one-way', 'plugin-request', 'run-activity']);
+const sideEffectIntentTypes = new Set<SagaIntent['type']>(['plugin-one-way', 'plugin-request', 'plugin-intent', 'run-activity']);
 
 const countSideEffects = (intentTypes: readonly string[]): number => intentTypes
   .filter((intentType) => sideEffectIntentTypes.has(intentType as SagaIntent['type']))

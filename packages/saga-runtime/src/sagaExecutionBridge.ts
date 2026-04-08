@@ -162,6 +162,7 @@ const resolveHandlerKeys = (eventType: string, aggregateType?: string): readonly
 const isSideEffectIntent = (intent: SagaIntent): boolean => (
   intent.type === 'plugin-one-way'
   || intent.type === 'plugin-request'
+  || intent.type === 'plugin-intent'
   || intent.type === 'run-activity'
 );
 
@@ -468,7 +469,7 @@ export function createSagaExecutionBridge<TState>(
               recordedAt: new Date().toISOString(),
               metadata: {
                 handler: match.key,
-                ...(intent.type === 'plugin-one-way' || intent.type === 'plugin-request'
+                ...(intent.type === 'plugin-one-way' || intent.type === 'plugin-request' || intent.type === 'plugin-intent'
                   ? { pluginKey: intent.plugin_key, actionName: intent.action_name }
                   : {})
               }

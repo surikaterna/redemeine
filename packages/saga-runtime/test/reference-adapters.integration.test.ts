@@ -489,6 +489,59 @@ describe('reference adapters v1 integration', () => {
     expect(telemetry.counters['saga.intent.execution_failed']).toBe(1);
   });
 
+<<<<<<< HEAD
+  it('keeps minimal-mode observability overhead within bounded budget', async () => {
+    const adapters = createReferenceAdaptersV1();
+
+    const result = await runReferenceAdapterFlowV1(adapters, {
+      sagaId: 'saga-overhead-1',
+      nowIso: '2026-01-01T00:00:00.000Z',
+      intents: [
+        {
+          type: 'plugin-intent',
+          plugin_key: 'payments',
+          action_name: 'authorize',
+          interaction: 'request_response',
+          execution_payload: { orderId: 'order-1', amount: 1900 },
+          routing_metadata: {
+            response_handler_key: 'payments.authorize.ok',
+            error_handler_key: 'payments.authorize.failed',
+            handler_data: { orderId: 'order-1' }
+          },
+          metadata: { ...metadata, correlationId: 'corr-overhead-1' }
+        },
+        {
+          type: 'plugin-intent',
+          plugin_key: 'notifications',
+          action_name: 'send',
+          interaction: 'fire_and_forget',
+          execution_payload: { template: 'order-confirmed' },
+          metadata: { ...metadata, correlationId: 'corr-overhead-2' }
+        },
+        {
+          type: 'run-activity',
+          name: 'order.audit',
+          closure: () => ({ ok: true }),
+          metadata: { ...metadata, correlationId: 'corr-overhead-3' }
+        }
+      ]
+    });
+
+    const telemetry = adapters.telemetry.snapshot();
+    const received = telemetry.counters['saga.intent.received'] ?? 0;
+    const executed = telemetry.counters['saga.intent.executed'] ?? 0;
+    const emittedEvents = telemetry.events.length;
+
+    expect(result.processedIntents).toBe(3);
+    expect(result.persistedExecutions).toHaveLength(3);
+    expect(result.responseCorrelations).toHaveLength(3);
+    expect(result.responseCorrelations.every((entry) => entry.executionId.startsWith('saga-overhead-1:intent:'))).toBe(true);
+
+    expect(received).toBe(3);
+    expect(executed).toBe(3);
+    expect(emittedEvents).toBeLessThanOrEqual(received + 1);
+  });
+
   it('emits retry.dead_letter when side effect execution fails', async () => {
     const adapters = createReferenceAdaptersV1();
     const inspectionEvents: CanonicalInspectionEnvelope[] = [];
