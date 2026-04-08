@@ -89,14 +89,16 @@ describe('otel inspection continuity e2e', () => {
     });
 
     const mirage = await depot.get('order-1');
-    const command = aggregate.commandCreators.open({
+    const command = {
+      ...aggregate.commandCreators.open({
       orderId: 'order-1',
       correlationId,
       causationId: commandId,
       eventId
-    });
-    command.id = commandId;
-    command.headers = { correlationId };
+      }),
+      id: commandId,
+      headers: { correlationId }
+    };
 
     await mirage.dispatch(command);
     await depot.save(mirage);
