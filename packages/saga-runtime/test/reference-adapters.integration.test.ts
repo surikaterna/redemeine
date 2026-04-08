@@ -489,7 +489,6 @@ describe('reference adapters v1 integration', () => {
     expect(telemetry.counters['saga.intent.execution_failed']).toBe(1);
   });
 
-<<<<<<< HEAD
   it('keeps minimal-mode observability overhead within bounded budget', async () => {
     const adapters = createReferenceAdaptersV1();
 
