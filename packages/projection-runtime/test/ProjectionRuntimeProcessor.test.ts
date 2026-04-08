@@ -297,4 +297,75 @@ describe('ProjectionRuntimeProcessor', () => {
     expect(document?._projection.documentId).toBe('order-1');
     expect((document as Record<string, unknown>)?.checkpoint).toBeUndefined();
   });
+
+  it('keeps persistence results equivalent between patch and document runtime modes', async () => {
+    const commits = [
+      createCommit(1, 'order', 'order-42', 'order.created', { amount: 5 }),
+      createCommit(2, 'order', 'order-42', 'order.updated', { amount: 7 })
+    ];
+
+    const patchPersistence = new InMemoryProjectionPersistenceAdapter();
+    const documentPersistence = new InMemoryProjectionPersistenceAdapter();
+
+    const patchProcessor = new ProjectionRuntimeProcessor({
+      projection: createProjectionDefinition('mode-parity'),
+      commitFeed: new InMemoryCommitFeed(commits),
+      cursorStore: new InMemoryCursorStoreAdapter(),
+      linkStore: new InMemoryLinkStore(),
+      persistence: patchPersistence,
+      persistenceMode: 'patch'
+    });
+
+    const documentProcessor = new ProjectionRuntimeProcessor({
+      projection: createProjectionDefinition('mode-parity'),
+      commitFeed: new InMemoryCommitFeed(commits),
+      cursorStore: new InMemoryCursorStoreAdapter(),
+      linkStore: new InMemoryLinkStore(),
+      persistence: documentPersistence,
+      persistenceMode: 'document'
+    });
+
+    await patchProcessor.processNextBatch();
+    await documentProcessor.processNextBatch();
+
+    const patchDoc = patchPersistence.getDocumentSnapshot('mode-parity', 'order-42');
+    const documentDoc = documentPersistence.getDocumentSnapshot('mode-parity', 'order-42');
+
+    expect(patchDoc?.total).toBe(12);
+    expect(documentDoc?.total).toBe(12);
+    expect(patchDoc?.appliedSequences).toEqual([1, 2]);
+    expect(documentDoc?.appliedSequences).toEqual([1, 2]);
+    expect(patchDoc?._projection.version).toBe(1);
+    expect(documentDoc?._projection.version).toBe(1);
+  });
+
+  it('persists metadata in unified _projection envelope shape', async () => {
+    const persistence = new InMemoryProjectionPersistenceAdapter({ now: () => '2026-04-09T00:00:09.000Z' });
+
+    const processor = new ProjectionRuntimeProcessor({
+      projection: createProjectionDefinition('metadata-envelope'),
+      commitFeed: new InMemoryCommitFeed([createCommit(9, 'order', 'order-9', 'order.created', { amount: 9 })]),
+      cursorStore: new InMemoryCursorStoreAdapter(),
+      linkStore: new InMemoryLinkStore(),
+      persistence,
+      persistenceMode: 'document'
+    });
+
+    await processor.processNextBatch();
+
+    const document = persistence.getDocumentSnapshot('metadata-envelope', 'order-9');
+    expect(document?._projection).toEqual({
+      projectionName: 'metadata-envelope',
+      documentId: 'order-9',
+      version: 1,
+      lastCheckpoint: { sequence: 9, timestamp: '2026-04-09T00:00:09.000Z' },
+      updatedAt: expect.any(String),
+      persistenceMode: 'document'
+    });
+
+    expect((document as Record<string, unknown>)?.version).toBeUndefined();
+    expect((document as Record<string, unknown>)?.lastCheckpoint).toBeUndefined();
+    expect((document as Record<string, unknown>)?.persistenceMode).toBeUndefined();
+    expect((document as Record<string, unknown>)?.updatedAt).toBeUndefined();
+  });
 });
