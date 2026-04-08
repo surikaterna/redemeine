@@ -155,7 +155,7 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-2', amount: 4900, sku: 'sku-2', quantity: 1 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',
@@ -172,7 +172,7 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-4', amount: 8900, sku: 'sku-4', quantity: 2 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',
@@ -199,7 +199,7 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-7', amount: 12900, sku: 'sku-7', quantity: 3 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',

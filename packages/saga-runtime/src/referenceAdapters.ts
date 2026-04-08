@@ -81,12 +81,32 @@ export interface SagaPluginRequestIntent<
   readonly metadata: SagaIntentMetadata;
 }
 
+export interface SagaPluginUnifiedIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> {
+  readonly type: 'plugin-intent';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly interaction: 'fire_and_forget' | 'request_response';
+  readonly execution_payload: TExecutionPayload;
+  readonly routing_metadata?: {
+    readonly response_handler_key: string;
+    readonly error_handler_key: string;
+    readonly handler_data: unknown;
+    readonly retry_handler_key?: string;
+  };
+  readonly metadata: SagaIntentMetadata;
+}
+
 export type SagaIntent =
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginUnifiedIntent
   | {
     readonly type: 'dispatch';
     readonly command: string;
@@ -146,6 +166,7 @@ export interface SagaRuntimeSchedulerPluginV1 {
 export type SagaRuntimeSideEffectIntent =
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginUnifiedIntent
   | SagaRunActivityIntent;
 
 export interface SagaRuntimeSideEffectResult {
@@ -428,7 +449,7 @@ export function createInMemorySideEffectsPluginV1(
         return await executeIntent(intent);
       }
 
-      if (intent.type === 'plugin-request') {
+      if (intent.type === 'plugin-request' || (intent.type === 'plugin-intent' && intent.interaction === 'request_response')) {
         return {
           status: 'succeeded',
           responseRef: {
@@ -491,7 +512,12 @@ const asScheduleIntent = (intent: SagaIntent): SagaScheduleIntent | null => inte
 const asCancelIntent = (intent: SagaIntent): SagaCancelScheduleIntent | null => intent.type === 'cancel-schedule' ? intent : null;
 
 const asSideEffectIntent = (intent: SagaIntent): SagaRuntimeSideEffectIntent | null => {
-  if (intent.type === 'plugin-one-way' || intent.type === 'plugin-request' || intent.type === 'run-activity') {
+  if (
+    intent.type === 'plugin-one-way'
+    || intent.type === 'plugin-request'
+    || intent.type === 'plugin-intent'
+    || intent.type === 'run-activity'
+  ) {
     return intent;
   }
 
