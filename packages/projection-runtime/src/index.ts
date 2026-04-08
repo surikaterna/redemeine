@@ -31,3 +31,12 @@ export type {
   ProjectionVersionAvailableNotification,
   VersionNotifierContract
 } from './contracts/versionNotifier';
+
+export {
+  ProjectionRuntimeProcessor
+} from './ProjectionRuntimeProcessor';
+
+export type {
+  ProjectionRuntimeBatchStats,
+  ProjectionRuntimeProcessorOptions
+} from './ProjectionRuntimeProcessor';
