@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
+    "@redemeine/kernel": "workspace:*",
     "@redemeine/saga": "workspace:*"
   }
 }
