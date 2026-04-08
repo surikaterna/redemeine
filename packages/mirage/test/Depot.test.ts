@@ -516,4 +516,136 @@ describe('Depot', () => {
 
     expect(bridge.getUncommittedEvents()).toEqual([]);
   });
+
+  test('persists append and outbox atomically and skips inline onAfterCommit in outbox_primary mode', async () => {
+    const calls: string[] = [];
+    const outboxBatches: Array<{ id: string; events: Event[]; expectedVersion?: number; outbox: any[] }> = [];
+
+    const store: EventStore & {
+      saveEventsWithOutbox: (args: { id: string; events: Event[]; expectedVersion?: number; outbox: any[] }) => Promise<void>;
+    } = {
+      readStream: async function* () {},
+      saveEvents: async () => {
+        calls.push('saveEvents');
+      },
+      saveEventsWithOutbox: async (args) => {
+        calls.push('saveEventsWithOutbox');
+        outboxBatches.push(args);
+      }
+    };
+
+    const depot = createDepot(aggregate, store, {
+      outbox: {
+        mode: 'outbox_primary'
+      },
+      plugins: [{
+        key: 'after-commit-plugin',
+        onAfterCommit: async () => {
+          calls.push('inline-after-commit');
+        }
+      }]
+    });
+
+    const mirage = await depot.get('o1');
+    const bridge = createLegacyAggregateBridge(mirage);
+    await mirage.increment(2);
+
+    await depot.save(mirage);
+
+    expect(calls).toEqual(['saveEventsWithOutbox']);
+    expect(outboxBatches).toHaveLength(1);
+    expect(outboxBatches[0]).toMatchObject({
+      id: 'o1',
+      expectedVersion: 1,
+      events: [{ type: 'order.incremented.event', payload: { amount: 2 } }],
+      outbox: [{ type: 'plugin.onAfterCommit', aggregateId: 'o1', pluginKey: 'after-commit-plugin' }]
+    });
+    expect(bridge.getUncommittedEvents()).toEqual([]);
+  });
+
+  test('rolls back pending results when saveEventsWithOutbox fails in outbox_primary mode', async () => {
+    const calls: string[] = [];
+    const store: EventStore & {
+      saveEventsWithOutbox: (args: { id: string; events: Event[]; expectedVersion?: number; outbox: any[] }) => Promise<void>;
+    } = {
+      readStream: async function* () {},
+      saveEvents: async () => {
+        calls.push('saveEvents');
+      },
+      saveEventsWithOutbox: async () => {
+        calls.push('saveEventsWithOutbox');
+        throw new Error('atomic-write-failed');
+      }
+    };
+
+    const depot = createDepot(aggregate, store, {
+      outbox: {
+        mode: 'outbox_primary'
+      },
+      plugins: [{
+        key: 'after-commit-plugin',
+        onAfterCommit: async () => {
+          calls.push('inline-after-commit');
+        }
+      }]
+    });
+
+    const mirage = await depot.get('o1');
+    const bridge = createLegacyAggregateBridge(mirage);
+    await mirage.increment(2);
+
+    await expect(depot.save(mirage)).rejects.toThrow('atomic-write-failed');
+    expect(calls).toEqual(['saveEventsWithOutbox']);
+    expect(bridge.getUncommittedEvents()).toHaveLength(1);
+  });
+
+  test('supports compatibility_inline mode when store lacks saveEventsWithOutbox', async () => {
+    const calls: string[] = [];
+    const store: EventStore = {
+      readStream: async function* () {},
+      saveEvents: async () => {
+        calls.push('saveEvents');
+      }
+    };
+
+    const depot = createDepot(aggregate, store, {
+      outbox: {
+        mode: 'compatibility_inline'
+      },
+      plugins: [{
+        key: 'after-commit-plugin',
+        onAfterCommit: async () => {
+          calls.push('inline-after-commit');
+        }
+      }]
+    });
+
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+    await depot.save(mirage);
+
+    expect(calls).toEqual(['saveEvents', 'inline-after-commit']);
+  });
+
+  test('fails fast in outbox_primary mode without saveEventsWithOutbox capability', async () => {
+    const store: EventStore = {
+      readStream: async function* () {},
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store, {
+      outbox: {
+        mode: 'outbox_primary'
+      },
+      plugins: [{
+        key: 'after-commit-plugin',
+        onAfterCommit: async () => undefined
+      }]
+    });
+
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+
+    await expect(depot.save(mirage)).rejects.toThrow('Outbox primary mode requires an EventStore implementing saveEventsWithOutbox');
+  });
 });

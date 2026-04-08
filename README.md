@@ -125,6 +125,27 @@ Flat root-level plugin keys are not accepted.
 - `onBeforeAppend`: **fail_closed** (append/save is blocked)
 - `onAfterCommit`: **fail_closed_post_commit** (events already persisted; pending results are cleared and a structured `RedemeinePluginHookError` is thrown with `pluginKey` + `hook`)
 
+### Transactional outbox mode (Depot)
+
+`createDepot` supports an outbox-first persistence seam for atomic event append + outbox enqueue:
+
+```ts
+const depot = createDepot(aggregate, store, {
+  outbox: { mode: 'outbox_primary' }
+});
+```
+
+- In `outbox_primary`, stores implementing `saveEventsWithOutbox(...)` are used for atomic persistence and **inline `onAfterCommit` is not executed**.
+- For stores without outbox capability, use explicit legacy compatibility mode:
+
+```ts
+outbox: {
+  mode: 'compatibility_inline'
+}
+```
+
+- Default mode remains `compatibility_inline` (legacy `saveEvents` + inline `onAfterCommit`).
+
 ## 🔁 Sagas / Process Managers
 
 Redemeine includes an event-sourced saga toolkit for long-running, cross-aggregate workflows.
