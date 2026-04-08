@@ -6,6 +6,23 @@ export interface EventStore {
     saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
 }
 
+export type OutboxQueueEntry = {
+  type: 'plugin.onAfterCommit';
+  aggregateId: string;
+  pluginKey: string;
+  events: Event[];
+  intents: Record<string, unknown>;
+};
+
+export interface OutboxCapableEventStore extends EventStore {
+  saveEventsWithOutbox(args: {
+    id: string;
+    events: Event[];
+    expectedVersion?: number;
+    outbox: OutboxQueueEntry[];
+  }): Promise<void>;
+}
+
 export type EventReadStreamOptions = {
   fromVersion?: number;
 };
@@ -18,6 +35,16 @@ export type DepotSnapshot<TState> = {
 export type DepotGetOptions<TState> = {
   initialState?: TState;
   snapshot?: DepotSnapshot<TState>;
+};
+
+export type DepotOutboxOptions = {
+  /**
+   * outbox_primary: prefer atomic event+outbox persistence and never run inline side-effects
+   * unless allowInlineAfterCommitFallback is explicitly enabled for non-capable stores.
+   *
+   * compatibility_inline: preserve legacy save-then-inline onAfterCommit behavior.
+   */
+  mode?: 'outbox_primary' | 'compatibility_inline';
 };
 
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
@@ -40,7 +67,9 @@ export interface Depot<TState extends {}, M extends Record<string, any> = any, R
 export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   builder: BA,
   store: EventStore,
-  options?: MirageOptions<BuiltAggregatePlugins<BA>>
+  options?: MirageOptions<BuiltAggregatePlugins<BA>> & {
+    outbox?: DepotOutboxOptions;
+  }
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
   const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
 
@@ -123,6 +152,26 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     }
   };
 
+  const hasOutboxCapability = (candidate: EventStore): candidate is OutboxCapableEventStore => {
+    return typeof (candidate as OutboxCapableEventStore).saveEventsWithOutbox === 'function';
+  };
+
+  const buildOutboxEntries = (
+    id: string,
+    events: Event[],
+    intents: Record<string, unknown>
+  ): OutboxQueueEntry[] => {
+    return plugins
+      .filter((plugin): plugin is Required<Pick<RedemeinePlugin<any>, 'key' | 'onAfterCommit'>> & RedemeinePlugin<any> => typeof plugin.onAfterCommit === 'function')
+      .map((plugin) => ({
+        type: 'plugin.onAfterCommit' as const,
+        aggregateId: id,
+        pluginKey: plugin.key,
+        events,
+        intents
+      }));
+  };
+
   return {
       get: async (id: string, getOptions?: DepotGetOptions<BuiltAggregateState<BA>>) => {
           const snapshot = getOptions?.snapshot;
@@ -148,11 +197,30 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           const { events, intents } = core.getPendingResults();
           const appendableEvents = await runAppendInterceptors(core.id, events);
 
+          const outboxMode = options?.outbox?.mode ?? 'compatibility_inline';
+          const outboxEntries = buildOutboxEntries(core.id, appendableEvents, intents);
+
+          if (outboxMode === 'outbox_primary' && outboxEntries.length > 0) {
+            if (hasOutboxCapability(store)) {
+              await store.saveEventsWithOutbox({
+                id: core.id,
+                events: appendableEvents,
+                expectedVersion: core.version,
+                outbox: outboxEntries
+              });
+              core.clearPendingResults();
+              return;
+            }
+
+            throw new Error(
+              'Outbox primary mode requires an EventStore implementing saveEventsWithOutbox. ' +
+              'Use options.outbox.mode="compatibility_inline" for explicit legacy inline compatibility mode.'
+            );
+          }
+
           await store.saveEvents(core.id, appendableEvents, core.version);
           core.clearPendingResults();
 
-          // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
-          // so post-commit failures are retriable without coupling to request lifecycle.
           await runAfterCommitHooks(core.id, appendableEvents, intents);
       }
   };
