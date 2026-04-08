@@ -40,3 +40,20 @@ export type {
   ProjectionRuntimeBatchStats,
   ProjectionRuntimeProcessorOptions
 } from './ProjectionRuntimeProcessor';
+
+export {
+  InMemoryProjectionPersistenceAdapter,
+  persistProjectedState
+} from './persistence/InMemoryProjectionPersistenceAdapter';
+
+export {
+  buildProjectionMetadata,
+  withProjectionMetadata
+} from './persistence/metadata';
+
+export {
+  resolveProjectionPersistence,
+  type ProjectionPersistenceCapabilities,
+  type ProjectionPersistenceMode,
+  type ResolvedProjectionPersistence
+} from './persistence/modeSelection';
