@@ -22,6 +22,7 @@
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
     "@redemeine/kernel": "workspace:*",
+    "@redemeine/otel": "workspace:*",
     "@redemeine/saga": "workspace:*"
   }
 }

@@ -11,6 +11,7 @@ import {
   resolveInspectionCorrelationId,
   type InspectionEventPublisher
 } from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 export type SagaTriggerMisfirePolicy =
   | { readonly mode: 'catch_up_all' }
@@ -195,6 +196,7 @@ export interface SagaRuntimeReferenceFlowInput {
   readonly schedulerPolicy?: SagaSchedulerTriggerPolicyContract;
   readonly nowIso?: string;
   readonly inspection?: InspectionEventPublisher;
+  readonly telemetryAdapterId?: string;
   readonly resolveExecutionIdentity?: (input: {
     readonly sagaId: string;
     readonly intent: SagaRuntimeSideEffectIntent;
@@ -527,6 +529,7 @@ export async function runReferenceAdapterFlowV1(
   adapters: SagaRuntimeReferenceAdapters,
   input: SagaRuntimeReferenceFlowInput
 ): Promise<SagaRuntimeReferenceFlowResult> {
+  const telemetry = createTelemetryFacade(input.telemetryAdapterId);
   const persistedExecutionIds: string[] = [];
   const scheduledTriggerIds: string[] = [];
   const responseCorrelations: SagaRuntimeResponseCorrelation[] = [];
@@ -567,7 +570,21 @@ export async function runReferenceAdapterFlowV1(
         },
         payload: {
           mode: 'schedule',
-          runAt
+          runAt,
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: telemetry.extract({
+              correlationId: schedule.metadata.correlationId,
+              causationId: schedule.metadata.causationId
+            }).values ?? {},
+            propagatedCarrier: telemetry.inject(
+              telemetry.extract({
+                correlationId: schedule.metadata.correlationId,
+                causationId: schedule.metadata.causationId
+              }),
+              {}
+            )
+          }
         },
         compatibility: {
           legacyHook: 'runtime.telemetry',
@@ -618,6 +635,12 @@ export async function runReferenceAdapterFlowV1(
   }
 
   const completed = await Promise.all(sideEffectExecutions.map(async (execution) => {
+    const executionContext = telemetry.extract({
+      correlationId: execution.intent.metadata.correlationId,
+      causationId: execution.intent.metadata.causationId
+    });
+    const executionCarrier = telemetry.inject(executionContext, {});
+
     await emitCanonicalInspection(input.inspection, {
       hook: 'outbox.dequeue',
       runtime: 'saga-runtime',
@@ -631,7 +654,12 @@ export async function runReferenceAdapterFlowV1(
       },
       payload: {
         intentType: execution.intent.type,
-        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
       },
       compatibility: {
         legacyHook: 'runtime.telemetry',
@@ -656,7 +684,12 @@ export async function runReferenceAdapterFlowV1(
       },
       payload: {
         intentType: execution.intent.type,
-        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
       },
       compatibility: {
         legacyHook: 'runtime.telemetry',
@@ -707,7 +740,12 @@ export async function runReferenceAdapterFlowV1(
         payload: {
           attempts: 1,
           terminal: true,
-          reason: result.error ?? 'failed_without_retry_policy'
+          reason: result.error ?? 'failed_without_retry_policy',
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: executionContext.values ?? {},
+            propagatedCarrier: executionCarrier
+          }
         },
         compatibility: {
           legacyHook: 'runtime.telemetry',

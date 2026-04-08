@@ -53,6 +53,7 @@
       "dependencies": {
         "@redemeine/aggregate": "workspace:*",
         "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
       },
     },
     "packages/otel": {
@@ -64,6 +65,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
         "immer": "^10.2.0",
       },
     },
@@ -85,6 +87,7 @@
       "dependencies": {
         "@redemeine/aggregate": "workspace:*",
         "@redemeine/kernel": "workspace:*",
+        "@redemeine/otel": "workspace:*",
         "@redemeine/saga": "workspace:*",
       },
     },

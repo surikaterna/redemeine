@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
-    "@redemeine/kernel": "workspace:*"
+    "@redemeine/kernel": "workspace:*",
+    "@redemeine/otel": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

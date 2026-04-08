@@ -9,6 +9,7 @@ import {
   resolveInspectionCausationId,
   resolveInspectionCorrelationId
 } from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
@@ -107,6 +108,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
     if (plugins.length === 0) return events;
 
+    const telemetry = createTelemetryFacade();
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
@@ -134,7 +136,21 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
             },
             payload: {
               pluginKey: plugin.key,
-              eventType: event.type
+              eventType: event.type,
+              telemetry: {
+                mode: telemetry.isNoop ? 'fallback' : 'adapter',
+                extractedContext: telemetry.extract({
+                  correlationId: typeof event.metadata?.correlationId === 'string' ? event.metadata.correlationId : undefined,
+                  causationId: typeof event.metadata?.causationId === 'string' ? event.metadata.causationId : undefined
+                }).values ?? {},
+                propagatedCarrier: telemetry.inject(
+                  telemetry.extract({
+                    correlationId: typeof event.metadata?.correlationId === 'string' ? event.metadata.correlationId : undefined,
+                    causationId: typeof event.metadata?.causationId === 'string' ? event.metadata.causationId : undefined
+                  }),
+                  {}
+                )
+              }
             },
             compatibility: {
               legacyHook: 'onBeforeAppend',
@@ -171,19 +187,31 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
     for (const plugin of plugins) {
       if (typeof plugin.onAfterCommit === 'function') {
+        const telemetry = createTelemetryFacade();
+        const eventMetadata = (events[0]?.metadata as Record<string, unknown> | undefined);
+        const context = telemetry.extract({
+          correlationId: typeof eventMetadata?.['correlationId'] === 'string' ? eventMetadata['correlationId'] : undefined,
+          causationId: typeof eventMetadata?.['causationId'] === 'string' ? eventMetadata['causationId'] : undefined
+        });
+        const propagatedCarrier = telemetry.inject(context, {});
         await emitCanonicalInspection(options?.inspection, {
           hook: 'outbox.enqueue',
           runtime: 'mirage',
           boundary: 'post_commit.side_effect',
           ids: {
             aggregateId: id,
-            correlationId: resolveInspectionCorrelationId((events[0]?.metadata as Record<string, unknown> | undefined)?.correlationId, `${id}:outbox.enqueue`),
+            correlationId: resolveInspectionCorrelationId(eventMetadata?.correlationId, `${id}:outbox.enqueue`),
             causationId: resolveInspectionCausationId(events[0]?.id)
           },
           payload: {
             pluginKey: plugin.key,
             eventCount: events.length,
-            intentKeys: Object.keys(intents)
+            intentKeys: Object.keys(intents),
+            telemetry: {
+              mode: telemetry.isNoop ? 'fallback' : 'adapter',
+              extractedContext: context.values ?? {},
+              propagatedCarrier
+            }
           },
           compatibility: {
             legacyHook: 'onAfterCommit',

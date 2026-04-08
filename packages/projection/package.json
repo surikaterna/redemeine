@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@redemeine/kernel": "workspace:*",
+    "@redemeine/otel": "workspace:*",
     "immer": "^10.2.0"
   }
 }

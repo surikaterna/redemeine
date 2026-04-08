@@ -5,6 +5,7 @@ import {
   resolveInspectionCorrelationId,
   type InspectionEventPublisher
 } from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 const sagaPackage = require('@redemeine/saga');
 const runSagaHandler = sagaPackage.runSagaHandler as (
@@ -93,6 +94,7 @@ export interface CreateSagaExecutionBridgeOptions<TState> {
   readonly getAggregateState?: (sagaId: string) => SagaAggregateState | undefined;
   readonly setAggregateState?: (sagaId: string, state: SagaAggregateState) => void;
   readonly inspection?: InspectionEventPublisher;
+  readonly telemetryAdapterId?: string;
 }
 
 type RuntimeSagaHandler<TState> = (
@@ -178,6 +180,18 @@ type RawSagaPluginIntent = {
   readonly metadata: SagaIntentMetadata;
 };
 
+type RawSagaCoreActivityIntent = {
+  readonly type: 'plugin-intent';
+  readonly plugin_key: 'core';
+  readonly action_name: 'runActivity';
+  readonly interaction: 'fire_and_forget';
+  readonly execution_payload: {
+    readonly name: string;
+    readonly closure: () => unknown;
+  };
+  readonly metadata: SagaIntentMetadata;
+};
+
 const asRuntimeIntent = (intent: unknown): SagaIntent => {
   if (!intent || typeof intent !== 'object') {
     return intent as SagaIntent;
@@ -204,6 +218,16 @@ const asRuntimeIntent = (intent: unknown): SagaIntent => {
     };
   }
 
+  if (raw.plugin_key === 'core' && raw.action_name === 'runActivity') {
+    const activityIntent = raw as unknown as RawSagaCoreActivityIntent;
+    return {
+      type: 'run-activity',
+      name: activityIntent.execution_payload.name,
+      closure: activityIntent.execution_payload.closure,
+      metadata: raw.metadata
+    };
+  }
+
   return {
     type: 'plugin-one-way',
     plugin_key: raw.plugin_key,
@@ -223,6 +247,7 @@ export function createSagaExecutionBridge<TState>(
   dispatch: (input: SagaExecutionBridgeDispatchInput) => Promise<SagaExecutionBridgeDispatchResult<TState>>;
 } {
   const sagaAggregate = options.sagaAggregate ?? createSagaAggregate({ aggregateName: 'saga' });
+  const telemetry = createTelemetryFacade(options.telemetryAdapterId);
   const adapters = options.adapters ?? createReferenceAdaptersV1();
   const tokenBindings = createTokenBindings(options.definition as SagaDefinitionLike<unknown>);
 
@@ -346,6 +371,11 @@ export function createSagaExecutionBridge<TState>(
       }
 
       const metadata = resolveMetadata(input.sagaId, input.event, input.intentMetadata);
+      const inspectionContext = telemetry.extract({
+        correlationId: metadata.correlationId,
+        causationId: metadata.causationId
+      });
+      const inspectionCarrier = telemetry.inject(inspectionContext, {});
       ensureAggregateInstance(input.sagaId, input.sagaType ?? options.definition.sagaType);
 
       applyAggregateCommand(
@@ -379,7 +409,12 @@ export function createSagaExecutionBridge<TState>(
         },
         payload: {
           handlerCount: matches.length,
-          hasMetadata: input.event.metadata !== undefined
+          hasMetadata: input.event.metadata !== undefined,
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: inspectionContext.values ?? {},
+            propagatedCarrier: inspectionCarrier
+          }
         },
         compatibility: {
           legacyHook: 'runtime.telemetry',
@@ -447,6 +482,7 @@ export function createSagaExecutionBridge<TState>(
           schedulerPolicy: input.schedulerPolicy,
           nowIso: input.nowIso,
           inspection: options.inspection,
+          telemetryAdapterId: options.telemetryAdapterId,
           resolveExecutionIdentity: ({ intentIndex }) => executionIdentityByIntentIndex.get(intentIndex)
         });
         adapterResults.push(adapterResult);

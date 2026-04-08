@@ -16,6 +16,7 @@ import {
     resolveInspectionCausationId,
     resolveInspectionCorrelationId
 } from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 import type { EntityPackage, AggregateEntityRegistry } from '@redemeine/aggregate';
 import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
@@ -520,6 +521,9 @@ export class MirageCore<S> {
     }
 
     private async emitCommandIngress(command: Command<any, string>): Promise<void> {
+        const telemetry = createTelemetryFacade();
+        const context = telemetry.extract((command.headers as Record<string, string | undefined>) ?? {});
+        const propagatedCarrier = telemetry.inject(context, {});
         void emitCanonicalInspection(this.inspection, {
             hook: 'command.ingress',
             runtime: 'mirage',
@@ -531,7 +535,12 @@ export class MirageCore<S> {
             },
             payload: {
                 commandType: command.type,
-                viaPlugins: this.hasBeforeCommandPlugins
+                viaPlugins: this.hasBeforeCommandPlugins,
+                telemetry: {
+                    mode: telemetry.isNoop ? 'fallback' : 'adapter',
+                    extractedContext: context.values ?? {},
+                    propagatedCarrier
+                }
             },
             compatibility: {
                 legacyHook: 'onBeforeCommand',
