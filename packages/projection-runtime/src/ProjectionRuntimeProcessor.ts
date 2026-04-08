@@ -3,11 +3,14 @@ import type { CursorStoreContract } from './contracts/cursorStore';
 import type { LinkStoreContract } from './contracts/linkStore';
 import type {
   DocumentProjectionPersistenceContract,
-  PersistProjectionDocument,
+  PatchProjectionPersistenceContract,
   ProjectedDocument,
-  ProjectionReadContract
+  ProjectionReadContract,
+  Rfc6902Operation
 } from './contracts/persistence';
 import type { VersionNotifierContract } from './contracts/versionNotifier';
+import { persistProjectedState } from './persistence/InMemoryProjectionPersistenceAdapter';
+import type { ProjectionPersistenceCapabilities, ProjectionPersistenceMode } from './persistence/modeSelection';
 
 type PlainObject = Record<string, unknown>;
 
@@ -37,7 +40,9 @@ type RuntimeProjectionDefinition<TState extends PlainObject> = {
 };
 
 type ProjectionPersistenceContract<TState extends PlainObject> = ProjectionReadContract<TState> &
-  DocumentProjectionPersistenceContract;
+  Partial<ProjectionPersistenceCapabilities<TState>> &
+  Partial<PatchProjectionPersistenceContract> &
+  Partial<DocumentProjectionPersistenceContract>;
 
 export interface ProjectionRuntimeBatchStats {
   commitsRead: number;
@@ -55,12 +60,16 @@ export interface ProjectionRuntimeProcessorOptions<TState extends PlainObject> {
   linkStore: LinkStoreContract;
   persistence: ProjectionPersistenceContract<TState>;
   versionNotifier?: VersionNotifierContract;
+  persistenceMode?: ProjectionPersistenceMode;
   batchSize?: number;
   onBatch?: (stats: ProjectionRuntimeBatchStats) => void;
 }
 
+const DEFAULT_PERSISTENCE_MODE: ProjectionPersistenceMode = 'document';
+
 interface PendingDocument<TState extends PlainObject> {
   documentId: string;
+  previousState: TState;
   state: TState;
   baseVersion: number;
   appliedCommits: number;
@@ -132,34 +141,21 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
     const documentsToPersist = Array.from(pendingDocuments.values()).filter((pending) => pending.appliedCommits > 0);
 
     for (const pending of documentsToPersist) {
-      const metadata = {
+      const persisted = await persistProjectedState({
+        persistence: this.resolvePersistenceCapabilities(),
         projectionName: this.options.projection.name,
         documentId: pending.documentId,
-        version: pending.baseVersion + pending.appliedCommits,
-        lastCheckpoint: pending.lastCheckpoint,
-        updatedAt: pending.lastCheckpoint.timestamp ?? new Date().toISOString(),
-        persistenceMode: 'document' as const
-      };
-
-      const projectedDocument: ProjectedDocument<TState> = {
-        ...(pending.state as TState),
-        _projection: metadata
-      };
-
-      const change: PersistProjectionDocument = {
-        projectionName: this.options.projection.name,
-        documentId: pending.documentId,
-        expectedVersion: pending.baseVersion > 0 ? pending.baseVersion : undefined,
-        document: projectedDocument
-      };
-
-      await this.options.persistence.persistDocument(change);
+        nextState: pending.state,
+        checkpoint: pending.lastCheckpoint,
+        preferredMode: this.options.persistenceMode ?? DEFAULT_PERSISTENCE_MODE,
+        operations: this.buildPatchOperations(pending)
+      });
 
       if (this.options.versionNotifier) {
         await this.options.versionNotifier.notifyVersionAvailable({
           projectionName: this.options.projection.name,
           documentId: pending.documentId,
-          version: metadata.version
+          version: persisted.document._projection.version
         });
       }
     }
@@ -208,6 +204,7 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
 
     const pending: PendingDocument<TState> = {
       documentId,
+      previousState: this.deepCloneState(currentState),
       state: currentState,
       baseVersion: storedDocument?._projection.version ?? 0,
       appliedCommits: 0,
@@ -221,6 +218,74 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   private stripProjectionMetadata(document: ProjectedDocument<TState>): TState {
     const { _projection: _, ...state } = document;
     return state as unknown as TState;
+  }
+
+  private deepCloneState(state: TState): TState {
+    return JSON.parse(JSON.stringify(state)) as TState;
+  }
+
+  private resolvePersistenceCapabilities(): ProjectionPersistenceCapabilities<TState> {
+    const persistence = this.options.persistence;
+
+    return {
+      preferredMode: persistence.preferredMode,
+      read: persistence,
+      patch:
+        persistence.patch ??
+        (typeof persistence.persistPatch === 'function'
+          ? {
+              persistPatch: persistence.persistPatch.bind(persistence)
+            }
+          : undefined),
+      document:
+        persistence.document ??
+        (typeof persistence.persistDocument === 'function'
+          ? {
+              persistDocument: persistence.persistDocument.bind(persistence)
+            }
+          : undefined)
+    };
+  }
+
+  private buildPatchOperations(pending: PendingDocument<TState>): Rfc6902Operation[] {
+    const operations: Rfc6902Operation[] = [];
+    const previousState = pending.previousState as Record<string, unknown>;
+    const nextState = pending.state as Record<string, unknown>;
+
+    if (pending.baseVersion === 0) {
+      for (const [key, value] of Object.entries(nextState)) {
+        operations.push({
+          op: 'add',
+          path: `/${this.escapePathSegment(key)}`,
+          value
+        });
+      }
+      return operations;
+    }
+
+    for (const key of Object.keys(previousState)) {
+      if (!(key in nextState)) {
+        operations.push({
+          op: 'remove',
+          path: `/${this.escapePathSegment(key)}`
+        });
+      }
+    }
+
+    for (const [key, value] of Object.entries(nextState)) {
+      const operation: Rfc6902Operation = {
+        op: key in previousState ? 'replace' : 'add',
+        path: `/${this.escapePathSegment(key)}`,
+        value
+      };
+      operations.push(operation);
+    }
+
+    return operations;
+  }
+
+  private escapePathSegment(segment: string): string {
+    return segment.replace(/~/g, '~0').replace(/\//g, '~1');
   }
 
   private resolveHandler(commit: ProjectionCommit): RuntimeProjectionHandler<TState> | null {
