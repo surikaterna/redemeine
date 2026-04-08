@@ -63,6 +63,7 @@
       "name": "@redemeine/projection",
       "version": "0.1.0",
       "dependencies": {
+        "@redemeine/kernel": "workspace:*",
         "immer": "^10.2.0",
       },
     },
@@ -83,6 +84,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@redemeine/aggregate": "workspace:*",
+        "@redemeine/kernel": "workspace:*",
         "@redemeine/saga": "workspace:*",
       },
     },

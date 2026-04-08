@@ -1,4 +1,21 @@
-import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError, Contract, ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import {
+    Command,
+    Event,
+    AggregateHooks,
+    CommandInterceptorContext,
+    EventInterceptorContext,
+    PluginExtensions,
+    PluginIntents,
+    RedemeinePlugin,
+    RedemeinePluginHookError,
+    Contract,
+    ReadonlyDeep,
+    createReadonlyDeepProxy,
+    type InspectionEventPublisher,
+    emitCanonicalInspection,
+    resolveInspectionCausationId,
+    resolveInspectionCorrelationId
+} from '@redemeine/kernel';
 import type { EntityPackage, AggregateEntityRegistry } from '@redemeine/aggregate';
 import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
@@ -337,7 +354,8 @@ const hydrateStateFromEvents = async <S>(
     aggregateId: string,
     baseState: S,
     events: HydrationEvents<Event>,
-    plugins: RedemeinePlugin<any>[]
+    plugins: RedemeinePlugin<any>[],
+    inspection?: InspectionEventPublisher
 ): Promise<S> => {
     let state = baseState;
     let replayedEvents = 0;
@@ -345,6 +363,30 @@ const hydrateStateFromEvents = async <S>(
     const hasHydratePlugins = hasHydrateEventPlugins(plugins);
 
     for await (const event of events) {
+        await emitCanonicalInspection(inspection, {
+            hook: 'event.hydration',
+            runtime: 'mirage',
+            boundary: 'aggregate.hydration',
+            ids: {
+                aggregateId,
+                eventType: event.type,
+                correlationId: resolveInspectionCorrelationId(event.metadata?.correlationId, `${aggregateId}:${event.type}:event.hydration`),
+                causationId: resolveInspectionCausationId(event.id, event.type),
+                eventId: resolveInspectionCausationId(event.id)
+            },
+            payload: {
+                eventType: event.type,
+                hasPlugins: hasHydratePlugins
+            },
+            compatibility: {
+                legacyHook: 'onHydrateEvent',
+                legacyContext: {
+                    aggregateId,
+                    eventType: event.type
+                }
+            }
+        });
+
         if (hasHydratePlugins) {
             const ctx: EventInterceptorContext<{}, unknown> = {
                 pluginKey: '',
@@ -390,6 +432,7 @@ export interface MirageOptions<TPlugins extends PluginExtensions = {}> {
     contract?: Contract;
     strict?: boolean;
     plugins?: RedemeinePlugin<TPlugins>[];
+    inspection?: InspectionEventPublisher;
 }
 
 /**
@@ -405,6 +448,7 @@ export class MirageCore<S> {
     private listeners: ((state: S) => void)[] = [];
     private plugins: RedemeinePlugin<any>[];
     private hasBeforeCommandPlugins: boolean;
+    private inspection?: InspectionEventPublisher;
 
     public get uncommitted(): Event[] {
         return this.pendingResults.events;
@@ -421,9 +465,11 @@ export class MirageCore<S> {
         public state: S,
         public contract?: Contract,
         public strict: boolean = false,
-        plugins: RedemeinePlugin<any>[] = []
+        plugins: RedemeinePlugin<any>[] = [],
+        inspection?: InspectionEventPublisher
     ) {
         this.plugins = plugins;
+        this.inspection = inspection;
         this.plugins.forEach(assertPluginHasKey);
         this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
     }
@@ -441,6 +487,29 @@ export class MirageCore<S> {
         for (const plugin of this.plugins) {
             if (typeof plugin.onBeforeCommand === 'function') {
                 ctx.pluginKey = plugin.key;
+                await emitCanonicalInspection(this.inspection, {
+                    hook: 'command.ingress',
+                    runtime: 'mirage',
+                    boundary: 'aggregate.command',
+                    ids: {
+                        aggregateId: this.id,
+                        correlationId: resolveInspectionCorrelationId(command.headers?.['correlationId'], `${this.id}:${command.type}:command.ingress`),
+                        causationId: resolveInspectionCausationId(command.id, command.type)
+                    },
+                    payload: {
+                        pluginKey: plugin.key,
+                        commandType: command.type,
+                        hasMeta: ctx.meta !== undefined
+                    },
+                    compatibility: {
+                        legacyHook: 'onBeforeCommand',
+                        legacyContext: {
+                            pluginKey: ctx.pluginKey,
+                            aggregateId: ctx.aggregateId,
+                            commandType: ctx.commandType
+                        }
+                    }
+                });
                 try {
                     await plugin.onBeforeCommand(ctx);
                 } catch (error) {
@@ -450,7 +519,33 @@ export class MirageCore<S> {
         }
     }
 
+    private async emitCommandIngress(command: Command<any, string>): Promise<void> {
+        void emitCanonicalInspection(this.inspection, {
+            hook: 'command.ingress',
+            runtime: 'mirage',
+            boundary: 'aggregate.command',
+            ids: {
+                aggregateId: this.id,
+                correlationId: resolveInspectionCorrelationId(command.headers?.['correlationId'], `${this.id}:${command.type}:command.ingress`),
+                causationId: resolveInspectionCausationId(command.id, command.type)
+            },
+            payload: {
+                commandType: command.type,
+                viaPlugins: this.hasBeforeCommandPlugins
+            },
+            compatibility: {
+                legacyHook: 'onBeforeCommand',
+                legacyContext: {
+                    aggregateId: this.id,
+                    commandType: command.type
+                }
+            }
+        });
+    }
+
     private processAndApply(command: Command<any, string>): S {
+        void this.emitCommandIngress(command);
+
         if (this.builder.hooks?.onBeforeCommand) {
             this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
         }
@@ -505,6 +600,7 @@ export class MirageCore<S> {
     }
 
     private async dispatchWithPlugins(command: Command<any, string>): Promise<S> {
+        await this.emitCommandIngress(command);
         await this.runBeforeCommandInterceptors(command);
 
         if (this.builder.hooks?.onBeforeCommand) {
@@ -629,7 +725,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
     const makeMirage = (state: BuiltAggregateState<BA>, plugins: RedemeinePlugin<any>[]): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
 
-    const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, plugins);
+    const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, plugins, setup?.inspection);
     const mounts = builder.mounts || {};
     const selectors = (builder.selectors || {}) as Record<string, (state: ReadonlyDeep<BuiltAggregateState<BA>>, ...args: any[]) => any>;
 
@@ -1330,7 +1426,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     }
 
     return (async () => {
-        const hydratedState = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins);
+        const hydratedState = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins, setup?.inspection);
         return makeMirage(hydratedState, plugins);
     })();
 }

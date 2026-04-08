@@ -1,4 +1,5 @@
 export * from './types';
+export * from './inspection';
 export * from './createCommand';
 export * from './createEvent';
 export * from './identity';

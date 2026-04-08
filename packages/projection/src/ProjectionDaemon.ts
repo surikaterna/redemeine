@@ -1,4 +1,10 @@
 import { produce, Draft } from 'immer';
+import {
+  emitCanonicalInspection,
+  resolveInspectionCausationId,
+  resolveInspectionCorrelationId,
+  type InspectionEventPublisher
+} from '@redemeine/kernel';
 import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
 import { Checkpoint, ProjectionEvent } from './types';
@@ -24,6 +30,8 @@ export interface ProjectionDaemonOptions<TState> {
   onBatch?: (stats: BatchStats) => void;
   /** Link store for join routing correlation */
   linkStore?: IProjectionLinkStore;
+  /** Optional canonical inspection publisher */
+  inspection?: InspectionEventPublisher;
 }
 
 export interface BatchStats {
@@ -101,6 +109,30 @@ export class ProjectionDaemon<TState = unknown> {
     
     // Poll events
     const batch = await subscription.poll(cursor, batchSize);
+
+    await emitCanonicalInspection(this.options.inspection, {
+      hook: 'projection.batch.processing',
+      runtime: 'projection',
+      boundary: 'projection.daemon.batch',
+      ids: {
+        projectionName: projection.name,
+        correlationId: resolveInspectionCorrelationId(undefined, `${projection.name}:${batch.nextCursor.sequence}:projection.batch.processing`),
+        causationId: resolveInspectionCausationId(cursor.sequence, String(cursor.sequence))
+      },
+      payload: {
+        polledEvents: batch.events.length,
+        fromSequence: cursor.sequence,
+        toSequence: batch.nextCursor.sequence
+      },
+      compatibility: {
+        legacyHook: 'projection.onBatch',
+        legacyContext: {
+          projection: projection.name,
+          batchSize,
+          events: batch.events.length
+        }
+      }
+    });
     
     if (batch.events.length === 0) {
       const emptyStats = { eventsProcessed: 0, documentsUpdated: 0, duration: Date.now() - startTime };

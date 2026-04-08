@@ -9,12 +9,25 @@ import {
   type SagaIntent,
   type SagaRuntimeSideEffectResult
 } from '../src/referenceAdapters';
+import type { CanonicalInspectionEnvelope } from '@redemeine/kernel';
 
 const metadata = {
   sagaId: 'saga-777',
   correlationId: 'corr-777',
   causationId: 'cause-777'
 } as const;
+
+const waitFor = async (predicate: () => boolean, attempts = 50): Promise<void> => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+
+  throw new Error('waitFor timeout');
+};
 
 describe('reference adapters v1 integration', () => {
   it('provides in-memory persistence adapters with projection interfaces', () => {
@@ -291,6 +304,7 @@ describe('reference adapters v1 integration', () => {
 
   it('runs reference flow end-to-end across persistence scheduler side-effects telemetry', async () => {
     const adapters = createReferenceAdaptersV1();
+    const inspectionEvents: CanonicalInspectionEnvelope[] = [];
     const intents: SagaIntent[] = [
       {
         type: 'schedule',
@@ -336,6 +350,9 @@ describe('reference adapters v1 integration', () => {
       sagaId: 'saga-777',
       intents,
       nowIso: '2026-01-01T00:00:00.000Z',
+      inspection: (event) => {
+        inspectionEvents.push(event);
+      },
       schedulerPolicy: {
         restart: { mode: 'force', reason: 'overlap' },
         misfire: { mode: 'latest_only' }
@@ -358,6 +375,10 @@ describe('reference adapters v1 integration', () => {
     expect(telemetry.counters['saga.intent.executed']).toBe(3);
     expect(telemetry.counters['saga.intent.scheduled']).toBe(1);
     expect(telemetry.counters['saga.intent.cancelled_schedule']).toBe(1);
+
+    expect(inspectionEvents.filter((event) => event.hook === 'outbox.enqueue')).toHaveLength(1);
+    expect(inspectionEvents.filter((event) => event.hook === 'outbox.dequeue')).toHaveLength(3);
+    expect(inspectionEvents.filter((event) => event.hook === 'side_effect.execution')).toHaveLength(3);
   });
 
   it('correlates concurrent outbound responses and failures by response reference', async () => {
@@ -408,7 +429,7 @@ describe('reference adapters v1 integration', () => {
       ]
     });
 
-    await Promise.resolve();
+    await waitFor(() => resolvers.size === 2);
 
     resolvers.get('plugin-request:corr-b')?.({
       status: 'failed',
@@ -466,5 +487,74 @@ describe('reference adapters v1 integration', () => {
     expect(telemetry.counters['saga.intent.executed']).toBe(2);
     expect(telemetry.counters['saga.intent.execution_succeeded']).toBe(1);
     expect(telemetry.counters['saga.intent.execution_failed']).toBe(1);
+  });
+
+  it('emits retry.dead_letter when side effect execution fails', async () => {
+    const adapters = createReferenceAdaptersV1();
+    const inspectionEvents: CanonicalInspectionEnvelope[] = [];
+
+    const failedResult = await runReferenceAdapterFlowV1({
+      ...adapters,
+      sideEffects: createInMemorySideEffectsPluginV1(() => ({
+        status: 'failed',
+        error: 'fault-injected'
+      }))
+    }, {
+      sagaId: 'saga-failed-1',
+      nowIso: '2026-01-01T00:00:00.000Z',
+      inspection: (event) => {
+        inspectionEvents.push(event);
+      },
+      intents: [
+        {
+          type: 'plugin-request',
+          plugin_key: 'payments',
+          action_name: 'authorize',
+          action_kind: 'request_response',
+          execution_payload: { amount: 100 },
+          routing_metadata: {
+            response_handler_key: 'payments.authorize.ok',
+            error_handler_key: 'payments.authorize.failed',
+            handler_data: { orderId: 'order-1' }
+          },
+          metadata: {
+            ...metadata,
+            sagaId: 'saga-failed-1'
+          }
+        }
+      ]
+    });
+
+    expect(failedResult.responseCorrelations[0]?.status).toBe('failed');
+
+    const deadLetter = inspectionEvents.find((event) => event.hook === 'retry.dead_letter');
+    const dequeue = inspectionEvents.find((event) => event.hook === 'outbox.dequeue');
+
+    expect(dequeue).toMatchObject({
+      schema: 'redemeine.inspection/v1',
+      runtime: 'saga-runtime',
+      compatibility: {
+        legacyHook: 'runtime.telemetry'
+      },
+      ids: {
+        sagaId: 'saga-failed-1'
+      }
+    });
+
+    expect(deadLetter).toMatchObject({
+      schema: 'redemeine.inspection/v1',
+      runtime: 'saga-runtime',
+      compatibility: {
+        legacyHook: 'runtime.telemetry'
+      },
+      ids: {
+        sagaId: 'saga-failed-1'
+      },
+      payload: {
+        attempts: 1,
+        terminal: true,
+        reason: 'fault-injected'
+      }
+    });
   });
 });

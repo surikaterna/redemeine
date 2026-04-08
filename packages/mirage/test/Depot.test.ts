@@ -2,7 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '@redemeine/aggregate';
 import { createDepot, EventStore } from '../src/Depot';
 import { createLegacyAggregateBridge } from '../src/createMirage';
-import { Event, RedemeinePlugin } from '@redemeine/kernel';
+import { Event, RedemeinePlugin, type CanonicalInspectionEnvelope } from '@redemeine/kernel';
 
 type S = { id: string; count: number };
 
@@ -628,6 +628,7 @@ describe('Depot', () => {
   });
 
   test('fails fast in outbox_primary mode without saveEventsWithOutbox capability', async () => {
+
     const store: EventStore = {
       readStream: async function* () {},
       saveEvents: async () => undefined
@@ -647,5 +648,58 @@ describe('Depot', () => {
     await mirage.increment(1);
 
     await expect(depot.save(mirage)).rejects.toThrow('Outbox primary mode requires an EventStore implementing saveEventsWithOutbox');
+  });
+
+  test('emits canonical append and enqueue inspection compatibility mappings', async () => {
+    const inspectionEvents: CanonicalInspectionEnvelope[] = [];
+    const inspection = (event: CanonicalInspectionEnvelope) => {
+      inspectionEvents.push(event);
+    };
+    const store: EventStore = {
+      readStream: async function* () {},
+      saveEvents: async () => undefined
+    };
+
+    const depot = createDepot(aggregate, store, {
+      inspection,
+      plugins: [
+        {
+          key: 'append-test',
+          onBeforeAppend: async () => undefined,
+          onAfterCommit: async () => undefined
+        }
+      ]
+    });
+
+    const mirage = await depot.get('o1');
+    await mirage.increment(1);
+
+    await depot.save(mirage);
+
+    const append = inspectionEvents.find((event) => event.hook === 'event.append');
+    const enqueue = inspectionEvents.find((event) => event.hook === 'outbox.enqueue');
+
+    expect(append).toMatchObject({
+      schema: 'redemeine.inspection/v1',
+      runtime: 'mirage',
+      compatibility: {
+        legacyHook: 'onBeforeAppend'
+      },
+      ids: {
+        aggregateId: 'o1',
+        eventType: 'order.incremented.event'
+      }
+    });
+
+    expect(enqueue).toMatchObject({
+      schema: 'redemeine.inspection/v1',
+      runtime: 'mirage',
+      compatibility: {
+        legacyHook: 'onAfterCommit'
+      },
+      ids: {
+        aggregateId: 'o1'
+      }
+    });
   });
 });

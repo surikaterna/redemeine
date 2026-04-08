@@ -1,5 +1,14 @@
 import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol, HydrationEvents } from './createMirage';
-import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
+import {
+  Event,
+  EventInterceptorContext,
+  PluginExtensions,
+  RedemeinePlugin,
+  RedemeinePluginHookError,
+  emitCanonicalInspection,
+  resolveInspectionCausationId,
+  resolveInspectionCorrelationId
+} from '@redemeine/kernel';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
@@ -112,6 +121,30 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
       for (const plugin of plugins) {
         if (typeof plugin.onBeforeAppend === 'function') {
           ctx.pluginKey = plugin.key;
+          await emitCanonicalInspection(options?.inspection, {
+            hook: 'event.append',
+            runtime: 'mirage',
+            boundary: 'event_store.append',
+            ids: {
+              aggregateId: id,
+              eventType: event.type,
+              correlationId: resolveInspectionCorrelationId(event.metadata?.correlationId, `${id}:${event.type}:event.append`),
+              causationId: resolveInspectionCausationId(event.id, event.type),
+              eventId: resolveInspectionCausationId(event.id)
+            },
+            payload: {
+              pluginKey: plugin.key,
+              eventType: event.type
+            },
+            compatibility: {
+              legacyHook: 'onBeforeAppend',
+              legacyContext: {
+                aggregateId: id,
+                eventType: event.type,
+                pluginKey: plugin.key
+              }
+            }
+          });
           try {
             const nextPayload = await plugin.onBeforeAppend(ctx);
             if (nextPayload !== undefined) {
@@ -138,6 +171,29 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
     for (const plugin of plugins) {
       if (typeof plugin.onAfterCommit === 'function') {
+        await emitCanonicalInspection(options?.inspection, {
+          hook: 'outbox.enqueue',
+          runtime: 'mirage',
+          boundary: 'post_commit.side_effect',
+          ids: {
+            aggregateId: id,
+            correlationId: resolveInspectionCorrelationId((events[0]?.metadata as Record<string, unknown> | undefined)?.correlationId, `${id}:outbox.enqueue`),
+            causationId: resolveInspectionCausationId(events[0]?.id)
+          },
+          payload: {
+            pluginKey: plugin.key,
+            eventCount: events.length,
+            intentKeys: Object.keys(intents)
+          },
+          compatibility: {
+            legacyHook: 'onAfterCommit',
+            legacyContext: {
+              aggregateId: id,
+              events: events.map((event) => event.type),
+              pluginKey: plugin.key
+            }
+          }
+        });
         try {
           await plugin.onAfterCommit({
             pluginKey: plugin.key,
