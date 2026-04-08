@@ -1,9 +1,8 @@
 import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
 import {
-  type IEventSubscription,
-  type IProjectionStore,
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
+import type { IEventSubscription, IProjectionStore } from '@redemeine/projection-runtime';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -66,8 +65,8 @@ type ProjectionDaemonLike<TState> = {
 };
 
 type ProjectionRuntimeModule = {
-  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
-  ProjectionDaemon: new <TState>(options: {
+  InMemoryProjectionStore: new <TState extends Record<string, unknown>>() => IProjectionStore<TState>;
+  ProjectionDaemon: new <TState extends Record<string, unknown>>(options: {
     projection: ProjectionDefinition<TState>;
     subscription: IEventSubscription;
     store: IProjectionStore<TState>;
@@ -89,10 +88,10 @@ async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   if (!projectionRuntimeModulePromise) {
     projectionRuntimeModulePromise = (async () => {
       try {
-        return await dynamicImport('@redemeine/projection') as ProjectionRuntimeModule;
+        return await dynamicImport('@redemeine/projection-runtime') as ProjectionRuntimeModule;
       } catch (packageImportError) {
         try {
-          return await dynamicImport('../../projection/src/index') as ProjectionRuntimeModule;
+          return await dynamicImport('../../projection-runtime/src/index') as ProjectionRuntimeModule;
         } catch (sourceImportError) {
           throw new Error(
             `createTestDepot: unable to load projection runtime from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`

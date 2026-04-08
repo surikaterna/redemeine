@@ -23,6 +23,7 @@
   "dependencies": {
     "@redemeine/mirage": "workspace:*",
     "@redemeine/projection": "workspace:*",
+    "@redemeine/projection-runtime": "workspace:*",
     "@redemeine/saga": "workspace:*",
     "immer": "^10.1.1"
   }

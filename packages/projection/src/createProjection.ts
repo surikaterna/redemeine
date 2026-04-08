@@ -1,4 +1,4 @@
-import { Draft } from 'immer';
+import type { Draft } from 'immer';
 import { ProjectionEvent as BaseProjectionEvent } from './types';
 
 /**
