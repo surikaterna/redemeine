@@ -205,6 +205,13 @@ export interface SagaRuntimeReferenceAdapters {
   readonly telemetry: SagaRuntimeTelemetryPluginV1;
 }
 
+export interface CreateReferenceAdaptersV1Options {
+  readonly persistence?: SagaRuntimePersistencePluginV1;
+  readonly scheduler?: SagaRuntimeSchedulerPluginV1;
+  readonly sideEffects?: SagaRuntimeSideEffectsPluginV1;
+  readonly telemetry?: SagaRuntimeTelemetryPluginV1;
+}
+
 export interface SagaRuntimeReferenceFlowInput {
   readonly sagaId: string;
   readonly intents: readonly SagaIntent[];
@@ -499,12 +506,12 @@ export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 
   };
 }
 
-export function createReferenceAdaptersV1(): SagaRuntimeReferenceAdapters {
+export function createReferenceAdaptersV1(options: CreateReferenceAdaptersV1Options = {}): SagaRuntimeReferenceAdapters {
   return {
-    persistence: createInMemoryPersistencePluginV1(),
-    scheduler: createInMemorySchedulerPluginV1(),
-    sideEffects: createInMemorySideEffectsPluginV1(),
-    telemetry: createInMemoryTelemetryPluginV1()
+    persistence: options.persistence ?? createInMemoryPersistencePluginV1(),
+    scheduler: options.scheduler ?? createInMemorySchedulerPluginV1(),
+    sideEffects: options.sideEffects ?? createInMemorySideEffectsPluginV1(),
+    telemetry: options.telemetry ?? createInMemoryTelemetryPluginV1()
   };
 }
 
@@ -636,7 +643,9 @@ export async function runReferenceAdapterFlowV1(
     adapters.telemetry.event('saga.intent.executed', {
       sagaId: input.sagaId,
       executionId: execution.executionId,
-      status: result.status
+      status: result.status,
+      correlationId: execution.intent.metadata.correlationId,
+      causationId: execution.intent.metadata.causationId
     });
 
     return {

@@ -95,10 +95,15 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
       state.lastOrderId = event.payload.orderId;
     },
     authorized: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.runActivity('order.audit.prepare', () => ({
-        orderId: event.payload.orderId,
-        stage: 'authorized'
-      }));
+      ctx.emit({
+        type: 'run-activity',
+        name: 'order.audit.prepare',
+        closure: () => ({
+          orderId: event.payload.orderId,
+          stage: 'authorized'
+        }),
+        metadata: ctx.metadata
+      });
 
       ctx.actions.shipping.dispatch({
         orderId: event.payload.orderId,
@@ -109,7 +114,12 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
       state.lastOrderId = event.payload.orderId;
     },
     packed: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.schedule('delivery-followup', 60_000);
+      ctx.emit({
+        type: 'schedule',
+        id: 'delivery-followup',
+        delay: 60_000,
+        metadata: ctx.metadata
+      });
       ctx.actions.notifications.send({ orderId: event.payload.orderId, template: 'packed' });
 
       state.progression.push('packed');
@@ -122,17 +132,26 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
       state.lastOrderId = event.payload.orderId;
     },
     delivered: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.cancelSchedule('delivery-followup');
+      ctx.emit({
+        type: 'cancel-schedule',
+        id: 'delivery-followup',
+        metadata: ctx.metadata
+      });
       ctx.actions.notifications.send({ orderId: event.payload.orderId, template: 'delivered' });
 
       state.progression.push('delivered');
       state.lastOrderId = event.payload.orderId;
     },
     settled: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.runActivity('order.audit.finalize', () => ({
-        orderId: event.payload.orderId,
-        stage: 'settled'
-      }));
+      ctx.emit({
+        type: 'run-activity',
+        name: 'order.audit.finalize',
+        closure: () => ({
+          orderId: event.payload.orderId,
+          stage: 'settled'
+        }),
+        metadata: ctx.metadata
+      });
 
       state.progression.push('settled');
       state.lastOrderId = event.payload.orderId;
@@ -160,7 +179,7 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-2' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['run-activity', 'plugin-intent']
       }
     ]
   },
@@ -177,17 +196,17 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['run-activity', 'plugin-intent']
       },
       {
         type: 'orders.packed.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['schedule', 'plugin-one-way']
+        expectedIntentTypes: ['schedule', 'plugin-intent']
       },
       {
         type: 'orders.dispatched.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       }
     ]
   },
@@ -204,22 +223,22 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['run-activity', 'plugin-intent']
       },
       {
         type: 'orders.packed.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['schedule', 'plugin-one-way']
+        expectedIntentTypes: ['schedule', 'plugin-intent']
       },
       {
         type: 'orders.dispatched.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       },
       {
         type: 'orders.delivered.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['cancel-schedule', 'plugin-one-way']
+        expectedIntentTypes: ['cancel-schedule', 'plugin-intent']
       },
       {
         type: 'orders.settled.event',
@@ -229,7 +248,7 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.closed.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       }
     ]
   }
