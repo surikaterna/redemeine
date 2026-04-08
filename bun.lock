@@ -55,6 +55,10 @@
         "@redemeine/kernel": "workspace:*",
       },
     },
+    "packages/otel": {
+      "name": "@redemeine/otel",
+      "version": "0.1.0",
+    },
     "packages/projection": {
       "name": "@redemeine/projection",
       "version": "0.1.0",
@@ -295,6 +299,8 @@
     "@redemeine/kernel": ["@redemeine/kernel@workspace:packages/kernel"],
 
     "@redemeine/mirage": ["@redemeine/mirage@workspace:packages/mirage"],
+
+    "@redemeine/otel": ["@redemeine/otel@workspace:packages/otel"],
 
     "@redemeine/projection": ["@redemeine/projection@workspace:packages/projection"],
 
