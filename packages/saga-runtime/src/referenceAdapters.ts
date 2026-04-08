@@ -619,6 +619,31 @@ export async function runReferenceAdapterFlowV1(
 
   const completed = await Promise.all(sideEffectExecutions.map(async (execution) => {
     await emitCanonicalInspection(input.inspection, {
+      hook: 'outbox.dequeue',
+      runtime: 'saga-runtime',
+      boundary: 'adapter.side_effect',
+      ids: {
+        sagaId: input.sagaId,
+        intentId: execution.intentId,
+        executionId: execution.executionId,
+        correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:outbox.dequeue`),
+        causationId: execution.intent.metadata.causationId
+      },
+      payload: {
+        intentType: execution.intent.type,
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key
+      },
+      compatibility: {
+        legacyHook: 'runtime.telemetry',
+        legacyContext: {
+          event: 'saga.intent.dequeued',
+          executionId: execution.executionId,
+          intentId: execution.intentId
+        }
+      }
+    });
+
+    await emitCanonicalInspection(input.inspection, {
       hook: 'side_effect.execution',
       runtime: 'saga-runtime',
       boundary: 'adapter.side_effect',
@@ -666,6 +691,35 @@ export async function runReferenceAdapterFlowV1(
       executionId: execution.executionId,
       status: result.status
     });
+
+    if (result.status === 'failed') {
+      await emitCanonicalInspection(input.inspection, {
+        hook: 'retry.dead_letter',
+        runtime: 'saga-runtime',
+        boundary: 'adapter.side_effect',
+        ids: {
+          sagaId: input.sagaId,
+          intentId: execution.intentId,
+          executionId: execution.executionId,
+          correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:retry.dead_letter`),
+          causationId: execution.intent.metadata.causationId
+        },
+        payload: {
+          attempts: 1,
+          terminal: true,
+          reason: result.error ?? 'failed_without_retry_policy'
+        },
+        compatibility: {
+          legacyHook: 'runtime.telemetry',
+          legacyContext: {
+            event: 'saga.intent.dead_lettered',
+            executionId: execution.executionId,
+            intentId: execution.intentId,
+            status: result.status
+          }
+        }
+      });
+    }
 
     return {
       executionId: execution.executionId,
