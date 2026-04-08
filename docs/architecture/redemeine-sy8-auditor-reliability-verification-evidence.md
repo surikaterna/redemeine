@@ -34,7 +34,13 @@ Targeted reliability checks are mapped to existing deterministic integration tes
      - `keeps retry/redelivery execution counts observable in telemetry counters`
    - Invariant validated: telemetry counters reflect retries, failures, and success progression deterministically.
 
-5. **Adapter lifecycle and execution correlation sanity**
+5. **Lease recovery (claim expiry -> deterministic re-claim)**
+   - Test file: `packages/mirage/test/outboxDispatcher.integration.test.ts`
+   - Focused case:
+     - `recovers expired lease and allows re-claim in same run`
+   - Invariant validated: expired `leased` entries are deterministically recovered to claimable state and dispatched by the active worker in the same run cycle.
+
+6. **Adapter lifecycle and execution correlation sanity**
    - Test file: `packages/saga-runtime/test/reference-adapters.integration.test.ts`
    - Focused cases:
      - e2e adapter flow with persistence/scheduler/side-effects/telemetry
@@ -53,7 +59,15 @@ bun install
 
 Result: `584 packages installed`.
 
-2. Reliability delivery modes suite:
+2. Outbox worker lease/reliability suite:
+
+```powershell
+bun test packages/mirage/test/outboxDispatcher.integration.test.ts
+```
+
+Result: `7 pass, 0 fail`.
+
+3. Reliability delivery modes suite:
 
 ```powershell
 bun test packages/saga-runtime/test/reliability-delivery-modes.integration.test.ts
@@ -61,7 +75,7 @@ bun test packages/saga-runtime/test/reliability-delivery-modes.integration.test.
 
 Result: `3 pass, 0 fail`.
 
-3. Reference adapter integration reliability suite:
+4. Reference adapter integration reliability suite:
 
 ```powershell
 bun test packages/saga-runtime/test/reference-adapters.integration.test.ts
@@ -69,7 +83,7 @@ bun test packages/saga-runtime/test/reference-adapters.integration.test.ts
 
 Result: `10 pass, 0 fail`.
 
-4. Mirage depot atomicity/side-effect boundary suite:
+5. Mirage depot atomicity/side-effect boundary suite:
 
 ```powershell
 bun test packages/mirage/test/Depot.test.ts
@@ -83,11 +97,8 @@ Result: `14 pass, 0 fail`.
 - **Retries**: PASS — transient failure path shows deterministic retry scheduling progression.
 - **Dead-letter**: PASS — retry exhaustion transitions to dead-letter as expected.
 - **Idempotency**: PASS — effectively-once path dedupes redelivery; at-least-once path reprocesses.
-- **Lease recovery**: **BLOCKED / NOT COVERED IN CURRENT IMPLEMENTATION TEST SURFACE**.
-  - Evidence: targeted search for lease/claim semantics in `packages/saga-runtime` tests returned no matching worker lease recovery tests.
-  - Current runtime reliability suite validates retries/dead-letter/idempotency and persistence correlation, but not explicit worker lease-claim expiry/recovery invariants.
+- **Lease recovery**: PASS — expired outbox lease is recovered and re-claimed deterministically in worker cycle (`packages/mirage/test/outboxDispatcher.integration.test.ts`).
 
 ## Risk and Readiness Assessment
 
-- Remaining gap to full `redemeine-4gu` matrix: explicit lease recovery invariant coverage is absent in current code/test surface.
-- Release readiness for full outbox reliability matrix should be considered **conditional** pending lease-recovery implementation/tests, or explicit scope carve-out accepted by Builder/Architect.
+- Full `redemeine-4gu` reliability matrix now has deterministic evidence coverage across atomicity, retries, dead-letter, idempotency, and lease recovery invariants.
