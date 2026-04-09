@@ -12,6 +12,7 @@ import type {
   ProjectionWorkerPushManyResult,
   ProjectionWorkerPushResult,
   ProjectionWorkerResultItem,
+  ProjectionWorkerStoreFailure,
   ProjectionWorkerStateLoader,
   ProjectionWorkerStateRequest,
   ProjectionWorkerTransportMetadata
@@ -19,6 +20,7 @@ import type {
 
 const DEFAULT_PRIORITY = 0;
 const DEFAULT_RETRY_COUNT = 0;
+const DEFAULT_STATE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 type LaneSchedule = {
   tail: Promise<void>;
@@ -29,6 +31,15 @@ interface ProjectionStateCache {
   set(key: string, value: unknown | null): void;
   delete(key: string): void;
 }
+
+type CacheClock = () => number;
+
+type ProjectionWorkerStoreFailureLike = {
+  kind?: unknown;
+  reason?: unknown;
+  message?: unknown;
+  retryable?: unknown;
+};
 
 function normalizeMetadata(
   metadata: ProjectionWorkerTransportMetadata | undefined
@@ -94,26 +105,51 @@ function readPositiveInteger(value: number | undefined): number | undefined {
   return asInteger;
 }
 
-function createLruCache(maxEntries: number): ProjectionStateCache {
-  const entries = new Map<string, unknown | null>();
+function createLruCache(maxEntries: number, ttlMs: number, now: CacheClock): ProjectionStateCache {
+  const entries = new Map<string, { value: unknown | null; expiresAt: number }>();
+
+  function pruneExpiredFromOldest(): void {
+    const nowMs = now();
+    for (const [key, entry] of entries) {
+      if (entry.expiresAt > nowMs) {
+        break;
+      }
+
+      entries.delete(key);
+    }
+  }
 
   return {
     get(key: string): unknown | null | undefined {
-      if (!entries.has(key)) {
+      const existing = entries.get(key);
+      if (existing === undefined) {
         return undefined;
       }
 
-      const value = entries.get(key);
+      const nowMs = now();
+      if (existing.expiresAt <= nowMs) {
+        entries.delete(key);
+        return undefined;
+      }
+
       entries.delete(key);
-      entries.set(key, value ?? null);
-      return value;
+      entries.set(key, {
+        value: existing.value,
+        expiresAt: nowMs + ttlMs
+      });
+      return existing.value;
     },
     set(key: string, value: unknown | null): void {
+      pruneExpiredFromOldest();
+
       if (entries.has(key)) {
         entries.delete(key);
       }
 
-      entries.set(key, value);
+      entries.set(key, {
+        value,
+        expiresAt: now() + ttlMs
+      });
 
       while (entries.size > maxEntries) {
         const oldestKey = entries.keys().next().value;
@@ -225,6 +261,118 @@ function determineBatchMode(
   return 'none';
 }
 
+function normalizeStoreFailureReason(reason: string | undefined, kind: ProjectionWorkerStoreFailure['kind']): string {
+  if (typeof reason === 'string' && reason.length > 0) {
+    return reason;
+  }
+
+  if (kind === 'conflict') {
+    return 'store-conflict';
+  }
+
+  if (kind === 'transient') {
+    return 'store-transient-failure';
+  }
+
+  return 'store-terminal-failure';
+}
+
+function classifyStoreFailure(error: unknown): ProjectionWorkerStoreFailure | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+
+  const storeFailure = error as ProjectionWorkerStoreFailureLike;
+  if (storeFailure.kind === 'conflict') {
+    return {
+      kind: 'conflict',
+      reason: typeof storeFailure.reason === 'string'
+        ? storeFailure.reason
+        : normalizeStoreFailureReason(undefined, 'conflict')
+    };
+  }
+
+  if (storeFailure.kind === 'transient') {
+    return {
+      kind: 'transient',
+      reason: typeof storeFailure.reason === 'string'
+        ? storeFailure.reason
+        : normalizeStoreFailureReason(undefined, 'transient')
+    };
+  }
+
+  if (storeFailure.kind === 'terminal') {
+    return {
+      kind: 'terminal',
+      reason: typeof storeFailure.reason === 'string'
+        ? storeFailure.reason
+        : normalizeStoreFailureReason(undefined, 'terminal')
+    };
+  }
+
+  if (storeFailure.retryable === true) {
+    return {
+      kind: 'transient',
+      reason: typeof storeFailure.reason === 'string'
+        ? storeFailure.reason
+        : normalizeStoreFailureReason(undefined, 'transient')
+    };
+  }
+
+  return undefined;
+}
+
+function toStoreFailureDecision(failure: ProjectionWorkerStoreFailure): ProjectionWorkerDecision {
+  return {
+    status: 'nack',
+    retryable: failure.kind !== 'terminal',
+    reason: normalizeStoreFailureReason(failure.reason, failure.kind)
+  };
+}
+
+function collectStateTargetIds(commit: ProjectionWorkerCommit): readonly string[] {
+  const targetIds = new Set<string>();
+  for (const target of commit.message.routeDecision.targets) {
+    targetIds.add(target.targetId);
+  }
+
+  if (targetIds.size === 0) {
+    targetIds.add(commit.message.envelope.sourceId);
+  }
+
+  return Array.from(targetIds).sort();
+}
+
+function evictStateCacheTargets(
+  stateCache: ProjectionStateCache | undefined,
+  commit: ProjectionWorkerCommit
+): void {
+  if (stateCache === undefined) {
+    return;
+  }
+
+  for (const targetId of collectStateTargetIds(commit)) {
+    stateCache.delete(computeStateKey(commit.definition, targetId));
+  }
+}
+
+function decideStoreFailureForCommit(
+  stateCache: ProjectionStateCache | undefined,
+  commit: ProjectionWorkerCommit,
+  error: unknown
+): ProjectionWorkerDecision | undefined {
+  const failure = classifyStoreFailure(error);
+  if (failure === undefined) {
+    return undefined;
+  }
+
+  if (failure.kind !== 'terminal') {
+    evictStateCacheTargets(stateCache, commit);
+  }
+
+  return toStoreFailureDecision(failure);
+}
+
 async function processSingleCommit(
   processor: ProjectionWorkerProcessor,
   commit: ProjectionWorkerCommit,
@@ -234,12 +382,21 @@ async function processSingleCommit(
   stateCache: ProjectionStateCache | undefined
 ): Promise<ProjectionWorkerDecision> {
   const stateAccess = createProjectionStateAccess(commit, stateLoader, stateCache);
-  return processor({
-    commit,
-    metadata,
-    laneKeys,
-    ...stateAccess
-  });
+  try {
+    return await processor({
+      commit,
+      metadata,
+      laneKeys,
+      ...stateAccess
+    });
+  } catch (error) {
+    const decision = decideStoreFailureForCommit(stateCache, commit, error);
+    if (decision !== undefined) {
+      return decision;
+    }
+
+    throw error;
+  }
 }
 
 async function processBatch(
@@ -265,12 +422,32 @@ async function processBatch(
       )
     ).sort();
 
-    const decisions = await batchProcessor({
-      commits,
-      metadata,
-      laneKeys,
-      ...stateAccess
-    });
+    let decisions: readonly ProjectionWorkerDecision[];
+    try {
+      decisions = await batchProcessor({
+        commits,
+        metadata,
+        laneKeys,
+        ...stateAccess
+      });
+    } catch (error) {
+      const failureDecision = decideStoreFailureForCommit(stateCache, first, error);
+      if (failureDecision === undefined) {
+        throw error;
+      }
+
+      for (const commit of commits) {
+        if (commit === first) {
+          continue;
+        }
+
+        if (failureDecision.status === 'nack' && failureDecision.retryable) {
+          evictStateCacheTargets(stateCache, commit);
+        }
+      }
+
+      return commits.map(() => ({ ...failureDecision }));
+    }
 
     if (decisions.length !== commits.length) {
       throw new Error('Batch processor must return one decision per commit.');
@@ -305,8 +482,11 @@ export function createProjectionWorkerCore(
 
   const processor = options.processor;
   const lanes = new Map<string, LaneSchedule>();
-  const stateCache = readPositiveInteger(options.stateCache?.maxEntries) !== undefined
-    ? createLruCache(readPositiveInteger(options.stateCache?.maxEntries) as number)
+  const stateCacheMaxEntries = readPositiveInteger(options.stateCache?.maxEntries);
+  const stateCacheTtlMs = readPositiveInteger(options.stateCache?.ttlMs) ?? DEFAULT_STATE_CACHE_TTL_MS;
+  const stateCacheNow = options.stateCache?.now ?? Date.now;
+  const stateCache = stateCacheMaxEntries !== undefined
+    ? createLruCache(stateCacheMaxEntries, stateCacheTtlMs, stateCacheNow)
     : undefined;
 
   function getLane(laneKey: string): LaneSchedule {

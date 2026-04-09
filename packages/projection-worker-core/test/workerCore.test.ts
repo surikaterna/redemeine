@@ -247,4 +247,140 @@ describe('projection-worker-core', () => {
 
     expect(loads).toEqual(['invoice-1', 'invoice-2', 'invoice-3', 'invoice-1']);
   });
+
+  test('state cache expires entries by TTL (default configurable) while preserving maxEntries behavior', async () => {
+    const loads: string[] = [];
+    let nowMs = 10_000;
+
+    const worker = createProjectionWorkerCore({
+      processor: async (context) => {
+        const target = context.commit.message.routeDecision.targets[0]?.targetId;
+        if (target !== undefined) {
+          await context.getProjectionState(target);
+        }
+        return { status: 'ack' };
+      },
+      stateLoader: async ({ targetId }) => {
+        loads.push(targetId);
+        return { targetId, loadedAt: nowMs };
+      },
+      stateCache: {
+        maxEntries: 2,
+        ttlMs: 50,
+        now: () => nowMs
+      }
+    });
+
+    await worker.push(createCommit('a', 'invoice-1'));
+    nowMs += 20;
+    await worker.push(createCommit('b', 'invoice-1'));
+    nowMs += 51;
+    await worker.push(createCommit('c', 'invoice-1'));
+    await worker.push(createCommit('d', 'invoice-2'));
+    await worker.push(createCommit('e', 'invoice-3'));
+    await worker.push(createCommit('f', 'invoice-1'));
+
+    expect(loads).toEqual([
+      'invoice-1',
+      'invoice-1',
+      'invoice-2',
+      'invoice-3',
+      'invoice-1'
+    ]);
+  });
+
+  test('retryable store failures evict affected cache keys and return requeue-friendly nack', async () => {
+    const loads: string[] = [];
+    const worker = createProjectionWorkerCore({
+      processor: async (context) => {
+        const target = context.commit.message.routeDecision.targets[0]?.targetId;
+        if (target !== undefined) {
+          await context.getProjectionState(target);
+        }
+
+        if (context.commit.message.envelope.eventName === 'conflict') {
+          throw {
+            kind: 'conflict',
+            reason: 'occ-conflict'
+          };
+        }
+
+        if (context.commit.message.envelope.eventName === 'transient') {
+          throw {
+            kind: 'transient',
+            reason: 'temporary-store-unavailable'
+          };
+        }
+
+        return { status: 'ack' };
+      },
+      stateLoader: async ({ targetId }) => {
+        loads.push(targetId);
+        return { targetId, loaded: loads.length };
+      },
+      stateCache: {
+        maxEntries: 10
+      }
+    });
+
+    const conflict = await worker.push(createCommit('conflict', 'invoice-1'));
+    const afterConflict = await worker.push(createCommit('ack-after-conflict', 'invoice-1'));
+    const transient = await worker.push(createCommit('transient', 'invoice-2'));
+    const afterTransient = await worker.push(createCommit('ack-after-transient', 'invoice-2'));
+
+    expect(conflict.item.decision).toEqual({
+      status: 'nack',
+      retryable: true,
+      reason: 'occ-conflict'
+    });
+    expect(afterConflict.item.decision).toEqual({ status: 'ack' });
+
+    expect(transient.item.decision).toEqual({
+      status: 'nack',
+      retryable: true,
+      reason: 'temporary-store-unavailable'
+    });
+    expect(afterTransient.item.decision).toEqual({ status: 'ack' });
+
+    expect(loads).toEqual(['invoice-1', 'invoice-1', 'invoice-2', 'invoice-2']);
+  });
+
+  test('terminal store failures return non-retryable nack without cache eviction', async () => {
+    const loads: string[] = [];
+    const worker = createProjectionWorkerCore({
+      processor: async (context) => {
+        const target = context.commit.message.routeDecision.targets[0]?.targetId;
+        if (target !== undefined) {
+          await context.getProjectionState(target);
+        }
+
+        if (context.commit.message.envelope.eventName === 'terminal') {
+          throw {
+            kind: 'terminal',
+            reason: 'schema-validation-failed'
+          };
+        }
+
+        return { status: 'ack' };
+      },
+      stateLoader: async ({ targetId }) => {
+        loads.push(targetId);
+        return { targetId };
+      },
+      stateCache: {
+        maxEntries: 10
+      }
+    });
+
+    const terminal = await worker.push(createCommit('terminal', 'invoice-9'));
+    const afterTerminal = await worker.push(createCommit('ack-after-terminal', 'invoice-9'));
+
+    expect(terminal.item.decision).toEqual({
+      status: 'nack',
+      retryable: false,
+      reason: 'schema-validation-failed'
+    });
+    expect(afterTerminal.item.decision).toEqual({ status: 'ack' });
+    expect(loads).toEqual(['invoice-9']);
+  });
 });

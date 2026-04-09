@@ -122,6 +122,15 @@ export type ProjectionWorkerProjectionConfigResolver = (
 
 export interface ProjectionWorkerStateCacheOptions {
   readonly maxEntries: number;
+  readonly ttlMs?: number;
+  readonly now?: () => number;
+}
+
+export type ProjectionWorkerStoreFailureKind = 'conflict' | 'transient' | 'terminal';
+
+export interface ProjectionWorkerStoreFailure {
+  readonly kind: ProjectionWorkerStoreFailureKind;
+  readonly reason?: string;
 }
 
 export interface ProjectionWorkerCoreOptions {
