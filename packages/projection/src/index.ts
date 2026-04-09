@@ -25,4 +25,17 @@ export type {
   ProjectionDefinition,
   ProjectionBuilder
 } from '@redemeine/projection-runtime-core';
+export {
+  planReverseSubscribe,
+  planReverseRelink,
+  planReverseUnsubscribe
+} from './reverseSemanticsContract';
+export type {
+  ReverseLinkAddress,
+  ReverseMutation,
+  ReverseSemanticsWarning,
+  ReverseSubscribeSpec,
+  ReverseRelinkSpec,
+  ReverseUnsubscribeSpec
+} from './reverseSemanticsContract';
 export { InMemoryProjectionStore, InMemoryProjectionLinkStore } from '@redemeine/projection-runtime-store-inmemory';
