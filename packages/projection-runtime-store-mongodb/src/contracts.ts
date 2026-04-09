@@ -25,10 +25,66 @@ export interface IProjectionStore<TState = unknown> {
   load(documentId: string): Promise<TState | null>;
   save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void>;
   commitAtomic(write: ProjectionAtomicWrite<TState>): Promise<void>;
+  commitAtomicMany?(
+    request: ProjectionStoreCommitAtomicManyRequest<TState>
+  ): Promise<ProjectionStoreAtomicManyResult>;
   resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null>;
   getCheckpoint?(key: string): Promise<Checkpoint | null>;
   getDedupeCheckpoint(key: string): Promise<Checkpoint | null>;
   delete?(documentId: string): Promise<void>;
+}
+
+export interface ProjectionStoreAtomicManyCommittedResult {
+  status: 'committed';
+  highestWatermark: Checkpoint;
+  byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
+  committedCount: number;
+}
+
+export interface ProjectionStoreAtomicManyRejectedResult {
+  status: 'rejected';
+  highestWatermark: null;
+  byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
+  failedAtIndex: number;
+  reason: string;
+  committedCount: 0;
+}
+
+export type ProjectionStoreAtomicManyResult =
+  | ProjectionStoreAtomicManyCommittedResult
+  | ProjectionStoreAtomicManyRejectedResult;
+
+export interface ProjectionStoreFullDocumentWrite<TState = unknown> {
+  documentId: string;
+  mode: 'full';
+  fullDocument: TState;
+  checkpoint: Checkpoint;
+}
+
+export interface ProjectionStorePatchDocumentWrite {
+  documentId: string;
+  mode: 'patch';
+  patch: Record<string, unknown>;
+  checkpoint: Checkpoint;
+}
+
+export type ProjectionStoreDocumentWrite<TState = unknown> =
+  | ProjectionStoreFullDocumentWrite<TState>
+  | ProjectionStorePatchDocumentWrite;
+
+export interface ProjectionStoreDedupeWrite {
+  upserts: ReadonlyArray<{ key: string; checkpoint: Checkpoint }>;
+}
+
+export interface ProjectionStoreAtomicWrite<TState = unknown> {
+  routingKeySource: `${string}:${string}`;
+  documents: ReadonlyArray<ProjectionStoreDocumentWrite<TState>>;
+  dedupe: ProjectionStoreDedupeWrite;
+}
+
+export interface ProjectionStoreCommitAtomicManyRequest<TState = unknown> {
+  mode: 'atomic-all';
+  writes: ReadonlyArray<ProjectionStoreAtomicWrite<TState>>;
 }
 
 export interface IProjectionLinkStore {

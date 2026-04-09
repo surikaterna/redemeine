@@ -3,7 +3,16 @@ export type {
   ProjectionAtomicWrite,
   ProjectionDedupeWrite,
   IProjectionStore,
-  IProjectionLinkStore
+  IProjectionLinkStore,
+  ProjectionStoreAtomicManyCommittedResult,
+  ProjectionStoreAtomicManyRejectedResult,
+  ProjectionStoreAtomicManyResult,
+  ProjectionStoreFullDocumentWrite,
+  ProjectionStorePatchDocumentWrite,
+  ProjectionStoreDocumentWrite,
+  ProjectionStoreDedupeWrite,
+  ProjectionStoreAtomicWrite,
+  ProjectionStoreCommitAtomicManyRequest
 } from './contracts';
 
 export type {

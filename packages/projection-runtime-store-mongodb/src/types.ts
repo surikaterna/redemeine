@@ -36,6 +36,7 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
   linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
   dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
+  executeInTransaction?: <T>(work: () => Promise<T>) => Promise<T>;
   now?: () => string;
 }
 
