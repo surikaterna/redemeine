@@ -20,6 +20,7 @@
     "lint": "bunx tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "immer": "^10.2.0"
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-inmemory": "workspace:*"
   }
 }
