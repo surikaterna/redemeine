@@ -2,7 +2,11 @@ import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/
 import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
-import type { IEventSubscription, IProjectionStore } from '@redemeine/projection-runtime';
+import type {
+  IEventSubscription,
+  IProjectionStore,
+  IProjectionLinkStore
+} from '@redemeine/projection-runtime-core';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -65,8 +69,7 @@ type ProjectionDaemonLike<TState> = {
   processBatch(): Promise<{ eventsProcessed: number }>;
 };
 
-type ProjectionRuntimeModule = {
-  InMemoryProjectionStore: new <TState extends Record<string, unknown>>() => IProjectionStore<TState>;
+type ProjectionRuntimeCoreModule = {
   ProjectionDaemon: new <TState extends Record<string, unknown>>(options: {
     projection: ProjectionDefinition<TState>;
     subscription: IEventSubscription;
@@ -100,13 +103,17 @@ async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   if (!projectionRuntimeModulePromise) {
     projectionRuntimeModulePromise = (async () => {
       try {
-        return await dynamicImport('@redemeine/projection-runtime') as ProjectionRuntimeModule;
+        const core = await dynamicImport('@redemeine/projection-runtime-core') as ProjectionRuntimeCoreModule;
+        const inmemory = await dynamicImport('@redemeine/projection-runtime-store-inmemory') as ProjectionRuntimeStoreInMemoryModule;
+        return { core, inmemory };
       } catch (packageImportError) {
         try {
-          return await dynamicImport('../../projection-runtime/src/index') as ProjectionRuntimeModule;
+          const core = await dynamicImport('../../projection-runtime-core/src/index') as ProjectionRuntimeCoreModule;
+          const inmemory = await dynamicImport('../../projection-runtime-store-inmemory/src/index') as ProjectionRuntimeStoreInMemoryModule;
+          return { core, inmemory };
         } catch (sourceImportError) {
           throw new Error(
-            `createTestDepot: unable to load projection runtime core/store modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
+            `createTestDepot: unable to load projection runtime core/store-inmemory modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
           );
         }
       }
