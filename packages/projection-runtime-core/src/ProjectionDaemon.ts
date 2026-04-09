@@ -39,6 +39,11 @@ export interface BatchStats {
   };
 }
 
+interface RuntimeProjectionContext extends ProjectionContext {
+  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  getUnsubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+}
+
 class SubscriptionOrchestrator<TState = unknown> {
   private readonly cursorKey: string;
   private readonly modeKey: string;
@@ -520,7 +525,7 @@ export class ProjectionDaemon<TState = unknown> {
   /**
    * Create the context object passed to handlers
    */
-  private createContext(): ProjectionContext {
+  private createContext(): RuntimeProjectionContext {
     const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
     const unsubscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
 

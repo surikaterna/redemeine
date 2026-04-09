@@ -93,11 +93,15 @@ export interface ProjectionContext {
    * Used for .join semantics to correlate related aggregates
    */
   subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  
+
   /**
-   * Get current subscriptions
+   * Remove a prior subscription for a related aggregate stream.
    */
-  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
+
+  /**
+   * Internal runtime state is intentionally not exposed on public context.
+   */
 }
 
 /**

@@ -36,3 +36,23 @@ export type {
 } from './createProjection';
 export { ProjectionDaemon } from './ProjectionDaemon';
 export type { ProjectionDaemonOptions, BatchStats } from './ProjectionDaemon';
+export type {
+  ProjectionIngressPriority,
+  ProjectionResumeToken,
+  ProjectionEnvelopeMetadata,
+  ProjectionIngressEnvelope,
+  ProjectionIngress,
+  ProjectionIngressAckDecision,
+  ProjectionIngressNackDecision,
+  ProjectionIngressDecision,
+  ProjectionIngressResultItem,
+  ProjectionIngressPushResult,
+  ProjectionIngressPushManyResult,
+  ProjectionStoreAtomicManyResult,
+  ProjectionDocumentWriteMode,
+  ProjectionStoreDocumentWrite,
+  ProjectionRoutingKey,
+  ProjectionRouterFanoutEnvelope,
+  ProjectionRouterDecision,
+  ProjectionCatchupPollingAdapter
+} from './contracts';
