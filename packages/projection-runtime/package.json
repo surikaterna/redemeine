@@ -1,5 +1,5 @@
 {
-  "name": "@redemeine/projection",
+  "name": "@redemeine/projection-runtime",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
@@ -16,7 +16,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
+    "test": "bun test ./test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@redemeine/projection": "workspace:*"
   }
 }

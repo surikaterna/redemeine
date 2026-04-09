@@ -23,7 +23,12 @@
   "dependencies": {
     "@redemeine/mirage": "workspace:*",
     "@redemeine/projection": "workspace:*",
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-inmemory": "workspace:*",
     "@redemeine/saga": "workspace:*",
     "immer": "^10.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2"
   }
 }
