@@ -14,6 +14,21 @@ export type {
   ProjectionIngressPushManyResult
 } from './ingress';
 export type {
+  ProjectionDedupeKeyVersion,
+  ProjectionDedupeKeyEncoded,
+  ProjectionDedupeKey,
+  ProjectionDedupeRetentionCleanupPolicy,
+  ProjectionDedupeRetentionPolicy,
+  ProjectionDedupeRetentionDisposition,
+  ProjectionDedupeRetentionEvaluationInput
+} from './dedupe';
+export {
+  PROJECTION_DEDUPE_KEY_VERSION,
+  encodeProjectionDedupeKey,
+  decodeProjectionDedupeKey,
+  evaluateProjectionDedupeRetention
+} from './dedupe';
+export type {
   ProjectionStoreAtomicManyCommittedResult,
   ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
@@ -27,6 +42,7 @@ export type {
   ProjectionStoreContract,
   ProjectionStoreDurableDedupeContract,
   ProjectionStoreAtomicManyContract,
+  ProjectionStoreDedupeRetentionContract,
   ProjectionStoreWriteWatermark
 } from './store';
 export type {

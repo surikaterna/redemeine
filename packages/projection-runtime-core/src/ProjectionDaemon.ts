@@ -3,6 +3,7 @@ import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
 import { Checkpoint, EventBatch, ProjectionEvent, ProjectionWarning } from './types';
 import { ProjectionDefinition, ProjectionContext } from './createProjection';
+import { encodeProjectionDedupeKey } from './contracts';
 
 type RuntimeMode = 'catching_up' | 'ready_to_cutover' | 'live';
 
@@ -258,7 +259,12 @@ export class ProjectionDaemon<TState = unknown> {
       passCount++;
 
       for (const event of batch.events) {
-        const eventKey = `${event.aggregateType}:${event.aggregateId}:${event.sequence}`;
+        const eventKey = encodeProjectionDedupeKey({
+          projectionName: projection.name,
+          aggregateType: event.aggregateType,
+          aggregateId: event.aggregateId,
+          sequence: event.sequence
+        });
         if (processedEvents.has(eventKey)) continue;
 
         const persistedCheckpoint = await store.getDedupeCheckpoint(eventKey);
