@@ -239,7 +239,7 @@ Copy History: The framework copies all events from V1 up to the explicit "fork p
 
 Resume: V2 hydrates its state from those copied events. Because your new, bug-free code is now running, when it evaluates the last event, it makes the correct state transition and generates the correct intents.
 
-Crucial Guardrail: When building the Fork feature, your framework must carry over the original intentIds for any side-effects that were already executed prior to the fork point. This ensures that the Outbox's idempotency checks prevent V2 from double-charging a credit card that V1 already charged.
+Crucial Guardrail: When building the Fork feature, your framework must carry over the original intentIds for any side-effects that were already executed prior to the fork point. This ensures CDC relay + consumer idempotency checks prevent V2 from double-charging a credit card that V1 already charged.
 3. The "Force Transition" (The Ultimate Escape Hatch)
 Sometimes, the external world just breaks, and neither a code fix nor a payload repair will save you. (e.g., A partner company goes bankrupt and their webhook will never fire).
 
@@ -362,7 +362,7 @@ Determinism: invoke calls dequeue pending requests in FIFO order per token, so c
 
 Assertions: * .expectState(expected): Deep-equals the mutated Immer draft.
 
-.expectIntents(intents): Deep-equals the exact array of Plugin Intents yielded to the Outbox (e.g., verifying a schedule or https intent was generated with the correct routing metadata).
+.expectIntents(intents): Deep-equals the exact array of Plugin Intents yielded to the relay/inbox path (e.g., verifying a schedule or https intent was generated with the correct routing metadata).
 
 3. The Projection Tester (testProjection)
 Provide a simple fixture to validate Read-Model mutations and database patch generation.

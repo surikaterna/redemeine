@@ -305,6 +305,8 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           await store.saveEvents(core.id, appendableEvents, core.version);
           core.clearPendingResults();
 
+          // Runtime policy: keep post-commit hooks inline in-process.
+          // Durable side-effect relay is handled by CDC -> DB -> relay -> MQ -> saga/projection inbox flows.
           await runAfterCommitHooks(core.id, appendableEvents, intents);
       }
   };
