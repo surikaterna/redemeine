@@ -170,57 +170,6 @@ describe('createProjection Builder API', () => {
     expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
   });
 
-  test('join() contract remains unchanged when reverseSubscribe API exists', () => {
-    const builder = createProjection<{ invoice: InvoiceState; order: OrderState }>('join-contract', () => ({
-      invoice: { id: '', amount: 0, status: 'pending' as const },
-      order: { id: '', items: [] }
-    }));
-
-    expect(typeof builder.join).toBe('function');
-
-    const projection = builder
-      .from(invoiceAggDef, {
-        created: (state, event) => {
-          state.invoice.id = event.payload.customerId;
-        }
-      })
-      .join(orderAggDef, {
-        shipped: (state, event) => {
-          state.order.shippedAt = '2024-01-01T00:00:00Z';
-        }
-      })
-      .build();
-
-    expect(projection.joinStreams).toHaveLength(1);
-    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
-  });
-
-  test('reverseSubscribe() exists and registers a join stream', () => {
-    const builder = createProjection<{ invoice: InvoiceState; order: OrderState }>('reverse-subscribe-contract', () => ({
-      invoice: { id: '', amount: 0, status: 'pending' as const },
-      order: { id: '', items: [] }
-    }));
-
-    expect(typeof builder.reverseSubscribe).toBe('function');
-
-    const projection = builder
-      .from(invoiceAggDef, {
-        created: (state, event) => {
-          state.invoice.id = event.payload.customerId;
-        }
-      })
-      .reverseSubscribe(orderAggDef, {
-        shipped: (state, event) => {
-          state.order.shippedAt = '2024-01-01T00:00:00Z';
-        }
-      })
-      .build();
-
-    expect(projection.reverseSubscribeStreams).toHaveLength(1);
-    expect(projection.reverseSubscribeStreams?.[0].aggregate).toBe(orderAggDef);
-    expect(projection.reverseSubscribeStreams?.[0].handlers).toHaveProperty('shipped');
-  });
-
   test('initialState(fn) overrides the initial state factory', () => {
     const projection = createProjection<InvoiceState>('invoice-summary', () => ({
       id: '',
@@ -511,7 +460,6 @@ describe('createProjection ProjectionDefinition Output', () => {
     expect(projection).toHaveProperty('identity');
     expect(projection).toHaveProperty('fromStream');
     expect(projection).toHaveProperty('joinStreams');
-    expect(projection).toHaveProperty('reverseSubscribeStreams');
     expect(projection).toHaveProperty('subscriptions');
   });
 
@@ -693,7 +641,6 @@ describe('createProjection Type Exports', () => {
     expect(builder).toBeDefined();
     expect(typeof builder.from).toBe('function');
     expect(typeof builder.join).toBe('function');
-    expect(typeof builder.reverseSubscribe).toBe('function');
     expect(typeof builder.build).toBe('function');
   });
 

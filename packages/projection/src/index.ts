@@ -1,17 +1,8 @@
+export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
 export {
-  createProjection,
-  ProjectionDaemon,
-  type ProjectionDaemonOptions,
-  type BatchStats
-} from '@redemeine/projection-runtime-core';
+  createProjection
+} from './createProjection';
 export type {
-  Checkpoint,
-  ProjectionEvent,
-  EventBatch,
-  Cursor,
-  IProjectionStore,
-  IEventSubscription,
-  IProjectionLinkStore,
   AggregateDefinition,
   AggregateEventPayloadMap,
   AggregateEventKeys,
@@ -21,21 +12,14 @@ export type {
   ProjectionHandlers,
   ProjectionStreamDefinition,
   JoinStreamDefinition,
-  ReverseSubscribeStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder
-} from '@redemeine/projection-runtime-core';
+} from './createProjection';
 export {
-  planReverseSubscribe,
-  planReverseRelink,
-  planReverseUnsubscribe
+  reverseSemanticsContract,
+  createReverseSemanticsContract
 } from './reverseSemanticsContract';
 export type {
-  ReverseLinkAddress,
-  ReverseMutation,
-  ReverseSemanticsWarning,
-  ReverseSubscribeSpec,
-  ReverseRelinkSpec,
-  ReverseUnsubscribeSpec
+  ReverseSemanticsOperation,
+  ReverseSemanticsContract
 } from './reverseSemanticsContract';
-export { InMemoryProjectionStore, InMemoryProjectionLinkStore } from '@redemeine/projection-runtime-store-inmemory';
