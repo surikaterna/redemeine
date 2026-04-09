@@ -285,4 +285,47 @@ describe('Lifecycle Routing', () => {
     const ghostDoc = await store.load('order-999');
     expect(ghostDoc).toBeNull();
   });
+
+  it('should expose usable unsubscribeFrom on handler context at runtime', async () => {
+    let unsubscribeFnType: string | null = null;
+    let subscribeFnType: string | null = null;
+
+    const projection = createProjection<InvoiceState>('runtime-context-contract', () => ({ total: 0 }))
+      .from(invoiceAgg, {
+        'invoice.created': (state, event: any, ctx) => {
+          subscribeFnType = typeof ctx.subscribeTo;
+          unsubscribeFnType = typeof ctx.unsubscribeFrom;
+          ctx.subscribeTo(orderAgg, event.payload.orderId);
+          ctx.unsubscribeFrom(orderAgg, event.payload.orderId);
+          state.total = event.payload.amount;
+        }
+      })
+      .join(orderAgg, {
+        'order.shipped': (state, event: any) => {
+          state.total += event.payload.amount;
+        }
+      })
+      .build();
+
+    const subscription = createMockSubscription([
+      {
+        aggregateType: 'invoice',
+        aggregateId: 'invoice-123',
+        type: 'invoice.created',
+        payload: { amount: 100, orderId: 'order-456' },
+        sequence: 1,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+
+    const daemon = new ProjectionDaemon({ projection, subscription, store });
+
+    await daemon.processBatch();
+
+    expect(subscribeFnType).toBe('function');
+    expect(unsubscribeFnType).toBe('function');
+
+    const doc = await store.load('invoice-123');
+    expect(doc?.total).toBe(100);
+  });
 });

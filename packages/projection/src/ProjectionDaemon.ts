@@ -250,6 +250,9 @@ export class ProjectionDaemon<TState = unknown> {
       subscribeTo(aggregate, aggregateId) {
         subscriptions.push({ aggregate, aggregateId });
       },
+      unsubscribeFrom(_aggregate, _aggregateId) {
+        // Runtime API contract surface for handlers; no-op until unlink semantics are defined.
+      },
       getSubscriptions() {
         return [...subscriptions];
       }

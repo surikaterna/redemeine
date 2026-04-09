@@ -92,6 +92,11 @@ export interface ProjectionContext {
    * Used for .join semantics to correlate related aggregates
    */
   subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
+
+  /**
+   * Unsubscribe from events from another aggregate
+   */
+  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
   
   /**
    * Get current subscriptions
@@ -205,6 +210,14 @@ export interface ProjectionBuilder<TState> {
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
+
+  /**
+   * Add a reverse subscription stream aliasing .join semantics.
+   */
+  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
+  ): ProjectionBuilder<TState>;
   
   /**
    * Build the final projection definition
@@ -280,6 +293,13 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     });
     
     return this;
+  }
+
+  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
+  ): ProjectionBuilder<TState> {
+    return this.join(aggregate, handlers);
   }
 
   build(): ProjectionDefinition<TState> {
