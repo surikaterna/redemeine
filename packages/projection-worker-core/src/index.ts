@@ -24,6 +24,11 @@ export type {
   ProjectionWorkerStateCacheOptions,
   ProjectionWorkerStateLoader,
   ProjectionWorkerStateRequest,
+  ProjectionWorkerReplayPollingAdapter,
+  ProjectionWorkerReplayPollingAdapterOptions,
+  ProjectionWorkerReplayPollingNack,
+  ProjectionWorkerReplayPollingResult,
   ProjectionWorkerTransportMetadata
 } from './contracts';
 export { createProjectionWorkerCore } from './createProjectionWorkerCore';
+export { createProjectionWorkerReplayPollingAdapter } from './createProjectionWorkerReplayPollingAdapter';

@@ -1,3 +1,9 @@
+import type {
+  Checkpoint,
+  ProjectionCatchupPollingAdapter,
+  ProjectionEvent
+} from '@redemeine/projection-runtime-core';
+
 export interface ProjectionDefinitionLike {
   readonly projectionName: string;
 }
@@ -129,4 +135,31 @@ export interface ProjectionWorkerCoreOptions {
 export interface ProjectionWorkerPushContract {
   push(commit: ProjectionWorkerCommit): Promise<ProjectionWorkerPushResult>;
   pushMany(commits: readonly ProjectionWorkerCommit[]): Promise<ProjectionWorkerPushManyResult>;
+}
+
+export interface ProjectionWorkerReplayPollingAdapterOptions {
+  readonly polling: ProjectionCatchupPollingAdapter;
+  readonly worker: ProjectionWorkerPushContract;
+  readonly toCommit: (event: ProjectionEvent) => ProjectionWorkerCommit;
+  readonly initialCursor?: Checkpoint;
+  readonly dedupeKey?: (event: ProjectionEvent) => string;
+}
+
+export interface ProjectionWorkerReplayPollingNack {
+  readonly event: ProjectionEvent;
+  readonly decision: ProjectionWorkerNackDecision;
+}
+
+export interface ProjectionWorkerReplayPollingResult {
+  readonly cursorStart: Checkpoint;
+  readonly cursorEnd: Checkpoint;
+  readonly polledCount: number;
+  readonly pushedCount: number;
+  readonly dedupedCount: number;
+  readonly nack?: ProjectionWorkerReplayPollingNack;
+}
+
+export interface ProjectionWorkerReplayPollingAdapter {
+  getCursor(): Checkpoint;
+  pollAndPush(batchSize: number): Promise<ProjectionWorkerReplayPollingResult>;
 }
