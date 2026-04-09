@@ -13,10 +13,13 @@ import type {
   ProjectionPoisonClassificationModel,
   ProjectionPoisonClassifier,
   ProjectionEnvelopeValidator,
+  ProjectionDedupeKey,
+  ProjectionDedupeRetentionPolicy,
   ProjectionStoreAtomicManyContract,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
   ProjectionStoreContract,
+  ProjectionStoreDedupeRetentionContract,
   ProjectionStoreDocumentWrite,
   ProjectionStoreDurableDedupeContract,
   ProjectionShardCheckpointLeaseContract,
@@ -31,7 +34,11 @@ import type {
 } from '../src';
 import {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
-  classifyProjectionEnvelopeCandidate
+  PROJECTION_DEDUPE_KEY_VERSION,
+  classifyProjectionEnvelopeCandidate,
+  decodeProjectionDedupeKey,
+  encodeProjectionDedupeKey,
+  evaluateProjectionDedupeRetention
 } from '../src';
 
 function createAckDecision(): ProjectionIngressAckDecision {
@@ -344,11 +351,36 @@ describe('projection-runtime-core contract types', () => {
   });
 
   test('store atomicMany contract exposes highest watermark and durable dedupe semantics', async () => {
+    const canonicalKey = encodeProjectionDedupeKey({
+      projectionName: 'invoice-summary',
+      aggregateType: 'invoice',
+      aggregateId: '1',
+      sequence: 11
+    });
+
     const dedupeStore: ProjectionStoreDurableDedupeContract = {
       async getDedupeCheckpoint(key) {
-        return key === 'invoice:1:created:11' ? { sequence: 11 } : null;
+        return key === canonicalKey ? { sequence: 11 } : null;
       }
     };
+
+    const dedupeRetentionPolicy: ProjectionDedupeRetentionPolicy = {
+      windowMs: 30_000,
+      ttlMs: 300_000,
+      cleanup: {
+        mode: 'scheduled',
+        maxDeletesPerRun: 1_000
+      }
+    };
+
+    const dedupeRetention: ProjectionStoreDedupeRetentionContract = {
+      async setDedupeRetentionPolicy(policy) {
+        expect(policy.cleanup?.mode).toBe('scheduled');
+        expect(policy.ttlMs).toBeGreaterThanOrEqual(policy.windowMs);
+      }
+    };
+
+    await dedupeRetention.setDedupeRetentionPolicy(dedupeRetentionPolicy);
 
     const atomicManyOnly: ProjectionStoreAtomicManyContract = {
       async commitAtomicMany(request: ProjectionStoreCommitAtomicManyRequest): Promise<ProjectionStoreAtomicManyResult> {
@@ -400,7 +432,15 @@ describe('projection-runtime-core contract types', () => {
             }
           ],
           dedupe: {
-            upserts: [{ key: 'invoice:1:created:21', checkpoint: { sequence: 21 } }]
+            upserts: [{
+              key: encodeProjectionDedupeKey({
+                projectionName: 'invoice-summary',
+                aggregateType: 'invoice',
+                aggregateId: '1',
+                sequence: 21
+              }),
+              checkpoint: { sequence: 21 }
+            }]
           }
         }
       ]
@@ -413,7 +453,7 @@ describe('projection-runtime-core contract types', () => {
       expect(committed.byLaneWatermark?.['invoice-summary:doc-1']?.sequence).toBe(21);
     }
 
-    const dedupeCheckpoint = await store.getDedupeCheckpoint('invoice:1:created:11');
+    const dedupeCheckpoint = await store.getDedupeCheckpoint(canonicalKey);
     expect(dedupeCheckpoint?.sequence).toBe(11);
   });
 
@@ -612,5 +652,57 @@ describe('projection-runtime-core contract types', () => {
     const upDestinations = new Set(scaleUpPlan.assignments.map((assignment) => assignment.toWorkerId));
     expect(upDestinations).toEqual(new Set(['worker-0', 'worker-1', 'worker-6', 'worker-7']));
     expect(scaleUpPlan.assignments.filter((assignment) => assignment.mode === 'handoff')).toHaveLength(2);
+  });
+
+  test('dedupe key contract is deterministic and round-trips encoded fields', () => {
+    const input: Omit<ProjectionDedupeKey, 'version'> = {
+      projectionName: 'invoice-summary',
+      aggregateType: 'invoice domain',
+      aggregateId: 'id/with|delimiters?and=spaces',
+      sequence: 42
+    };
+
+    const encoded = encodeProjectionDedupeKey(input);
+    const encodedAgain = encodeProjectionDedupeKey(input);
+    expect(encodedAgain).toBe(encoded);
+
+    const decoded = decodeProjectionDedupeKey(encoded);
+    expect(decoded).toEqual({
+      version: PROJECTION_DEDUPE_KEY_VERSION,
+      ...input
+    });
+
+    expect(decodeProjectionDedupeKey('v2|a|b|c|1')).toBeNull();
+    expect(decodeProjectionDedupeKey('v1|a|b|c|not-a-number')).toBeNull();
+  });
+
+  test('dedupe retention evaluation keeps safety window then expires at ttl', () => {
+    const now = Date.parse('2026-04-09T18:05:00.000Z');
+    const policy: ProjectionDedupeRetentionPolicy = {
+      windowMs: 60_000,
+      ttlMs: 300_000,
+      cleanup: { mode: 'lazy' }
+    };
+
+    const withinWindow = evaluateProjectionDedupeRetention({
+      policy,
+      checkpoint: { sequence: 11, timestamp: '2026-04-09T18:04:30.000Z' },
+      now
+    });
+    expect(withinWindow).toBe('retain');
+
+    const afterWindowBeforeTtl = evaluateProjectionDedupeRetention({
+      policy,
+      checkpoint: { sequence: 11, timestamp: '2026-04-09T18:03:30.000Z' },
+      now
+    });
+    expect(afterWindowBeforeTtl).toBe('retain');
+
+    const atTtl = evaluateProjectionDedupeRetention({
+      policy,
+      checkpoint: { sequence: 11, timestamp: '2026-04-09T18:00:00.000Z' },
+      now
+    });
+    expect(atTtl).toBe('eligible_for_cleanup');
   });
 });

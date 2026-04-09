@@ -65,6 +65,13 @@ export type {
   ProjectionIngressResultItem,
   ProjectionIngressPushResult,
   ProjectionIngressPushManyResult,
+  ProjectionDedupeKeyVersion,
+  ProjectionDedupeKeyEncoded,
+  ProjectionDedupeKey,
+  ProjectionDedupeRetentionCleanupPolicy,
+  ProjectionDedupeRetentionPolicy,
+  ProjectionDedupeRetentionDisposition,
+  ProjectionDedupeRetentionEvaluationInput,
   ProjectionStoreAtomicManyCommittedResult,
   ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
@@ -78,6 +85,7 @@ export type {
   ProjectionStoreContract,
   ProjectionStoreDurableDedupeContract,
   ProjectionStoreAtomicManyContract,
+  ProjectionStoreDedupeRetentionContract,
   ProjectionStoreWriteWatermark,
   ProjectionRoutingKey,
   ProjectionRouterFanoutEnvelope,
@@ -108,4 +116,10 @@ export type {
 export {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
   classifyProjectionEnvelopeCandidate
+} from './contracts';
+export {
+  PROJECTION_DEDUPE_KEY_VERSION,
+  encodeProjectionDedupeKey,
+  decodeProjectionDedupeKey,
+  evaluateProjectionDedupeRetention
 } from './contracts';

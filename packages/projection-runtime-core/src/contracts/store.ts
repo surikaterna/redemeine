@@ -1,4 +1,8 @@
 import type { Checkpoint } from '../types';
+import type {
+  ProjectionDedupeKeyEncoded,
+  ProjectionDedupeRetentionPolicy
+} from './dedupe';
 
 export interface ProjectionStoreAtomicManyCommittedResult {
   status: 'committed';
@@ -44,7 +48,7 @@ export type ProjectionStoreDocumentWrite<TState = unknown> =
  * Durable dedupe updates that must persist with projection writes.
  */
 export interface ProjectionStoreDedupeWrite {
-  upserts: ReadonlyArray<{ key: string; checkpoint: Checkpoint }>;
+  upserts: ReadonlyArray<{ key: ProjectionDedupeKeyEncoded; checkpoint: Checkpoint }>;
 }
 
 export interface ProjectionStoreAtomicWrite<TState = unknown> {
@@ -63,11 +67,11 @@ export interface ProjectionStoreContract<TState = unknown> {
     request: ProjectionStoreCommitAtomicManyRequest<TState>
   ): Promise<ProjectionStoreAtomicManyResult>;
 
-  getDedupeCheckpoint(key: string): Promise<Checkpoint | null>;
+  getDedupeCheckpoint(key: ProjectionDedupeKeyEncoded): Promise<Checkpoint | null>;
 }
 
 export interface ProjectionStoreDurableDedupeContract {
-  getDedupeCheckpoint(key: string): Promise<Checkpoint | null>;
+  getDedupeCheckpoint(key: ProjectionDedupeKeyEncoded): Promise<Checkpoint | null>;
 }
 
 export interface ProjectionStoreAtomicManyContract<TState = unknown> {
@@ -78,4 +82,14 @@ export interface ProjectionStoreAtomicManyContract<TState = unknown> {
 
 export interface ProjectionStoreWriteWatermark {
   checkpoint: Checkpoint;
+}
+
+/**
+ * Optional extension for stores that enforce retention internally.
+ *
+ * This remains transport/broker agnostic: runtime and adapters may decide
+ * whether cleanup is eager, lazy-on-read, or scheduled out-of-band.
+ */
+export interface ProjectionStoreDedupeRetentionContract {
+  setDedupeRetentionPolicy(policy: ProjectionDedupeRetentionPolicy): Promise<void>;
 }
