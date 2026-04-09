@@ -1,5 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import { produce } from 'immer';
+
+function produce<TState>(state: TState, recipe: (draft: TState) => void): TState {
+  const draft = structuredClone(state);
+  recipe(draft);
+  return draft;
+}
 
 // These types would normally come from the projection framework
 // We're demonstrating the testing pattern that developers will use
