@@ -1,9 +1,12 @@
 import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
 import {
-  type IEventSubscription,
-  type IProjectionStore,
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
+import type {
+  IEventSubscription,
+  IProjectionStore,
+  IProjectionLinkStore
+} from '@redemeine/projection-runtime-core';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -65,14 +68,24 @@ type ProjectionDaemonLike<TState> = {
   processBatch(): Promise<{ eventsProcessed: number }>;
 };
 
-type ProjectionRuntimeModule = {
-  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
+type ProjectionRuntimeCoreModule = {
   ProjectionDaemon: new <TState>(options: {
     projection: ProjectionDefinition<TState>;
     subscription: IEventSubscription;
     store: IProjectionStore<TState>;
     batchSize: number;
+    linkStore: IProjectionLinkStore;
   }) => ProjectionDaemonLike<TState>;
+};
+
+type ProjectionRuntimeStoreInMemoryModule = {
+  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
+  InMemoryProjectionLinkStore: new () => IProjectionLinkStore;
+};
+
+type ProjectionRuntimeModule = {
+  core: ProjectionRuntimeCoreModule;
+  inmemory: ProjectionRuntimeStoreInMemoryModule;
 };
 
 type ProjectionRuntime = {
@@ -89,13 +102,23 @@ async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   if (!projectionRuntimeModulePromise) {
     projectionRuntimeModulePromise = (async () => {
       try {
-        return await dynamicImport('@redemeine/projection') as ProjectionRuntimeModule;
+        const [core, inmemory] = await Promise.all([
+          dynamicImport('@redemeine/projection-runtime-core') as Promise<ProjectionRuntimeCoreModule>,
+          dynamicImport('@redemeine/projection-runtime-store-inmemory') as Promise<ProjectionRuntimeStoreInMemoryModule>
+        ]);
+
+        return { core, inmemory };
       } catch (packageImportError) {
         try {
-          return await dynamicImport('../../projection/src/index') as ProjectionRuntimeModule;
+          const [core, inmemory] = await Promise.all([
+            dynamicImport('../../projection-runtime-core/src/index') as Promise<ProjectionRuntimeCoreModule>,
+            dynamicImport('../../projection-runtime-store-inmemory/src/index') as Promise<ProjectionRuntimeStoreInMemoryModule>
+          ]);
+
+          return { core, inmemory };
         } catch (sourceImportError) {
           throw new Error(
-            `createTestDepot: unable to load projection runtime from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
+            `createTestDepot: unable to load projection runtime core/store modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
           );
         }
       }
@@ -226,9 +249,16 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
 
         const projectionRuntime = await loadProjectionRuntimeModule();
         projectionRuntimes = (options.projections ?? []).map((projection) => {
-          const store = new projectionRuntime.InMemoryProjectionStore<any>();
+          const store = new projectionRuntime.inmemory.InMemoryProjectionStore<any>();
+          const linkStore = new projectionRuntime.inmemory.InMemoryProjectionLinkStore();
           const subscription = createEventQueueSubscription();
-          const daemon = new projectionRuntime.ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
+          const daemon = new projectionRuntime.core.ProjectionDaemon({
+            projection,
+            subscription,
+            store,
+            batchSize: 100,
+            linkStore
+          });
           projectionStoreByDefinition.set(projection, store);
 
           return { projection, store, subscription, daemon };
