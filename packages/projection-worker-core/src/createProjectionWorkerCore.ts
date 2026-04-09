@@ -213,6 +213,18 @@ function queueOnLane<T>(lane: LaneSchedule, run: () => Promise<T>): Promise<T> {
     });
 }
 
+function queueOnLanes<T>(lanes: readonly LaneSchedule[], run: () => Promise<T>): Promise<T> {
+  let chained = run;
+
+  for (let index = lanes.length - 1; index >= 0; index -= 1) {
+    const lane = lanes[index] as LaneSchedule;
+    const next = chained;
+    chained = () => queueOnLane(lane, next);
+  }
+
+  return chained();
+}
+
 function determineBatchMode(
   options: ProjectionWorkerCoreOptions,
   definition: ProjectionDefinitionLike
@@ -356,18 +368,39 @@ export function createProjectionWorkerCore(
       const metadata = normalizeMetadata(commit.metadata);
       const laneKeys = uniqueLaneKeys(commit);
       const laneKey = computeLaneForCommit(commit);
+      const batchMode = determineBatchMode(options, commit.definition);
 
       return {
         index,
         commit,
         metadata,
         laneKeys,
-        laneKey
+        laneKey,
+        batchMode
       };
     });
 
-    const byLane = new Map<string, typeof commitEntries>();
+    const allByProjection = new Map<string, typeof commitEntries>();
+    const nonAllEntries: typeof commitEntries = [];
+
     for (const entry of commitEntries) {
+      if (entry.batchMode === 'all') {
+        const projectionName = entry.commit.definition.projectionName;
+        const grouped = allByProjection.get(projectionName);
+        if (grouped === undefined) {
+          allByProjection.set(projectionName, [entry]);
+        } else {
+          grouped.push(entry);
+        }
+
+        continue;
+      }
+
+      nonAllEntries.push(entry);
+    }
+
+    const byLane = new Map<string, typeof nonAllEntries>();
+    for (const entry of nonAllEntries) {
       const laneEntries = byLane.get(entry.laneKey);
       if (laneEntries === undefined) {
         byLane.set(entry.laneKey, [entry]);
@@ -380,15 +413,8 @@ export function createProjectionWorkerCore(
     const laneRuns = Array.from(byLane.entries()).map(async ([laneKey, laneEntries]) => {
       const lane = getLane(laneKey);
       return queueOnLane(lane, async () => {
-        const definition = laneEntries[0]?.commit.definition;
-        if (definition === undefined) {
-          return;
-        }
-
-        const batchMode = determineBatchMode(options, definition);
-
-        if (batchMode === 'none') {
-          for (const entry of laneEntries) {
+        for (const entry of laneEntries) {
+          if (entry.batchMode === 'none') {
             const decision = await processSingleCommit(
               processor,
               entry.commit,
@@ -399,41 +425,42 @@ export function createProjectionWorkerCore(
             );
 
             resultItems[entry.index] = toResultItem(entry.commit, entry.metadata, decision);
+            continue;
           }
 
-          return;
+          const decisions = await processBatch(
+            processor,
+            options.batchProcessor,
+            [entry.commit],
+            [entry.metadata],
+            [entry.laneKeys],
+            options.stateLoader,
+            stateCache
+          );
+
+          const decision = decisions[0] as ProjectionWorkerDecision;
+          resultItems[entry.index] = toResultItem(entry.commit, entry.metadata, decision);
         }
+      });
+    });
 
-        if (batchMode === 'single') {
-          for (const entry of laneEntries) {
-            const decisions = await processBatch(
-              processor,
-              options.batchProcessor,
-              [entry.commit],
-              [entry.metadata],
-              [entry.laneKeys],
-              options.stateLoader,
-              stateCache
-            );
-            const decision = decisions[0] as ProjectionWorkerDecision;
-            resultItems[entry.index] = toResultItem(entry.commit, entry.metadata, decision);
-          }
+    const allRuns = Array.from(allByProjection.values()).map(async (projectionEntries) => {
+      const laneKeys = Array.from(new Set(projectionEntries.map((entry) => entry.laneKey))).sort();
+      const projectionLanes = laneKeys.map((laneKey) => getLane(laneKey));
 
-          return;
-        }
-
+      await queueOnLanes(projectionLanes, async () => {
         const decisions = await processBatch(
           processor,
           options.batchProcessor,
-          laneEntries.map((entry) => entry.commit),
-          laneEntries.map((entry) => entry.metadata),
-          laneEntries.map((entry) => entry.laneKeys),
+          projectionEntries.map((entry) => entry.commit),
+          projectionEntries.map((entry) => entry.metadata),
+          projectionEntries.map((entry) => entry.laneKeys),
           options.stateLoader,
           stateCache
         );
 
-        for (let index = 0; index < laneEntries.length; index += 1) {
-          const entry = laneEntries[index];
+        for (let index = 0; index < projectionEntries.length; index += 1) {
+          const entry = projectionEntries[index];
           if (entry === undefined) {
             continue;
           }
@@ -444,7 +471,7 @@ export function createProjectionWorkerCore(
       });
     });
 
-    await Promise.all(laneRuns);
+    await Promise.all([...laneRuns, ...allRuns]);
 
     return {
       items: resultItems
