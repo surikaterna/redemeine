@@ -187,15 +187,19 @@ describe('projection-worker-core', () => {
     expect(batchSizes).toEqual([1, 1]);
   });
 
-  test('micro-batching mode all batches lane commits together', async () => {
+  test('micro-batching mode all batches globally across documents', async () => {
     const batchSizes: number[] = [];
     const batchEventNames: string[][] = [];
+    const batchTargetIds: string[][] = [];
 
     const worker = createProjectionWorkerCore({
       processor: () => ({ status: 'ack' }),
       batchProcessor: (context) => {
         batchSizes.push(context.commits.length);
         batchEventNames.push(context.commits.map((commit) => commit.message.envelope.eventName));
+        batchTargetIds.push(
+          context.commits.map((commit) => commit.message.routeDecision.targets[0]?.targetId ?? 'missing-target')
+        );
         return context.commits.map(() => ({ status: 'ack' as const }));
       },
       getProjectionConfig: () => ({ microBatching: 'all' })
@@ -203,13 +207,14 @@ describe('projection-worker-core', () => {
 
     const many = await worker.pushMany([
       createCommit('a', 'invoice-1'),
-      createCommit('b', 'invoice-1'),
+      createCommit('b', 'invoice-2'),
       createCommit('c', 'invoice-1')
     ]);
 
     expect(many.items).toHaveLength(3);
     expect(batchSizes).toEqual([3]);
     expect(batchEventNames[0]).toEqual(['a', 'b', 'c']);
+    expect(batchTargetIds[0]).toEqual(['invoice-1', 'invoice-2', 'invoice-1']);
   });
 
   test('optional LRU cache reuses loaded state and evicts least recently used', async () => {

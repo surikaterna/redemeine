@@ -230,22 +230,37 @@ describe('RT3-13 validation matrix: router + worker + stores', () => {
       expect(singleBatchShapes).toEqual([1, 1, 1]);
 
       const allBatchShapes: string[][] = [];
+      const allBatchTargets: string[][] = [];
       const allWorker = createProjectionWorkerCore({
         processor: () => ({ status: 'ack' }),
         batchProcessor: (context) => {
           allBatchShapes.push(context.commits.map((commit) => commit.message.envelope.eventName));
+          allBatchTargets.push(
+            context.commits.map((commit) => commit.message.routeDecision.targets[0]?.targetId ?? 'missing-target')
+          );
           return context.commits.map(() => ({ status: 'ack' as const }));
         },
         getProjectionConfig: () => ({ microBatching: 'all' })
       });
 
+      const routeDecisionDoc1 = {
+        projectionName,
+        targets: [{ targetId: 'doc-lane', laneKey: `${projectionName}:doc-lane` }]
+      };
+
+      const routeDecisionDoc2 = {
+        projectionName,
+        targets: [{ targetId: 'doc-lane-2', laneKey: `${projectionName}:doc-lane-2` }]
+      };
+
       await allWorker.pushMany([
-        toCommit(toEnvelope('invoice', 'doc-lane', 'all-a', 7), routeDecision),
-        toCommit(toEnvelope('invoice', 'doc-lane', 'all-b', 8), routeDecision),
-        toCommit(toEnvelope('invoice', 'doc-lane', 'all-c', 9), routeDecision)
+        toCommit(toEnvelope('invoice', 'doc-lane', 'all-a', 7), routeDecisionDoc1),
+        toCommit(toEnvelope('invoice', 'doc-lane-2', 'all-b', 8), routeDecisionDoc2),
+        toCommit(toEnvelope('invoice', 'doc-lane', 'all-c', 9), routeDecisionDoc1)
       ]);
 
       expect(allBatchShapes).toEqual([['all-a', 'all-b', 'all-c']]);
+      expect(allBatchTargets).toEqual([['doc-lane', 'doc-lane-2', 'doc-lane']]);
     });
   }
 });
