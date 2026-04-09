@@ -19,7 +19,5 @@
     "test": "bun test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "@redemeine/projection-runtime-core": "workspace:*"
-  }
+  "dependencies": {}
 }
