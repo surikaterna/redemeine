@@ -5,30 +5,15 @@ import { Checkpoint, ProjectionEvent } from './types';
 import { ProjectionDefinition, ProjectionContext } from './createProjection';
 import { IProjectionLinkStore } from './IProjectionLinkStore';
 
-/**
- * Configuration options for the ProjectionDaemon
- */
 export interface ProjectionDaemonOptions<TState> {
-  /** The projection definition to run */
   projection: ProjectionDefinition<TState>;
-  /** The event subscription to poll from */
   subscription: IEventSubscription;
-  /** The state store for persistence */
   store: IProjectionStore<TState>;
-  /** Batch size for polling (default: 100) */
   batchSize?: number;
-  /** Polling interval in ms (default: 1000) */
   pollInterval?: number;
-  /** Callback on each processed batch */
   onBatch?: (stats: BatchStats) => void;
   /** Link store for join routing correlation */
   linkStore: IProjectionLinkStore;
-}
-
-export interface BatchStats {
-  eventsProcessed: number;
-  documentsUpdated: number;
-  duration: number;
 }
 
 /**

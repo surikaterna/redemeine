@@ -72,7 +72,18 @@ type ProjectionRuntimeModule = {
     subscription: IEventSubscription;
     store: IProjectionStore<TState>;
     batchSize: number;
+    linkStore: IProjectionLinkStore;
   }) => ProjectionDaemonLike<TState>;
+};
+
+type ProjectionRuntimeStoreInMemoryModule = {
+  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
+  InMemoryProjectionLinkStore: new () => IProjectionLinkStore;
+};
+
+type ProjectionRuntimeModule = {
+  core: ProjectionRuntimeCoreModule;
+  inmemory: ProjectionRuntimeStoreInMemoryModule;
 };
 
 type ProjectionRuntime = {
@@ -95,7 +106,7 @@ async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
           return await dynamicImport('../../projection-runtime/src/index') as ProjectionRuntimeModule;
         } catch (sourceImportError) {
           throw new Error(
-            `createTestDepot: unable to load projection runtime from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
+            `createTestDepot: unable to load projection runtime core/store modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
           );
         }
       }
@@ -226,9 +237,16 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
 
         const projectionRuntime = await loadProjectionRuntimeModule();
         projectionRuntimes = (options.projections ?? []).map((projection) => {
-          const store = new projectionRuntime.InMemoryProjectionStore<any>();
+          const store = new projectionRuntime.inmemory.InMemoryProjectionStore<any>();
+          const linkStore = new projectionRuntime.inmemory.InMemoryProjectionLinkStore();
           const subscription = createEventQueueSubscription();
-          const daemon = new projectionRuntime.ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
+          const daemon = new projectionRuntime.core.ProjectionDaemon({
+            projection,
+            subscription,
+            store,
+            batchSize: 100,
+            linkStore
+          });
           projectionStoreByDefinition.set(projection, store);
 
           return { projection, store, subscription, daemon };
