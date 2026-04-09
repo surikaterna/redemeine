@@ -113,7 +113,7 @@ async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
           return { core, inmemory };
         } catch (sourceImportError) {
           throw new Error(
-            `createTestDepot: unable to load projection runtime core/store-inmemory modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
+            `createTestDepot: unable to load projection runtime v3 core/store-inmemory modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
           );
         }
       }

@@ -112,7 +112,7 @@ const orderedCounterProjection = {
 } as const;
 
 describe('createTestDepot', () => {
-  it('integrates projections through runtime dynamic loading from @redemeine/projection-runtime', async () => {
+  it('integrates projections through runtime v3 dynamic loading from core/store packages', async () => {
     const firstDepot = createTestDepot({
       aggregates: [CounterAggregate as any],
       projections: [counterProjection]

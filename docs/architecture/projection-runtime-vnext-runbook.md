@@ -128,6 +128,17 @@ Operator rollback steps:
 
 `@redemeine/projection` is definition-only and **must not depend on runtime packages**.
 
+Legacy v1 package status:
+
+- `@redemeine/projection-runtime` is deprecated for production paths and must not be imported by active runtime/package `src/**` code.
+- Production/runtime consumers must import v3 package entrypoints directly:
+  - `@redemeine/projection-router-core`
+  - `@redemeine/projection-worker-core`
+  - `@redemeine/projection-worker-lite`
+  - `@redemeine/projection-runtime-core`
+  - `@redemeine/projection-runtime-store-inmemory`
+  - `@redemeine/projection-runtime-store-mongodb`
+
 Forbidden dependency direction:
 
 - `@redemeine/projection` -> `@redemeine/projection-runtime-core`
@@ -169,6 +180,7 @@ Evidence to capture:
 
 - Exit status `0`.
 - Output indicating no projection -> runtime dependency violations.
+- Output indicating no deprecated `@redemeine/projection-runtime` usage in production `src/**` paths.
 
 ### Gate C: Projection package validation
 
