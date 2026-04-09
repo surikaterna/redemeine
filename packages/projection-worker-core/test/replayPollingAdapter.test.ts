@@ -161,4 +161,66 @@ describe('projection-worker-core replay polling adapter', () => {
     expect(result.nack?.decision).toEqual({ status: 'nack', retryable: true, reason: 'transient-failure' });
     expect(adapter.getCursor()).toEqual({ sequence: 40 });
   });
+
+  test('suppresses already-acked duplicates across nack retry window', async () => {
+    const firstPassEvents = [createEvent(51), createEvent(52, 'failed')];
+    const secondPassEvents = [createEvent(51), createEvent(52, 'failed')];
+    let pollCount = 0;
+    const polling = {
+      async poll(): Promise<EventBatch> {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return {
+            events: firstPassEvents,
+            nextCursor: { sequence: 52, timestamp: '2026-04-09T18:00:52.000Z' }
+          };
+        }
+
+        return {
+          events: secondPassEvents,
+          nextCursor: { sequence: 52, timestamp: '2026-04-09T18:00:52.000Z' }
+        };
+      }
+    };
+
+    const pushedSequences: number[] = [];
+    let failedAttempts = 0;
+    const worker = createProjectionWorkerCore((context) => {
+      const sequence = Number((context.commit.message.envelope.payload as { sequence: number }).sequence);
+      pushedSequences.push(sequence);
+
+      if (sequence === 52 && failedAttempts === 0) {
+        failedAttempts += 1;
+        return { status: 'nack', retryable: true, reason: 'transient-failure' };
+      }
+
+      return { status: 'ack' };
+    });
+
+    const adapter = createProjectionWorkerReplayPollingAdapter({
+      polling,
+      worker,
+      toCommit,
+      initialCursor: { sequence: 50 }
+    });
+
+    const firstResult = await adapter.pollAndPush(10);
+    const secondResult = await adapter.pollAndPush(10);
+
+    expect(firstResult.cursorStart).toEqual({ sequence: 50 });
+    expect(firstResult.cursorEnd).toEqual({ sequence: 50 });
+    expect(firstResult.pushedCount).toBe(2);
+    expect(firstResult.dedupedCount).toBe(0);
+    expect(firstResult.nack?.event.sequence).toBe(52);
+
+    expect(secondResult.cursorStart).toEqual({ sequence: 50 });
+    expect(secondResult.cursorEnd).toEqual({ sequence: 52, timestamp: '2026-04-09T18:00:52.000Z' });
+    expect(secondResult.polledCount).toBe(2);
+    expect(secondResult.pushedCount).toBe(1);
+    expect(secondResult.dedupedCount).toBe(1);
+    expect(secondResult.nack).toBeUndefined();
+
+    expect(pushedSequences).toEqual([51, 52, 52]);
+    expect(adapter.getCursor()).toEqual({ sequence: 52, timestamp: '2026-04-09T18:00:52.000Z' });
+  });
 });

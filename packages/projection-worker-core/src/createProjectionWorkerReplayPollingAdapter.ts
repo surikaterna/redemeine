@@ -39,6 +39,27 @@ function extractWorkerNack(
   return undefined;
 }
 
+function rememberAckedEvents(
+  workerResult: ProjectionWorkerPushManyResult,
+  eventsByCommitIndex: readonly ProjectionEvent[],
+  dedupeKey: (event: ProjectionEvent) => string,
+  seen: Set<string>
+): void {
+  for (let index = 0; index < workerResult.items.length; index += 1) {
+    const item = workerResult.items[index];
+    if (!item || item.decision.status !== 'ack') {
+      continue;
+    }
+
+    const event = eventsByCommitIndex[index];
+    if (!event) {
+      continue;
+    }
+
+    seen.add(dedupeKey(event));
+  }
+}
+
 export function createProjectionWorkerReplayPollingAdapter(
   options: ProjectionWorkerReplayPollingAdapterOptions
 ): ProjectionWorkerReplayPollingAdapter {
@@ -74,12 +95,11 @@ export function createProjectionWorkerReplayPollingAdapter(
         ? { items: [] }
         : await options.worker.pushMany(commits);
 
+      rememberAckedEvents(workerResult, eventsByCommitIndex, dedupeKey, seen);
+
       const nack = extractWorkerNack(workerResult, eventsByCommitIndex);
 
       if (!nack) {
-        for (const key of stagedDedupeKeys) {
-          seen.add(key);
-        }
         cursor = batch.nextCursor;
       }
 
