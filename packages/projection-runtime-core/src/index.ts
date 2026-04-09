@@ -1,4 +1,11 @@
-export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
+export type {
+  Checkpoint,
+  ProjectionEvent,
+  EventBatch,
+  Cursor,
+  ProjectionWarningCode,
+  ProjectionWarning
+} from './types';
 export type {
   IProjectionStore,
   ProjectionAtomicWrite,

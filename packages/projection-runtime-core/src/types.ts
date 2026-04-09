@@ -38,6 +38,20 @@ export interface EventBatch {
   nextCursor: Checkpoint;
 }
 
+export type ProjectionWarningCode =
+  | 'missing_reverse_target'
+  | 'missing_target_removal';
+
+export interface ProjectionWarning {
+  code: ProjectionWarningCode;
+  projectionName: string;
+  aggregateType: string;
+  aggregateId: string;
+  eventType: string;
+  sequence: number;
+  targetDocId?: string;
+}
+
 /**
  * Cursor for resuming event consumption
  */

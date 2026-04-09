@@ -1,7 +1,7 @@
 import { produce, Draft } from 'immer';
 import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
-import { Checkpoint, ProjectionEvent } from './types';
+import { Checkpoint, ProjectionEvent, ProjectionWarning } from './types';
 import { ProjectionDefinition, ProjectionContext } from './createProjection';
 
 export interface ProjectionDaemonOptions<TState> {
@@ -11,6 +11,7 @@ export interface ProjectionDaemonOptions<TState> {
   batchSize?: number;
   pollInterval?: number;
   onBatch?: (stats: BatchStats) => void;
+  onWarning?: (warning: ProjectionWarning) => void;
 }
 
 export interface BatchStats {
@@ -78,7 +79,7 @@ export class ProjectionDaemon<TState = unknown> {
    */
   async processBatch(): Promise<BatchStats> {
     const startTime = Date.now();
-    const { projection, subscription, store, batchSize = 100, onBatch } = this.options;
+    const { projection, subscription, store, batchSize = 100, onBatch, onWarning } = this.options;
 
     // Get cursor for this projection
     const cursor = await this.getCurrentCursor();
@@ -105,6 +106,7 @@ export class ProjectionDaemon<TState = unknown> {
     const pendingLinkAdds = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
     const pendingLinkRemoves = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
     const pendingDedupe = new Map<string, Checkpoint>();
+    const unresolvedWarnings = new Map<string, ProjectionWarning>();
 
     // Process events in order - multiple passes to handle dynamic subscriptions
     let madeProgress = true;
@@ -126,12 +128,18 @@ export class ProjectionDaemon<TState = unknown> {
           continue;
         }
 
-        const targetDocIds = await this.resolveTargetDocumentIds(event, pendingLinkAdds, pendingLinkRemoves);
+        const targetResolution = await this.resolveTargetDocumentIds(event, pendingLinkAdds, pendingLinkRemoves);
+        const targetDocIds = targetResolution.targetDocIds;
 
         if (targetDocIds.length === 0) {
+          if (targetResolution.warning) {
+            unresolvedWarnings.set(eventKey, targetResolution.warning);
+          }
           // Skip events without valid targets (join events without subscription)
           continue;
         }
+
+        unresolvedWarnings.delete(eventKey);
 
         for (const targetDocId of targetDocIds) {
           // Get or create pending document
@@ -245,6 +253,12 @@ export class ProjectionDaemon<TState = unknown> {
       }
     }
 
+    if (onWarning) {
+      for (const warning of unresolvedWarnings.values()) {
+        onWarning(warning);
+      }
+    }
+
     // Single required production write path: atomic commit for docs + links + cursor.
     await store.commitAtomic({
       documents: Array.from(pendingDocuments.values()).map((pending) => ({
@@ -289,7 +303,7 @@ export class ProjectionDaemon<TState = unknown> {
   }
 
   /**
-   * Determine target document ID for an event
+   * Determine target document IDs for an event and warning diagnostics.
    *
    * RULES:
    * 1. If event is from .from stream: use projection.identity(event) as document ID
@@ -300,14 +314,14 @@ export class ProjectionDaemon<TState = unknown> {
     event: ProjectionEvent,
     pendingLinkAdds: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>,
     pendingLinkRemoves: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>
-  ): Promise<string[]> {
+  ): Promise<{ targetDocIds: string[]; warning?: ProjectionWarning }> {
     const { projection } = this.options;
 
     // Check if this is a .from stream event
     if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
       const identity = projection.identity(event);
       const docIds = Array.isArray(identity) ? identity : [identity];
-      return Array.from(new Set(docIds));
+      return { targetDocIds: Array.from(new Set(docIds)) };
     }
 
     // Check if this is a .join stream event
@@ -322,22 +336,43 @@ export class ProjectionDaemon<TState = unknown> {
       const pendingRemoved = pendingLinkRemoves.get(linkKey);
 
       if (pendingRemoved && !pendingLink) {
-        return [];
+        return {
+          targetDocIds: [],
+          warning: {
+            code: 'missing_target_removal',
+            projectionName: projection.name,
+            aggregateType: event.aggregateType,
+            aggregateId: event.aggregateId,
+            eventType: event.type,
+            sequence: event.sequence,
+            targetDocId: pendingRemoved.targetDocId
+          }
+        };
       }
 
       const targetDocId = pendingLink?.targetDocId
         ?? await this.options.store.resolveTarget(event.aggregateType, event.aggregateId);
 
       if (targetDocId) {
-        return [targetDocId];
+        return { targetDocIds: [targetDocId] };
       }
 
-      // No subscription - IGNORE this event (prevents ghost documents)
-      return [];
+      // No reverse target/subscription - warn and skip
+      return {
+        targetDocIds: [],
+        warning: {
+          code: 'missing_reverse_target',
+          projectionName: projection.name,
+          aggregateType: event.aggregateType,
+          aggregateId: event.aggregateId,
+          eventType: event.type,
+          sequence: event.sequence
+        }
+      };
     }
 
     // Unknown stream type - ignore
-    return [];
+    return { targetDocIds: [] };
   }
 
   /**

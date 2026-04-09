@@ -7,7 +7,8 @@ import {
   type IEventSubscription,
   type IProjectionStore,
   type ProjectionAtomicWrite,
-  type ProjectionEvent
+  type ProjectionEvent,
+  type ProjectionWarning
 } from '../../projection-runtime-core/src';
 
 type ProjectionState = {
@@ -258,5 +259,103 @@ describe('runtime-core E3.2 unsubscribe/relink semantics', () => {
 
     const state = store.getDocument('invoice-1');
     expect(state).toEqual({ fromEvents: 1, joinEvents: 1 });
+  });
+
+  test('warns and skips missing reverse targets while continuing batch processing', async () => {
+    const warnings: ProjectionWarning[] = [];
+    const projection = createProjection<ProjectionState>('warn-missing-target', () => ({ fromEvents: 0, joinEvents: 0 }))
+      .from(invoiceAgg, {
+        created: (state, evt, ctx) => {
+          state.fromEvents += 1;
+          ctx.subscribeTo(customerAgg, String(evt.payload.customerId));
+        }
+      })
+      .join(customerAgg, {
+        updated: (state) => {
+          state.joinEvents += 1;
+        }
+      })
+      .build();
+
+    const store = new RecordingProjectionStore<ProjectionState>();
+    const daemon = new ProjectionDaemon<ProjectionState>({
+      projection,
+      subscription: new InMemoryEventSubscription([
+        event(1, 'invoice', 'invoice-1', 'created', { customerId: 'customer-1' }),
+        event(2, 'customer', 'customer-1', 'updated', { name: 'Nora' }),
+        event(3, 'customer', 'customer-missing', 'updated', { name: 'Ghost' }),
+        event(4, 'customer', 'customer-1', 'updated', { name: 'Nora-2' })
+      ]),
+      store,
+      batchSize: 100,
+      onWarning: (warning) => warnings.push(warning)
+    });
+
+    await daemon.processBatch();
+
+    const state = store.getDocument('invoice-1');
+    expect(state).toEqual({ fromEvents: 1, joinEvents: 2 });
+    expect(warnings).toEqual([
+      {
+        code: 'missing_reverse_target',
+        projectionName: 'warn-missing-target',
+        aggregateType: 'customer',
+        aggregateId: 'customer-missing',
+        eventType: 'updated',
+        sequence: 3
+      }
+    ]);
+  });
+
+  test('warns on missing-target removal and still processes other targets', async () => {
+    const warnings: ProjectionWarning[] = [];
+    const projection = createProjection<ProjectionState>('warn-missing-removal', () => ({ fromEvents: 0, joinEvents: 0 }))
+      .from(invoiceAgg, {
+        created: (state, evt, ctx) => {
+          state.fromEvents += 1;
+          ctx.subscribeTo(customerAgg, String(evt.payload.customerId));
+        },
+        canceled: (state, evt, ctx) => {
+          state.fromEvents += 1;
+          ctx.unsubscribeFrom(customerAgg, String(evt.payload.customerId));
+        }
+      })
+      .join(customerAgg, {
+        updated: (state) => {
+          state.joinEvents += 1;
+        }
+      })
+      .build();
+
+    const store = new RecordingProjectionStore<ProjectionState>();
+    const daemon = new ProjectionDaemon<ProjectionState>({
+      projection,
+      subscription: new InMemoryEventSubscription([
+        event(1, 'invoice', 'invoice-1', 'created', { customerId: 'customer-1' }),
+        event(2, 'invoice', 'invoice-1', 'canceled', { customerId: 'customer-1' }),
+        event(3, 'customer', 'customer-1', 'updated', { name: 'NoRoute' }),
+        event(4, 'invoice', 'invoice-2', 'created', { customerId: 'customer-2' }),
+        event(5, 'customer', 'customer-2', 'updated', { name: 'StillRouted' })
+      ]),
+      store,
+      batchSize: 100,
+      onWarning: (warning) => warnings.push(warning)
+    });
+
+    await daemon.processBatch();
+
+    expect(store.getDocument('invoice-1')).toEqual({ fromEvents: 2, joinEvents: 0 });
+    expect(store.getDocument('invoice-2')).toEqual({ fromEvents: 1, joinEvents: 1 });
+    expect(warnings).toEqual([
+      {
+        code: 'missing_target_removal',
+        projectionName: 'warn-missing-removal',
+        aggregateType: 'customer',
+        aggregateId: 'customer-1',
+        eventType: 'updated',
+        sequence: 3,
+        targetDocId: 'invoice-1'
+      }
+    ]);
   });
 });
