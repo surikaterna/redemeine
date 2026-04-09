@@ -1,5 +1,5 @@
 {
-  "name": "@redemeine/mirage",
+  "name": "@redemeine/otel",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
@@ -13,15 +13,13 @@
       "default": "./src/index.ts"
     }
   },
-  "dependencies": {
-    "@redemeine/aggregate": "workspace:*",
-    "@redemeine/kernel": "workspace:*",
-    "@redemeine/otel": "workspace:*"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
+    "test": "bun test ./test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@redemeine/saga-runtime": "workspace:*"
   }
 }

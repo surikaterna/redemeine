@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import type { CanonicalInspectionEnvelope } from '@redemeine/kernel';
 import { ProjectionDaemon, ProjectionDaemonOptions, BatchStats } from '../src/ProjectionDaemon';
 import { IProjectionStore } from '../src/IProjectionStore';
 import { IEventSubscription } from '../src/IEventSubscription';
@@ -703,6 +704,36 @@ describe('ProjectionDaemon', () => {
       expect(onBatchMock).toHaveBeenCalledTimes(1);
       const stats = onBatchMock.mock.calls[0][0] as BatchStats;
       expect(stats.eventsProcessed).toBe(4);
+    });
+
+    it('emits canonical projection batch inspection compatibility mapping', async () => {
+      const inspectionEvents: CanonicalInspectionEnvelope[] = [];
+
+      const daemon = new ProjectionDaemon({
+        ...options,
+        inspection: (event) => {
+          inspectionEvents.push(event);
+        }
+      });
+
+      await daemon.processBatch();
+
+      const batchProcessing = inspectionEvents.find((event) => event.hook === 'projection.batch.processing');
+      expect(batchProcessing).toMatchObject({
+        schema: 'redemeine.inspection/v1',
+        runtime: 'projection',
+        compatibility: {
+          legacyHook: 'projection.onBatch'
+        },
+        ids: {
+          projectionName: 'testProjection'
+        },
+        payload: {
+          polledEvents: 4,
+          fromSequence: 0,
+          toSequence: 4
+        }
+      });
     });
   });
   

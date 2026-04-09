@@ -6,6 +6,12 @@ import type {
   IntentExecutionStatus,
   IntentExecutionResponseRef
 } from './SagaAggregate';
+import {
+  emitCanonicalInspection,
+  resolveInspectionCorrelationId,
+  type InspectionEventPublisher
+} from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 export type SagaTriggerMisfirePolicy =
   | { readonly mode: 'catch_up_all' }
@@ -81,12 +87,32 @@ export interface SagaPluginRequestIntent<
   readonly metadata: SagaIntentMetadata;
 }
 
+export interface SagaPluginUnifiedIntent<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> {
+  readonly type: 'plugin-intent';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly interaction: 'fire_and_forget' | 'request_response';
+  readonly execution_payload: TExecutionPayload;
+  readonly routing_metadata?: {
+    readonly response_handler_key: string;
+    readonly error_handler_key: string;
+    readonly handler_data: unknown;
+    readonly retry_handler_key?: string;
+  };
+  readonly metadata: SagaIntentMetadata;
+}
+
 export type SagaIntent =
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginUnifiedIntent
   | {
     readonly type: 'dispatch';
     readonly command: string;
@@ -146,6 +172,7 @@ export interface SagaRuntimeSchedulerPluginV1 {
 export type SagaRuntimeSideEffectIntent =
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginUnifiedIntent
   | SagaRunActivityIntent;
 
 export interface SagaRuntimeSideEffectResult {
@@ -184,11 +211,20 @@ export interface SagaRuntimeReferenceAdapters {
   readonly telemetry: SagaRuntimeTelemetryPluginV1;
 }
 
+export interface CreateReferenceAdaptersV1Options {
+  readonly persistence?: SagaRuntimePersistencePluginV1;
+  readonly scheduler?: SagaRuntimeSchedulerPluginV1;
+  readonly sideEffects?: SagaRuntimeSideEffectsPluginV1;
+  readonly telemetry?: SagaRuntimeTelemetryPluginV1;
+}
+
 export interface SagaRuntimeReferenceFlowInput {
   readonly sagaId: string;
   readonly intents: readonly SagaIntent[];
   readonly schedulerPolicy?: SagaSchedulerTriggerPolicyContract;
   readonly nowIso?: string;
+  readonly inspection?: InspectionEventPublisher;
+  readonly telemetryAdapterId?: string;
   readonly resolveExecutionIdentity?: (input: {
     readonly sagaId: string;
     readonly intent: SagaRuntimeSideEffectIntent;
@@ -428,7 +464,7 @@ export function createInMemorySideEffectsPluginV1(
         return await executeIntent(intent);
       }
 
-      if (intent.type === 'plugin-request') {
+      if (intent.type === 'plugin-request' || (intent.type === 'plugin-intent' && intent.interaction === 'request_response')) {
         return {
           status: 'succeeded',
           responseRef: {
@@ -478,12 +514,12 @@ export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 
   };
 }
 
-export function createReferenceAdaptersV1(): SagaRuntimeReferenceAdapters {
+export function createReferenceAdaptersV1(options: CreateReferenceAdaptersV1Options = {}): SagaRuntimeReferenceAdapters {
   return {
-    persistence: createInMemoryPersistencePluginV1(),
-    scheduler: createInMemorySchedulerPluginV1(),
-    sideEffects: createInMemorySideEffectsPluginV1(),
-    telemetry: createInMemoryTelemetryPluginV1()
+    persistence: options.persistence ?? createInMemoryPersistencePluginV1(),
+    scheduler: options.scheduler ?? createInMemorySchedulerPluginV1(),
+    sideEffects: options.sideEffects ?? createInMemorySideEffectsPluginV1(),
+    telemetry: options.telemetry ?? createInMemoryTelemetryPluginV1()
   };
 }
 
@@ -491,7 +527,12 @@ const asScheduleIntent = (intent: SagaIntent): SagaScheduleIntent | null => inte
 const asCancelIntent = (intent: SagaIntent): SagaCancelScheduleIntent | null => intent.type === 'cancel-schedule' ? intent : null;
 
 const asSideEffectIntent = (intent: SagaIntent): SagaRuntimeSideEffectIntent | null => {
-  if (intent.type === 'plugin-one-way' || intent.type === 'plugin-request' || intent.type === 'run-activity') {
+  if (
+    intent.type === 'plugin-one-way'
+    || intent.type === 'plugin-request'
+    || intent.type === 'plugin-intent'
+    || intent.type === 'run-activity'
+  ) {
     return intent;
   }
 
@@ -521,6 +562,7 @@ export async function runReferenceAdapterFlowV1(
   adapters: SagaRuntimeReferenceAdapters,
   input: SagaRuntimeReferenceFlowInput
 ): Promise<SagaRuntimeReferenceFlowResult> {
+  const telemetry = createTelemetryFacade(input.telemetryAdapterId);
   const persistedExecutionIds: string[] = [];
   const scheduledTriggerIds: string[] = [];
   const responseCorrelations: SagaRuntimeResponseCorrelation[] = [];
@@ -536,7 +578,7 @@ export async function runReferenceAdapterFlowV1(
     const intent = input.intents[index];
     adapters.telemetry.count('saga.intent.received');
 
-    const schedule = asScheduleIntent(intent);
+      const schedule = asScheduleIntent(intent);
     if (schedule) {
       const runAt = new Date(Date.parse(nowIso) + schedule.delay).toISOString();
       adapters.scheduler.schedule({
@@ -549,6 +591,43 @@ export async function runReferenceAdapterFlowV1(
       adapters.telemetry.count('saga.intent.scheduled');
       adapters.telemetry.event('saga.schedule.created', { sagaId: input.sagaId, intentId: schedule.id });
       scheduledTriggerIds.push(schedule.id);
+      await emitCanonicalInspection(input.inspection, {
+        hook: 'outbox.enqueue',
+        runtime: 'saga-runtime',
+        boundary: 'scheduler.queue',
+        ids: {
+          sagaId: input.sagaId,
+          intentId: schedule.id,
+          correlationId: resolveInspectionCorrelationId(schedule.metadata.correlationId, `${input.sagaId}:${schedule.id}:outbox.enqueue`),
+          causationId: schedule.metadata.causationId
+        },
+        payload: {
+          mode: 'schedule',
+          runAt,
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: telemetry.extract({
+              correlationId: schedule.metadata.correlationId,
+              causationId: schedule.metadata.causationId
+            }).values ?? {},
+            propagatedCarrier: telemetry.inject(
+              telemetry.extract({
+                correlationId: schedule.metadata.correlationId,
+                causationId: schedule.metadata.causationId
+              }),
+              {}
+            )
+          }
+        },
+        compatibility: {
+          legacyHook: 'runtime.telemetry',
+          legacyContext: {
+            event: 'saga.schedule.created',
+            sagaId: input.sagaId,
+            intentId: schedule.id
+          }
+        }
+      });
       continue;
     }
 
@@ -589,6 +668,72 @@ export async function runReferenceAdapterFlowV1(
   }
 
   const completed = await Promise.all(sideEffectExecutions.map(async (execution) => {
+    const executionContext = telemetry.extract({
+      correlationId: execution.intent.metadata.correlationId,
+      causationId: execution.intent.metadata.causationId
+    });
+    const executionCarrier = telemetry.inject(executionContext, {});
+
+    await emitCanonicalInspection(input.inspection, {
+      hook: 'outbox.dequeue',
+      runtime: 'saga-runtime',
+      boundary: 'adapter.side_effect',
+      ids: {
+        sagaId: input.sagaId,
+        intentId: execution.intentId,
+        executionId: execution.executionId,
+        correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:outbox.dequeue`),
+        causationId: execution.intent.metadata.causationId
+      },
+      payload: {
+        intentType: execution.intent.type,
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
+      },
+      compatibility: {
+        legacyHook: 'runtime.telemetry',
+        legacyContext: {
+          event: 'saga.intent.dequeued',
+          executionId: execution.executionId,
+          intentId: execution.intentId
+        }
+      }
+    });
+
+    await emitCanonicalInspection(input.inspection, {
+      hook: 'side_effect.execution',
+      runtime: 'saga-runtime',
+      boundary: 'adapter.side_effect',
+      ids: {
+        sagaId: input.sagaId,
+        intentId: execution.intentId,
+        executionId: execution.executionId,
+        correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:side_effect.execution`),
+        causationId: execution.intent.metadata.causationId
+      },
+      payload: {
+        intentType: execution.intent.type,
+        pluginKey: execution.intent.type === 'run-activity' ? undefined : execution.intent.plugin_key,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: executionContext.values ?? {},
+          propagatedCarrier: executionCarrier
+        }
+      },
+      compatibility: {
+        legacyHook: 'runtime.telemetry',
+        legacyContext: {
+          event: 'saga.intent.executed',
+          executionId: execution.executionId,
+          intentId: execution.intentId
+        }
+      }
+    });
+
     const result = await adapters.sideEffects.execute(execution.intent);
     adapters.persistence.intentExecutionProjection.upsert(
       createExecutionRecord(
@@ -610,8 +755,44 @@ export async function runReferenceAdapterFlowV1(
     adapters.telemetry.event('saga.intent.executed', {
       sagaId: input.sagaId,
       executionId: execution.executionId,
-      status: result.status
+      status: result.status,
+      correlationId: execution.intent.metadata.correlationId,
+      causationId: execution.intent.metadata.causationId
     });
+
+    if (result.status === 'failed') {
+      await emitCanonicalInspection(input.inspection, {
+        hook: 'retry.dead_letter',
+        runtime: 'saga-runtime',
+        boundary: 'adapter.side_effect',
+        ids: {
+          sagaId: input.sagaId,
+          intentId: execution.intentId,
+          executionId: execution.executionId,
+          correlationId: resolveInspectionCorrelationId(execution.intent.metadata.correlationId, `${input.sagaId}:${execution.executionId}:retry.dead_letter`),
+          causationId: execution.intent.metadata.causationId
+        },
+        payload: {
+          attempts: 1,
+          terminal: true,
+          reason: result.error ?? 'failed_without_retry_policy',
+          telemetry: {
+            mode: telemetry.isNoop ? 'fallback' : 'adapter',
+            extractedContext: executionContext.values ?? {},
+            propagatedCarrier: executionCarrier
+          }
+        },
+        compatibility: {
+          legacyHook: 'runtime.telemetry',
+          legacyContext: {
+            event: 'saga.intent.dead_lettered',
+            executionId: execution.executionId,
+            intentId: execution.intentId,
+            status: result.status
+          }
+        }
+      });
+    }
 
     return {
       executionId: execution.executionId,

@@ -1,9 +1,36 @@
 import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol, HydrationEvents } from './createMirage';
-import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
+import {
+  Event,
+  EventInterceptorContext,
+  PluginExtensions,
+  RedemeinePlugin,
+  RedemeinePluginHookError,
+  emitCanonicalInspection,
+  resolveInspectionCausationId,
+  resolveInspectionCorrelationId
+} from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
     saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
+}
+
+export type OutboxQueueEntry = {
+  type: 'plugin.onAfterCommit';
+  aggregateId: string;
+  pluginKey: string;
+  events: Event[];
+  intents: Record<string, unknown>;
+};
+
+export interface OutboxCapableEventStore extends EventStore {
+  saveEventsWithOutbox(args: {
+    id: string;
+    events: Event[];
+    expectedVersion?: number;
+    outbox: OutboxQueueEntry[];
+  }): Promise<void>;
 }
 
 export type EventReadStreamOptions = {
@@ -18,6 +45,16 @@ export type DepotSnapshot<TState> = {
 export type DepotGetOptions<TState> = {
   initialState?: TState;
   snapshot?: DepotSnapshot<TState>;
+};
+
+export type DepotOutboxOptions = {
+  /**
+   * outbox_primary: prefer atomic event+outbox persistence and never run inline side-effects
+   * unless allowInlineAfterCommitFallback is explicitly enabled for non-capable stores.
+   *
+   * compatibility_inline: preserve legacy save-then-inline onAfterCommit behavior.
+   */
+  mode?: 'outbox_primary' | 'compatibility_inline';
 };
 
 type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
@@ -40,7 +77,9 @@ export interface Depot<TState extends {}, M extends Record<string, any> = any, R
 export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   builder: BA,
   store: EventStore,
-  options?: MirageOptions<BuiltAggregatePlugins<BA>>
+  options?: MirageOptions<BuiltAggregatePlugins<BA>> & {
+    outbox?: DepotOutboxOptions;
+  }
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
   const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
 
@@ -69,6 +108,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
     if (plugins.length === 0) return events;
 
+    const telemetry = createTelemetryFacade();
     const eventMetaRegistry = builder.metadata?.events || {};
 
     for (const event of events) {
@@ -83,6 +123,44 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
       for (const plugin of plugins) {
         if (typeof plugin.onBeforeAppend === 'function') {
           ctx.pluginKey = plugin.key;
+          await emitCanonicalInspection(options?.inspection, {
+            hook: 'event.append',
+            runtime: 'mirage',
+            boundary: 'event_store.append',
+            ids: {
+              aggregateId: id,
+              eventType: event.type,
+              correlationId: resolveInspectionCorrelationId(event.metadata?.correlationId, `${id}:${event.type}:event.append`),
+              causationId: resolveInspectionCausationId(event.id, event.type),
+              eventId: resolveInspectionCausationId(event.id)
+            },
+            payload: {
+              pluginKey: plugin.key,
+              eventType: event.type,
+              telemetry: {
+                mode: telemetry.isNoop ? 'fallback' : 'adapter',
+                extractedContext: telemetry.extract({
+                  correlationId: typeof event.metadata?.correlationId === 'string' ? event.metadata.correlationId : undefined,
+                  causationId: typeof event.metadata?.causationId === 'string' ? event.metadata.causationId : undefined
+                }).values ?? {},
+                propagatedCarrier: telemetry.inject(
+                  telemetry.extract({
+                    correlationId: typeof event.metadata?.correlationId === 'string' ? event.metadata.correlationId : undefined,
+                    causationId: typeof event.metadata?.causationId === 'string' ? event.metadata.causationId : undefined
+                  }),
+                  {}
+                )
+              }
+            },
+            compatibility: {
+              legacyHook: 'onBeforeAppend',
+              legacyContext: {
+                aggregateId: id,
+                eventType: event.type,
+                pluginKey: plugin.key
+              }
+            }
+          });
           try {
             const nextPayload = await plugin.onBeforeAppend(ctx);
             if (nextPayload !== undefined) {
@@ -109,6 +187,41 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 
     for (const plugin of plugins) {
       if (typeof plugin.onAfterCommit === 'function') {
+        const telemetry = createTelemetryFacade();
+        const eventMetadata = (events[0]?.metadata as Record<string, unknown> | undefined);
+        const context = telemetry.extract({
+          correlationId: typeof eventMetadata?.['correlationId'] === 'string' ? eventMetadata['correlationId'] : undefined,
+          causationId: typeof eventMetadata?.['causationId'] === 'string' ? eventMetadata['causationId'] : undefined
+        });
+        const propagatedCarrier = telemetry.inject(context, {});
+        await emitCanonicalInspection(options?.inspection, {
+          hook: 'outbox.enqueue',
+          runtime: 'mirage',
+          boundary: 'post_commit.side_effect',
+          ids: {
+            aggregateId: id,
+            correlationId: resolveInspectionCorrelationId(eventMetadata?.correlationId, `${id}:outbox.enqueue`),
+            causationId: resolveInspectionCausationId(events[0]?.id)
+          },
+          payload: {
+            pluginKey: plugin.key,
+            eventCount: events.length,
+            intentKeys: Object.keys(intents),
+            telemetry: {
+              mode: telemetry.isNoop ? 'fallback' : 'adapter',
+              extractedContext: context.values ?? {},
+              propagatedCarrier
+            }
+          },
+          compatibility: {
+            legacyHook: 'onAfterCommit',
+            legacyContext: {
+              aggregateId: id,
+              events: events.map((event) => event.type),
+              pluginKey: plugin.key
+            }
+          }
+        });
         try {
           await plugin.onAfterCommit({
             pluginKey: plugin.key,
@@ -121,6 +234,26 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
         }
       }
     }
+  };
+
+  const hasOutboxCapability = (candidate: EventStore): candidate is OutboxCapableEventStore => {
+    return typeof (candidate as OutboxCapableEventStore).saveEventsWithOutbox === 'function';
+  };
+
+  const buildOutboxEntries = (
+    id: string,
+    events: Event[],
+    intents: Record<string, unknown>
+  ): OutboxQueueEntry[] => {
+    return plugins
+      .filter((plugin): plugin is Required<Pick<RedemeinePlugin<any>, 'key' | 'onAfterCommit'>> & RedemeinePlugin<any> => typeof plugin.onAfterCommit === 'function')
+      .map((plugin) => ({
+        type: 'plugin.onAfterCommit' as const,
+        aggregateId: id,
+        pluginKey: plugin.key,
+        events,
+        intents
+      }));
   };
 
   return {
@@ -148,11 +281,32 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           const { events, intents } = core.getPendingResults();
           const appendableEvents = await runAppendInterceptors(core.id, events);
 
+          const outboxMode = options?.outbox?.mode ?? 'compatibility_inline';
+          const outboxEntries = buildOutboxEntries(core.id, appendableEvents, intents);
+
+          if (outboxMode === 'outbox_primary' && outboxEntries.length > 0) {
+            if (hasOutboxCapability(store)) {
+              await store.saveEventsWithOutbox({
+                id: core.id,
+                events: appendableEvents,
+                expectedVersion: core.version,
+                outbox: outboxEntries
+              });
+              core.clearPendingResults();
+              return;
+            }
+
+            throw new Error(
+              'Outbox primary mode requires an EventStore implementing saveEventsWithOutbox. ' +
+              'Use options.outbox.mode="compatibility_inline" for explicit legacy inline compatibility mode.'
+            );
+          }
+
           await store.saveEvents(core.id, appendableEvents, core.version);
           core.clearPendingResults();
 
-          // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
-          // so post-commit failures are retriable without coupling to request lifecycle.
+          // Runtime policy: keep post-commit hooks inline in-process.
+          // Durable side-effect relay is handled by CDC -> DB -> relay -> MQ -> saga/projection inbox flows.
           await runAfterCommitHooks(core.id, appendableEvents, intents);
       }
   };

@@ -1,4 +1,11 @@
 import { produce, Draft } from 'immer';
+import {
+  emitCanonicalInspection,
+  resolveInspectionCausationId,
+  resolveInspectionCorrelationId,
+  type InspectionEventPublisher
+} from '@redemeine/kernel';
+import { createTelemetryFacade } from '@redemeine/otel';
 import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
 import { Checkpoint, ProjectionEvent } from './types';
@@ -24,6 +31,10 @@ export interface ProjectionDaemonOptions<TState> {
   onBatch?: (stats: BatchStats) => void;
   /** Link store for join routing correlation */
   linkStore?: IProjectionLinkStore;
+  /** Optional canonical inspection publisher */
+  inspection?: InspectionEventPublisher;
+  /** Optional telemetry adapter id for trace propagation */
+  telemetryAdapterId?: string;
 }
 
 export interface BatchStats {
@@ -101,6 +112,51 @@ export class ProjectionDaemon<TState = unknown> {
     
     // Poll events
     const batch = await subscription.poll(cursor, batchSize);
+
+    const firstEventMetadata = batch.events[0]?.metadata;
+    const metadataCorrelationId = typeof firstEventMetadata?.['correlationId'] === 'string'
+      ? firstEventMetadata['correlationId']
+      : undefined;
+    const metadataCausationId = typeof firstEventMetadata?.['causationId'] === 'string'
+      ? firstEventMetadata['causationId']
+      : undefined;
+
+    const telemetry = createTelemetryFacade(this.options.telemetryAdapterId);
+    const inspectionContext = telemetry.extract({
+      projectionName: projection.name,
+      correlationId: metadataCorrelationId,
+      causationId: metadataCausationId
+    });
+    const inspectionCarrier = telemetry.inject(inspectionContext, {});
+
+    await emitCanonicalInspection(this.options.inspection, {
+      hook: 'projection.batch.processing',
+      runtime: 'projection',
+      boundary: 'projection.daemon.batch',
+      ids: {
+        projectionName: projection.name,
+        correlationId: resolveInspectionCorrelationId(metadataCorrelationId, `${projection.name}:${batch.nextCursor.sequence}:projection.batch.processing`),
+        causationId: resolveInspectionCausationId(metadataCausationId, String(cursor.sequence))
+      },
+      payload: {
+        polledEvents: batch.events.length,
+        fromSequence: cursor.sequence,
+        toSequence: batch.nextCursor.sequence,
+        telemetry: {
+          mode: telemetry.isNoop ? 'fallback' : 'adapter',
+          extractedContext: inspectionContext.values ?? {},
+          propagatedCarrier: inspectionCarrier
+        }
+      },
+      compatibility: {
+        legacyHook: 'projection.onBatch',
+        legacyContext: {
+          projection: projection.name,
+          batchSize,
+          events: batch.events.length
+        }
+      }
+    });
     
     if (batch.events.length === 0) {
       const emptyStats = { eventsProcessed: 0, documentsUpdated: 0, duration: Date.now() - startTime };
