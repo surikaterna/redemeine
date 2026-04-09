@@ -4,6 +4,21 @@ export type {
   ProjectionEnvelopeMetadata,
   ProjectionIngressEnvelope
 } from './envelope';
+export {
+  DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
+  classifyProjectionEnvelopeCandidate
+} from './poison';
+export type {
+  ProjectionPoisonClass,
+  ProjectionPoisonHandlingAction,
+  ProjectionPoisonClassificationModel,
+  ProjectionEnvelopeValidationCandidate,
+  ProjectionEnvelopeValidValidationResult,
+  ProjectionEnvelopePoisonValidationResult,
+  ProjectionEnvelopeValidationResult,
+  ProjectionEnvelopeValidator,
+  ProjectionPoisonClassifier
+} from './poison';
 export type {
   ProjectionIngress,
   ProjectionIngressAckDecision,

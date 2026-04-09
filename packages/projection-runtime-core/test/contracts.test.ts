@@ -1,10 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type {
+  ProjectionEnvelopeValidationCandidate,
+  ProjectionEnvelopeValidationResult,
   ProjectionIngress,
   ProjectionIngressDecision,
   ProjectionIngressEnvelope,
   ProjectionIngressPushManyResult,
   ProjectionIngressPushResult,
+  ProjectionPoisonClassificationModel,
+  ProjectionPoisonClassifier,
+  ProjectionEnvelopeValidator,
   ProjectionStoreAtomicManyContract,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
@@ -13,6 +18,10 @@ import type {
   ProjectionStoreDurableDedupeContract,
   ProjectionRouterFanoutEnvelope,
   ProjectionStoreWriteWatermark
+} from '../src';
+import {
+  DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
+  classifyProjectionEnvelopeCandidate
 } from '../src';
 
 function isAck(decision: ProjectionIngressDecision): boolean {
@@ -226,5 +235,113 @@ describe('projection-runtime-core contract types', () => {
 
     const dedupeCheckpoint = await store.getDedupeCheckpoint('invoice:1:created:11');
     expect(dedupeCheckpoint?.sequence).toBe(11);
+  });
+
+  test('poison-message classifier is deterministic and adapter-neutral', () => {
+    const cases: Array<{ candidate: ProjectionEnvelopeValidationCandidate; expected: ProjectionEnvelopeValidationResult }> = [
+      {
+        candidate: {
+          payloadBytes: 10,
+          maxPayloadBytes: 1024,
+          parseable: true,
+          binary: false,
+          envelopeShapeValid: true
+        },
+        expected: { status: 'valid' }
+      },
+      {
+        candidate: {
+          payloadBytes: 10,
+          maxPayloadBytes: 1024,
+          parseable: true,
+          binary: false,
+          envelopeShapeValid: false
+        },
+        expected: { status: 'poison', poisonClass: 'malformed', action: 'dead-letter' }
+      },
+      {
+        candidate: {
+          payloadBytes: 10,
+          maxPayloadBytes: 1024,
+          parseable: false,
+          binary: false,
+          envelopeShapeValid: true
+        },
+        expected: { status: 'poison', poisonClass: 'garbage', action: 'drop' }
+      },
+      {
+        candidate: {
+          payloadBytes: 2048,
+          maxPayloadBytes: 1024,
+          parseable: true,
+          binary: false,
+          envelopeShapeValid: true
+        },
+        expected: { status: 'poison', poisonClass: 'oversized', action: 'retry' }
+      },
+      {
+        candidate: {
+          payloadBytes: 64,
+          maxPayloadBytes: 1024,
+          parseable: false,
+          binary: true,
+          envelopeShapeValid: false
+        },
+        expected: { status: 'poison', poisonClass: 'binary', action: 'quarantine' }
+      }
+    ];
+
+    for (const testCase of cases) {
+      expect(classifyProjectionEnvelopeCandidate(testCase.candidate)).toEqual(testCase.expected);
+    }
+  });
+
+  test('poison class/action contracts support custom mapping', () => {
+    const customModel: ProjectionPoisonClassificationModel = {
+      malformed: 'quarantine',
+      garbage: 'dead-letter',
+      binary: 'drop',
+      oversized: 'retry'
+    };
+
+    const classifier: ProjectionPoisonClassifier = {
+      classify(poisonClass) {
+        return customModel[poisonClass];
+      }
+    };
+
+    const validator: ProjectionEnvelopeValidator = {
+      validate(candidate) {
+        const outcome = classifyProjectionEnvelopeCandidate(candidate, customModel);
+        if (outcome.status === 'valid') {
+          return outcome;
+        }
+
+        return {
+          ...outcome,
+          action: classifier.classify(outcome.poisonClass)
+        };
+      }
+    };
+
+    const outcome = validator.validate({
+      payloadBytes: 16,
+      maxPayloadBytes: 32,
+      parseable: true,
+      binary: false,
+      envelopeShapeValid: false
+    });
+
+    expect(DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL).toEqual({
+      malformed: 'dead-letter',
+      garbage: 'drop',
+      binary: 'quarantine',
+      oversized: 'retry'
+    });
+    expect(outcome).toEqual({
+      status: 'poison',
+      poisonClass: 'malformed',
+      action: 'quarantine'
+    });
   });
 });

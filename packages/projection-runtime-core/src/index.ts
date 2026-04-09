@@ -41,6 +41,15 @@ export type {
   ProjectionResumeToken,
   ProjectionEnvelopeMetadata,
   ProjectionIngressEnvelope,
+  ProjectionPoisonClass,
+  ProjectionPoisonHandlingAction,
+  ProjectionPoisonClassificationModel,
+  ProjectionEnvelopeValidationCandidate,
+  ProjectionEnvelopeValidValidationResult,
+  ProjectionEnvelopePoisonValidationResult,
+  ProjectionEnvelopeValidationResult,
+  ProjectionEnvelopeValidator,
+  ProjectionPoisonClassifier,
   ProjectionIngress,
   ProjectionIngressAckDecision,
   ProjectionIngressNackDecision,
@@ -66,4 +75,8 @@ export type {
   ProjectionRouterFanoutEnvelope,
   ProjectionRouterDecision,
   ProjectionCatchupPollingAdapter
+} from './contracts';
+export {
+  DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
+  classifyProjectionEnvelopeCandidate
 } from './contracts';
