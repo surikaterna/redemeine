@@ -17,14 +17,14 @@ export interface IEventSubscription {
    * @returns A batch of events and the last-returned checkpoint
    */
   poll(cursor: Checkpoint, batchSize: number): Promise<EventBatch>;
-  
+
   /**
    * Subscribe to specific aggregate IDs for join streams
    * @param aggregateType The type of aggregate to subscribe to
    * @param aggregateIds The specific aggregate IDs to subscribe to
    */
   subscribe?(aggregateType: string, aggregateIds: string[]): Promise<void>;
-  
+
   /**
    * Unsubscribe from specific aggregate IDs
    * @param aggregateType The type of aggregate to unsubscribe from
