@@ -18,6 +18,12 @@ export interface BatchStats {
   eventsProcessed: number;
   documentsUpdated: number;
   duration: number;
+  diagnostics: {
+    cursorStart: Checkpoint;
+    cursorEnd: Checkpoint;
+    dedupeSuppressed: number;
+    warnings: number;
+  };
 }
 
 /**
@@ -88,13 +94,24 @@ export class ProjectionDaemon<TState = unknown> {
     const batch = await subscription.poll(cursor, batchSize);
 
     if (batch.events.length === 0) {
-      const emptyStats = { eventsProcessed: 0, documentsUpdated: 0, duration: Date.now() - startTime };
+      const emptyStats = {
+        eventsProcessed: 0,
+        documentsUpdated: 0,
+        duration: Date.now() - startTime,
+        diagnostics: {
+          cursorStart: cursor,
+          cursorEnd: batch.nextCursor,
+          dedupeSuppressed: 0,
+          warnings: 0
+        }
+      };
       if (onBatch) onBatch(emptyStats);
       return emptyStats;
     }
 
     // Track which events have been processed
     const processedEvents = new Set<string>();
+    let dedupeSuppressed = 0;
 
     // Track documents that need to be saved
     const pendingDocuments = new Map<string, {
@@ -123,6 +140,7 @@ export class ProjectionDaemon<TState = unknown> {
 
         const persistedCheckpoint = await store.getDedupeCheckpoint(eventKey);
         if (persistedCheckpoint) {
+          dedupeSuppressed += 1;
           processedEvents.add(eventKey);
           madeProgress = true;
           continue;
@@ -294,7 +312,13 @@ export class ProjectionDaemon<TState = unknown> {
     const stats = {
       eventsProcessed: processedEvents.size,
       documentsUpdated: pendingDocuments.size,
-      duration: Date.now() - startTime
+      duration: Date.now() - startTime,
+      diagnostics: {
+        cursorStart: cursor,
+        cursorEnd: batch.nextCursor,
+        dedupeSuppressed,
+        warnings: unresolvedWarnings.size
+      }
     };
 
     if (onBatch) onBatch(stats);
