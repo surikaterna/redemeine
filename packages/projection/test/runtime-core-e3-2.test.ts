@@ -33,6 +33,22 @@ class InMemoryEventSubscription implements IEventSubscription {
   }
 }
 
+class ScriptedEventSubscription implements IEventSubscription {
+  private batchIndex = 0;
+
+  constructor(private readonly batches: EventBatch[]) {}
+
+  async poll(cursor: Checkpoint, _batchSize: number): Promise<EventBatch> {
+    const scripted = this.batches[this.batchIndex];
+    if (!scripted) {
+      return { events: [], nextCursor: cursor };
+    }
+
+    this.batchIndex += 1;
+    return scripted;
+  }
+}
+
 class RecordingProjectionStore<TState> implements IProjectionStore<TState> {
   readonly atomicWrites: ProjectionAtomicWrite<TState>[] = [];
   private readonly documents = new Map<string, { state: TState; checkpoint: Checkpoint }>();
@@ -439,5 +455,155 @@ describe('runtime-core E4.3 atomic+dedupe consistency', () => {
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
+  });
+});
+
+describe('runtime-core E5.3 cutover dedupe overlap validation', () => {
+  test('suppresses delayed live overlap after catch-up replay and exposes cutover diagnostics', async () => {
+    const projection = createProjection<{ applied: number; seen: number[] }>('cutover-overlap', () => ({ applied: 0, seen: [] }))
+      .from(invoiceAgg, {
+        created: (state, evt) => {
+          state.applied += 1;
+          state.seen.push(evt.sequence);
+        }
+      })
+      .build();
+
+    const store = new RecordingProjectionStore<{ applied: number; seen: number[] }>();
+
+    const catchupDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
+      projection,
+      subscription: new ScriptedEventSubscription([
+        {
+          events: [
+            event(1, 'invoice', 'invoice-1', 'created', {}),
+            event(2, 'invoice', 'invoice-1', 'created', {}),
+            event(3, 'invoice', 'invoice-1', 'created', {})
+          ],
+          nextCursor: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' }
+        }
+      ]),
+      store,
+      batchSize: 100
+    });
+
+    const catchupStats = await catchupDaemon.processBatch();
+    expect(catchupStats.diagnostics).toEqual({
+      cursorStart: { sequence: 0 },
+      cursorEnd: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' },
+      dedupeSuppressed: 0,
+      warnings: 0
+    });
+
+    const liveDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
+      projection,
+      subscription: new ScriptedEventSubscription([
+        {
+          events: [
+            event(2, 'invoice', 'invoice-1', 'created', {}),
+            event(3, 'invoice', 'invoice-1', 'created', {}),
+            event(4, 'invoice', 'invoice-1', 'created', {})
+          ],
+          nextCursor: { sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' }
+        }
+      ]),
+      store,
+      batchSize: 100
+    });
+
+    const liveStats = await liveDaemon.processBatch();
+    expect(liveStats.diagnostics).toEqual({
+      cursorStart: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' },
+      cursorEnd: { sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' },
+      dedupeSuppressed: 2,
+      warnings: 0
+    });
+
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 4, seen: [1, 2, 3, 4] });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({ sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:2')).toEqual({ sequence: 2, timestamp: '2026-04-09T00:00:02.000Z' });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:3')).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
+  });
+
+  test('restart during cutover keeps single-apply semantics and reports overlap diagnostics', async () => {
+    const projection = createProjection<{ applied: number; seen: number[] }>('cutover-restart', () => ({ applied: 0, seen: [] }))
+      .from(invoiceAgg, {
+        created: (state, evt) => {
+          state.applied += 1;
+          state.seen.push(evt.sequence);
+        }
+      })
+      .build();
+
+    const store = new FailBeforeCommitProjectionStore<{ applied: number; seen: number[] }>();
+
+    const catchupDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
+      projection,
+      subscription: new ScriptedEventSubscription([
+        {
+          events: [
+            event(1, 'invoice', 'invoice-1', 'created', {}),
+            event(2, 'invoice', 'invoice-1', 'created', {}),
+            event(3, 'invoice', 'invoice-1', 'created', {})
+          ],
+          nextCursor: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' }
+        }
+      ]),
+      store,
+      batchSize: 100
+    });
+
+    await catchupDaemon.processBatch();
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 3, seen: [1, 2, 3] });
+
+    store.failNextCommit();
+
+    const failingCutoverDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
+      projection,
+      subscription: new ScriptedEventSubscription([
+        {
+          events: [
+            event(3, 'invoice', 'invoice-1', 'created', {}),
+            event(4, 'invoice', 'invoice-1', 'created', {})
+          ],
+          nextCursor: { sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' }
+        }
+      ]),
+      store,
+      batchSize: 100
+    });
+
+    await expect(failingCutoverDaemon.processBatch()).rejects.toThrow('injected pre-commit failure');
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 3, seen: [1, 2, 3] });
+    expect(store.getCursor('__cursor__cutover-restart')).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toBeNull();
+
+    const restartedCutoverDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
+      projection,
+      subscription: new ScriptedEventSubscription([
+        {
+          events: [
+            event(3, 'invoice', 'invoice-1', 'created', {}),
+            event(4, 'invoice', 'invoice-1', 'created', {})
+          ],
+          nextCursor: { sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' }
+        }
+      ]),
+      store,
+      batchSize: 100
+    });
+
+    const recoveredStats = await restartedCutoverDaemon.processBatch();
+    expect(recoveredStats.diagnostics).toEqual({
+      cursorStart: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' },
+      cursorEnd: { sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' },
+      dedupeSuppressed: 1,
+      warnings: 0
+    });
+
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 4, seen: [1, 2, 3, 4] });
+    expect(store.getCursor('__cursor__cutover-restart')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
   });
 });
