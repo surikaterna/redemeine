@@ -1,5 +1,7 @@
 export interface ProjectionDefinitionLike {
   readonly projectionName: string;
+  readonly fromAggregateType: string;
+  readonly identity: (envelope: ProjectionRouterEnvelope) => string | readonly string[];
 }
 
 export interface ProjectionRouterEnvelope {
