@@ -1,4 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  evaluateCutoverReadiness,
+  transitionToCutover,
+  transitionToRollback
+} from '../src';
 import type {
   Checkpoint,
   ProjectionEnvelopeValidationCandidate,
@@ -34,7 +39,9 @@ import type {
   ProjectionShardLeaseRenewResult,
   ProjectionShardOwnerIdentity,
   ProjectionRouterFanoutEnvelope,
-  ProjectionStoreWriteWatermark
+  ProjectionStoreWriteWatermark,
+  ProjectionGenerationSwitchContract,
+  ProjectionRebuildLifecycleState
 } from '../src';
 import {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
@@ -709,6 +716,8 @@ describe('projection-runtime-core contract types', () => {
     });
     expect(atTtl).toBe('eligible_for_cleanup');
 
+  });
+
   test('hydration mode/status contracts and _projection metadata stay minimal', () => {
     const hydrationMode: ProjectionHydrationMode = 'snapshot_plus_tail';
     const statuses: ProjectionHydrationStatus[] = ['hydrating', 'ready', 'rebuilding', 'failed'];
@@ -735,5 +744,106 @@ describe('projection-runtime-core contract types', () => {
     expect(metadata.generation).toBe(3);
     expect(metadata.watermark?.sequence).toBe(101);
     expect(Object.prototype.hasOwnProperty.call(metadata, 'projectionName')).toBe(false);
+  });
+
+  test('cutover readiness is deterministic from criteria', () => {
+    const ready = evaluateCutoverReadiness({
+      shadowCaughtUp: true,
+      validationPassed: true,
+      writesQuiesced: true
+    });
+
+    expect(ready).toEqual({
+      ready: true,
+      unmetCriteria: []
+    });
+
+    const notReady = evaluateCutoverReadiness({
+      shadowCaughtUp: true,
+      validationPassed: false,
+      writesQuiesced: false
+    });
+
+    expect(notReady.ready).toBe(false);
+    expect(notReady.unmetCriteria).toEqual(['validationPassed', 'writesQuiesced']);
+  });
+
+  test('cutover and rollback transitions are deterministic', async () => {
+    const initial: ProjectionRebuildLifecycleState = {
+      activeGenerationId: 'gen-a',
+      shadowGenerationId: 'gen-b',
+      status: 'shadow_ready',
+      checkpoint: { sequence: 10 }
+    };
+
+    const notCutover = transitionToCutover({
+      state: initial,
+      checkpoint: { sequence: 11 },
+      readiness: {
+        shadowCaughtUp: true,
+        validationPassed: false,
+        writesQuiesced: true
+      }
+    });
+    expect(notCutover).toEqual(initial);
+
+    const cutover = transitionToCutover({
+      state: initial,
+      checkpoint: { sequence: 12 },
+      readiness: {
+        shadowCaughtUp: true,
+        validationPassed: true,
+        writesQuiesced: true
+      }
+    });
+
+    expect(cutover).toEqual({
+      activeGenerationId: 'gen-b',
+      shadowGenerationId: 'gen-a',
+      status: 'live',
+      checkpoint: { sequence: 12 }
+    });
+
+    const notRollback = transitionToRollback({
+      state: cutover,
+      checkpoint: { sequence: 13 }
+    });
+    expect(notRollback).toEqual(cutover);
+
+    const rollbackReadyState: ProjectionRebuildLifecycleState = {
+      ...cutover,
+      status: 'rollback_ready'
+    };
+    const rolledBack = transitionToRollback({
+      state: rollbackReadyState,
+      checkpoint: { sequence: 14 }
+    });
+
+    expect(rolledBack).toEqual({
+      activeGenerationId: 'gen-a',
+      shadowGenerationId: 'gen-b',
+      status: 'rolled_back',
+      checkpoint: { sequence: 14 }
+    });
+
+    const switchContract: ProjectionGenerationSwitchContract = {
+      async cutover(request) {
+        return transitionToCutover(request);
+      },
+      async rollback(request) {
+        return transitionToRollback(request);
+      }
+    };
+
+    const contractCutover = await switchContract.cutover({
+      state: initial,
+      checkpoint: { sequence: 15 },
+      readiness: {
+        shadowCaughtUp: true,
+        validationPassed: true,
+        writesQuiesced: true
+      }
+    });
+    expect(contractCutover.status).toBe('live');
   });
 });

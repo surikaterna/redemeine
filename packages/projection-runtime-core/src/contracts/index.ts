@@ -104,3 +104,20 @@ export type {
   ProjectionMetadataEnvelope,
   ProjectionHydrationHint
 } from './hydration';
+export type {
+  ProjectionRebuildGenerationId,
+  ProjectionRebuildLifecycleStatus,
+  ProjectionCutoverReadinessCriteria,
+  ProjectionCutoverReadiness,
+  ProjectionRebuildLifecycleState,
+  ProjectionCutoverRequest,
+  ProjectionRollbackRequest,
+  ProjectionGenerationCutoverContract,
+  ProjectionGenerationRollbackContract,
+  ProjectionGenerationSwitchContract
+} from './rebuild';
+export {
+  evaluateCutoverReadiness,
+  transitionToCutover,
+  transitionToRollback
+} from './rebuild';
