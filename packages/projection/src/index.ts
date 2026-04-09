@@ -18,6 +18,19 @@ export type {
   ProjectionDefinition,
   ProjectionBuilder
 } from './createProjection';
+export {
+  planReverseSubscribe,
+  planReverseRelink,
+  planReverseUnsubscribe
+} from './reverseSemanticsContract';
+export type {
+  ReverseLinkAddress,
+  ReverseMutation,
+  ReverseSemanticsWarning,
+  ReverseSubscribeSpec,
+  ReverseRelinkSpec,
+  ReverseUnsubscribeSpec
+} from './reverseSemanticsContract';
 export { InMemoryProjectionStore } from './InMemoryProjectionStore';
 export { InMemoryProjectionLinkStore } from './InMemoryProjectionLinkStore';
 export { ProjectionDaemon } from './ProjectionDaemon';
