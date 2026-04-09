@@ -34,6 +34,7 @@ type ProjectionEvent = {
 
 type ProjectionContext = {
   subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
+  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 };
 

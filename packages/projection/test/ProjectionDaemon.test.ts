@@ -533,6 +533,72 @@ describe('ProjectionDaemon', () => {
       expect(state!.name).toBe('Jane');
       expect(state!.events).toEqual(['customer.attached']);
     });
+
+    it('should expose context.unsubscribeFrom() and prevent persisting unsubscribed links', async () => {
+      const orderAgg = {
+        __aggregateType: 'order',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+      const customerAgg = {
+        __aggregateType: 'customer',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+
+      const projectionWithUnsubscribe = createProjection<TestState>('joinWithUnsubscribe', () => ({
+        count: 0,
+        name: '',
+        events: []
+      }))
+        .from(orderAgg, {
+          'order.created': (state, event: any, ctx) => {
+            ctx.subscribeTo(customerAgg, event.payload.customerId);
+            ctx.unsubscribeFrom(customerAgg, event.payload.customerId);
+            state.name = event.payload.name || 'unknown';
+          }
+        })
+        .join(customerAgg, {
+          'customer.attached': (state, event: any) => {
+            state.name = event.payload.customerName;
+            state.events.push(event.type);
+          }
+        })
+        .build();
+
+      const addLinkSpy = jest.fn();
+      const customLinkStore: IProjectionLinkStore = {
+        addLink(aggregateType: string, aggregateId: string, targetDocId: string): void {
+          addLinkSpy(aggregateType, aggregateId, targetDocId);
+        },
+        resolveTarget(): string | null {
+          return null;
+        }
+      };
+
+      const subscription = createMockSubscription([
+        {
+          aggregateType: 'order',
+          aggregateId: 'order-1',
+          type: 'order.created',
+          payload: { name: 'Order 1', customerId: 'customer-1' },
+          sequence: 1,
+          timestamp: '2024-01-01T00:00:00Z'
+        }
+      ]);
+
+      const daemon = new ProjectionDaemon({
+        ...options,
+        projection: projectionWithUnsubscribe,
+        subscription,
+        linkStore: customLinkStore
+      });
+
+      const stats = await daemon.processBatch();
+
+      expect(stats.eventsProcessed).toBe(1);
+      expect(addLinkSpy).not.toHaveBeenCalled();
+    });
   });
   
   describe('In-memory batching/folding', () => {

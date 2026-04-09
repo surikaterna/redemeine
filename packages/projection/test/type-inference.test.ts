@@ -120,6 +120,22 @@ describe('Type Inference for Projections', () => {
     expect(projection.name).toBe('test');
   });
 
+  it('should infer event.payload types from .reverseSubscribe() aggregate', () => {
+    const projection = createProjection('test-reverse-subscribe', () => ({ total: 0 }))
+      .from(invoiceAgg, { created: (state, event) => {} })
+      .reverseSubscribe(orderAgg, {
+        shipped: (state, event) => {
+          const _trackingNumber: string = event.payload.trackingNumber;
+        },
+        delivered: (state, event) => {
+          const _deliveredAt: string = event.payload.deliveredAt;
+        }
+      })
+      .build();
+
+    expect(projection.name).toBe('test-reverse-subscribe');
+  });
+
   it('should NOT confuse types between .from() and .join() aggregates', () => {
     // This test verifies type isolation
     const projection = createProjection('test', () => ({ total: 0 }))

@@ -245,13 +245,30 @@ export class ProjectionDaemon<TState = unknown> {
    */
   private createContext(): ProjectionContext {
     const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+    const unsubscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
     
     return {
       subscribeTo(aggregate, aggregateId) {
         subscriptions.push({ aggregate, aggregateId });
       },
+      unsubscribeFrom(aggregate, aggregateId) {
+        unsubscriptions.push({ aggregate, aggregateId });
+      },
       getSubscriptions() {
-        return [...subscriptions];
+        const remaining = new Map<string, { aggregate: { __aggregateType: string }; aggregateId: string }>();
+
+        for (const subscription of subscriptions) {
+          remaining.set(
+            `${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`,
+            subscription
+          );
+        }
+
+        for (const unsubscription of unsubscriptions) {
+          remaining.delete(`${unsubscription.aggregate.__aggregateType}:${unsubscription.aggregateId}`);
+        }
+
+        return Array.from(remaining.values());
       }
     };
   }
