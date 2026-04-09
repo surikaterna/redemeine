@@ -102,6 +102,11 @@ export interface ProjectionContext {
    * Get current subscriptions
    */
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+
+  /**
+   * Get explicit unsubscribe operations emitted by handler.
+   */
+  getUnsubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 }
 
 /**

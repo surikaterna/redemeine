@@ -102,7 +102,8 @@ export class ProjectionDaemon<TState = unknown> {
       cursor: Checkpoint;
     }>();
 
-    const pendingLinks = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
+    const pendingLinkAdds = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
+    const pendingLinkRemoves = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
 
     // Process events in order - multiple passes to handle dynamic subscriptions
     let madeProgress = true;
@@ -117,7 +118,7 @@ export class ProjectionDaemon<TState = unknown> {
         const eventKey = `${event.aggregateType}:${event.aggregateId}:${event.sequence}`;
         if (processedEvents.has(eventKey)) continue;
 
-        const targetDocIds = await this.resolveTargetDocumentIds(event, pendingLinks);
+        const targetDocIds = await this.resolveTargetDocumentIds(event, pendingLinkAdds, pendingLinkRemoves);
 
         if (targetDocIds.length === 0) {
           // Skip events without valid targets (join events without subscription)
@@ -148,10 +149,71 @@ export class ProjectionDaemon<TState = unknown> {
             }
           });
 
+          for (const unsubscription of context.getUnsubscriptions()) {
+            const linkKey = `${unsubscription.aggregate.__aggregateType}:${unsubscription.aggregateId}`;
+            pendingLinkAdds.delete(linkKey);
+
+            pendingLinkRemoves.set(linkKey, {
+              aggregateType: unsubscription.aggregate.__aggregateType,
+              aggregateId: unsubscription.aggregateId,
+              targetDocId
+            });
+          }
+
           for (const subscription of context.getSubscriptions()) {
             const linkKey = `${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`;
-            if (!pendingLinks.has(linkKey)) {
-              pendingLinks.set(linkKey, {
+            const removed = pendingLinkRemoves.get(linkKey);
+
+            if (removed) {
+              pendingLinkAdds.set(linkKey, {
+                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateId: subscription.aggregateId,
+                targetDocId
+              });
+              continue;
+            }
+
+            const pendingAdd = pendingLinkAdds.get(linkKey);
+            if (pendingAdd) {
+              if (pendingAdd.targetDocId !== targetDocId) {
+                pendingLinkRemoves.set(linkKey, {
+                  aggregateType: pendingAdd.aggregateType,
+                  aggregateId: pendingAdd.aggregateId,
+                  targetDocId: pendingAdd.targetDocId
+                });
+
+                pendingLinkAdds.set(linkKey, {
+                  aggregateType: subscription.aggregate.__aggregateType,
+                  aggregateId: subscription.aggregateId,
+                  targetDocId
+                });
+              }
+
+              continue;
+            }
+
+            const existingTarget = await this.options.store.resolveTarget(
+              subscription.aggregate.__aggregateType,
+              subscription.aggregateId
+            );
+
+            if (existingTarget && existingTarget !== targetDocId) {
+              pendingLinkRemoves.set(linkKey, {
+                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateId: subscription.aggregateId,
+                targetDocId: existingTarget
+              });
+
+              pendingLinkAdds.set(linkKey, {
+                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateId: subscription.aggregateId,
+                targetDocId
+              });
+              continue;
+            }
+
+            if (!existingTarget) {
+              pendingLinkAdds.set(linkKey, {
                 aggregateType: subscription.aggregate.__aggregateType,
                 aggregateId: subscription.aggregateId,
                 targetDocId
@@ -178,7 +240,20 @@ export class ProjectionDaemon<TState = unknown> {
         state: pending.state,
         checkpoint: pending.cursor
       })),
-      links: Array.from(pendingLinks.values()),
+      links: [
+        ...Array.from(pendingLinkRemoves.values()).map((link) => ({
+          op: 'remove' as const,
+          aggregateType: link.aggregateType,
+          aggregateId: link.aggregateId,
+          targetDocId: link.targetDocId
+        })),
+        ...Array.from(pendingLinkAdds.values()).map((link) => ({
+          op: 'add' as const,
+          aggregateType: link.aggregateType,
+          aggregateId: link.aggregateId,
+          targetDocId: link.targetDocId
+        }))
+      ],
       cursorKey: `__cursor__${projection.name}`,
       // Cursor contract: nextCursor is the last returned/processed event checkpoint.
       cursor: batch.nextCursor,
@@ -206,7 +281,8 @@ export class ProjectionDaemon<TState = unknown> {
    */
   private async resolveTargetDocumentIds(
     event: ProjectionEvent,
-    pendingLinks: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>
+    pendingLinkAdds: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>,
+    pendingLinkRemoves: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>
   ): Promise<string[]> {
     const { projection } = this.options;
 
@@ -224,7 +300,14 @@ export class ProjectionDaemon<TState = unknown> {
 
     if (joinStream) {
       // .join events ONLY process if we have a subscription
-      const pendingLink = pendingLinks.get(`${event.aggregateType}:${event.aggregateId}`);
+      const linkKey = `${event.aggregateType}:${event.aggregateId}`;
+      const pendingLink = pendingLinkAdds.get(linkKey);
+      const pendingRemoved = pendingLinkRemoves.get(linkKey);
+
+      if (pendingRemoved && !pendingLink) {
+        return [];
+      }
+
       const targetDocId = pendingLink?.targetDocId
         ?? await this.options.store.resolveTarget(event.aggregateType, event.aggregateId);
 
@@ -266,6 +349,9 @@ export class ProjectionDaemon<TState = unknown> {
         }
 
         return Array.from(remaining.values());
+      },
+      getUnsubscriptions() {
+        return [...unsubscriptions];
       }
     };
   }

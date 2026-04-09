@@ -6,11 +6,21 @@ export interface ProjectionDocumentWrite<TState> {
   checkpoint: Checkpoint;
 }
 
-export interface ProjectionLinkWrite {
+export interface ProjectionLinkAddWrite {
+  op: 'add';
   aggregateType: string;
   aggregateId: string;
   targetDocId: string;
 }
+
+export interface ProjectionLinkRemoveWrite {
+  op: 'remove';
+  aggregateType: string;
+  aggregateId: string;
+  targetDocId: string;
+}
+
+export type ProjectionLinkWrite = ProjectionLinkAddWrite | ProjectionLinkRemoveWrite;
 
 /**
  * E4.2 contract stub for durable dedupe persistence.
