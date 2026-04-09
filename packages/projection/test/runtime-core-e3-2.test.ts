@@ -98,6 +98,27 @@ class RecordingProjectionStore<TState> implements IProjectionStore<TState> {
   getDocument(documentId: string): TState | null {
     return this.documents.get(documentId)?.state ?? null;
   }
+
+  getCursor(checkpointKey: string): Checkpoint | null {
+    return this.documents.get(checkpointKey)?.checkpoint ?? null;
+  }
+}
+
+class FailBeforeCommitProjectionStore<TState> extends RecordingProjectionStore<TState> {
+  private shouldFail = false;
+
+  failNextCommit(): void {
+    this.shouldFail = true;
+  }
+
+  override async commitAtomic(write: ProjectionAtomicWrite<TState>): Promise<void> {
+    if (this.shouldFail) {
+      this.shouldFail = false;
+      throw new Error('injected pre-commit failure');
+    }
+
+    await super.commitAtomic(write);
+  }
 }
 
 const invoiceAgg = {
@@ -357,5 +378,66 @@ describe('runtime-core E3.2 unsubscribe/relink semantics', () => {
         targetDocId: 'invoice-1'
       }
     ]);
+  });
+});
+
+describe('runtime-core E4.3 atomic+dedupe consistency', () => {
+  test('in-memory path keeps writes all-or-nothing and recovers on retry/restart without double-apply', async () => {
+    const projection = createProjection<{ applied: number }>('atomic-dedupe-consistency', () => ({ applied: 0 }))
+      .from(invoiceAgg, {
+        created: (state) => {
+          state.applied += 1;
+        }
+      })
+      .build();
+
+    const events = [event(1, 'invoice', 'invoice-1', 'created', {})];
+    const subscription = new InMemoryEventSubscription(events);
+    const store = new FailBeforeCommitProjectionStore<{ applied: number }>();
+    const daemon = new ProjectionDaemon<{ applied: number }>({
+      projection,
+      subscription,
+      store,
+      batchSize: 100
+    });
+
+    store.failNextCommit();
+
+    await expect(daemon.processBatch()).rejects.toThrow('injected pre-commit failure');
+    expect(store.getDocument('invoice-1')).toBeNull();
+    expect(store.getCursor('__cursor__atomic-dedupe-consistency')).toBeNull();
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toBeNull();
+
+    const retryStats = await daemon.processBatch();
+    expect(retryStats.eventsProcessed).toBe(1);
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 1 });
+    expect(store.getCursor('__cursor__atomic-dedupe-consistency')).toEqual({
+      sequence: 1,
+      timestamp: '2026-04-09T00:00:01.000Z'
+    });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+      sequence: 1,
+      timestamp: '2026-04-09T00:00:01.000Z'
+    });
+
+    // Simulate process restart: new daemon instance on same durable store.
+    const restartedDaemon = new ProjectionDaemon<{ applied: number }>({
+      projection,
+      subscription: new InMemoryEventSubscription(events),
+      store,
+      batchSize: 100
+    });
+
+    const restartStats = await restartedDaemon.processBatch();
+    expect(restartStats.eventsProcessed).toBe(0);
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 1 });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+      sequence: 1,
+      timestamp: '2026-04-09T00:00:01.000Z'
+    });
+    expect(store.getCursor('__cursor__atomic-dedupe-consistency')).toEqual({
+      sequence: 1,
+      timestamp: '2026-04-09T00:00:01.000Z'
+    });
   });
 });
