@@ -14,9 +14,20 @@ export type {
   ProjectionIngressPushManyResult
 } from './ingress';
 export type {
+  ProjectionStoreAtomicManyCommittedResult,
+  ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
   ProjectionDocumentWriteMode,
-  ProjectionStoreDocumentWrite
+  ProjectionStoreFullDocumentWrite,
+  ProjectionStorePatchDocumentWrite,
+  ProjectionStoreDocumentWrite,
+  ProjectionStoreDedupeWrite,
+  ProjectionStoreAtomicWrite,
+  ProjectionStoreCommitAtomicManyRequest,
+  ProjectionStoreContract,
+  ProjectionStoreDurableDedupeContract,
+  ProjectionStoreAtomicManyContract,
+  ProjectionStoreWriteWatermark
 } from './store';
 export type {
   ProjectionRoutingKey,
