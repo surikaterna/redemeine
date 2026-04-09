@@ -122,4 +122,121 @@ describe('MongoProjectionStore', () => {
       }
     ]);
   });
+
+  test('commitAtomic failure before first write leaves no partial state or dedupe/cursor drift', async () => {
+    const collection = createProjectionDocumentCollection<{ count: number }>();
+    const linkCollection = createProjectionLinkCollection();
+    const dedupeCollection = createProjectionDedupeCollection();
+
+    const failingCollection = {
+      findOne: collection.findOne.bind(collection),
+      deleteOne: collection.deleteOne.bind(collection),
+      deleteMany: collection.deleteMany.bind(collection),
+      async updateOne(
+        filter: Record<string, unknown>,
+        update: Record<string, unknown>,
+        options?: { upsert?: boolean }
+      ): Promise<unknown> {
+        void filter;
+        void update;
+        void options;
+        throw new Error('injected pre-write failure');
+      }
+    };
+
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection: failingCollection,
+      linkCollection,
+      dedupeCollection
+    });
+
+    await expect(
+      store.commitAtomic({
+        documents: [
+          {
+            documentId: 'doc-fail',
+            state: { count: 1 },
+            checkpoint: { sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' }
+          }
+        ],
+        links: [
+          {
+            aggregateType: 'invoice',
+            aggregateId: 'inv-fail',
+            targetDocId: 'doc-fail'
+          }
+        ],
+        cursorKey: '__cursor__projection-fail',
+        cursor: { sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' },
+        dedupe: {
+          upserts: [
+            {
+              key: 'invoice:inv-fail:1',
+              checkpoint: { sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' }
+            }
+          ]
+        }
+      })
+    ).rejects.toThrow('injected pre-write failure');
+
+    expect(await store.load('doc-fail')).toBeNull();
+    expect(await store.resolveTarget('invoice', 'inv-fail')).toBeNull();
+    expect(await store.getCheckpoint?.('__cursor__projection-fail')).toBeNull();
+    expect(await store.getDedupeCheckpoint('invoice:inv-fail:1')).toBeNull();
+    expect(linkCollection.snapshot()).toEqual([]);
+    expect(dedupeCollection.snapshot()).toEqual([]);
+  });
+
+  test('commitAtomic replay of same write is idempotent for doc/link/cursor/dedupe records', async () => {
+    const collection = createProjectionDocumentCollection<{ count: number }>();
+    const linkCollection = createProjectionLinkCollection();
+    const dedupeCollection = createProjectionDedupeCollection();
+    const now = () => '2026-04-09T00:00:00.000Z';
+    const store = new MongoProjectionStore<{ count: number }>({ collection, linkCollection, dedupeCollection, now });
+
+    const write = {
+      documents: [
+        {
+          documentId: 'doc-retry',
+          state: { count: 9 },
+          checkpoint: { sequence: 9, timestamp: '2026-04-09T00:00:09.000Z' }
+        }
+      ],
+      links: [
+        {
+          aggregateType: 'invoice',
+          aggregateId: 'inv-retry',
+          targetDocId: 'doc-retry'
+        }
+      ],
+      cursorKey: '__cursor__projection-retry',
+      cursor: { sequence: 9, timestamp: '2026-04-09T00:00:09.000Z' },
+      dedupe: {
+        upserts: [
+          {
+            key: 'invoice:inv-retry:9',
+            checkpoint: { sequence: 9, timestamp: '2026-04-09T00:00:09.000Z' }
+          }
+        ]
+      }
+    };
+
+    await store.commitAtomic(write);
+    await store.commitAtomic(write);
+
+    expect(await store.load('doc-retry')).toEqual({ count: 9 });
+    expect(await store.resolveTarget('invoice', 'inv-retry')).toBe('doc-retry');
+    expect(await store.getCheckpoint?.('__cursor__projection-retry')).toEqual({
+      sequence: 9,
+      timestamp: '2026-04-09T00:00:09.000Z'
+    });
+    expect(await store.getDedupeCheckpoint('invoice:inv-retry:9')).toEqual({
+      sequence: 9,
+      timestamp: '2026-04-09T00:00:09.000Z'
+    });
+
+    expect(collection.snapshot()).toHaveLength(2);
+    expect(linkCollection.snapshot()).toHaveLength(1);
+    expect(dedupeCollection.snapshot()).toHaveLength(1);
+  });
 });
