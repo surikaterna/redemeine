@@ -8,9 +8,12 @@
       "@redemeine/kernel": ["packages/kernel/src/index.ts"],
       "@redemeine/mirage": ["packages/mirage/src/index.ts"],
       "@redemeine/projection": ["packages/projection/src/index.ts"],
+      "@redemeine/projection-router-core": ["packages/projection-router-core/src/index.ts"],
       "@redemeine/projection-runtime-core": ["packages/projection-runtime-core/src/index.ts"],
       "@redemeine/projection-runtime-store-inmemory": ["packages/projection-runtime-store-inmemory/src/index.ts"],
       "@redemeine/projection-runtime-store-mongodb": ["packages/projection-runtime-store-mongodb/src/index.ts"],
+      "@redemeine/projection-worker-core": ["packages/projection-worker-core/src/index.ts"],
+      "@redemeine/projection-worker-lite": ["packages/projection-worker-lite/src/index.ts"],
       "@redemeine/saga": ["packages/saga/src/index.ts"],
       "@redemeine/saga-runtime": ["packages/saga-runtime/src/index.ts"]
     }
@@ -21,9 +24,12 @@
     "packages/kernel/src/**/*.ts",
     "packages/mirage/src/**/*.ts",
     "packages/projection/src/**/*.ts",
+    "packages/projection-router-core/src/**/*.ts",
     "packages/projection-runtime-core/src/**/*.ts",
     "packages/projection-runtime-store-inmemory/src/**/*.ts",
     "packages/projection-runtime-store-mongodb/src/**/*.ts",
+    "packages/projection-worker-core/src/**/*.ts",
+    "packages/projection-worker-lite/src/**/*.ts",
     "packages/saga/src/**/*.ts",
     "packages/saga-runtime/src/**/*.ts"
   ]
