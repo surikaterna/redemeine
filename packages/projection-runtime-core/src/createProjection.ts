@@ -9,10 +9,10 @@ type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'p
   type: TType;
 };
 
-type AnyProjector = (...args: any[]) => unknown;
+type AnyProjector = (...args: unknown[]) => unknown;
 
 type ProjectorPayload<TProjector> =
-  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+  TProjector extends (state: unknown, event: infer TEvent, ...args: unknown[]) => unknown
     ? TEvent extends { payload: infer TPayload }
       ? TPayload
       : unknown
