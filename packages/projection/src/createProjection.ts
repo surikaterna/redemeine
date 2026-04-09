@@ -1,5 +1,6 @@
-import { Draft } from 'immer';
 import { ProjectionEvent as BaseProjectionEvent } from './types';
+
+type Draft<TState> = TState;
 
 /**
  * Event shape passed to projection handlers with narrowed payload type.

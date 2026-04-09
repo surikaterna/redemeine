@@ -42,6 +42,7 @@ Once you've mastered the basics, explore task-oriented guides for solving common
 
 * [**Testing Aggregates**](/docs/recipes/testing-aggregates) — A "Given / When / Then" blueprint for testing pure business logic.
 * [**Testing Projections**](/docs/recipes/testing-projections) — Practical patterns for `.from()`/`.join()`, identity routing, and pure handler tests.
+* [**Projection Runtime vNext Runbook + Release Gates**](/docs/architecture/projection-runtime-vnext-runbook) — Operational guide for catch-up/cutover/live modes, diagnostics triage, rollback expectations, and command-based release sign-off gates.
 * [**Testing Pyramid (Typed-First)**](/docs/recipes/testing-pyramid) — Layered guidance for `testAggregate`/`testSaga`/`testProjection`, Mirage, and `createTestDepot` v1 with typed-first defaults.
 * [**Saga Reference**](/docs/reference/sagas-reference) — API-focused reference for defining saga intent maps, projecting pending intents, and integrating dispatch helpers.
 * [**Path Conventions Guide**](/docs/guides/path-conventions) — A quick cheat sheet for the default command and event naming paths.
