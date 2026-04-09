@@ -1,12 +1,25 @@
 import { produce, Draft } from 'immer';
 import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
-import { Checkpoint, ProjectionEvent, ProjectionWarning } from './types';
+import { Checkpoint, EventBatch, ProjectionEvent, ProjectionWarning } from './types';
 import { ProjectionDefinition, ProjectionContext } from './createProjection';
+
+type RuntimeMode = 'catching_up' | 'ready_to_cutover' | 'live';
+
+interface CutoverSubscriptions {
+  catchUp: IEventSubscription;
+  live: IEventSubscription;
+}
+
+interface RuntimeModeMetadata {
+  mode: RuntimeMode;
+  updatedAt: string;
+}
 
 export interface ProjectionDaemonOptions<TState> {
   projection: ProjectionDefinition<TState>;
-  subscription: IEventSubscription;
+  subscription?: IEventSubscription;
+  subscriptions?: CutoverSubscriptions;
   store: IProjectionStore<TState>;
   batchSize?: number;
   pollInterval?: number;
@@ -18,6 +31,97 @@ export interface BatchStats {
   eventsProcessed: number;
   documentsUpdated: number;
   duration: number;
+}
+
+class SubscriptionOrchestrator<TState = unknown> {
+  private readonly cursorKey: string;
+  private readonly modeKey: string;
+
+  constructor(
+    private readonly projectionName: string,
+    private readonly store: IProjectionStore<TState>,
+    private readonly singleSubscription: IEventSubscription | null,
+    private readonly cutoverSubscriptions: CutoverSubscriptions | null
+  ) {
+    this.cursorKey = `__cursor__${projectionName}`;
+    this.modeKey = `__checkpoint__${projectionName}__runtime_mode`;
+  }
+
+  async poll(cursor: Checkpoint, batchSize: number): Promise<{ batch: EventBatch | null; mode: RuntimeMode }> {
+    if (this.singleSubscription) {
+      return {
+        batch: await this.singleSubscription.poll(cursor, batchSize),
+        mode: 'live'
+      };
+    }
+
+    if (!this.cutoverSubscriptions) {
+      throw new Error('Projection daemon requires either options.subscription or options.subscriptions');
+    }
+
+    const mode = await this.loadRuntimeMode();
+
+    if (mode === 'catching_up') {
+      const catchUpBatch = await this.cutoverSubscriptions.catchUp.poll(cursor, batchSize);
+
+      if (catchUpBatch.events.length > 0) {
+        return {
+          batch: catchUpBatch,
+          mode
+        };
+      }
+
+      // Durable intermediate state to make cutover restart-safe.
+      await this.persistRuntimeMode('ready_to_cutover', cursor);
+
+      return {
+        batch: null,
+        mode: 'ready_to_cutover'
+      };
+    }
+
+    if (mode === 'ready_to_cutover') {
+      await this.persistRuntimeMode('live', cursor);
+
+      return {
+        batch: null,
+        mode: 'live'
+      };
+    }
+
+    return {
+      batch: await this.cutoverSubscriptions.live.poll(cursor, batchSize),
+      mode
+    };
+  }
+
+  private async loadRuntimeMode(): Promise<RuntimeMode> {
+    const metadata = await this.store.load(this.modeKey);
+    const candidate = (metadata as RuntimeModeMetadata | null)?.mode;
+
+    if (candidate === 'catching_up' || candidate === 'ready_to_cutover' || candidate === 'live') {
+      return candidate;
+    }
+
+    return 'catching_up';
+  }
+
+  private async persistRuntimeMode(mode: RuntimeMode, checkpoint: Checkpoint): Promise<void> {
+    await this.store.commitAtomic({
+      documents: [{
+        documentId: this.modeKey,
+        state: {
+          mode,
+          updatedAt: new Date().toISOString()
+        } as TState,
+        checkpoint
+      }],
+      links: [],
+      cursorKey: this.cursorKey,
+      cursor: checkpoint,
+      dedupe: { upserts: [] }
+    });
+  }
 }
 
 /**
@@ -38,8 +142,20 @@ export interface BatchStats {
 export class ProjectionDaemon<TState = unknown> {
   private isRunning = false;
   private shouldStop = false;
+  private readonly orchestrator: SubscriptionOrchestrator<TState>;
 
-  constructor(private options: ProjectionDaemonOptions<TState>) {}
+  constructor(private options: ProjectionDaemonOptions<TState>) {
+    if (options.subscription && options.subscriptions) {
+      throw new Error('Projection daemon options are mutually exclusive: use either subscription or subscriptions');
+    }
+
+    this.orchestrator = new SubscriptionOrchestrator<TState>(
+      options.projection.name,
+      options.store,
+      options.subscription ?? null,
+      options.subscriptions ?? null
+    );
+  }
 
   /**
    * Start the daemon's polling loop
@@ -79,15 +195,16 @@ export class ProjectionDaemon<TState = unknown> {
    */
   async processBatch(): Promise<BatchStats> {
     const startTime = Date.now();
-    const { projection, subscription, store, batchSize = 100, onBatch, onWarning } = this.options;
+    const { projection, store, batchSize = 100, onBatch, onWarning } = this.options;
 
     // Get cursor for this projection
     const cursor = await this.getCurrentCursor();
 
-    // Poll events
-    const batch = await subscription.poll(cursor, batchSize);
+    // Poll events through subscription orchestration.
+    const orchestrated = await this.orchestrator.poll(cursor, batchSize);
+    const batch = orchestrated.batch;
 
-    if (batch.events.length === 0) {
+    if (!batch || batch.events.length === 0) {
       const emptyStats = { eventsProcessed: 0, documentsUpdated: 0, duration: Date.now() - startTime };
       if (onBatch) onBatch(emptyStats);
       return emptyStats;
