@@ -35,3 +35,10 @@ export type {
   ProjectionRouterDecision
 } from './router';
 export type { ProjectionCatchupPollingAdapter } from './catchup';
+export type {
+  ProjectionHydrationMode,
+  ProjectionHydrationStatus,
+  ProjectionHydrationFailure,
+  ProjectionMetadataEnvelope,
+  ProjectionHydrationHint
+} from './hydration';

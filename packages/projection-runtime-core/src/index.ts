@@ -65,5 +65,10 @@ export type {
   ProjectionRoutingKey,
   ProjectionRouterFanoutEnvelope,
   ProjectionRouterDecision,
-  ProjectionCatchupPollingAdapter
+  ProjectionCatchupPollingAdapter,
+  ProjectionHydrationMode,
+  ProjectionHydrationStatus,
+  ProjectionHydrationFailure,
+  ProjectionMetadataEnvelope,
+  ProjectionHydrationHint
 } from './contracts';

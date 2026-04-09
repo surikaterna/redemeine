@@ -59,3 +59,34 @@ These invariants are binding for downstream RT3 beads unless a new ADR explicitl
   - `subscribeTo(...)`
   - `unsubscribeFrom(...)`
 - Getter methods such as `getSubscriptions()` / `getUnsubscriptions()` are internal runtime concerns and must not be exposed in public projection contracts.
+
+## 8) Join hydration mode and `_projection` status envelope
+
+- Join hydration mode contract supports:
+  - `replay_all`
+  - `snapshot_only`
+  - `snapshot_plus_tail`
+- `_projection` metadata is intentionally minimal and operational:
+  - `status` (`hydrating` | `ready` | `rebuilding` | `failed`)
+  - `generation`
+  - optional `watermark` and lifecycle timestamps
+  - optional `adapter` extension bag for store-specific metadata
+- `_projection` metadata **must not include `projectionName`** (superfluous/redundant in projection-scoped storage).
+
+Example:
+
+```json
+{
+  "total": 42,
+  "_projection": {
+    "status": "ready",
+    "generation": 2,
+    "watermark": { "sequence": 1201, "timestamp": "2026-04-09T18:00:02.000Z" },
+    "updatedAt": "2026-04-09T18:00:02.000Z",
+    "hydratedAt": "2026-04-09T18:00:02.000Z",
+    "adapter": {
+      "store": "mongodb"
+    }
+  }
+}
+```
