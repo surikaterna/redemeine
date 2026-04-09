@@ -294,6 +294,37 @@ describe('projection-worker-core', () => {
     ]);
   });
 
+  test('state cache default TTL is 10 minutes when ttlMs is unset', async () => {
+    const loads: string[] = [];
+    let nowMs = 1_000;
+
+    const worker = createProjectionWorkerCore({
+      processor: async (context) => {
+        const target = context.commit.message.routeDecision.targets[0]?.targetId;
+        if (target !== undefined) {
+          await context.getProjectionState(target);
+        }
+        return { status: 'ack' };
+      },
+      stateLoader: async ({ targetId }) => {
+        loads.push(targetId);
+        return { targetId, loadedAt: nowMs };
+      },
+      stateCache: {
+        maxEntries: 5,
+        now: () => nowMs
+      }
+    });
+
+    await worker.push(createCommit('a', 'invoice-1'));
+    nowMs += 600_000 - 1;
+    await worker.push(createCommit('b', 'invoice-2'));
+    nowMs += 1;
+    await worker.push(createCommit('c', 'invoice-1'));
+
+    expect(loads).toEqual(['invoice-1', 'invoice-2', 'invoice-1']);
+  });
+
   test('retryable store failures evict affected cache keys and return requeue-friendly nack', async () => {
     const loads: string[] = [];
     const worker = createProjectionWorkerCore({
@@ -387,5 +418,58 @@ describe('projection-worker-core', () => {
     });
     expect(afterTerminal.item.decision).toEqual({ status: 'ack' });
     expect(loads).toEqual(['invoice-9']);
+  });
+
+  test('retryable batch failures evict cache targets and return deterministic requeue nacks', async () => {
+    const loads: string[] = [];
+    const worker = createProjectionWorkerCore({
+      processor: () => ({ status: 'ack' }),
+      batchProcessor: async (context) => {
+        for (const commit of context.commits) {
+          for (const target of commit.message.routeDecision.targets) {
+            await context.getProjectionState(target.targetId);
+          }
+        }
+
+        throw {
+          kind: 'transient',
+          reason: 'write-timeout'
+        };
+      },
+      getProjectionConfig: () => ({ microBatching: 'all' }),
+      stateLoader: async ({ targetId }) => {
+        loads.push(targetId);
+        return { targetId, loadedAt: loads.length };
+      },
+      stateCache: {
+        maxEntries: 10
+      }
+    });
+
+    const many = await worker.pushMany([
+      createCommit('a', 'invoice-1'),
+      createCommit('b', 'invoice-2')
+    ]);
+
+    const after = await worker.pushMany([
+      createCommit('after-a', 'invoice-1'),
+      createCommit('after-b', 'invoice-2')
+    ]);
+
+    expect(many.items).toHaveLength(2);
+    expect(many.items[0]?.decision).toEqual({
+      status: 'nack',
+      retryable: true,
+      reason: 'write-timeout'
+    });
+    expect(many.items[1]?.decision).toEqual({
+      status: 'nack',
+      retryable: true,
+      reason: 'write-timeout'
+    });
+
+    expect(after.items[0]?.decision).toEqual({ status: 'nack', retryable: true, reason: 'write-timeout' });
+    expect(after.items[1]?.decision).toEqual({ status: 'nack', retryable: true, reason: 'write-timeout' });
+    expect(loads).toEqual(['invoice-1', 'invoice-2', 'invoice-1', 'invoice-2']);
   });
 });

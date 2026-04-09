@@ -791,6 +791,51 @@ describe('projection-runtime-core contract types', () => {
     expect(Object.prototype.hasOwnProperty.call(metadata, 'projectionName')).toBe(false);
   });
 
+  test('hydration lifecycle transitions remain within contract statuses', () => {
+    const lifecycle: ProjectionMetadataEnvelope[] = [
+      {
+        status: 'hydrating',
+        generation: 4,
+        updatedAt: '2026-04-09T18:00:00.000Z',
+        watermark: { sequence: 200 },
+        rebuildingAt: '2026-04-09T18:00:00.000Z'
+      },
+      {
+        status: 'ready',
+        generation: 4,
+        updatedAt: '2026-04-09T18:00:01.000Z',
+        watermark: { sequence: 210 },
+        hydratedAt: '2026-04-09T18:00:01.000Z'
+      },
+      {
+        status: 'rebuilding',
+        generation: 5,
+        updatedAt: '2026-04-09T18:00:02.000Z',
+        watermark: { sequence: 210 },
+        rebuildingAt: '2026-04-09T18:00:02.000Z'
+      },
+      {
+        status: 'failed',
+        generation: 5,
+        updatedAt: '2026-04-09T18:00:03.000Z',
+        watermark: { sequence: 211 },
+        failed: {
+          at: '2026-04-09T18:00:03.000Z',
+          reason: 'snapshot-corrupt',
+          retryable: false
+        }
+      }
+    ];
+
+    expect(lifecycle.map((entry) => entry.status)).toEqual([
+      'hydrating',
+      'ready',
+      'rebuilding',
+      'failed'
+    ]);
+    expect(lifecycle.every((entry) => !Object.prototype.hasOwnProperty.call(entry, 'projectionName'))).toBe(true);
+  });
+
   test('cutover readiness is deterministic from criteria', () => {
     const ready = evaluateCutoverReadiness({
       shadowCaughtUp: true,
@@ -892,6 +937,40 @@ describe('projection-runtime-core contract types', () => {
     expect(contractCutover.status).toBe('live');
   });
 
+  test('cutover safety requires shadow-ready or rollback-ready status and satisfied readiness', () => {
+    const failedState: ProjectionRebuildLifecycleState = {
+      activeGenerationId: 'gen-a',
+      shadowGenerationId: 'gen-b',
+      status: 'failed',
+      checkpoint: { sequence: 10 }
+    };
+
+    const rebuildingState: ProjectionRebuildLifecycleState = {
+      activeGenerationId: 'gen-a',
+      shadowGenerationId: 'gen-b',
+      status: 'building_shadow',
+      checkpoint: { sequence: 10 }
+    };
+
+    const readiness = {
+      shadowCaughtUp: true,
+      validationPassed: true,
+      writesQuiesced: true
+    } as const;
+
+    expect(transitionToCutover({
+      state: failedState,
+      checkpoint: { sequence: 11 },
+      readiness
+    })).toEqual(failedState);
+
+    expect(transitionToCutover({
+      state: rebuildingState,
+      checkpoint: { sequence: 11 },
+      readiness
+    })).toEqual(rebuildingState);
+  });
+
   test('store failure taxonomy keeps deterministic retryability', () => {
     const conflict: ProjectionStoreWriteFailure = {
       category: 'conflict',
@@ -917,5 +996,16 @@ describe('projection-runtime-core contract types', () => {
     expect(conflict.retryable).toBe(true);
     expect(transient.retryable).toBe(true);
     expect(terminal.retryable).toBe(false);
+
+    const failures: ProjectionStoreWriteFailure[] = [conflict, transient, terminal];
+    const retryabilityByCategory = Object.fromEntries(
+      failures.map((failure) => [failure.category, failure.retryable])
+    );
+
+    expect(retryabilityByCategory).toEqual({
+      conflict: true,
+      transient: true,
+      terminal: false
+    });
   });
 });
