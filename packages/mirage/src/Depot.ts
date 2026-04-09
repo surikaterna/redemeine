@@ -151,8 +151,8 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           await store.saveEvents(core.id, appendableEvents, core.version);
           core.clearPendingResults();
 
-          // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
-          // so post-commit failures are retriable without coupling to request lifecycle.
+          // Runtime policy: keep post-commit hooks inline in-process.
+          // Durable side-effect relay is handled by CDC -> DB -> relay -> MQ -> saga/projection inbox flows.
           await runAfterCommitHooks(core.id, appendableEvents, intents);
       }
   };
