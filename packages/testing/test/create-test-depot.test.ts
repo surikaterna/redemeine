@@ -112,6 +112,33 @@ const orderedCounterProjection = {
 } as const;
 
 describe('createTestDepot', () => {
+  it('integrates projections through runtime dynamic loading from @redemeine/projection-runtime', async () => {
+    const firstDepot = createTestDepot({
+      aggregates: [CounterAggregate as any],
+      projections: [counterProjection]
+    });
+
+    const secondDepot = createTestDepot({
+      aggregates: [CounterAggregate as any],
+      projections: [counterProjection]
+    });
+
+    await firstDepot.dispatch(CounterAggregate.commandCreators.increment('counter-runtime-1', 2));
+    await secondDepot.dispatch(CounterAggregate.commandCreators.increment('counter-runtime-2', 6));
+    await Promise.all([firstDepot.waitForIdle(), secondDepot.waitForIdle()]);
+
+    await expect(firstDepot.projections.get(counterProjection, 'counter-runtime-1')).resolves.toEqual({
+      id: 'counter-runtime-1',
+      total: 2,
+      events: 1
+    });
+    await expect(secondDepot.projections.get(counterProjection, 'counter-runtime-2')).resolves.toEqual({
+      id: 'counter-runtime-2',
+      total: 6,
+      events: 1
+    });
+  });
+
   it('processes command -> event -> projection deterministically', async () => {
     const depot = createTestDepot({
       aggregates: [CounterAggregate as any],
