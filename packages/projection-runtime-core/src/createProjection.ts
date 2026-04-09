@@ -1,6 +1,5 @@
+import type { Draft } from 'immer';
 import { ProjectionEvent as BaseProjectionEvent } from './types';
-
-type Draft<TState> = TState;
 
 /**
  * Event shape passed to projection handlers with narrowed payload type.
@@ -93,11 +92,21 @@ export interface ProjectionContext {
    * Used for .join semantics to correlate related aggregates
    */
   subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
+
+  /**
+   * Remove a prior subscription for a related aggregate stream.
+   */
+  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
   
   /**
    * Get current subscriptions
    */
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+
+  /**
+   * Get explicit unsubscribe operations emitted by handler.
+   */
+  getUnsubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 }
 
 /**
@@ -153,6 +162,16 @@ export interface JoinStreamDefinition<TState> {
 }
 
 /**
+ * Reverse-subscribe stream definition for declarative reverse contracts.
+ */
+export interface ReverseSubscribeStreamDefinition<TState> {
+  /** The aggregate type for this reverse stream */
+  aggregate: { __aggregateType: string };
+  /** Event handlers keyed by event type */
+  handlers: Record<string, ProjectionHandler<TState>>;
+}
+
+/**
  * Complete projection definition
  */
 export interface ProjectionDefinition<TState = unknown> {
@@ -162,6 +181,8 @@ export interface ProjectionDefinition<TState = unknown> {
   fromStream: ProjectionStreamDefinition<TState>;
   /** Additional streams to join (.join) */
   joinStreams?: JoinStreamDefinition<TState>[];
+  /** Additional reverse-subscribe streams (.reverseSubscribe) */
+  reverseSubscribeStreams?: ReverseSubscribeStreamDefinition<TState>[];
   /** Initial state factory function */
   initialState: (documentId: string) => TState;
   /** Identity resolver - determines which document ID(s) receive an event */
@@ -206,6 +227,14 @@ export interface ProjectionBuilder<TState> {
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
+
+  /**
+   * Add a reverse-subscribe stream declaration.
+   */
+  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
+  ): ProjectionBuilder<TState>;
   
   /**
    * Build the final projection definition
@@ -222,6 +251,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _identity: (event: BaseProjectionEvent) => string | readonly string[];
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
+  private _reverseSubscribeStreams: ReverseSubscribeStreamDefinition<TState>[] = [];
 
   constructor(name: string, initialState: (id: string) => TState) {
     this._name = name;
@@ -283,6 +313,26 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+    aggregate: TAggregate,
+    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
+  ): ProjectionBuilder<TState> {
+    const handlersMap: Record<string, ProjectionHandler<TState>> = {};
+
+    for (const [key, handler] of Object.entries(handlers)) {
+      if (handler) {
+        handlersMap[key as string] = handler as ProjectionHandler<TState>;
+      }
+    }
+
+    this._reverseSubscribeStreams.push({
+      aggregate,
+      handlers: handlersMap
+    });
+
+    return this;
+  }
+
   build(): ProjectionDefinition<TState> {
     if (!this._fromStream) {
       throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
@@ -292,6 +342,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       name: this._name,
       fromStream: this._fromStream,
       joinStreams: this._joinStreams,
+      reverseSubscribeStreams: this._reverseSubscribeStreams,
       initialState: this._initialState,
       identity: this._identity,
       subscriptions: []
