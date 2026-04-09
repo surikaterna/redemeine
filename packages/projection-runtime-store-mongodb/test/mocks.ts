@@ -1,6 +1,7 @@
 import type {
   MongoCollectionLike,
   ProjectionDocumentRecord,
+  ProjectionDedupeRecord,
   ProjectionLinkRecord
 } from '../src';
 
@@ -104,3 +105,6 @@ export const createProjectionDocumentCollection = <TState = unknown>(): InMemory
 
 export const createProjectionLinkCollection = (): InMemoryMongoCollection<ProjectionLinkRecord> =>
   new InMemoryMongoCollection<ProjectionLinkRecord>();
+
+export const createProjectionDedupeCollection = (): InMemoryMongoCollection<ProjectionDedupeRecord> =>
+  new InMemoryMongoCollection<ProjectionDedupeRecord>();

@@ -20,6 +20,7 @@ interface StoredDocument<TState> {
 export class InMemoryProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
+  private dedupe = new Map<string, Checkpoint>();
   async load(id: string): Promise<TState | null> {
     const doc = this.documents.get(id);
     return doc ? doc.state : null;
@@ -55,6 +56,10 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       checkpoint: write.cursor,
       updatedAt: new Date().toISOString()
     });
+
+    for (const dedupe of write.dedupe.upserts) {
+      this.dedupe.set(dedupe.key, dedupe.checkpoint);
+    }
   }
 
   async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
@@ -74,9 +79,15 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     return doc ? doc.checkpoint : null;
   }
 
+  async getDedupeCheckpoint(key: string): Promise<Checkpoint | null> {
+    return this.dedupe.get(key) ?? null;
+  }
+
   // Helper methods for testing
   clear(): void {
     this.documents.clear();
+    this.links.clear();
+    this.dedupe.clear();
   }
 
   getAll(): Map<string, StoredDocument<TState>> {

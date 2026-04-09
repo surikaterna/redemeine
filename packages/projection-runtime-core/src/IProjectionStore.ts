@@ -13,9 +13,7 @@ export interface ProjectionLinkWrite {
 }
 
 /**
- * E4.2 contract stub for durable dedupe persistence.
- *
- * Runtime-core E4.1 can pass this through without semantics.
+ * Durable dedupe updates persisted as part of atomic projection writes.
  */
 export interface ProjectionDedupeWrite {
   upserts: Array<{ key: string; checkpoint: Checkpoint }>;
@@ -26,7 +24,7 @@ export interface ProjectionAtomicWrite<TState> {
   links: ProjectionLinkWrite[];
   cursorKey: string;
   cursor: Checkpoint;
-  dedupe?: ProjectionDedupeWrite;
+  dedupe: ProjectionDedupeWrite;
 }
 
 /**
@@ -65,6 +63,13 @@ export interface IProjectionStore<TState = unknown> {
    * @param key The checkpoint key
    */
   getCheckpoint?(key: string): Promise<Checkpoint | null>;
+
+  /**
+   * Get persisted dedupe checkpoint for a canonical event key.
+   *
+   * Runtime uses this to suppress duplicates across replay/restart overlap.
+   */
+  getDedupeCheckpoint(key: string): Promise<Checkpoint | null>;
 
   /**
    * Delete a projection document
