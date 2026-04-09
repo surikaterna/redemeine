@@ -207,7 +207,19 @@ describe('runtime-core E5.1 EventStore catch-up subscription', () => {
     expect(stats).toEqual({
       eventsProcessed: 0,
       documentsUpdated: 0,
-      duration: expect.any(Number)
+      duration: expect.any(Number),
+      diagnostics: {
+        cursorStart: {
+          sequence: 5,
+          timestamp: '2026-04-09T00:00:05.000Z'
+        },
+        cursorEnd: {
+          sequence: 5,
+          timestamp: '2026-04-09T00:00:05.000Z'
+        },
+        dedupeSuppressed: 0,
+        warnings: 0
+      }
     });
     expect(store.atomicWrites).toHaveLength(0);
     expect(await store.getCheckpoint('__cursor__eventstore-catchup-empty')).toEqual({

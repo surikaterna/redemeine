@@ -607,3 +607,124 @@ describe('runtime-core E5.3 cutover dedupe overlap validation', () => {
     expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
   });
 });
+
+describe('runtime-core E5.2 automatic catch-up to live cutover', () => {
+  test('transitions catching_up -> ready_to_cutover -> live and persists restart-safe mode metadata', async () => {
+    const projection = createProjection<{ applied: number }>('auto-cutover-state-machine', () => ({ applied: 0 }))
+      .from(invoiceAgg, {
+        created: (state) => {
+          state.applied += 1;
+        }
+      })
+      .build();
+
+    const store = new RecordingProjectionStore<{ applied: number }>();
+
+    const catchUpSubscription = new InMemoryEventSubscription([
+      event(1, 'invoice', 'invoice-1', 'created', {})
+    ]);
+
+    const liveSubscription = new InMemoryEventSubscription([
+      // Deliberate overlap with catch-up stream; durable dedupe must suppress this.
+      event(1, 'invoice', 'invoice-1', 'created', {}),
+      event(2, 'invoice', 'invoice-1', 'created', {})
+    ]);
+
+    const daemon = new ProjectionDaemon<{ applied: number }>({
+      projection,
+      subscriptions: {
+        catchUp: catchUpSubscription,
+        live: liveSubscription
+      },
+      store,
+      batchSize: 100
+    });
+
+    // catch_up applies sequence=1
+    const first = await daemon.processBatch();
+    expect(first.eventsProcessed).toBe(1);
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 1 });
+
+    // no catch-up events -> persist ready_to_cutover
+    const second = await daemon.processBatch();
+    expect(second.eventsProcessed).toBe(0);
+    expect(store.getDocument('__checkpoint__auto-cutover-state-machine__runtime_mode')).toEqual({
+      mode: 'ready_to_cutover',
+      updatedAt: expect.any(String)
+    });
+
+    // ready_to_cutover -> live persisted durably
+    const third = await daemon.processBatch();
+    expect(third.eventsProcessed).toBe(0);
+    expect(store.getDocument('__checkpoint__auto-cutover-state-machine__runtime_mode')).toEqual({
+      mode: 'live',
+      updatedAt: expect.any(String)
+    });
+
+    // live stream overlap sequence=1 is skipped by cursor (>1) and dedupe; sequence=2 applies once.
+    const fourth = await daemon.processBatch();
+    expect(fourth.eventsProcessed).toBe(1);
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 2 });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+      sequence: 1,
+      timestamp: '2026-04-09T00:00:01.000Z'
+    });
+    expect(await store.getDedupeCheckpoint('invoice:invoice-1:2')).toEqual({
+      sequence: 2,
+      timestamp: '2026-04-09T00:00:02.000Z'
+    });
+  });
+
+  test('resumes cutover from persisted ready_to_cutover after restart', async () => {
+    const projection = createProjection<{ applied: number }>('auto-cutover-restart', () => ({ applied: 0 }))
+      .from(invoiceAgg, {
+        created: (state) => {
+          state.applied += 1;
+        }
+      })
+      .build();
+
+    const store = new RecordingProjectionStore<{ applied: number }>();
+    const catchUpEvents = [event(1, 'invoice', 'invoice-1', 'created', {})];
+    const liveEvents = [event(2, 'invoice', 'invoice-1', 'created', {})];
+
+    const firstDaemon = new ProjectionDaemon<{ applied: number }>({
+      projection,
+      subscriptions: {
+        catchUp: new InMemoryEventSubscription(catchUpEvents),
+        live: new InMemoryEventSubscription(liveEvents)
+      },
+      store,
+      batchSize: 100
+    });
+
+    await firstDaemon.processBatch(); // catching_up applies seq=1
+    await firstDaemon.processBatch(); // persist ready_to_cutover
+
+    // Simulated process restart in mid-transition.
+    const restartedDaemon = new ProjectionDaemon<{ applied: number }>({
+      projection,
+      subscriptions: {
+        catchUp: new InMemoryEventSubscription(catchUpEvents),
+        live: new InMemoryEventSubscription(liveEvents)
+      },
+      store,
+      batchSize: 100
+    });
+
+    const transition = await restartedDaemon.processBatch(); // ready_to_cutover -> live
+    expect(transition.eventsProcessed).toBe(0);
+    expect(store.getDocument('__checkpoint__auto-cutover-restart__runtime_mode')).toEqual({
+      mode: 'live',
+      updatedAt: expect.any(String)
+    });
+
+    const applyLive = await restartedDaemon.processBatch();
+    expect(applyLive.eventsProcessed).toBe(1);
+    expect(store.getDocument('invoice-1')).toEqual({ applied: 2 });
+    expect(store.getCursor('__cursor__auto-cutover-restart')).toEqual({
+      sequence: 2,
+      timestamp: '2026-04-09T00:00:02.000Z'
+    });
+  });
+});
