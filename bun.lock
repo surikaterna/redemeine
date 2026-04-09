@@ -59,7 +59,29 @@
       "name": "@redemeine/projection",
       "version": "0.1.0",
       "dependencies": {
+        "@redemeine/projection-runtime-core": "workspace:*",
+        "@redemeine/projection-runtime-store-inmemory": "workspace:*",
+      },
+    },
+    "packages/projection-runtime-core": {
+      "name": "@redemeine/projection-runtime-core",
+      "version": "0.1.0",
+      "dependencies": {
         "immer": "^10.2.0",
+      },
+    },
+    "packages/projection-runtime-store-inmemory": {
+      "name": "@redemeine/projection-runtime-store-inmemory",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/projection-runtime-core": "workspace:*",
+      },
+    },
+    "packages/projection-runtime-store-mongodb": {
+      "name": "@redemeine/projection-runtime-store-mongodb",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/projection-runtime-core": "workspace:*",
       },
     },
     "packages/root-runner": {
@@ -297,6 +319,12 @@
     "@redemeine/mirage": ["@redemeine/mirage@workspace:packages/mirage"],
 
     "@redemeine/projection": ["@redemeine/projection@workspace:packages/projection"],
+
+    "@redemeine/projection-runtime-core": ["@redemeine/projection-runtime-core@workspace:packages/projection-runtime-core"],
+
+    "@redemeine/projection-runtime-store-inmemory": ["@redemeine/projection-runtime-store-inmemory@workspace:packages/projection-runtime-store-inmemory"],
+
+    "@redemeine/projection-runtime-store-mongodb": ["@redemeine/projection-runtime-store-mongodb@workspace:packages/projection-runtime-store-mongodb"],
 
     "@redemeine/root-runner": ["@redemeine/root-runner@workspace:packages/root-runner"],
 

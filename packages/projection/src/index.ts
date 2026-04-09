@@ -1,11 +1,17 @@
-export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
-export type { IProjectionStore } from './IProjectionStore';
-export type { IEventSubscription } from './IEventSubscription';
-export type { IProjectionLinkStore } from './IProjectionLinkStore';
 export {
-  createProjection
-} from './createProjection';
+  createProjection,
+  ProjectionDaemon,
+  type ProjectionDaemonOptions,
+  type BatchStats
+} from '@redemeine/projection-runtime-core';
 export type {
+  Checkpoint,
+  ProjectionEvent,
+  EventBatch,
+  Cursor,
+  IProjectionStore,
+  IEventSubscription,
+  IProjectionLinkStore,
   AggregateDefinition,
   AggregateEventPayloadMap,
   AggregateEventKeys,
@@ -17,8 +23,5 @@ export type {
   JoinStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder
-} from './createProjection';
-export { InMemoryProjectionStore } from './InMemoryProjectionStore';
-export { InMemoryProjectionLinkStore } from './InMemoryProjectionLinkStore';
-export { ProjectionDaemon } from './ProjectionDaemon';
-export type { ProjectionDaemonOptions, BatchStats } from './ProjectionDaemon';
+} from '@redemeine/projection-runtime-core';
+export { InMemoryProjectionStore, InMemoryProjectionLinkStore } from '@redemeine/projection-runtime-store-inmemory';
