@@ -18,16 +18,6 @@ export interface ProjectionRouteTarget {
 export interface ProjectionRouteDecision {
   readonly projectionName: string;
   readonly targets: readonly ProjectionRouteTarget[];
-  readonly warnings?: readonly ProjectionRouteWarning[];
-}
-
-export interface ProjectionRouteWarning {
-  readonly code: 'missing_reverse_target' | 'missing_target_removal';
-  readonly projectionName: string;
-  readonly aggregateType: string;
-  readonly aggregateId: string;
-  readonly eventName: string;
-  readonly targetId?: string;
 }
 
 export interface ProjectionWorkerMessage {
@@ -51,9 +41,32 @@ export interface ProjectionWorkerProcessingMetadata {
   readonly retryCount: number;
 }
 
-export interface ProjectionWorkerProcessingContext {
+export interface ProjectionWorkerStateRequest {
+  readonly definition: ProjectionDefinitionLike;
+  readonly projectionName: string;
+  readonly targetId: string;
+}
+
+export type ProjectionWorkerStateLoader = (
+  request: ProjectionWorkerStateRequest
+) => Promise<unknown | null> | unknown | null;
+
+export interface ProjectionWorkerProjectionStateAccess {
+  getProjectionState(targetId: string): Promise<unknown | null>;
+  setProjectionState(targetId: string, state: unknown | null): void;
+  evictProjectionState(targetId: string): void;
+}
+
+export interface ProjectionWorkerProcessingContext extends ProjectionWorkerProjectionStateAccess {
   readonly commit: ProjectionWorkerCommit;
   readonly metadata: ProjectionWorkerProcessingMetadata;
+  readonly laneKeys: readonly string[];
+}
+
+export interface ProjectionWorkerBatchProcessingContext extends ProjectionWorkerProjectionStateAccess {
+  readonly commits: readonly ProjectionWorkerCommit[];
+  readonly metadata: readonly ProjectionWorkerProcessingMetadata[];
+  readonly laneKeys: readonly string[];
 }
 
 export interface ProjectionWorkerAckDecision {
@@ -86,6 +99,32 @@ export interface ProjectionWorkerPushManyResult {
 export type ProjectionWorkerProcessor = (
   context: ProjectionWorkerProcessingContext
 ) => Promise<ProjectionWorkerDecision> | ProjectionWorkerDecision;
+
+export type ProjectionWorkerBatchProcessor = (
+  context: ProjectionWorkerBatchProcessingContext
+) => Promise<readonly ProjectionWorkerDecision[]> | readonly ProjectionWorkerDecision[];
+
+export type ProjectionWorkerMicroBatchingMode = 'none' | 'single' | 'all';
+
+export interface ProjectionWorkerProjectionConfig {
+  readonly microBatching?: ProjectionWorkerMicroBatchingMode;
+}
+
+export type ProjectionWorkerProjectionConfigResolver = (
+  definition: ProjectionDefinitionLike
+) => ProjectionWorkerProjectionConfig | undefined;
+
+export interface ProjectionWorkerStateCacheOptions {
+  readonly maxEntries: number;
+}
+
+export interface ProjectionWorkerCoreOptions {
+  readonly processor: ProjectionWorkerProcessor;
+  readonly batchProcessor?: ProjectionWorkerBatchProcessor;
+  readonly getProjectionConfig?: ProjectionWorkerProjectionConfigResolver;
+  readonly stateLoader?: ProjectionWorkerStateLoader;
+  readonly stateCache?: ProjectionWorkerStateCacheOptions;
+}
 
 export interface ProjectionWorkerPushContract {
   push(commit: ProjectionWorkerCommit): Promise<ProjectionWorkerPushResult>;
