@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { ProjectionDaemon, ProjectionDaemonOptions, BatchStats } from '../src/ProjectionDaemon';
 import { IProjectionStore } from '../src/IProjectionStore';
 import { IEventSubscription } from '../src/IEventSubscription';
-import { IProjectionLinkStore } from '../src/IProjectionLinkStore';
 import { ProjectionDefinition, createProjection } from '../src/createProjection';
 import { Checkpoint, EventBatch, ProjectionEvent } from '../src/types';
 
@@ -41,6 +40,7 @@ function createMockStore(): IProjectionStore<TestState> & {
 } {
   const states = new Map<string, TestState>();
   const checkpoints = new Map<string, Checkpoint>();
+  const links = new Map<string, string>();
   
   return {
     states,
@@ -53,6 +53,24 @@ function createMockStore(): IProjectionStore<TestState> & {
     async save(documentId: string, state: TestState, checkpoint: Checkpoint): Promise<void> {
       states.set(documentId, state);
       checkpoints.set(documentId, checkpoint);
+    },
+
+    async commitAtomic(write): Promise<void> {
+      for (const document of write.documents) {
+        states.set(document.documentId, document.state);
+        checkpoints.set(document.documentId, document.checkpoint);
+      }
+
+      for (const link of write.links) {
+        links.set(`${link.aggregateType}:${link.aggregateId}`, link.targetDocId);
+      }
+
+      checkpoints.set(write.cursorKey, write.cursor);
+      states.set(write.cursorKey, {} as TestState);
+    },
+
+    async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
+      return links.get(`${aggregateType}:${aggregateId}`) ?? null;
     },
     
     async getCheckpoint(key: string): Promise<Checkpoint | null> {
@@ -460,8 +478,8 @@ describe('ProjectionDaemon', () => {
     });
   });
 
-  describe('Link store seam', () => {
-    it('should route join events using an injected linkStore', async () => {
+  describe('Store link resolution seam', () => {
+    it('should route join events via store.resolveTarget', async () => {
       const orderAgg = {
         __aggregateType: 'order',
         initialState: {},
@@ -491,19 +509,12 @@ describe('ProjectionDaemon', () => {
         })
         .build();
 
-      const links = new Map<string, string>([['customer:customer-1', 'invoice-1']]);
-      const addLinkSpy = jest.fn();
       const resolveTargetSpy = jest.fn((aggregateType: string, aggregateId: string) => {
-        return links.get(`${aggregateType}:${aggregateId}`) ?? null;
+        return aggregateType === 'customer' && aggregateId === 'customer-1' ? 'invoice-1' : null;
       });
-      const customLinkStore: IProjectionLinkStore = {
-        addLink(aggregateType: string, aggregateId: string, targetDocId: string): void {
-          addLinkSpy(aggregateType, aggregateId, targetDocId);
-        },
-        resolveTarget(aggregateType: string, aggregateId: string): string | null {
-          return resolveTargetSpy(aggregateType, aggregateId);
-        }
-      };
+
+      const customStore = createMockStore();
+      customStore.resolveTarget = async (aggregateType: string, aggregateId: string) => resolveTargetSpy(aggregateType, aggregateId);
 
       const subscription = createMockSubscription([
         {
@@ -518,9 +529,9 @@ describe('ProjectionDaemon', () => {
 
       const daemon = new ProjectionDaemon({
         ...options,
+        store: customStore,
         projection: projectionWithJoin,
-        subscription,
-        linkStore: customLinkStore
+        subscription
       });
 
       const stats = await daemon.processBatch();
@@ -528,7 +539,7 @@ describe('ProjectionDaemon', () => {
       expect(stats.eventsProcessed).toBe(1);
       expect(resolveTargetSpy).toHaveBeenCalledWith('customer', 'customer-1');
 
-      const state = await mockStore.load('invoice-1');
+      const state = await customStore.load('invoice-1');
       expect(state).not.toBeNull();
       expect(state!.name).toBe('Jane');
       expect(state!.events).toEqual(['customer.attached']);
@@ -581,7 +592,7 @@ describe('ProjectionDaemon', () => {
     });
     
     it('should save document only once per batch even with multiple events', async () => {
-      const saveSpy = jest.spyOn(mockStore as any, 'save');
+      const commitAtomicSpy = jest.spyOn(mockStore as any, 'commitAtomic');
       
       const events: ProjectionEvent[] = [
         {
@@ -607,11 +618,14 @@ describe('ProjectionDaemon', () => {
       
       await daemon.processBatch();
       
-      // Should only save once for order-1 (batching)
-      const order1Saves = saveSpy.mock.calls.filter(
-        (call: any[]) => call[0] === 'order-1'
-      );
-      expect(order1Saves).toHaveLength(1);
+      expect(commitAtomicSpy).toHaveBeenCalledTimes(1);
+      const atomicWrite = commitAtomicSpy.mock.calls[0][0] as {
+        documents: Array<{ documentId: string }>;
+      };
+
+      // Should only include one write for order-1 (batching)
+      const order1Writes = atomicWrite.documents.filter((document) => document.documentId === 'order-1');
+      expect(order1Writes).toHaveLength(1);
     });
   });
   

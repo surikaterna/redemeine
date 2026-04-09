@@ -4,6 +4,7 @@ import type { IProjectionStore, Checkpoint } from '../src';
 // Mock implementation for testing interface contract
 class MockProjectionStore<TState> implements IProjectionStore<TState> {
   private store: Map<string, { state: TState; cursor: Checkpoint }> = new Map();
+  private links: Map<string, string> = new Map();
 
   async load(id: string): Promise<TState | null> {
     const entry = this.store.get(id);
@@ -13,6 +14,25 @@ class MockProjectionStore<TState> implements IProjectionStore<TState> {
   async save(id: string, state: TState, cursor: Checkpoint): Promise<void> {
     // Simulate atomic commit
     this.store.set(id, { state, cursor });
+  }
+
+  async commitAtomic(write): Promise<void> {
+    for (const document of write.documents) {
+      this.store.set(document.documentId, { state: document.state, cursor: document.checkpoint });
+    }
+
+    for (const link of write.links) {
+      const key = `${link.aggregateType}:${link.aggregateId}`;
+      if (!this.links.has(key)) {
+        this.links.set(key, link.targetDocId);
+      }
+    }
+
+    this.store.set(write.cursorKey, { state: {} as TState, cursor: write.cursor });
+  }
+
+  async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
+    return this.links.get(`${aggregateType}:${aggregateId}`) ?? null;
   }
 
   async exists(id: string): Promise<boolean> {
