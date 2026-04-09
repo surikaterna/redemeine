@@ -97,16 +97,6 @@ export interface ProjectionContext {
    * Remove a prior subscription for a related aggregate stream.
    */
   unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  
-  /**
-   * Get current subscriptions
-   */
-  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
-
-  /**
-   * Get explicit unsubscribe operations emitted by handler.
-   */
-  getUnsubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 }
 
 /**
@@ -350,19 +340,6 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   }
 }
 
-/**
- * Create a projection definition using the fluent builder API.
- * 
- * @example
- * createProjection('invoice-summary', () => ({ id: '', amount: 0 }))
- *   .from(invoiceAgg, {
- *     created: (state, event) => { state.id = event.payload.customerId; }
- *   })
- *   .join(orderAgg, {
- *     shipped: (state, event) => { /* handle shipment *\/ }
- *   })
- *   .build()
- */
 export function createProjection<TState>(
   name: string,
   initialState: (id: string) => TState
