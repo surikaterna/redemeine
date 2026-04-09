@@ -103,3 +103,22 @@ const next = produce(state, (draft) => {
 - `fromCursor` is **exclusive** (`sequence > fromCursor.sequence`).
 - `nextCursor` points to the **last processed event** (not last + 1).
 - If no events are returned, keep the cursor unchanged.
+
+## 7) Reverse semantics contract (spec-level)
+
+For reverse mutation planning, the current contract is intentionally explicit and narrow:
+
+- **Relink is `remove` + `add` only**. There is no `replace` operation in the contract.
+- **`reverseSubscribe` supports multi-target** (`targetDocIds` can be one id or many).
+- **Missing target is warn-and-skip** for remove paths (`relink` removals and `unsubscribe`).
+
+Reference implementation-level contract helpers:
+
+- `planReverseSubscribe(spec)`
+- `planReverseRelink(spec)`
+- `planReverseUnsubscribe(spec)`
+
+Contract fixtures/tests live in:
+
+- `packages/projection/test/fixtures/reverse-semantics.contract.fixture.ts`
+- `packages/projection/test/reverse-semantics-contract.test.ts`
