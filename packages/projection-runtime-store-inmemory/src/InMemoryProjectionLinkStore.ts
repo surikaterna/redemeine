@@ -1,4 +1,4 @@
-import { IProjectionLinkStore } from './IProjectionLinkStore';
+import { IProjectionLinkStore } from '@redemeine/projection-runtime-core';
 
 export class InMemoryProjectionLinkStore implements IProjectionLinkStore {
   private links = new Map<string, string>();
@@ -12,6 +12,15 @@ export class InMemoryProjectionLinkStore implements IProjectionLinkStore {
 
   resolveTarget(aggregateType: string, aggregateId: string): string | null {
     return this.links.get(this.makeKey(aggregateType, aggregateId)) ?? null;
+  }
+
+  removeLink(aggregateType: string, aggregateId: string, targetDocId: string): void {
+    const key = this.makeKey(aggregateType, aggregateId);
+    const existing = this.links.get(key);
+
+    if (existing === targetDocId) {
+      this.links.delete(key);
+    }
   }
 
   removeLinksForTarget(targetDocId: string): void {
