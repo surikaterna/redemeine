@@ -18,6 +18,16 @@ export interface ProjectionRouteTarget {
 export interface ProjectionRouteDecision {
   readonly projectionName: string;
   readonly targets: readonly ProjectionRouteTarget[];
+  readonly warnings?: readonly ProjectionRouteWarning[];
+}
+
+export interface ProjectionRouteWarning {
+  readonly code: 'missing_reverse_target' | 'missing_target_removal';
+  readonly projectionName: string;
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly eventName: string;
+  readonly targetId?: string;
 }
 
 export interface ProjectionWorkerMessage {
