@@ -133,10 +133,10 @@ export type {
 } from './contracts';
 export {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
-  PROJECTION_DEDUPE_KEY_VERSION,
   classifyProjectionEnvelopeCandidate,
-  decodeProjectionDedupeKey,
+  PROJECTION_DEDUPE_KEY_VERSION,
   encodeProjectionDedupeKey,
+  decodeProjectionDedupeKey,
   evaluateProjectionDedupeRetention,
   evaluateCutoverReadiness,
   transitionToCutover,

@@ -46,8 +46,8 @@ import type {
 } from '../src';
 import {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
-  PROJECTION_DEDUPE_KEY_VERSION,
   classifyProjectionEnvelopeCandidate,
+  PROJECTION_DEDUPE_KEY_VERSION,
   decodeProjectionDedupeKey,
   encodeProjectionDedupeKey,
   evaluateProjectionDedupeRetention
@@ -74,11 +74,16 @@ function createNackDecision(
     retryable,
     reason,
     cause,
-    lifecycle: [
-      { stage: 'received' },
-      { stage: 'published_durable' },
-      { stage: 'nack', cause }
-    ]
+    lifecycle: cause === 'timeout'
+      ? [
+        { stage: 'received' },
+        { stage: 'nack', cause }
+      ]
+      : [
+        { stage: 'received' },
+        { stage: 'published_durable' },
+        { stage: 'nack', cause }
+      ]
   };
 }
 
@@ -228,9 +233,11 @@ describe('projection-runtime-core contract types', () => {
         return {
           items: envelopes.map((envelope) => ({
             messageId: envelope.metadata.messageId,
-            decision: envelope.metadata.retryCount > 0
-              ? createNackDecision('failure', true, 'retry-once')
-              : createAckDecision()
+            decision: envelope.metadata.retryCount > 1
+              ? createNackDecision('timeout', true, 'publish-confirm-timeout')
+              : envelope.metadata.retryCount > 0
+                ? createNackDecision('failure', true, 'retry-once')
+                : createAckDecision()
           }))
         };
       }
@@ -256,6 +263,13 @@ describe('projection-runtime-core contract types', () => {
     const single = await ingress.push(envelope);
     expect(single.item.messageId).toBe('msg-1');
     expect(isAck(single.item.decision)).toBe(true);
+    if (single.item.decision.status === 'ack') {
+      expect(single.item.decision.lifecycle).toEqual([
+        { stage: 'received' },
+        { stage: 'published_durable' },
+        { stage: 'ackable' }
+      ]);
+    }
 
     const many = await ingress.pushMany([
       envelope,
@@ -266,10 +280,18 @@ describe('projection-runtime-core contract types', () => {
           messageId: 'msg-2',
           retryCount: 1
         }
+      },
+      {
+        ...envelope,
+        metadata: {
+          ...envelope.metadata,
+          messageId: 'msg-3',
+          retryCount: 2
+        }
       }
     ]);
 
-    expect(many.items).toHaveLength(2);
+    expect(many.items).toHaveLength(3);
     expect(many.items[0].decision.status).toBe('ack');
     expect(many.items[1].decision).toEqual({
       status: 'nack',
@@ -281,6 +303,17 @@ describe('projection-runtime-core contract types', () => {
         { stage: 'published_durable' },
         { stage: 'nack', cause: 'failure' }
       ]
+    });
+    expect(many.items[2].decision).toEqual({
+      status: 'nack',
+      retryable: true,
+      reason: 'publish-confirm-timeout',
+      cause: 'timeout',
+      lifecycle: [
+        { stage: 'received' },
+        { stage: 'nack', cause: 'timeout' }
+      ]
+    });
     });
 
     if (many.items[0].decision.status === 'ack') {
@@ -858,6 +891,7 @@ describe('projection-runtime-core contract types', () => {
       }
     });
     expect(contractCutover.status).toBe('live');
+  });
 
   test('store failure taxonomy keeps deterministic retryability', () => {
     const conflict: ProjectionStoreWriteFailure = {
