@@ -50,3 +50,26 @@ export type {
   ProjectionRouterDecision
 } from './router';
 export type { ProjectionCatchupPollingAdapter } from './catchup';
+export type {
+  ProjectionShardLeaseTransitionReason,
+  ProjectionShardOwnerIdentity,
+  ProjectionShardLeaseIdentity,
+  ProjectionShardLeaseStatus,
+  ProjectionShardLeaseTimeline,
+  ProjectionShardCheckpointLeaseState,
+  ProjectionShardLeaseClaimRequest,
+  ProjectionShardLeaseClaimed,
+  ProjectionShardLeaseClaimRejected,
+  ProjectionShardLeaseClaimResult,
+  ProjectionShardLeaseRenewRequest,
+  ProjectionShardLeaseRenewed,
+  ProjectionShardLeaseRenewRejected,
+  ProjectionShardLeaseRenewResult,
+  ProjectionShardCheckpointCommitRequest,
+  ProjectionShardCheckpointCommitted,
+  ProjectionShardCheckpointCommitRejected,
+  ProjectionShardCheckpointCommitResult,
+  ProjectionShardLeaseAssignment,
+  ProjectionShardLeaseRebalancePlan,
+  ProjectionShardCheckpointLeaseContract
+} from './checkpointLeasing';
