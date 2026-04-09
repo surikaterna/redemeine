@@ -12,6 +12,7 @@ export type {
   ProjectionHandlers,
   ProjectionStreamDefinition,
   JoinStreamDefinition,
+  ReverseSubscribeStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder
 } from './createProjection';
