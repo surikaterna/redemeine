@@ -92,6 +92,12 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       status: 'rejected',
       highestWatermark: null,
       failedAtIndex: 0,
+      failure: {
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'no writes',
+        retryable: false
+      },
       reason: 'no writes',
       committedCount: 0
     });
@@ -148,9 +154,71 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       expect(result.failedAtIndex).toBe(1);
       expect(result.committedCount).toBe(0);
       expect(result.reason).toBe('injected patch evaluation failure');
+      expect(result.failure).toEqual({
+        category: 'transient',
+        code: 'write-failed',
+        message: 'injected patch evaluation failure',
+        retryable: true
+      });
     }
 
     expect(await store.load('doc-1')).toBeNull();
     expect(await store.getDedupeCheckpoint('invoice:1:1')).toBeNull();
+  });
+
+  test('commitAtomicMany enforces OCC precondition on expected revision', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'full',
+              fullDocument: { total: 3 },
+              checkpoint: { sequence: 3 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(seeded.status).toBe('committed');
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'patch',
+              patch: { total: 4 },
+              checkpoint: { sequence: 4 },
+              precondition: { expectedRevision: 2 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.failure).toEqual({
+        category: 'conflict',
+        code: 'occ-conflict',
+        message: "OCC precondition failed for document 'doc-1': expectedRevision=2, actualRevision=3",
+        retryable: true
+      });
+      expect(result.reason).toBe(result.failure.message);
+    }
+
+    expect(await store.load('doc-1')).toEqual({ total: 3 });
   });
 });

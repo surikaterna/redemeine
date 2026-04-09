@@ -12,6 +12,7 @@ export interface ProjectionStoreAtomicManyRejectedResult {
   highestWatermark: null;
   byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
   failedAtIndex: number;
+  failure: ProjectionStoreWriteFailure;
   reason: string;
   committedCount: 0;
 }
@@ -22,11 +23,36 @@ export type ProjectionStoreAtomicManyResult =
 
 export type ProjectionDocumentWriteMode = 'full' | 'patch';
 
+export type ProjectionStoreFailureCategory = 'conflict' | 'transient' | 'terminal';
+
+export interface ProjectionStoreWriteFailure {
+  category: ProjectionStoreFailureCategory;
+  code: string;
+  message: string;
+  /**
+   * Deterministic retryability by category:
+   * - conflict/transient: true
+   * - terminal: false
+   */
+  retryable: boolean;
+}
+
+/**
+ * OCC preconditions for a single document write.
+ *
+ * expectedRevision maps to current document checkpoint.sequence.
+ */
+export interface ProjectionStoreWritePrecondition {
+  expectedRevision?: number | null;
+  expectedCheckpoint?: Checkpoint | null;
+}
+
 export interface ProjectionStoreFullDocumentWrite<TState = unknown> {
   documentId: string;
   mode: 'full';
   fullDocument: TState;
   checkpoint: Checkpoint;
+  precondition?: ProjectionStoreWritePrecondition;
 }
 
 export interface ProjectionStorePatchDocumentWrite {
@@ -34,6 +60,7 @@ export interface ProjectionStorePatchDocumentWrite {
   mode: 'patch';
   patch: Record<string, unknown>;
   checkpoint: Checkpoint;
+  precondition?: ProjectionStoreWritePrecondition;
 }
 
 export type ProjectionStoreDocumentWrite<TState = unknown> =

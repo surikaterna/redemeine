@@ -1,6 +1,8 @@
 import { IProjectionStore, Checkpoint } from '@redemeine/projection-runtime-core';
 import type { ProjectionAtomicWrite } from '@redemeine/projection-runtime-core';
 import type {
+  ProjectionStoreWriteFailure,
+  ProjectionStoreWritePrecondition,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
   ProjectionStoreDocumentWrite
@@ -10,6 +12,12 @@ interface StoredDocument<TState> {
   state: TState;
   checkpoint: Checkpoint;
   updatedAt: string;
+}
+
+class ProjectionStoreAtomicManyError extends Error {
+  constructor(readonly failure: ProjectionStoreWriteFailure) {
+    super(failure.message);
+  }
 }
 
 /**
@@ -60,6 +68,69 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       ...base,
       ...patch
     } as TDoc;
+  }
+
+  private static createFailure(
+    category: ProjectionStoreWriteFailure['category'],
+    code: string,
+    message: string
+  ): ProjectionStoreWriteFailure {
+    return {
+      category,
+      code,
+      message,
+      retryable: category !== 'terminal'
+    };
+  }
+
+  private static createInvalidRequestFailure(message: string): ProjectionStoreWriteFailure {
+    return InMemoryProjectionStore.createFailure('terminal', 'invalid-request', message);
+  }
+
+  private static createConflictFailure(message: string): ProjectionStoreWriteFailure {
+    return InMemoryProjectionStore.createFailure('conflict', 'occ-conflict', message);
+  }
+
+  private static matchesCheckpoint(left: Checkpoint, right: Checkpoint): boolean {
+    return left.sequence === right.sequence && (left.timestamp ?? null) === (right.timestamp ?? null);
+  }
+
+  private static assertPrecondition(
+    documentId: string,
+    current: StoredDocument<unknown> | undefined,
+    precondition?: ProjectionStoreWritePrecondition
+  ): void {
+    if (!precondition) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(precondition, 'expectedRevision')) {
+      const actualRevision = current?.checkpoint.sequence ?? null;
+      const expectedRevision = precondition.expectedRevision ?? null;
+      if (actualRevision !== expectedRevision) {
+        throw new ProjectionStoreAtomicManyError(
+          InMemoryProjectionStore.createConflictFailure(
+            `OCC precondition failed for document '${documentId}': expectedRevision=${String(expectedRevision)}, actualRevision=${String(actualRevision)}`
+          )
+        );
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(precondition, 'expectedCheckpoint')) {
+      const actualCheckpoint = current?.checkpoint ?? null;
+      const expectedCheckpoint = precondition.expectedCheckpoint ?? null;
+      const matches = actualCheckpoint !== null && expectedCheckpoint !== null
+        ? InMemoryProjectionStore.matchesCheckpoint(actualCheckpoint, expectedCheckpoint)
+        : actualCheckpoint === expectedCheckpoint;
+
+      if (!matches) {
+        throw new ProjectionStoreAtomicManyError(
+          InMemoryProjectionStore.createConflictFailure(
+            `OCC precondition failed for document '${documentId}': expectedCheckpoint=${JSON.stringify(expectedCheckpoint)}, actualCheckpoint=${JSON.stringify(actualCheckpoint)}`
+          )
+        );
+      }
+    }
   }
   async load(id: string): Promise<TState | null> {
     const doc = this.documents.get(id);
@@ -115,21 +186,25 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     request: ProjectionStoreCommitAtomicManyRequest<TState>
   ): Promise<ProjectionStoreAtomicManyResult> {
     if (request.mode !== 'atomic-all') {
+      const failure = InMemoryProjectionStore.createInvalidRequestFailure(`unsupported mode: ${request.mode}`);
       return {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
-        reason: `unsupported mode: ${request.mode}`,
+        failure,
+        reason: failure.message,
         committedCount: 0
       };
     }
 
     if (request.writes.length === 0) {
+      const failure = InMemoryProjectionStore.createInvalidRequestFailure('no writes');
       return {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
-        reason: 'no writes',
+        failure,
+        reason: failure.message,
         committedCount: 0
       };
     }
@@ -163,6 +238,8 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
       try {
         for (const document of write.documents) {
+          const current = stagedDocuments.get(document.documentId);
+          InMemoryProjectionStore.assertPrecondition(document.documentId, current, document.precondition);
           applyDocumentWrite(document);
           laneWatermark = InMemoryProjectionStore.chooseHigherWatermark(laneWatermark, document.checkpoint);
           highestWatermark = InMemoryProjectionStore.chooseHigherWatermark(highestWatermark, document.checkpoint);
@@ -174,11 +251,20 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
           highestWatermark = InMemoryProjectionStore.chooseHigherWatermark(highestWatermark, dedupe.checkpoint);
         }
       } catch (error) {
+        const failure = error instanceof ProjectionStoreAtomicManyError
+          ? error.failure
+          : InMemoryProjectionStore.createFailure(
+            'transient',
+            'write-failed',
+            error instanceof Error ? error.message : 'atomicMany write failed'
+          );
+
         return {
           status: 'rejected',
           highestWatermark: null,
           failedAtIndex: index,
-          reason: error instanceof Error ? error.message : 'atomicMany write failed',
+          failure,
+          reason: failure.message,
           committedCount: 0
         };
       }
