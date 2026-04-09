@@ -1,5 +1,34 @@
 import { Checkpoint } from './types';
 
+export interface ProjectionDocumentWrite<TState> {
+  documentId: string;
+  state: TState;
+  checkpoint: Checkpoint;
+}
+
+export interface ProjectionLinkWrite {
+  aggregateType: string;
+  aggregateId: string;
+  targetDocId: string;
+}
+
+/**
+ * E4.2 contract stub for durable dedupe persistence.
+ *
+ * Runtime-core E4.1 can pass this through without semantics.
+ */
+export interface ProjectionDedupeWrite {
+  upserts: Array<{ key: string; checkpoint: Checkpoint }>;
+}
+
+export interface ProjectionAtomicWrite<TState> {
+  documents: ProjectionDocumentWrite<TState>[];
+  links: ProjectionLinkWrite[];
+  cursorKey: string;
+  cursor: Checkpoint;
+  dedupe?: ProjectionDedupeWrite;
+}
+
 /**
  * Interface for storing and retrieving projection state
  */
@@ -18,6 +47,18 @@ export interface IProjectionStore<TState = unknown> {
    * @param checkpoint The checkpoint for this state
    */
   save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void>;
+
+  /**
+   * Commit projection writes as one atomic unit.
+   *
+   * This is the required production write path for runtime-core execution.
+   */
+  commitAtomic(write: ProjectionAtomicWrite<TState>): Promise<void>;
+
+  /**
+   * Resolve a joined aggregate to its target projection document.
+   */
+  resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null>;
 
   /**
    * Get a checkpoint for a specific key

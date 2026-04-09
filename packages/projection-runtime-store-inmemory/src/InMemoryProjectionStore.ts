@@ -1,4 +1,5 @@
 import { IProjectionStore, Checkpoint } from '@redemeine/projection-runtime-core';
+import type { ProjectionAtomicWrite } from '@redemeine/projection-runtime-core';
 
 interface StoredDocument<TState> {
   state: TState;
@@ -18,7 +19,7 @@ interface StoredDocument<TState> {
  */
 export class InMemoryProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private documents = new Map<string, StoredDocument<TState>>();
-
+  private links = new Map<string, string>();
   async load(id: string): Promise<TState | null> {
     const doc = this.documents.get(id);
     return doc ? doc.state : null;
@@ -31,6 +32,33 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       checkpoint: cursor,
       updatedAt: new Date().toISOString()
     });
+  }
+
+  async commitAtomic(write: ProjectionAtomicWrite<TState>): Promise<void> {
+    for (const document of write.documents) {
+      this.documents.set(document.documentId, {
+        state: document.state,
+        checkpoint: document.checkpoint,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    for (const link of write.links) {
+      const key = `${link.aggregateType}:${link.aggregateId}`;
+      if (!this.links.has(key)) {
+        this.links.set(key, link.targetDocId);
+      }
+    }
+
+    this.documents.set(write.cursorKey, {
+      state: {} as TState,
+      checkpoint: write.cursor,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
+    return this.links.get(`${aggregateType}:${aggregateId}`) ?? null;
   }
 
   async exists(id: string): Promise<boolean> {

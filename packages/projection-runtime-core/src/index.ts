@@ -1,5 +1,11 @@
 export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
-export type { IProjectionStore } from './IProjectionStore';
+export type {
+  IProjectionStore,
+  ProjectionAtomicWrite,
+  ProjectionDocumentWrite,
+  ProjectionLinkWrite,
+  ProjectionDedupeWrite
+} from './IProjectionStore';
 export type { IEventSubscription } from './IEventSubscription';
 export type { IProjectionLinkStore } from './IProjectionLinkStore';
 export {

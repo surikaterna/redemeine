@@ -3,7 +3,6 @@ import { IProjectionStore } from './IProjectionStore';
 import { IEventSubscription } from './IEventSubscription';
 import { Checkpoint, ProjectionEvent } from './types';
 import { ProjectionDefinition, ProjectionContext } from './createProjection';
-import { IProjectionLinkStore } from './IProjectionLinkStore';
 
 export interface ProjectionDaemonOptions<TState> {
   projection: ProjectionDefinition<TState>;
@@ -12,8 +11,6 @@ export interface ProjectionDaemonOptions<TState> {
   batchSize?: number;
   pollInterval?: number;
   onBatch?: (stats: BatchStats) => void;
-  /** Link store for join routing correlation */
-  linkStore: IProjectionLinkStore;
 }
 
 export interface BatchStats {
@@ -102,9 +99,10 @@ export class ProjectionDaemon<TState = unknown> {
     const pendingDocuments = new Map<string, {
       docId: string;
       state: TState;
-      events: ProjectionEvent[];
       cursor: Checkpoint;
     }>();
+
+    const pendingLinks = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
 
     // Process events in order - multiple passes to handle dynamic subscriptions
     let madeProgress = true;
@@ -119,7 +117,7 @@ export class ProjectionDaemon<TState = unknown> {
         const eventKey = `${event.aggregateType}:${event.aggregateId}:${event.sequence}`;
         if (processedEvents.has(eventKey)) continue;
 
-        const targetDocIds = await this.resolveTargetDocumentIds(event);
+        const targetDocIds = await this.resolveTargetDocumentIds(event, pendingLinks);
 
         if (targetDocIds.length === 0) {
           // Skip events without valid targets (join events without subscription)
@@ -135,14 +133,12 @@ export class ProjectionDaemon<TState = unknown> {
             pending = {
               docId: targetDocId,
               state: state as TState,
-              events: [],
               cursor: { sequence: 0 }
             };
             pendingDocuments.set(targetDocId, pending);
           }
 
           // Process the event (this may trigger subscriptions via context)
-          this.currentDocId = targetDocId;
           const context = this.createContext();
 
           pending.state = produce(pending.state, (draft: Draft<TState>) => {
@@ -152,15 +148,22 @@ export class ProjectionDaemon<TState = unknown> {
             }
           });
 
-          await this.persistContextSubscriptions(context);
+          for (const subscription of context.getSubscriptions()) {
+            const linkKey = `${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`;
+            if (!pendingLinks.has(linkKey)) {
+              pendingLinks.set(linkKey, {
+                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateId: subscription.aggregateId,
+                targetDocId
+              });
+            }
+          }
 
           // Update cursor to latest event
           pending.cursor = {
             sequence: Math.max(pending.cursor.sequence, event.sequence),
             timestamp: event.timestamp
           };
-
-          this.currentDocId = null;
         }
 
         processedEvents.add(eventKey);
@@ -168,14 +171,19 @@ export class ProjectionDaemon<TState = unknown> {
       }
     }
 
-    // Save all pending documents
-    for (const pending of pendingDocuments.values()) {
-      await store.save(pending.docId, pending.state, pending.cursor);
-    }
-
-    // Save checkpoint from subscription contract:
-    // nextCursor is the last returned/processed event checkpoint.
-    await this.saveCursor(batch.nextCursor);
+    // Single required production write path: atomic commit for docs + links + cursor.
+    await store.commitAtomic({
+      documents: Array.from(pendingDocuments.values()).map((pending) => ({
+        documentId: pending.docId,
+        state: pending.state,
+        checkpoint: pending.cursor
+      })),
+      links: Array.from(pendingLinks.values()),
+      cursorKey: `__cursor__${projection.name}`,
+      // Cursor contract: nextCursor is the last returned/processed event checkpoint.
+      cursor: batch.nextCursor,
+      dedupe: { upserts: [] }
+    });
 
     const stats = {
       eventsProcessed: processedEvents.size,
@@ -196,7 +204,10 @@ export class ProjectionDaemon<TState = unknown> {
    * 2. If event is from .join stream: ONLY process if subscribeTo() was called
    *    for this aggregate+id; otherwise IGNORE (prevent ghost documents)
    */
-  private async resolveTargetDocumentIds(event: ProjectionEvent): Promise<string[]> {
+  private async resolveTargetDocumentIds(
+    event: ProjectionEvent,
+    pendingLinks: Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>
+  ): Promise<string[]> {
     const { projection } = this.options;
 
     // Check if this is a .from stream event
@@ -213,7 +224,9 @@ export class ProjectionDaemon<TState = unknown> {
 
     if (joinStream) {
       // .join events ONLY process if we have a subscription
-      const targetDocId = await this.options.linkStore.resolveTarget(event.aggregateType, event.aggregateId);
+      const pendingLink = pendingLinks.get(`${event.aggregateType}:${event.aggregateId}`);
+      const targetDocId = pendingLink?.targetDocId
+        ?? await this.options.store.resolveTarget(event.aggregateType, event.aggregateId);
 
       if (targetDocId) {
         return [targetDocId];
@@ -287,18 +300,6 @@ export class ProjectionDaemon<TState = unknown> {
     return null;
   }
 
-  private async persistContextSubscriptions(context: ProjectionContext): Promise<void> {
-    const currentDocId = this.resolveCurrentDocumentId();
-
-    for (const subscription of context.getSubscriptions()) {
-      await this.options.linkStore.addLink(
-        subscription.aggregate.__aggregateType,
-        subscription.aggregateId,
-        currentDocId
-      );
-    }
-  }
-
   private getHandlerCandidateKeys(event: ProjectionEvent): string[] {
     const keys = new Set<string>();
     const eventType = event.type;
@@ -339,25 +340,6 @@ export class ProjectionDaemon<TState = unknown> {
     return { sequence: 0 };
   }
 
-  /**
-   * Save cursor checkpoint.
-   *
-   * Cursor contract: checkpoint stores the last processed event sequence.
-   */
-  private async saveCursor(cursor: Checkpoint): Promise<void> {
-    const { projection, store } = this.options;
-    // Use type assertion for cursor storage - we store cursor data with empty state object
-    await store.save(`__cursor__${projection.name}`, {} as TState, cursor);
-  }
-
-  /**
-   * Track current document ID during processing (for subscribeTo context)
-   */
-  private currentDocId: string | null = null;
-  private resolveCurrentDocumentId(): string {
-    return this.currentDocId || '';
-  }
-
   private delay(ms: number): Promise<void> {
     const schedule = (globalThis as { setTimeout?: (handler: () => void, timeout?: number) => unknown }).setTimeout;
     if (!schedule) {
@@ -369,4 +351,3 @@ export class ProjectionDaemon<TState = unknown> {
     });
   }
 }
-
