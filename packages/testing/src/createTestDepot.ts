@@ -1,9 +1,5 @@
+import { produce } from 'immer';
 import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
-import {
-  type IEventSubscription,
-  type IProjectionStore,
-  type ProjectionDefinition as RuntimeProjectionDefinition
-} from '@redemeine/projection';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -15,11 +11,6 @@ type DomainEvent = {
   readonly type: string;
   readonly payload: unknown;
   readonly metadata?: Record<string, unknown>;
-};
-
-type Checkpoint = {
-  sequence: number;
-  timestamp?: string;
 };
 
 type ProjectionEvent = {
@@ -37,7 +28,19 @@ type ProjectionContext = {
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 };
 
-type ProjectionDefinition<TState = unknown> = RuntimeProjectionDefinition<TState>;
+type ProjectionDefinition<TState = unknown> = {
+  readonly name: string;
+  readonly fromStream: {
+    readonly aggregate: { __aggregateType: string };
+    readonly handlers: Record<string, (state: TState, event: ProjectionEvent, context: ProjectionContext) => void>;
+  };
+  readonly joinStreams?: readonly {
+    readonly aggregate: { __aggregateType: string };
+    readonly handlers: Record<string, (state: TState, event: ProjectionEvent, context: ProjectionContext) => void>;
+  }[];
+  readonly initialState: (documentId: string) => TState;
+  readonly identity: (event: ProjectionEvent) => string | readonly string[];
+};
 
 type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any> & {
   readonly __aggregateType?: string;
@@ -56,54 +59,10 @@ type Deferred<T> = {
   reject(error: unknown): void;
 };
 
-type EventQueueSubscription = IEventSubscription & {
-  push(events: readonly ProjectionEvent[]): void;
-  hasPendingEventsAfter(cursor: Checkpoint): boolean;
-};
-
-type ProjectionDaemonLike<TState> = {
-  processBatch(): Promise<{ eventsProcessed: number }>;
-};
-
-type ProjectionRuntimeModule = {
-  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
-  ProjectionDaemon: new <TState>(options: {
-    projection: ProjectionDefinition<TState>;
-    subscription: IEventSubscription;
-    store: IProjectionStore<TState>;
-    batchSize: number;
-  }) => ProjectionDaemonLike<TState>;
-};
-
 type ProjectionRuntime = {
   readonly projection: ProjectionDefinition<any>;
-  readonly store: IProjectionStore<any>;
-  readonly subscription: EventQueueSubscription;
-  readonly daemon: ProjectionDaemonLike<any>;
+  readonly documents: Map<string, any>;
 };
-
-let projectionRuntimeModulePromise: Promise<ProjectionRuntimeModule> | null = null;
-const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
-
-async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
-  if (!projectionRuntimeModulePromise) {
-    projectionRuntimeModulePromise = (async () => {
-      try {
-        return await dynamicImport('@redemeine/projection') as ProjectionRuntimeModule;
-      } catch (packageImportError) {
-        try {
-          return await dynamicImport('../../projection/src/index') as ProjectionRuntimeModule;
-        } catch (sourceImportError) {
-          throw new Error(
-            `createTestDepot: unable to load projection runtime from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
-          );
-        }
-      }
-    })();
-  }
-
-  return projectionRuntimeModulePromise;
-}
 
 export interface CreateTestDepotOptions {
   readonly aggregates: readonly AggregateDefinitionLike[];
@@ -151,36 +110,6 @@ function resolveAggregateId(command: CommandEnvelope): string {
   return 'test-aggregate';
 }
 
-function createEventQueueSubscription(): EventQueueSubscription {
-  let queue: ProjectionEvent[] = [];
-
-  return {
-    push(events) {
-      queue.push(...events);
-      queue = queue
-        .slice()
-        .sort((left, right) => left.sequence - right.sequence || left.timestamp.localeCompare(right.timestamp));
-    },
-    hasPendingEventsAfter(cursor) {
-      return queue.some((event) => event.sequence > cursor.sequence);
-    },
-    async poll(cursor, batchSize) {
-      const events = queue.filter((event) => event.sequence > cursor.sequence).slice(0, batchSize);
-      const nextCursor = events.length > 0
-        ? {
-            sequence: events[events.length - 1].sequence,
-            timestamp: events[events.length - 1].timestamp
-          }
-        : cursor;
-
-      return {
-        events,
-        nextCursor
-      };
-    }
-  };
-}
-
 function buildCommandRouting(aggregates: readonly AggregateDefinitionLike[]): Map<string, AggregateDefinitionLike> {
   const route = new Map<string, AggregateDefinitionLike>();
   for (const aggregate of aggregates) {
@@ -206,38 +135,88 @@ function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: nu
   };
 }
 
+function getHandlerCandidateKeys(event: ProjectionEvent): string[] {
+  const keys = new Set<string>();
+  const eventType = event.type;
+  const aggregatePrefix = `${event.aggregateType}.`;
+  const hasAggregatePrefix = eventType.startsWith(aggregatePrefix);
+  const hasEventSuffix = eventType.endsWith('.event');
+
+  keys.add(eventType);
+
+  if (hasAggregatePrefix) {
+    keys.add(eventType.slice(aggregatePrefix.length));
+  }
+
+  if (hasEventSuffix) {
+    const withoutEventSuffix = eventType.slice(0, -'.event'.length);
+    keys.add(withoutEventSuffix);
+
+    if (withoutEventSuffix.startsWith(aggregatePrefix)) {
+      keys.add(withoutEventSuffix.slice(aggregatePrefix.length));
+    }
+  }
+
+  return Array.from(keys);
+}
+
+function createProjectionContext(): ProjectionContext {
+  const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+
+  return {
+    subscribeTo(aggregate, aggregateId) {
+      subscriptions.push({ aggregate, aggregateId });
+    },
+    getSubscriptions() {
+      return [...subscriptions];
+    }
+  };
+}
+
+function findHandler<TState>(
+  projection: ProjectionDefinition<TState>,
+  event: ProjectionEvent
+): ((state: TState, event: ProjectionEvent, context: ProjectionContext) => void) | null {
+  const resolve = (
+    handlers: Record<string, (state: TState, event: ProjectionEvent, context: ProjectionContext) => void>
+  ): ((state: TState, event: ProjectionEvent, context: ProjectionContext) => void) | null => {
+    for (const key of getHandlerCandidateKeys(event)) {
+      const handler = handlers[key];
+      if (handler) {
+        return handler;
+      }
+    }
+
+    return null;
+  };
+
+  if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
+    return resolve(projection.fromStream.handlers as Record<string, (state: TState, event: ProjectionEvent, context: ProjectionContext) => void>);
+  }
+
+  for (const joinStream of projection.joinStreams ?? []) {
+    if (event.aggregateType === joinStream.aggregate.__aggregateType) {
+      return resolve(joinStream.handlers as Record<string, (state: TState, event: ProjectionEvent, context: ProjectionContext) => void>);
+    }
+  }
+
+  return null;
+}
+
 export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   const commandRoute = buildCommandRouting(options.aggregates);
 
   // v1 hook only: sagas are registered for routing bookkeeping.
-  // Full external worker response simulation is intentionally deferred.
   const sagaRegistrations = [...(options.sagas ?? [])];
+  void sagaRegistrations;
 
-  const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>();
-  let projectionRuntimes: ProjectionRuntime[] = [];
-  let projectionInitialization: Promise<void> | null = null;
-
-  const ensureProjectionRuntimesInitialized = async (): Promise<void> => {
-    if (!projectionInitialization) {
-      projectionInitialization = (async () => {
-        if ((options.projections ?? []).length === 0) {
-          return;
-        }
-
-        const projectionRuntime = await loadProjectionRuntimeModule();
-        projectionRuntimes = (options.projections ?? []).map((projection) => {
-          const store = new projectionRuntime.InMemoryProjectionStore<any>();
-          const subscription = createEventQueueSubscription();
-          const daemon = new projectionRuntime.ProjectionDaemon({ projection, subscription, store, batchSize: 100 });
-          projectionStoreByDefinition.set(projection, store);
-
-          return { projection, store, subscription, daemon };
-        });
-      })();
-    }
-
-    await projectionInitialization;
-  };
+  const projectionRuntimeByDefinition = new Map<ProjectionDefinition<any>, ProjectionRuntime>();
+  for (const projection of options.projections ?? []) {
+    projectionRuntimeByDefinition.set(projection, {
+      projection,
+      documents: new Map<string, any>()
+    });
+  }
 
   const mirages = new Map<string, ReturnType<typeof createMirage>>();
   const queue: Array<{ command: CommandEnvelope; deferred: Deferred<void> }> = [];
@@ -246,9 +225,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   let globalSequence = 0;
 
   const processProjectionRuntimes = async (events: readonly DomainEvent[], aggregateId: string): Promise<void> => {
-    await ensureProjectionRuntimesInitialized();
-
-    if (events.length === 0 || projectionRuntimes.length === 0) {
+    if (events.length === 0 || projectionRuntimeByDefinition.size === 0) {
       return;
     }
 
@@ -257,31 +234,26 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
       return toProjectionEvent(event, aggregateId, globalSequence);
     });
 
-    for (const runtime of projectionRuntimes) {
-      runtime.subscription.push(projectionEvents);
-    }
-
-    for (const runtime of projectionRuntimes) {
-      while (true) {
-        const cursor = (await runtime.store.getCheckpoint?.(`__cursor__${runtime.projection.name}`)) ?? { sequence: 0 };
-        if (!runtime.subscription.hasPendingEventsAfter(cursor)) {
-          break;
+    for (const runtime of projectionRuntimeByDefinition.values()) {
+      for (const projectionEvent of projectionEvents) {
+        const handler = findHandler(runtime.projection, projectionEvent);
+        if (!handler) {
+          continue;
         }
 
-        const stats = await runtime.daemon.processBatch();
-        if (stats.eventsProcessed === 0) {
-          break;
+        const rawIdentity = runtime.projection.identity(projectionEvent);
+        const identities = Array.isArray(rawIdentity) ? rawIdentity : [rawIdentity];
+        const uniqueIdentities = [...new Set(identities.map((value) => String(value)))];
+
+        for (const docId of uniqueIdentities) {
+          const currentState = runtime.documents.get(docId) ?? runtime.projection.initialState(docId);
+          const context = createProjectionContext();
+          const nextState = produce(currentState, (draft) => {
+            handler(draft, projectionEvent, context);
+          });
+          runtime.documents.set(docId, nextState);
         }
       }
-    }
-  };
-
-  const routeEventsToSagas = (_events: readonly DomainEvent[]): void => {
-    // Hook-only routing pass for v1: this confirms registration and match lookup paths
-    // without simulating external worker responses.
-    for (const saga of sagaRegistrations) {
-      const handlers = saga.handlers ?? [];
-      void handlers;
     }
   };
 
@@ -326,7 +298,6 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     const pending = core.getPendingResults();
     core.clearPendingResults();
 
-    routeEventsToSagas(pending.events);
     await processProjectionRuntimes(pending.events, aggregateId);
   };
 
@@ -388,14 +359,12 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     },
     projections: {
       async get(projection, id) {
-        await ensureProjectionRuntimesInitialized();
-
-        const store = projectionStoreByDefinition.get(projection);
-        if (!store) {
+        const runtime = projectionRuntimeByDefinition.get(projection);
+        if (!runtime) {
           throw new Error(`createTestDepot.projections.get: projection "${projection.name}" is not registered`);
         }
 
-        return store.load(id);
+        return runtime.documents.get(id) ?? null;
       }
     }
   };

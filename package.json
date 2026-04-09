@@ -56,7 +56,8 @@
     "docs:install": "bun install --cwd website",
     "docs:dev": "bun run --cwd website start",
     "docs:build": "bun run --cwd website build",
-    "verify:workspace": "bunx turbo run typecheck build test --continue"
+    "verify:workspace": "bunx turbo run typecheck build test --continue",
+    "check:projection-runtime-boundaries": "node ./bin/check-projection-runtime-boundaries.js"
   },
   "workspaces": [
     "packages/*"
