@@ -15,6 +15,12 @@ export interface ProjectionLinkRecord {
   createdAt: string;
 }
 
+export interface ProjectionDedupeRecord {
+  _id: string;
+  checkpoint: Checkpoint;
+  updatedAt: string;
+}
+
 export interface MongoCollectionLike<TDocument> {
   findOne(filter: Record<string, unknown>): Promise<TDocument | null>;
   updateOne(
@@ -28,6 +34,8 @@ export interface MongoCollectionLike<TDocument> {
 
 export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
+  linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
+  dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
   now?: () => string;
 }
 

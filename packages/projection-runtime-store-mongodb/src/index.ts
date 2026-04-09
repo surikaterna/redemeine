@@ -1,5 +1,7 @@
 export type {
   Checkpoint,
+  ProjectionAtomicWrite,
+  ProjectionDedupeWrite,
   IProjectionStore,
   IProjectionLinkStore
 } from './contracts';
@@ -9,6 +11,7 @@ export type {
   MongoProjectionStoreOptions,
   MongoProjectionLinkStoreOptions,
   ProjectionDocumentRecord,
+  ProjectionDedupeRecord,
   ProjectionLinkRecord
 } from './types';
 

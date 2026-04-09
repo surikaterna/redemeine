@@ -104,6 +104,7 @@ export class ProjectionDaemon<TState = unknown> {
 
     const pendingLinkAdds = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
     const pendingLinkRemoves = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
+    const pendingDedupe = new Map<string, Checkpoint>();
 
     // Process events in order - multiple passes to handle dynamic subscriptions
     let madeProgress = true;
@@ -117,6 +118,13 @@ export class ProjectionDaemon<TState = unknown> {
       for (const event of batch.events) {
         const eventKey = `${event.aggregateType}:${event.aggregateId}:${event.sequence}`;
         if (processedEvents.has(eventKey)) continue;
+
+        const persistedCheckpoint = await store.getDedupeCheckpoint(eventKey);
+        if (persistedCheckpoint) {
+          processedEvents.add(eventKey);
+          madeProgress = true;
+          continue;
+        }
 
         const targetDocIds = await this.resolveTargetDocumentIds(event, pendingLinkAdds, pendingLinkRemoves);
 
@@ -229,6 +237,10 @@ export class ProjectionDaemon<TState = unknown> {
         }
 
         processedEvents.add(eventKey);
+        pendingDedupe.set(eventKey, {
+          sequence: event.sequence,
+          timestamp: event.timestamp
+        });
         madeProgress = true;
       }
     }
@@ -257,7 +269,12 @@ export class ProjectionDaemon<TState = unknown> {
       cursorKey: `__cursor__${projection.name}`,
       // Cursor contract: nextCursor is the last returned/processed event checkpoint.
       cursor: batch.nextCursor,
-      dedupe: { upserts: [] }
+      dedupe: {
+        upserts: Array.from(pendingDedupe.entries()).map(([key, checkpoint]) => ({
+          key,
+          checkpoint
+        }))
+      }
     });
 
     const stats = {

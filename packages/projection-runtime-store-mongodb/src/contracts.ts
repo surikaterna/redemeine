@@ -9,10 +9,25 @@ export interface Checkpoint {
   timestamp?: string;
 }
 
+export interface ProjectionDedupeWrite {
+  upserts: Array<{ key: string; checkpoint: Checkpoint }>;
+}
+
+export interface ProjectionAtomicWrite<TState> {
+  documents: Array<{ documentId: string; state: TState; checkpoint: Checkpoint }>;
+  links: Array<{ aggregateType: string; aggregateId: string; targetDocId: string }>;
+  cursorKey: string;
+  cursor: Checkpoint;
+  dedupe: ProjectionDedupeWrite;
+}
+
 export interface IProjectionStore<TState = unknown> {
   load(documentId: string): Promise<TState | null>;
   save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void>;
+  commitAtomic(write: ProjectionAtomicWrite<TState>): Promise<void>;
+  resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null>;
   getCheckpoint?(key: string): Promise<Checkpoint | null>;
+  getDedupeCheckpoint(key: string): Promise<Checkpoint | null>;
   delete?(documentId: string): Promise<void>;
 }
 

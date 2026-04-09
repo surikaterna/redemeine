@@ -36,6 +36,7 @@ class RecordingProjectionStore<TState> implements IProjectionStore<TState> {
   readonly atomicWrites: ProjectionAtomicWrite<TState>[] = [];
   private readonly documents = new Map<string, { state: TState; checkpoint: Checkpoint }>();
   private readonly links = new Map<string, string>();
+  private readonly dedupe = new Map<string, Checkpoint>();
 
   async load(documentId: string): Promise<TState | null> {
     return this.documents.get(documentId)?.state ?? null;
@@ -71,6 +72,10 @@ class RecordingProjectionStore<TState> implements IProjectionStore<TState> {
       }
     }
 
+    for (const entry of write.dedupe.upserts) {
+      this.dedupe.set(entry.key, entry.checkpoint);
+    }
+
     this.documents.set(write.cursorKey, {
       state: {} as TState,
       checkpoint: write.cursor
@@ -83,6 +88,10 @@ class RecordingProjectionStore<TState> implements IProjectionStore<TState> {
 
   async getCheckpoint(key: string): Promise<Checkpoint | null> {
     return this.documents.get(key)?.checkpoint ?? null;
+  }
+
+  async getDedupeCheckpoint(eventKey: string): Promise<Checkpoint | null> {
+    return this.dedupe.get(eventKey) ?? null;
   }
 
   getDocument(documentId: string): TState | null {
