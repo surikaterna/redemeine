@@ -53,6 +53,13 @@ Legend: ✅ allowed, ❌ forbidden, — same package
 - **Post-cutover:** legacy imports are unsupported and should fail review.
 - **Compatibility:** no facade package and no long-term alias compatibility layer will be maintained.
 
+### Projection runtime v1 deprecation guardrail
+
+- Deprecated package: `@redemeine/projection-runtime` (v1 legacy runtime contract bundle).
+- Production-path policy: imports from `@redemeine/projection-runtime` are not allowed in package/root `src/**` paths.
+- Migration target: import from v3 split packages (`@redemeine/projection-router-core`, `@redemeine/projection-worker-core`, `@redemeine/projection-worker-lite`, `@redemeine/projection-runtime-core`, and store adapters) based on responsibility.
+- Historical/tests-only references are allowed when explicitly documenting migration history or compatibility context.
+
 ## Migration Mapping (Legacy -> Package Imports)
 
 | Legacy import pattern | Target package import |

@@ -9,6 +9,7 @@ const projectionSrcDir = path.join(repoRoot, 'packages', 'projection', 'src');
 
 const packageDirs = {
   projection: path.join(repoRoot, 'packages', 'projection'),
+  legacyRuntime: path.join(repoRoot, 'packages', 'projection-runtime'),
   routerCore: path.join(repoRoot, 'packages', 'projection-router-core'),
   workerCore: path.join(repoRoot, 'packages', 'projection-worker-core'),
   workerLite: path.join(repoRoot, 'packages', 'projection-worker-lite'),
@@ -18,6 +19,7 @@ const packageDirs = {
 };
 
 const runtimePackageNames = new Set([
+  '@redemeine/projection-runtime',
   '@redemeine/projection-runtime-core',
   '@redemeine/projection-runtime-store-inmemory',
   '@redemeine/projection-runtime-store-mongodb',
@@ -29,6 +31,8 @@ const runtimePackageNames = new Set([
 const concreteStoreImportPattern = /from\s+['"]@redemeine\/projection-runtime-store-(inmemory|mongodb)(?:\/[^'"]*)?['"]/;
 
 const concreteStoreDynamicImportPattern = /import\s*\(\s*['"]@redemeine\/projection-runtime-store-(inmemory|mongodb)(?:\/[^'"]*)?['"]\s*\)/;
+const legacyRuntimeImportPattern = /from\s+['"]@redemeine\/projection-runtime(?:\/[^'"]*)?['"]/;
+const legacyRuntimeDynamicImportPattern = /import\s*\(\s*['"]@redemeine\/projection-runtime(?:\/[^'"]*)?['"]\s*\)/;
 
 const errors = [];
 
@@ -109,6 +113,79 @@ function checkProjectionSourceImports() {
       const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
       const uniqueImports = [...new Set(imports)].join(', ');
       fail(`Import boundary violation: ${relativePath} must not import runtime package(s): ${uniqueImports}`);
+    }
+  }
+}
+
+function assertNoLegacyRuntimeDependencyOutsideLegacyPackage() {
+  const packagesRoot = path.join(repoRoot, 'packages');
+  const packageEntries = fs.readdirSync(packagesRoot, { withFileTypes: true });
+
+  for (const packageEntry of packageEntries) {
+    if (!packageEntry.isDirectory()) {
+      continue;
+    }
+
+    const packageDir = path.join(packagesRoot, packageEntry.name);
+    if (path.resolve(packageDir) === path.resolve(packageDirs.legacyRuntime)) {
+      continue;
+    }
+
+    const packageJsonPath = path.join(packageDir, 'package.json');
+    if (!fs.existsSync(packageJsonPath)) {
+      continue;
+    }
+
+    const packageJson = readJson(packageJsonPath);
+    const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+
+    for (const field of dependencyFields) {
+      const deps = packageJson[field] ?? {};
+      if ('@redemeine/projection-runtime' in deps) {
+        const relativePath = path.relative(repoRoot, packageJsonPath).replace(/\\/g, '/');
+        errors.push(
+          `Dependency boundary violation: ${relativePath} must not depend on @redemeine/projection-runtime (field: ${field}).`
+        );
+      }
+    }
+  }
+}
+
+function assertNoLegacyRuntimeImportsInProductionPaths() {
+  const packageRoot = path.join(repoRoot, 'packages');
+  const packageEntries = fs.readdirSync(packageRoot, { withFileTypes: true });
+  const sourceRoots = [];
+
+  for (const packageEntry of packageEntries) {
+    if (!packageEntry.isDirectory()) {
+      continue;
+    }
+
+    const packageDir = path.join(packageRoot, packageEntry.name);
+    if (path.resolve(packageDir) === path.resolve(packageDirs.legacyRuntime)) {
+      continue;
+    }
+
+    const srcDir = path.join(packageDir, 'src');
+    if (fs.existsSync(srcDir)) {
+      sourceRoots.push(srcDir);
+    }
+  }
+
+  const rootSrcDir = path.join(repoRoot, 'src');
+  if (fs.existsSync(rootSrcDir)) {
+    sourceRoots.push(rootSrcDir);
+  }
+
+  for (const sourceRoot of sourceRoots) {
+    for (const filePath of getAllTsFiles(sourceRoot)) {
+      const source = fs.readFileSync(filePath, 'utf8');
+      if (legacyRuntimeImportPattern.test(source) || legacyRuntimeDynamicImportPattern.test(source)) {
+        const relativePath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+        errors.push(
+          `Import boundary violation: ${relativePath} imports deprecated package @redemeine/projection-runtime. Migrate to v3 router/worker/store packages.`
+        );
+      }
     }
   }
 }
@@ -256,6 +333,8 @@ function run() {
   assertCoreImportBoundaries();
   assertRouterWorkerImportBoundaries();
   assertProjectionDefinitionOnly();
+  assertNoLegacyRuntimeDependencyOutsideLegacyPackage();
+  assertNoLegacyRuntimeImportsInProductionPaths();
   checkProjectionPackageDependencies();
   checkProjectionSourceImports();
 
