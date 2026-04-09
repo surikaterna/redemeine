@@ -285,4 +285,63 @@ describe('Lifecycle Routing', () => {
     const ghostDoc = await store.load('order-999');
     expect(ghostDoc).toBeNull();
   });
+
+  it('should route .join() events via reverseSubscribe relink to latest document', async () => {
+    const projection = createProjection<InvoiceState>('invoice-reverse-routing', () => ({ total: 0, orders: [] }))
+      .from(invoiceAgg, {
+        'invoice.created': (state, event: any, ctx) => {
+          ctx.reverseSubscribe(orderAgg, event.payload.orderId);
+          state.total += event.payload.amount;
+        }
+      })
+      .join(orderAgg, {
+        'order.shipped': (state, event: any) => {
+          (state.orders ??= []).push(event.aggregateId);
+        }
+      })
+      .build();
+
+    const subscription = createMockSubscription([
+      {
+        aggregateType: 'invoice',
+        aggregateId: 'invoice-123',
+        type: 'invoice.created',
+        payload: { amount: 100, orderId: 'order-456' },
+        sequence: 1,
+        timestamp: new Date().toISOString()
+      },
+      {
+        aggregateType: 'invoice',
+        aggregateId: 'invoice-789',
+        type: 'invoice.created',
+        payload: { amount: 80, orderId: 'order-456' },
+        sequence: 2,
+        timestamp: new Date().toISOString()
+      },
+      {
+        aggregateType: 'order',
+        aggregateId: 'order-456',
+        type: 'order.shipped',
+        payload: { amount: 50 },
+        sequence: 3,
+        timestamp: new Date().toISOString()
+      }
+    ]);
+
+    const daemon = new ProjectionDaemon({
+      projection,
+      subscription,
+      store
+    });
+
+    await daemon.processBatch();
+
+    const firstDoc = await store.load('invoice-123');
+    const latestDoc = await store.load('invoice-789');
+
+    expect(firstDoc).not.toBeNull();
+    expect(latestDoc).not.toBeNull();
+    expect(firstDoc?.orders ?? []).toEqual([]);
+    expect(latestDoc?.orders).toEqual(['order-456']);
+  });
 });

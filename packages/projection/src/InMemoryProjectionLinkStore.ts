@@ -14,6 +14,15 @@ export class InMemoryProjectionLinkStore implements IProjectionLinkStore {
     return this.links.get(this.makeKey(aggregateType, aggregateId)) ?? null;
   }
 
+  removeLink(aggregateType: string, aggregateId: string, targetDocId: string): void {
+    const key = this.makeKey(aggregateType, aggregateId);
+    const existing = this.links.get(key);
+
+    if (existing === targetDocId) {
+      this.links.delete(key);
+    }
+  }
+
   removeLinksForTarget(targetDocId: string): void {
     for (const [key, value] of this.links.entries()) {
       if (value === targetDocId) {

@@ -92,11 +92,21 @@ export interface ProjectionContext {
    * Used for .join semantics to correlate related aggregates
    */
   subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
+
+  /**
+   * Reverse subscription with explicit relink semantics in runtime planning.
+   */
+  reverseSubscribe(aggregate: { __aggregateType: string }, aggregateId: string): void;
   
   /**
    * Get current subscriptions
    */
   getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+
+  /**
+   * Get reverse-subscription intents captured in this handler invocation.
+   */
+  getReverseSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
 }
 
 /**

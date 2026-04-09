@@ -533,6 +533,148 @@ describe('ProjectionDaemon', () => {
       expect(state!.name).toBe('Jane');
       expect(state!.events).toEqual(['customer.attached']);
     });
+
+    it('should plan reverseSubscribe relink as explicit remove then add', async () => {
+      const invoiceAgg = {
+        __aggregateType: 'invoice',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+      const orderAgg = {
+        __aggregateType: 'order',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+
+      const projectionWithReverseSubscribe = createProjection<TestState>('reverseRelinkPlan', () => ({
+        count: 0,
+        name: '',
+        events: []
+      }))
+        .from(invoiceAgg, {
+          'invoice.created': (state, event: any, ctx) => {
+            state.name = event.aggregateId;
+            ctx.reverseSubscribe(orderAgg, event.payload.orderId);
+          }
+        })
+        .join(orderAgg, {
+          'order.shipped': () => {}
+        })
+        .build();
+
+      const callOrder: string[] = [];
+      const resolveTargetSpy = jest.fn(() => 'invoice-legacy');
+      const removeLinkSpy = jest.fn((aggregateType: string, aggregateId: string, targetDocId: string) => {
+        callOrder.push(`remove:${aggregateType}:${aggregateId}:${targetDocId}`);
+      });
+      const addLinkSpy = jest.fn((aggregateType: string, aggregateId: string, targetDocId: string) => {
+        callOrder.push(`add:${aggregateType}:${aggregateId}:${targetDocId}`);
+      });
+
+      const linkStore: IProjectionLinkStore = {
+        addLink: addLinkSpy,
+        resolveTarget: resolveTargetSpy,
+        removeLink: removeLinkSpy
+      };
+
+      const daemon = new ProjectionDaemon({
+        ...options,
+        projection: projectionWithReverseSubscribe,
+        linkStore,
+        subscription: createMockSubscription([
+          {
+            aggregateType: 'invoice',
+            aggregateId: 'invoice-123',
+            type: 'invoice.created',
+            payload: { orderId: 'order-1' },
+            sequence: 1,
+            timestamp: '2024-01-01T00:00:00Z'
+          }
+        ])
+      });
+
+      await daemon.processBatch();
+
+      expect(resolveTargetSpy).toHaveBeenCalledWith('order', 'order-1');
+      expect(removeLinkSpy).toHaveBeenCalledWith('order', 'order-1', 'invoice-legacy');
+      expect(addLinkSpy).toHaveBeenCalledWith('order', 'order-1', 'invoice-123');
+      expect(callOrder).toEqual([
+        'remove:order:order-1:invoice-legacy',
+        'add:order:order-1:invoice-123'
+      ]);
+    });
+
+    it('should apply multi-target reverseSubscribe planning deterministically', async () => {
+      const invoiceAgg = {
+        __aggregateType: 'invoice',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+      const orderAgg = {
+        __aggregateType: 'order',
+        initialState: {},
+        pure: { eventProjectors: {} }
+      };
+
+      const projectionWithFanoutReverse = createProjection<TestState>('reverseFanoutPlan', () => ({
+        count: 0,
+        name: '',
+        events: []
+      }))
+        .identity(() => ['invoice-b', 'invoice-a'])
+        .from(invoiceAgg, {
+          'invoice.created': (_state, event: any, ctx) => {
+            ctx.reverseSubscribe(orderAgg, event.payload.orderId);
+          }
+        })
+        .join(orderAgg, {
+          'order.shipped': () => {}
+        })
+        .build();
+
+      const links = new Map<string, string>();
+      const addLinkSpy = jest.fn((aggregateType: string, aggregateId: string, targetDocId: string) => {
+        links.set(`${aggregateType}:${aggregateId}`, targetDocId);
+      });
+
+      const linkStore: IProjectionLinkStore = {
+        addLink: addLinkSpy,
+        resolveTarget(aggregateType: string, aggregateId: string): string | null {
+          return links.get(`${aggregateType}:${aggregateId}`) ?? null;
+        },
+        removeLink(aggregateType: string, aggregateId: string, targetDocId: string): void {
+          const key = `${aggregateType}:${aggregateId}`;
+          const existing = links.get(key);
+          if (existing === targetDocId) {
+            links.delete(key);
+          }
+        }
+      };
+
+      const daemon = new ProjectionDaemon({
+        ...options,
+        projection: projectionWithFanoutReverse,
+        linkStore,
+        subscription: createMockSubscription([
+          {
+            aggregateType: 'invoice',
+            aggregateId: 'invoice-0',
+            type: 'invoice.created',
+            payload: { orderId: 'order-1' },
+            sequence: 1,
+            timestamp: '2024-01-01T00:00:00Z'
+          }
+        ])
+      });
+
+      await daemon.processBatch();
+
+      expect(addLinkSpy.mock.calls).toEqual([
+        ['order', 'order-1', 'invoice-b'],
+        ['order', 'order-1', 'invoice-a']
+      ]);
+      expect(links.get('order:order-1')).toBe('invoice-a');
+    });
   });
   
   describe('In-memory batching/folding', () => {

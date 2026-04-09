@@ -32,6 +32,10 @@ export interface BatchStats {
   duration: number;
 }
 
+type LinkMutation =
+  | { type: 'remove'; aggregateType: string; aggregateId: string; targetDocId: string }
+  | { type: 'add'; aggregateType: string; aggregateId: string; targetDocId: string };
+
 /**
  * The Projection Daemon orchestrates the projection engine.
  * 
@@ -245,13 +249,20 @@ export class ProjectionDaemon<TState = unknown> {
    */
   private createContext(): ProjectionContext {
     const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+    const reverseSubscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
     
     return {
       subscribeTo(aggregate, aggregateId) {
         subscriptions.push({ aggregate, aggregateId });
       },
+      reverseSubscribe(aggregate, aggregateId) {
+        reverseSubscriptions.push({ aggregate, aggregateId });
+      },
       getSubscriptions() {
         return [...subscriptions];
+      },
+      getReverseSubscriptions() {
+        return [...reverseSubscriptions];
       }
     };
   }
@@ -296,6 +307,69 @@ export class ProjectionDaemon<TState = unknown> {
         currentDocId
       );
     }
+
+    const reverseMutations = await this.planReverseSubscribeMutations(context, currentDocId);
+
+    for (const mutation of reverseMutations) {
+      if (mutation.type === 'remove') {
+        if (this.linkStore.removeLink) {
+          await this.linkStore.removeLink(mutation.aggregateType, mutation.aggregateId, mutation.targetDocId);
+        }
+        continue;
+      }
+
+      await this.linkStore.addLink(mutation.aggregateType, mutation.aggregateId, mutation.targetDocId);
+    }
+  }
+
+  private async planReverseSubscribeMutations(context: ProjectionContext, currentDocId: string): Promise<LinkMutation[]> {
+    const latestByKey = new Map<string, { aggregateType: string; aggregateId: string; targetDocId: string }>();
+
+    for (const reverseSubscription of context.getReverseSubscriptions()) {
+      const aggregateType = reverseSubscription.aggregate.__aggregateType;
+      const aggregateId = reverseSubscription.aggregateId;
+      latestByKey.set(`${aggregateType}:${aggregateId}`, {
+        aggregateType,
+        aggregateId,
+        targetDocId: currentDocId
+      });
+    }
+
+    const intents = Array.from(latestByKey.values()).sort((left, right) => {
+      if (left.aggregateType !== right.aggregateType) {
+        return left.aggregateType.localeCompare(right.aggregateType);
+      }
+
+      return left.aggregateId.localeCompare(right.aggregateId);
+    });
+
+    const mutations: LinkMutation[] = [];
+
+    for (const intent of intents) {
+      const existingTarget = await this.linkStore.resolveTarget(intent.aggregateType, intent.aggregateId);
+
+      if (existingTarget === intent.targetDocId) {
+        continue;
+      }
+
+      if (existingTarget) {
+        mutations.push({
+          type: 'remove',
+          aggregateType: intent.aggregateType,
+          aggregateId: intent.aggregateId,
+          targetDocId: existingTarget
+        });
+      }
+
+      mutations.push({
+        type: 'add',
+        aggregateType: intent.aggregateType,
+        aggregateId: intent.aggregateId,
+        targetDocId: intent.targetDocId
+      });
+    }
+
+    return mutations;
   }
 
   private getHandlerCandidateKeys(event: ProjectionEvent): string[] {
