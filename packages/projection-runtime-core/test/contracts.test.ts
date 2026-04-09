@@ -314,7 +314,6 @@ describe('projection-runtime-core contract types', () => {
         { stage: 'nack', cause: 'timeout' }
       ]
     });
-    });
 
     if (many.items[0].decision.status === 'ack') {
       expect(many.items[0].decision.lifecycle).toEqual([
