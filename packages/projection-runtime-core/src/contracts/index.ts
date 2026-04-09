@@ -35,3 +35,20 @@ export type {
   ProjectionRouterDecision
 } from './router';
 export type { ProjectionCatchupPollingAdapter } from './catchup';
+export type {
+  ProjectionRebuildGenerationId,
+  ProjectionRebuildLifecycleStatus,
+  ProjectionCutoverReadinessCriteria,
+  ProjectionCutoverReadiness,
+  ProjectionRebuildLifecycleState,
+  ProjectionCutoverRequest,
+  ProjectionRollbackRequest,
+  ProjectionGenerationCutoverContract,
+  ProjectionGenerationRollbackContract,
+  ProjectionGenerationSwitchContract
+} from './rebuild';
+export {
+  evaluateCutoverReadiness,
+  transitionToCutover,
+  transitionToRollback
+} from './rebuild';

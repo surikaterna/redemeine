@@ -65,5 +65,20 @@ export type {
   ProjectionRoutingKey,
   ProjectionRouterFanoutEnvelope,
   ProjectionRouterDecision,
-  ProjectionCatchupPollingAdapter
+  ProjectionCatchupPollingAdapter,
+  ProjectionRebuildGenerationId,
+  ProjectionRebuildLifecycleStatus,
+  ProjectionCutoverReadinessCriteria,
+  ProjectionCutoverReadiness,
+  ProjectionRebuildLifecycleState,
+  ProjectionCutoverRequest,
+  ProjectionRollbackRequest,
+  ProjectionGenerationCutoverContract,
+  ProjectionGenerationRollbackContract,
+  ProjectionGenerationSwitchContract
+} from './contracts';
+export {
+  evaluateCutoverReadiness,
+  transitionToCutover,
+  transitionToRollback
 } from './contracts';
