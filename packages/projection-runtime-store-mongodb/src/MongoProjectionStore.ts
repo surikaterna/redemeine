@@ -5,6 +5,11 @@ import type {
   ProjectionStoreCommitAtomicManyRequest,
   ProjectionStoreDocumentWrite
 } from './contracts';
+import {
+  assertWritePrecondition,
+  createInvalidRequestFailure,
+  toWriteFailure
+} from './storeFailures';
 import type {
   MongoProjectionStoreOptions,
   ProjectionDedupeRecord,
@@ -103,21 +108,25 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     request: ProjectionStoreCommitAtomicManyRequest<TState>
   ): Promise<ProjectionStoreAtomicManyResult> {
     if (request.mode !== 'atomic-all') {
+      const failure = createInvalidRequestFailure(`unsupported mode: ${request.mode}`);
       return {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
-        reason: `unsupported mode: ${request.mode}`,
+        failure,
+        reason: failure.message,
         committedCount: 0
       };
     }
 
     if (request.writes.length === 0) {
+      const failure = createInvalidRequestFailure('no writes');
       return {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
-        reason: 'no writes',
+        failure,
+        reason: failure.message,
         committedCount: 0
       };
     }
@@ -176,11 +185,14 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       });
     } catch (error) {
       await this.rollbackAtomicMany(originalDocuments, originalDedupe);
+      const failure = toWriteFailure(error);
+
       return {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex,
-        reason: error instanceof Error ? error.message : 'atomicMany write failed',
+        failure,
+        reason: failure.message,
         committedCount: 0
       };
     }
@@ -209,12 +221,14 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async persistDocumentWrite(write: ProjectionStoreDocumentWrite<TState>): Promise<void> {
+    const current = await this.options.collection.findOne({ _id: write.documentId });
+    assertWritePrecondition(write.documentId, current?.checkpoint ?? null, write.precondition);
+
     if (write.mode === 'full') {
       await this.save(write.documentId, write.fullDocument, write.checkpoint);
       return;
     }
 
-    const current = await this.options.collection.findOne({ _id: write.documentId });
     const currentState = current?.state;
     const base =
       currentState && typeof currentState === 'object' && !Array.isArray(currentState)

@@ -38,6 +38,7 @@ import type {
   ProjectionShardLeaseRebalancePlan,
   ProjectionShardLeaseRenewResult,
   ProjectionShardOwnerIdentity,
+  ProjectionStoreWriteFailure,
   ProjectionRouterFanoutEnvelope,
   ProjectionStoreWriteWatermark,
   ProjectionGenerationSwitchContract,
@@ -400,6 +401,12 @@ describe('projection-runtime-core contract types', () => {
             status: 'rejected',
             highestWatermark: null,
             failedAtIndex: 0,
+            failure: {
+              category: 'terminal',
+              code: 'invalid-request',
+              message: 'no writes',
+              retryable: false
+            },
             reason: 'no writes',
             committedCount: 0
           };
@@ -427,6 +434,12 @@ describe('projection-runtime-core contract types', () => {
       expect(rejected.highestWatermark).toBeNull();
       expect(rejected.committedCount).toBe(0);
       expect(rejected.failedAtIndex).toBe(0);
+      expect(rejected.failure).toEqual({
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'no writes',
+        retryable: false
+      });
     }
 
     const committed = await store.commitAtomicMany({
@@ -845,5 +858,31 @@ describe('projection-runtime-core contract types', () => {
       }
     });
     expect(contractCutover.status).toBe('live');
+
+  test('store failure taxonomy keeps deterministic retryability', () => {
+    const conflict: ProjectionStoreWriteFailure = {
+      category: 'conflict',
+      code: 'occ-conflict',
+      message: 'expected revision mismatch',
+      retryable: true
+    };
+
+    const transient: ProjectionStoreWriteFailure = {
+      category: 'transient',
+      code: 'io-timeout',
+      message: 'temporary network timeout',
+      retryable: true
+    };
+
+    const terminal: ProjectionStoreWriteFailure = {
+      category: 'terminal',
+      code: 'invalid-request',
+      message: 'no writes',
+      retryable: false
+    };
+
+    expect(conflict.retryable).toBe(true);
+    expect(transient.retryable).toBe(true);
+    expect(terminal.retryable).toBe(false);
   });
 });

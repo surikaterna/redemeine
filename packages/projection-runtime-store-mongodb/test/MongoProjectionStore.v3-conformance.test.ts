@@ -83,6 +83,12 @@ describe('shared v3 conformance', () => {
     if (result.status === 'rejected') {
       expect(result.failedAtIndex).toBe(1);
       expect(result.reason).toBe('injected dedupe failure');
+      expect(result.failure).toEqual({
+        category: 'transient',
+        code: 'write-failed',
+        message: 'injected dedupe failure',
+        retryable: true
+      });
     }
 
     expect(await store.load('doc-1')).toBeNull();

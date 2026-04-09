@@ -1,14 +1,39 @@
 import { describe, expect, test } from 'bun:test';
 import type { Checkpoint } from '../src';
 
+type V3Failure = {
+  category: 'conflict' | 'transient' | 'terminal';
+  code: string;
+  message: string;
+  retryable: boolean;
+};
+
 type V3ConformanceStore = {
   commitAtomicMany(request: {
     mode: 'atomic-all';
     writes: ReadonlyArray<{
       routingKeySource: `${string}:${string}`;
       documents: ReadonlyArray<
-        | { documentId: string; mode: 'full'; fullDocument: Record<string, unknown>; checkpoint: Checkpoint }
-        | { documentId: string; mode: 'patch'; patch: Record<string, unknown>; checkpoint: Checkpoint }
+        | {
+          documentId: string;
+          mode: 'full';
+          fullDocument: Record<string, unknown>;
+          checkpoint: Checkpoint;
+          precondition?: {
+            expectedRevision?: number | null;
+            expectedCheckpoint?: Checkpoint | null;
+          };
+        }
+        | {
+          documentId: string;
+          mode: 'patch';
+          patch: Record<string, unknown>;
+          checkpoint: Checkpoint;
+          precondition?: {
+            expectedRevision?: number | null;
+            expectedCheckpoint?: Checkpoint | null;
+          };
+        }
       >;
       dedupe: { upserts: ReadonlyArray<{ key: string; checkpoint: Checkpoint }> };
     }>;
@@ -24,6 +49,7 @@ type V3ConformanceStore = {
       highestWatermark: null;
       byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
       failedAtIndex: number;
+      failure: V3Failure;
       reason: string;
       committedCount: 0;
     }
@@ -102,9 +128,71 @@ export function runV3StoreConformance(
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
+        failure: {
+          category: 'terminal',
+          code: 'invalid-request',
+          message: 'no writes',
+          retryable: false
+        },
         reason: 'no writes',
         committedCount: 0
       });
+    });
+
+    test('commitAtomicMany enforces OCC preconditions with conflict failure classification', async () => {
+      const store = createStore();
+
+      const seeded = await store.commitAtomicMany({
+        mode: 'atomic-all',
+        writes: [
+          {
+            routingKeySource: 'invoice-summary:doc-1',
+            documents: [
+              {
+                documentId: 'doc-1',
+                mode: 'full',
+                fullDocument: { total: 3 },
+                checkpoint: { sequence: 3 }
+              }
+            ],
+            dedupe: { upserts: [] }
+          }
+        ]
+      });
+
+      expect(seeded.status).toBe('committed');
+
+      const result = await store.commitAtomicMany({
+        mode: 'atomic-all',
+        writes: [
+          {
+            routingKeySource: 'invoice-summary:doc-1',
+            documents: [
+              {
+                documentId: 'doc-1',
+                mode: 'patch',
+                patch: { total: 4 },
+                checkpoint: { sequence: 4 },
+                precondition: { expectedRevision: 2 }
+              }
+            ],
+            dedupe: { upserts: [] }
+          }
+        ]
+      });
+
+      expect(result.status).toBe('rejected');
+      if (result.status === 'rejected') {
+        expect(result.failure).toEqual({
+          category: 'conflict',
+          code: 'occ-conflict',
+          message: "OCC precondition failed for document 'doc-1': expectedRevision=2, actualRevision=3",
+          retryable: true
+        });
+        expect(result.reason).toBe(result.failure.message);
+      }
+
+      expect(await store.load('doc-1')).toEqual({ total: 3 });
     });
 
     test('highest watermark chooses newest timestamp when sequence ties', async () => {

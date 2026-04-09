@@ -324,6 +324,12 @@ describe('RT3-13 validation matrix: watermark semantics', () => {
         status: 'rejected',
         highestWatermark: null,
         failedAtIndex: 0,
+        failure: {
+          category: 'terminal',
+          code: 'invalid-request',
+          message: 'no writes',
+          retryable: false
+        },
         reason: 'no writes',
         committedCount: 0
       });

@@ -1,13 +1,20 @@
-/**
- * Local copy of the current projection runtime store contracts.
- *
- * This keeps the Mongo adapter package buildable in isolation while the
- * runtime-core package split is still in progress.
- */
-export interface Checkpoint {
-  sequence: number;
-  timestamp?: string;
-}
+import type {
+  Checkpoint as CoreCheckpoint,
+  ProjectionStoreAtomicManyCommittedResult as CoreProjectionStoreAtomicManyCommittedResult,
+  ProjectionStoreAtomicManyRejectedResult as CoreProjectionStoreAtomicManyRejectedResult,
+  ProjectionStoreAtomicManyResult as CoreProjectionStoreAtomicManyResult,
+  ProjectionStoreFailureCategory as CoreProjectionStoreFailureCategory,
+  ProjectionStoreWriteFailure as CoreProjectionStoreWriteFailure,
+  ProjectionStoreWritePrecondition as CoreProjectionStoreWritePrecondition,
+  ProjectionStoreFullDocumentWrite as CoreProjectionStoreFullDocumentWrite,
+  ProjectionStorePatchDocumentWrite as CoreProjectionStorePatchDocumentWrite,
+  ProjectionStoreDocumentWrite as CoreProjectionStoreDocumentWrite,
+  ProjectionStoreDedupeWrite as CoreProjectionStoreDedupeWrite,
+  ProjectionStoreAtomicWrite as CoreProjectionStoreAtomicWrite,
+  ProjectionStoreCommitAtomicManyRequest as CoreProjectionStoreCommitAtomicManyRequest
+} from '@redemeine/projection-runtime-core';
+
+export type Checkpoint = CoreCheckpoint;
 
 export interface ProjectionDedupeWrite {
   upserts: Array<{ key: string; checkpoint: Checkpoint }>;
@@ -34,58 +41,18 @@ export interface IProjectionStore<TState = unknown> {
   delete?(documentId: string): Promise<void>;
 }
 
-export interface ProjectionStoreAtomicManyCommittedResult {
-  status: 'committed';
-  highestWatermark: Checkpoint;
-  byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
-  committedCount: number;
-}
-
-export interface ProjectionStoreAtomicManyRejectedResult {
-  status: 'rejected';
-  highestWatermark: null;
-  byLaneWatermark?: Readonly<Record<string, Checkpoint>>;
-  failedAtIndex: number;
-  reason: string;
-  committedCount: 0;
-}
-
-export type ProjectionStoreAtomicManyResult =
-  | ProjectionStoreAtomicManyCommittedResult
-  | ProjectionStoreAtomicManyRejectedResult;
-
-export interface ProjectionStoreFullDocumentWrite<TState = unknown> {
-  documentId: string;
-  mode: 'full';
-  fullDocument: TState;
-  checkpoint: Checkpoint;
-}
-
-export interface ProjectionStorePatchDocumentWrite {
-  documentId: string;
-  mode: 'patch';
-  patch: Record<string, unknown>;
-  checkpoint: Checkpoint;
-}
-
-export type ProjectionStoreDocumentWrite<TState = unknown> =
-  | ProjectionStoreFullDocumentWrite<TState>
-  | ProjectionStorePatchDocumentWrite;
-
-export interface ProjectionStoreDedupeWrite {
-  upserts: ReadonlyArray<{ key: string; checkpoint: Checkpoint }>;
-}
-
-export interface ProjectionStoreAtomicWrite<TState = unknown> {
-  routingKeySource: `${string}:${string}`;
-  documents: ReadonlyArray<ProjectionStoreDocumentWrite<TState>>;
-  dedupe: ProjectionStoreDedupeWrite;
-}
-
-export interface ProjectionStoreCommitAtomicManyRequest<TState = unknown> {
-  mode: 'atomic-all';
-  writes: ReadonlyArray<ProjectionStoreAtomicWrite<TState>>;
-}
+export type ProjectionStoreAtomicManyCommittedResult = CoreProjectionStoreAtomicManyCommittedResult;
+export type ProjectionStoreAtomicManyRejectedResult = CoreProjectionStoreAtomicManyRejectedResult;
+export type ProjectionStoreAtomicManyResult = CoreProjectionStoreAtomicManyResult;
+export type ProjectionStoreFailureCategory = CoreProjectionStoreFailureCategory;
+export type ProjectionStoreWriteFailure = CoreProjectionStoreWriteFailure;
+export type ProjectionStoreWritePrecondition = CoreProjectionStoreWritePrecondition;
+export type ProjectionStoreFullDocumentWrite<TState = unknown> = CoreProjectionStoreFullDocumentWrite<TState>;
+export type ProjectionStorePatchDocumentWrite = CoreProjectionStorePatchDocumentWrite;
+export type ProjectionStoreDocumentWrite<TState = unknown> = CoreProjectionStoreDocumentWrite<TState>;
+export type ProjectionStoreDedupeWrite = CoreProjectionStoreDedupeWrite;
+export type ProjectionStoreAtomicWrite<TState = unknown> = CoreProjectionStoreAtomicWrite<TState>;
+export type ProjectionStoreCommitAtomicManyRequest<TState = unknown> = CoreProjectionStoreCommitAtomicManyRequest<TState>;
 
 export interface IProjectionLinkStore {
   addLink(aggregateType: string, aggregateId: string, targetDocId: string): Promise<void> | void;
