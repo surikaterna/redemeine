@@ -14,6 +14,8 @@ export type {
   ProjectionDedupeWrite
 } from './IProjectionStore';
 export type { IEventSubscription } from './IEventSubscription';
+export type { EventStoreCatchUpReader } from './EventStoreCatchUpSubscription';
+export { EventStoreCatchUpSubscription } from './EventStoreCatchUpSubscription';
 export type { IProjectionLinkStore } from './IProjectionLinkStore';
 export {
   createProjection
