@@ -97,3 +97,10 @@ export type {
   ProjectionShardLeaseRebalancePlan,
   ProjectionShardCheckpointLeaseContract
 } from './checkpointLeasing';
+export type {
+  ProjectionHydrationMode,
+  ProjectionHydrationStatus,
+  ProjectionHydrationFailure,
+  ProjectionMetadataEnvelope,
+  ProjectionHydrationHint
+} from './hydration';

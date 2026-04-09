@@ -88,12 +88,12 @@ export type {
   ProjectionStoreDedupeRetentionContract,
   ProjectionStoreWriteWatermark,
   ProjectionRoutingKey,
-  ProjectionRouterFanoutEnvelope,
-  ProjectionRouterDecision,
-  ProjectionCatchupPollingAdapter,
-  ProjectionShardLeaseTransitionReason,
-  ProjectionShardOwnerIdentity,
-  ProjectionShardLeaseIdentity,
+   ProjectionRouterFanoutEnvelope,
+   ProjectionRouterDecision,
+   ProjectionCatchupPollingAdapter,
+   ProjectionShardLeaseTransitionReason,
+   ProjectionShardOwnerIdentity,
+   ProjectionShardLeaseIdentity,
   ProjectionShardLeaseStatus,
   ProjectionShardLeaseTimeline,
   ProjectionShardCheckpointLeaseState,
@@ -108,18 +108,21 @@ export type {
   ProjectionShardCheckpointCommitRequest,
   ProjectionShardCheckpointCommitted,
   ProjectionShardCheckpointCommitRejected,
-  ProjectionShardCheckpointCommitResult,
-  ProjectionShardLeaseAssignment,
-  ProjectionShardLeaseRebalancePlan,
-  ProjectionShardCheckpointLeaseContract
-} from './contracts';
+   ProjectionShardCheckpointCommitResult,
+   ProjectionShardLeaseAssignment,
+   ProjectionShardLeaseRebalancePlan,
+   ProjectionShardCheckpointLeaseContract,
+   ProjectionHydrationMode,
+   ProjectionHydrationStatus,
+   ProjectionHydrationFailure,
+   ProjectionMetadataEnvelope,
+   ProjectionHydrationHint
+ } from './contracts';
 export {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
-  classifyProjectionEnvelopeCandidate
-} from './contracts';
-export {
   PROJECTION_DEDUPE_KEY_VERSION,
-  encodeProjectionDedupeKey,
+  classifyProjectionEnvelopeCandidate,
   decodeProjectionDedupeKey,
+  encodeProjectionDedupeKey,
   evaluateProjectionDedupeRetention
 } from './contracts';

@@ -15,6 +15,10 @@ import type {
   ProjectionEnvelopeValidator,
   ProjectionDedupeKey,
   ProjectionDedupeRetentionPolicy,
+  ProjectionHydrationHint,
+  ProjectionHydrationMode,
+  ProjectionHydrationStatus,
+  ProjectionMetadataEnvelope,
   ProjectionStoreAtomicManyContract,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
@@ -704,5 +708,32 @@ describe('projection-runtime-core contract types', () => {
       now
     });
     expect(atTtl).toBe('eligible_for_cleanup');
+
+  test('hydration mode/status contracts and _projection metadata stay minimal', () => {
+    const hydrationMode: ProjectionHydrationMode = 'snapshot_plus_tail';
+    const statuses: ProjectionHydrationStatus[] = ['hydrating', 'ready', 'rebuilding', 'failed'];
+
+    const metadata: ProjectionMetadataEnvelope = {
+      status: 'hydrating',
+      generation: 3,
+      watermark: { sequence: 101, timestamp: '2026-04-09T18:00:02.000Z' },
+      updatedAt: '2026-04-09T18:00:02.000Z',
+      adapter: {
+        provider: 'mongodb'
+      }
+    };
+
+    const hint: ProjectionHydrationHint = {
+      mode: hydrationMode,
+      snapshotWatermark: { sequence: 100 },
+      asOf: '2026-04-09T18:00:00.000Z'
+    };
+
+    expect(statuses).toEqual(['hydrating', 'ready', 'rebuilding', 'failed']);
+    expect(hint.mode).toBe('snapshot_plus_tail');
+    expect(metadata.status).toBe('hydrating');
+    expect(metadata.generation).toBe(3);
+    expect(metadata.watermark?.sequence).toBe(101);
+    expect(Object.prototype.hasOwnProperty.call(metadata, 'projectionName')).toBe(false);
   });
 });
