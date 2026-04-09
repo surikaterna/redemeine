@@ -239,4 +239,83 @@ describe('MongoProjectionStore', () => {
     expect(linkCollection.snapshot()).toHaveLength(1);
     expect(dedupeCollection.snapshot()).toHaveLength(1);
   });
+
+  test('commitAtomic fault during dedupe upsert recovers deterministically on retry without duplicate artifacts', async () => {
+    const collection = createProjectionDocumentCollection<{ count: number }>();
+    const linkCollection = createProjectionLinkCollection();
+    const dedupeCollection = createProjectionDedupeCollection();
+
+    let shouldFailDedupeWrite = true;
+    const failingDedupeCollection = {
+      findOne: dedupeCollection.findOne.bind(dedupeCollection),
+      deleteOne: dedupeCollection.deleteOne.bind(dedupeCollection),
+      deleteMany: dedupeCollection.deleteMany.bind(dedupeCollection),
+      async updateOne(
+        filter: Record<string, unknown>,
+        update: Record<string, unknown>,
+        options?: { upsert?: boolean }
+      ): Promise<unknown> {
+        if (shouldFailDedupeWrite) {
+          shouldFailDedupeWrite = false;
+          throw new Error('injected dedupe write failure');
+        }
+
+        return dedupeCollection.updateOne(filter, update, options);
+      }
+    };
+
+    const now = () => '2026-04-09T00:00:00.000Z';
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection,
+      linkCollection,
+      dedupeCollection: failingDedupeCollection,
+      now
+    });
+
+    const write = {
+      documents: [
+        {
+          documentId: 'doc-fault-retry',
+          state: { count: 5 },
+          checkpoint: { sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' }
+        }
+      ],
+      links: [
+        {
+          aggregateType: 'invoice',
+          aggregateId: 'inv-fault-retry',
+          targetDocId: 'doc-fault-retry'
+        }
+      ],
+      cursorKey: '__cursor__projection-fault-retry',
+      cursor: { sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' },
+      dedupe: {
+        upserts: [
+          {
+            key: 'invoice:inv-fault-retry:5',
+            checkpoint: { sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' }
+          }
+        ]
+      }
+    };
+
+    await expect(store.commitAtomic(write)).rejects.toThrow('injected dedupe write failure');
+
+    await store.commitAtomic(write);
+
+    expect(await store.load('doc-fault-retry')).toEqual({ count: 5 });
+    expect(await store.resolveTarget('invoice', 'inv-fault-retry')).toBe('doc-fault-retry');
+    expect(await store.getCheckpoint?.('__cursor__projection-fault-retry')).toEqual({
+      sequence: 5,
+      timestamp: '2026-04-09T00:00:05.000Z'
+    });
+    expect(await store.getDedupeCheckpoint('invoice:inv-fault-retry:5')).toEqual({
+      sequence: 5,
+      timestamp: '2026-04-09T00:00:05.000Z'
+    });
+
+    expect(collection.snapshot()).toHaveLength(2);
+    expect(linkCollection.snapshot()).toHaveLength(1);
+    expect(dedupeCollection.snapshot()).toHaveLength(1);
+  });
 });
