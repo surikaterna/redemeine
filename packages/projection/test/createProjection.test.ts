@@ -170,14 +170,40 @@ describe('createProjection Builder API', () => {
     expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
   });
 
-  test('creates a projection with reverseSubscribe()', () => {
-    const projection = createProjection<{ invoice: InvoiceState; order: OrderState }>(
-      'reverse-subscribe-view',
-      () => ({
-        invoice: { id: '', amount: 0, status: 'pending' as const },
-        order: { id: '', items: [] }
+  test('join() contract remains unchanged when reverseSubscribe API exists', () => {
+    const builder = createProjection<{ invoice: InvoiceState; order: OrderState }>('join-contract', () => ({
+      invoice: { id: '', amount: 0, status: 'pending' as const },
+      order: { id: '', items: [] }
+    }));
+
+    expect(typeof builder.join).toBe('function');
+
+    const projection = builder
+      .from(invoiceAggDef, {
+        created: (state, event) => {
+          state.invoice.id = event.payload.customerId;
+        }
       })
-    )
+      .join(orderAggDef, {
+        shipped: (state, event) => {
+          state.order.shippedAt = '2024-01-01T00:00:00Z';
+        }
+      })
+      .build();
+
+    expect(projection.joinStreams).toHaveLength(1);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
+  });
+
+  test('reverseSubscribe() exists and registers a join stream', () => {
+    const builder = createProjection<{ invoice: InvoiceState; order: OrderState }>('reverse-subscribe-contract', () => ({
+      invoice: { id: '', amount: 0, status: 'pending' as const },
+      order: { id: '', items: [] }
+    }));
+
+    expect(typeof builder.reverseSubscribe).toBe('function');
+
+    const projection = builder
       .from(invoiceAggDef, {
         created: (state, event) => {
           state.invoice.id = event.payload.customerId;
@@ -185,7 +211,7 @@ describe('createProjection Builder API', () => {
       })
       .reverseSubscribe(orderAggDef, {
         shipped: (state, event) => {
-          state.order.shippedAt = new Date().toISOString();
+          state.order.shippedAt = '2024-01-01T00:00:00Z';
         }
       })
       .build();

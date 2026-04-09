@@ -16,6 +16,12 @@ export interface ProjectionDaemonOptions<TState> {
   linkStore: IProjectionLinkStore;
 }
 
+export interface BatchStats {
+  eventsProcessed: number;
+  documentsUpdated: number;
+  duration: number;
+}
+
 /**
  * The Projection Daemon orchestrates the projection engine.
  *
@@ -353,7 +359,14 @@ export class ProjectionDaemon<TState = unknown> {
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    const schedule = (globalThis as { setTimeout?: (handler: () => void, timeout?: number) => unknown }).setTimeout;
+    if (!schedule) {
+      return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+      schedule(() => resolve(), ms);
+    });
   }
 }
 
