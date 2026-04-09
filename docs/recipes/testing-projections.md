@@ -123,10 +123,10 @@ Contract fixtures/tests live in:
 - `packages/projection/test/fixtures/reverse-semantics.contract.fixture.ts`
 - `packages/projection/test/reverse-semantics-contract.test.ts`
 
-## 8) Projection runtime vNext operations and release gates
+## 8) Projection runtime v3 operations and release gates
 
 For operational rollout guidance and release evidence requirements for runtime vNext, see:
 
-- [Projection Runtime vNext: Operational Runbook and Release Gates](/docs/architecture/projection-runtime-vnext-runbook)
+- [Projection Runtime v3: Operational Runbook and Release Gates](/docs/architecture/projection-runtime-vnext-runbook)
 
-This runbook documents frozen semantics (`.join` unchanged, `.reverseSubscribe`, `context.unsubscribeFrom`, explicit remove+add relink, and missing-target warn-and-skip), runtime guarantees (atomic write path, durable dedupe, and catch-up-to-live cutover), and the command-based gate checklist used for release sign-off.
+This runbook documents frozen semantics (`.join` unchanged, `.reverseSubscribe`, `context.unsubscribeFrom`, explicit remove+add relink, and missing-target warn-and-skip), runtime guarantees (atomic write path, durable dedupe, and catch-up-to-live cutover), validation matrix commands for router/worker/store integration, worker-lite limitations, and the command-based gate checklist used for release sign-off.

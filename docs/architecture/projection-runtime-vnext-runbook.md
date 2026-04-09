@@ -1,6 +1,6 @@
-# Projection Runtime vNext: Operational Runbook and Release Gates
+# Projection Runtime v3: Operational Runbook and Release Gates
 
-This runbook is the operational source of truth for Projection Runtime vNext rollout, verification, and incident response.
+This runbook is the operational source of truth for Projection Runtime v3 rollout, verification, and incident response.
 
 ## Scope and non-goals
 
@@ -21,7 +21,7 @@ Operational implication: any future change proposal that violates one of the abo
 
 ## Runtime guarantees (production contract)
 
-Projection runtime vNext guarantees:
+Projection runtime v3 guarantees:
 
 1. **Single atomic production write path** for docs, links, cursor/checkpoint, runtime mode transitions, and dedupe markers.
 2. **Durable dedupe persisted in store** so replay/restart/cutover overlap does not double-apply events.
@@ -151,6 +151,28 @@ Enforcement command:
 bun run check:projection-runtime-boundaries
 ```
 
+## Validation matrix (RT3-13)
+
+Run these focused suites to validate cross-package integration behavior before full workspace verification.
+
+| Matrix area | Command | Expected evidence |
+|---|---|---|
+| Router fanout (reverse + persisted links) | `bun run --cwd packages/projection-router-core test` | Router tests pass for reverse rules + persisted link union, relink remove+add, and warn-and-skip semantics |
+| Lane ordering + batching modes | `bun run --cwd packages/projection-worker-core test` | Worker-core tests pass for per-lane ordering, cross-lane parallelism, and micro-batching modes (`none`/`single`/`all`) |
+| Watermark semantics | `bun run --cwd packages/projection-runtime-store-inmemory test` and `bun run --cwd packages/projection-runtime-store-mongodb test` | Conformance tests pass for `commitAtomicMany`, `highestWatermark`, `byLaneWatermark`, and rejection semantics |
+| Cross-package router+worker+store integration | `bun test packages/projection/test/runtime-v3-validation-matrix.integration.test.ts` | Matrix integration suite passes for router fanout + worker-core execution against both in-memory and mongodb-backed stores |
+| Runtime replay/cutover continuity | `bun test packages/projection/test/runtime-core-e6-1-cross-store-e2e.test.ts` | E2E catches dedupe/cutover/restart invariants across both stores |
+
+## Worker-lite limitations (intentional, non-blocking)
+
+`@redemeine/projection-worker-lite` is intentionally best-effort and is **not** a release gate for durable runtime guarantees.
+
+- No durable dedupe guarantees
+- No transactional/atomic persistence guarantees
+- No strong ordering guarantees across process boundaries
+
+Use `@redemeine/projection-worker-core` + runtime stores for production durability semantics.
+
 ## Release gate checklist (commands + evidence)
 
 All gates below are required for release sign-off.
@@ -168,7 +190,20 @@ Evidence to capture:
 - Command exit status `0`.
 - Build output snippet showing successful docs build completion.
 
-### Gate B: Package boundary enforcement
+### Gate B: Workspace verification
+
+Command:
+
+```bash
+bun run verify:workspace
+```
+
+Evidence to capture:
+
+- Exit status and package-level summary.
+- Any unrelated baseline failures must be explicitly listed with package names.
+
+### Gate C: Package boundary enforcement
 
 Command:
 
@@ -182,7 +217,20 @@ Evidence to capture:
 - Output indicating no projection -> runtime dependency violations.
 - Output indicating no deprecated `@redemeine/projection-runtime` usage in production `src/**` paths.
 
-### Gate C: Projection package validation
+### Gate D: Principles lint
+
+Command:
+
+```bash
+bun run lint:principles
+```
+
+Evidence to capture:
+
+- Exit status `0`.
+- Output confirming no principle violations.
+
+### Gate E: Projection package validation
 
 Command:
 
@@ -195,7 +243,7 @@ Evidence to capture:
 - Total tests passed/failed.
 - Confirmation reverse semantics contract coverage remains green.
 
-### Gate D: Mongo store runtime validation
+### Gate F: Mongo store runtime validation
 
 Command:
 
@@ -208,7 +256,7 @@ Evidence to capture:
 - Total tests passed/failed.
 - Confirmation failure/restart scenarios pass.
 
-### Gate E: Runtime core type safety
+### Gate G: Runtime core type safety
 
 Command:
 
@@ -221,7 +269,7 @@ Evidence to capture:
 - Exit status `0`.
 - No type errors in runtime core package.
 
-### Gate F: Mongo store type safety
+### Gate H: Mongo store type safety
 
 Command:
 
@@ -238,13 +286,15 @@ Evidence to capture:
 
 Use this for release gate evidence logging:
 
-- Bead: `redemeine-bm7`
+- Bead: `<bead-id>`
 - Commit: `<hash>`
 - Gate A (`docs:build`): pass/fail + output snippet
-- Gate B (`check:projection-runtime-boundaries`): pass/fail + output snippet
-- Gate C (`projection tests`): pass/fail + summary counts
-- Gate D (`mongodb tests`): pass/fail + summary counts
-- Gate E (`runtime-core tsc`): pass/fail
-- Gate F (`mongodb-store tsc`): pass/fail
+- Gate B (`verify:workspace`): pass/fail + summary counts
+- Gate C (`check:projection-runtime-boundaries`): pass/fail + output snippet
+- Gate D (`lint:principles`): pass/fail + output snippet
+- Gate E (`projection tests`): pass/fail + summary counts
+- Gate F (`mongodb tests`): pass/fail + summary counts
+- Gate G (`runtime-core tsc`): pass/fail
+- Gate H (`mongodb-store tsc`): pass/fail
 - Runtime mode validation observed: `catching_up` / `ready_to_cutover` / `live`
 - Notes: alerts, warnings, or deviations
