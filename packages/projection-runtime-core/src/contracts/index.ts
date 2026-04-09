@@ -6,6 +6,14 @@ export type {
 } from './envelope';
 export type {
   ProjectionIngress,
+  ProjectionIngressAckBarrierStage,
+  ProjectionIngressReceivedLifecycleStep,
+  ProjectionIngressPublishedDurableLifecycleStep,
+  ProjectionIngressAckableLifecycleStep,
+  ProjectionIngressNackLifecycleStep,
+  ProjectionIngressAckLifecycle,
+  ProjectionIngressNackLifecycle,
+  ProjectionIngressNackCause,
   ProjectionIngressAckDecision,
   ProjectionIngressNackDecision,
   ProjectionIngressDecision,
