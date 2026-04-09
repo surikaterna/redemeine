@@ -45,6 +45,15 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
     for (const link of write.links) {
       const key = `${link.aggregateType}:${link.aggregateId}`;
+
+      if (link.op === 'remove') {
+        const existing = this.links.get(key);
+        if (existing === link.targetDocId) {
+          this.links.delete(key);
+        }
+        continue;
+      }
+
       if (!this.links.has(key)) {
         this.links.set(key, link.targetDocId);
       }
