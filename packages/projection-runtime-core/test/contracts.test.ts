@@ -4,8 +4,10 @@ import type {
   ProjectionEnvelopeValidationCandidate,
   ProjectionEnvelopeValidationResult,
   ProjectionIngress,
+  ProjectionIngressAckDecision,
   ProjectionIngressDecision,
   ProjectionIngressEnvelope,
+  ProjectionIngressNackDecision,
   ProjectionIngressPushManyResult,
   ProjectionIngressPushResult,
   ProjectionPoisonClassificationModel,
@@ -31,6 +33,35 @@ import {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
   classifyProjectionEnvelopeCandidate
 } from '../src';
+
+function createAckDecision(): ProjectionIngressAckDecision {
+  return {
+    status: 'ack',
+    lifecycle: [
+      { stage: 'received' },
+      { stage: 'published_durable' },
+      { stage: 'ackable' }
+    ]
+  };
+}
+
+function createNackDecision(
+  cause: ProjectionIngressNackDecision['cause'],
+  retryable: boolean,
+  reason: string
+): ProjectionIngressNackDecision {
+  return {
+    status: 'nack',
+    retryable,
+    reason,
+    cause,
+    lifecycle: [
+      { stage: 'received' },
+      { stage: 'published_durable' },
+      { stage: 'nack', cause }
+    ]
+  };
+}
 
 function isAck(decision: ProjectionIngressDecision): boolean {
   return decision.status === 'ack';
@@ -170,7 +201,7 @@ describe('projection-runtime-core contract types', () => {
         return {
           item: {
             messageId: envelope.metadata.messageId,
-            decision: { status: 'ack' }
+            decision: createAckDecision()
           }
         };
       },
@@ -179,8 +210,8 @@ describe('projection-runtime-core contract types', () => {
           items: envelopes.map((envelope) => ({
             messageId: envelope.metadata.messageId,
             decision: envelope.metadata.retryCount > 0
-              ? { status: 'nack', retryable: true, reason: 'retry-once' }
-              : { status: 'ack' }
+              ? createNackDecision('failure', true, 'retry-once')
+              : createAckDecision()
           }))
         };
       }
@@ -224,8 +255,22 @@ describe('projection-runtime-core contract types', () => {
     expect(many.items[1].decision).toEqual({
       status: 'nack',
       retryable: true,
-      reason: 'retry-once'
+      reason: 'retry-once',
+      cause: 'failure',
+      lifecycle: [
+        { stage: 'received' },
+        { stage: 'published_durable' },
+        { stage: 'nack', cause: 'failure' }
+      ]
     });
+
+    if (many.items[0].decision.status === 'ack') {
+      expect(many.items[0].decision.lifecycle).toEqual([
+        { stage: 'received' },
+        { stage: 'published_durable' },
+        { stage: 'ackable' }
+      ]);
+    }
   });
 
   test('router fanout and atomicMany contracts include locked fields', () => {

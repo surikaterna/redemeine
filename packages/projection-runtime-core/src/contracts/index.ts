@@ -21,6 +21,14 @@ export type {
 } from './poison';
 export type {
   ProjectionIngress,
+  ProjectionIngressAckBarrierStage,
+  ProjectionIngressReceivedLifecycleStep,
+  ProjectionIngressPublishedDurableLifecycleStep,
+  ProjectionIngressAckableLifecycleStep,
+  ProjectionIngressNackLifecycleStep,
+  ProjectionIngressAckLifecycle,
+  ProjectionIngressNackLifecycle,
+  ProjectionIngressNackCause,
   ProjectionIngressAckDecision,
   ProjectionIngressNackDecision,
   ProjectionIngressDecision,
