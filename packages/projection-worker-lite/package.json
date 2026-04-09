@@ -18,9 +18,5 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "@redemeine/projection-router-core": "workspace:*",
-    "@redemeine/projection": "workspace:*"
   }
 }
