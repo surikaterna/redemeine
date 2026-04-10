@@ -12,7 +12,8 @@ import type {
   IProjectionStore,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
-  ProjectionStoreDocumentWrite
+  ProjectionStoreDocumentWrite,
+  ProjectionStoreRfc6902Operation
 } from './contracts';
 import {
   ProjectionStoreAtomicManyError,
@@ -64,6 +65,186 @@ const withSession = <T extends object>(options: T, session: ClientSession): T & 
 });
 
 type TransactionExecutor = <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>;
+
+const decodePathSegment = (segment: string): string => segment.replace(/~1/g, '/').replace(/~0/g, '~');
+
+const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const pathTokens = (path: string): string[] => {
+  if (path === '') {
+    return [];
+  }
+
+  const normalized = path.startsWith('/') ? path.slice(1) : path;
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized.split('/').map(decodePathSegment);
+};
+
+const isIndexToken = (token: string): boolean => /^\d+$/.test(token);
+
+const getContainer = (root: unknown, tokens: string[]): { parent: any; key: string | undefined } => {
+  if (tokens.length === 0) {
+    return { parent: undefined, key: undefined };
+  }
+
+  let current: any = root;
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const token = tokens[index];
+    const nextToken = tokens[index + 1];
+
+    if (Array.isArray(current)) {
+      const arrayIndex = Number(token);
+      if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+        throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
+      }
+      if (current[arrayIndex] === undefined || current[arrayIndex] === null) {
+        current[arrayIndex] = isIndexToken(nextToken) ? [] : {};
+      }
+      current = current[arrayIndex];
+      continue;
+    }
+
+    if (typeof current !== 'object' || current === null) {
+      throw new Error(`Cannot traverse RFC6902 path through non-object value at "${token}".`);
+    }
+
+    if (!(token in current) || current[token] === undefined || current[token] === null) {
+      current[token] = isIndexToken(nextToken) ? [] : {};
+    }
+    current = current[token];
+  }
+
+  return { parent: current, key: tokens[tokens.length - 1] };
+};
+
+const removeAtPath = (root: any, path: string): unknown => {
+  const tokens = pathTokens(path);
+  if (tokens.length === 0) {
+    throw new Error('Removing document root is not supported.');
+  }
+
+  const { parent, key } = getContainer(root, tokens);
+  if (Array.isArray(parent)) {
+    if (key === undefined) {
+      throw new Error('Missing RFC6902 array key.');
+    }
+
+    const index = Number(key);
+    if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
+      throw new Error(`Invalid RFC6902 remove index "${key}".`);
+    }
+
+    const [removed] = parent.splice(index, 1);
+    return removed;
+  }
+
+  if (!parent || typeof parent !== 'object' || key === undefined) {
+    throw new Error(`Invalid RFC6902 remove path "${path}".`);
+  }
+
+  const removed = parent[key];
+  delete parent[key];
+  return removed;
+};
+
+const applyRfc6902Operation = (target: Record<string, unknown>, operation: ProjectionStoreRfc6902Operation): void => {
+  const tokens = pathTokens(operation.path);
+
+  if (operation.op === 'remove') {
+    removeAtPath(target, operation.path);
+    return;
+  }
+
+  if (operation.op === 'move') {
+    if (!operation.from) {
+      throw new Error('RFC6902 move operation requires "from".');
+    }
+
+    const moved = removeAtPath(target, operation.from);
+    applyRfc6902Operation(target, { op: 'add', path: operation.path, value: moved });
+    return;
+  }
+
+  if (operation.op === 'copy') {
+    if (!operation.from) {
+      throw new Error('RFC6902 copy operation requires "from".');
+    }
+
+    let source: unknown = target;
+    for (const token of pathTokens(operation.from)) {
+      source = (source as Record<string, unknown> | undefined)?.[token];
+    }
+
+    applyRfc6902Operation(target, { op: 'add', path: operation.path, value: deepClone(source) });
+    return;
+  }
+
+  if (operation.op === 'test') {
+    let current: unknown = target;
+    for (const token of tokens) {
+      current = (current as Record<string, unknown> | undefined)?.[token];
+    }
+
+    if (JSON.stringify(operation.value) !== JSON.stringify(current)) {
+      throw new Error(`RFC6902 test failed at path "${operation.path}".`);
+    }
+
+    return;
+  }
+
+  if (tokens.length === 0) {
+    throw new Error('Replacing document root is not supported.');
+  }
+
+  const { parent, key } = getContainer(target, tokens);
+
+  if (Array.isArray(parent)) {
+    if (key === undefined) {
+      throw new Error('Missing RFC6902 array key.');
+    }
+
+    const index = key === '-' ? parent.length : Number(key);
+    if (!Number.isInteger(index) || index < 0 || index > parent.length) {
+      throw new Error(`Invalid RFC6902 array index "${key}".`);
+    }
+
+    if (operation.op === 'add') {
+      parent.splice(index, 0, deepClone(operation.value));
+      return;
+    }
+
+    if (index >= parent.length) {
+      throw new Error(`Invalid RFC6902 replace index "${key}".`);
+    }
+
+    parent[index] = deepClone(operation.value);
+    return;
+  }
+
+  if (!parent || typeof parent !== 'object' || key === undefined) {
+    throw new Error(`Invalid RFC6902 path "${operation.path}".`);
+  }
+
+  if (operation.op === 'replace' && !(key in parent)) {
+    throw new Error(`RFC6902 replace path not found "${operation.path}".`);
+  }
+
+  parent[key] = deepClone(operation.value);
+};
+
+const applyRfc6902Patch = (
+  base: Record<string, unknown>,
+  operations: ReadonlyArray<ProjectionStoreRfc6902Operation>
+): Record<string, unknown> => {
+  const next = deepClone(base);
+  for (const operation of operations) {
+    applyRfc6902Operation(next, operation);
+  }
+  return next;
+};
 
 /**
  * Mongo-backed projection store adapter with transaction-backed atomicity.
@@ -133,6 +314,28 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     let highestWatermark: Checkpoint | null = null;
     let failedAtIndex = 0;
 
+    const seenDocumentIds = new Set<string>();
+    for (let index = 0; index < request.writes.length; index += 1) {
+      const write = request.writes[index];
+      for (const document of write.documents) {
+        if (seenDocumentIds.has(document.documentId)) {
+          const failure = createInvalidRequestFailure(
+            `duplicate document write in atomic-all batch: documentId='${document.documentId}'`
+          );
+          return {
+            status: 'rejected',
+            highestWatermark: null,
+            failedAtIndex: index,
+            failure,
+            reason: failure.message,
+            committedCount: 0
+          };
+        }
+
+        seenDocumentIds.add(document.documentId);
+      }
+    }
+
     const execute = this.createTransactionExecutor();
 
     try {
@@ -181,7 +384,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
           if (documentOps.length > 0) {
             await this.options.collection.bulkWrite(
               documentOps,
-              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: false }, session)
             );
           }
 
@@ -201,7 +404,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
                   }
                 })
               ),
-              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: false }, session)
             );
 
             for (const dedupe of write.dedupe.upserts) {
@@ -405,10 +608,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
         ? (currentState as Record<string, unknown>)
         : {};
 
-    const nextState = {
-      ...base,
-      ...write.patch
-    } as TState;
+    const nextState = applyRfc6902Patch(base, write.patch) as TState;
 
     return nextState;
   }

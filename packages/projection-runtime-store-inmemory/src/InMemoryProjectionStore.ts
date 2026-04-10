@@ -5,7 +5,8 @@ import type {
   ProjectionStoreWritePrecondition,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest,
-  ProjectionStoreDocumentWrite
+  ProjectionStoreDocumentWrite,
+  ProjectionStoreRfc6902Operation
 } from '@redemeine/projection-runtime-core';
 
 interface StoredDocument<TState> {
@@ -58,16 +59,200 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     return current;
   }
 
-  private static applyPatchDocument<TDoc>(existing: TDoc | undefined, patch: Record<string, unknown>): TDoc {
+  private static decodePathSegment(segment: string): string {
+    return segment.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+
+  private static deepClone<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  private static pathTokens(path: string): string[] {
+    if (path === '') {
+      return [];
+    }
+
+    const normalized = path.startsWith('/') ? path.slice(1) : path;
+    if (!normalized) {
+      return [];
+    }
+
+    return normalized.split('/').map(InMemoryProjectionStore.decodePathSegment);
+  }
+
+  private static isIndexToken(token: string): boolean {
+    return /^\d+$/.test(token);
+  }
+
+  private static getContainer(root: unknown, tokens: string[]): { parent: any; key: string | undefined } {
+    if (tokens.length === 0) {
+      return { parent: undefined, key: undefined };
+    }
+
+    let current: any = root;
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+      const token = tokens[index];
+      const nextToken = tokens[index + 1];
+
+      if (Array.isArray(current)) {
+        const arrayIndex = Number(token);
+        if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+          throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
+        }
+        if (current[arrayIndex] === undefined || current[arrayIndex] === null) {
+          current[arrayIndex] = InMemoryProjectionStore.isIndexToken(nextToken) ? [] : {};
+        }
+        current = current[arrayIndex];
+        continue;
+      }
+
+      if (typeof current !== 'object' || current === null) {
+        throw new Error(`Cannot traverse RFC6902 path through non-object value at "${token}".`);
+      }
+
+      if (!(token in current) || current[token] === undefined || current[token] === null) {
+        current[token] = InMemoryProjectionStore.isIndexToken(nextToken) ? [] : {};
+      }
+      current = current[token];
+    }
+
+    return { parent: current, key: tokens[tokens.length - 1] };
+  }
+
+  private static removeAtPath(root: any, path: string): unknown {
+    const tokens = InMemoryProjectionStore.pathTokens(path);
+    if (tokens.length === 0) {
+      throw new Error('Removing document root is not supported.');
+    }
+
+    const { parent, key } = InMemoryProjectionStore.getContainer(root, tokens);
+    if (Array.isArray(parent)) {
+      if (key === undefined) {
+        throw new Error('Missing RFC6902 array key.');
+      }
+
+      const index = Number(key);
+      if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
+        throw new Error(`Invalid RFC6902 remove index "${key}".`);
+      }
+
+      const [removed] = parent.splice(index, 1);
+      return removed;
+    }
+
+    if (!parent || typeof parent !== 'object' || key === undefined) {
+      throw new Error(`Invalid RFC6902 remove path "${path}".`);
+    }
+
+    const removed = parent[key];
+    delete parent[key];
+    return removed;
+  }
+
+  private static applyRfc6902Operation(target: Record<string, unknown>, operation: ProjectionStoreRfc6902Operation): void {
+    const tokens = InMemoryProjectionStore.pathTokens(operation.path);
+
+    if (operation.op === 'remove') {
+      InMemoryProjectionStore.removeAtPath(target, operation.path);
+      return;
+    }
+
+    if (operation.op === 'move') {
+      if (!operation.from) {
+        throw new Error('RFC6902 move operation requires "from".');
+      }
+
+      const moved = InMemoryProjectionStore.removeAtPath(target, operation.from);
+      InMemoryProjectionStore.applyRfc6902Operation(target, { op: 'add', path: operation.path, value: moved });
+      return;
+    }
+
+    if (operation.op === 'copy') {
+      if (!operation.from) {
+        throw new Error('RFC6902 copy operation requires "from".');
+      }
+
+      let source: unknown = target;
+      for (const token of InMemoryProjectionStore.pathTokens(operation.from)) {
+        source = (source as Record<string, unknown> | undefined)?.[token];
+      }
+
+      InMemoryProjectionStore.applyRfc6902Operation(target, {
+        op: 'add',
+        path: operation.path,
+        value: InMemoryProjectionStore.deepClone(source)
+      });
+      return;
+    }
+
+    if (operation.op === 'test') {
+      let current: unknown = target;
+      for (const token of tokens) {
+        current = (current as Record<string, unknown> | undefined)?.[token];
+      }
+
+      if (JSON.stringify(operation.value) !== JSON.stringify(current)) {
+        throw new Error(`RFC6902 test failed at path "${operation.path}".`);
+      }
+
+      return;
+    }
+
+    if (tokens.length === 0) {
+      throw new Error('Replacing document root is not supported.');
+    }
+
+    const { parent, key } = InMemoryProjectionStore.getContainer(target, tokens);
+
+    if (Array.isArray(parent)) {
+      if (key === undefined) {
+        throw new Error('Missing RFC6902 array key.');
+      }
+
+      const index = key === '-' ? parent.length : Number(key);
+      if (!Number.isInteger(index) || index < 0 || index > parent.length) {
+        throw new Error(`Invalid RFC6902 array index "${key}".`);
+      }
+
+      if (operation.op === 'add') {
+        parent.splice(index, 0, InMemoryProjectionStore.deepClone(operation.value));
+        return;
+      }
+
+      if (index >= parent.length) {
+        throw new Error(`Invalid RFC6902 replace index "${key}".`);
+      }
+
+      parent[index] = InMemoryProjectionStore.deepClone(operation.value);
+      return;
+    }
+
+    if (!parent || typeof parent !== 'object' || key === undefined) {
+      throw new Error(`Invalid RFC6902 path "${operation.path}".`);
+    }
+
+    if (operation.op === 'replace' && !(key in parent)) {
+      throw new Error(`RFC6902 replace path not found "${operation.path}".`);
+    }
+
+    parent[key] = InMemoryProjectionStore.deepClone(operation.value);
+  }
+
+  private static applyPatchDocument<TDoc>(
+    existing: TDoc | undefined,
+    patch: ReadonlyArray<ProjectionStoreRfc6902Operation>
+  ): TDoc {
     const base =
       existing && typeof existing === 'object' && !Array.isArray(existing)
         ? (existing as Record<string, unknown>)
         : {};
 
-    return {
-      ...base,
-      ...patch
-    } as TDoc;
+    const next = InMemoryProjectionStore.deepClone(base);
+    for (const operation of patch) {
+      InMemoryProjectionStore.applyRfc6902Operation(next, operation);
+    }
+
+    return next as TDoc;
   }
 
   private static createFailure(
@@ -213,6 +398,28 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     const stagedDedupe = new Map(this.dedupe);
     const byLaneWatermark: Record<string, Checkpoint> = {};
     let highestWatermark: Checkpoint | null = null;
+
+    const seenDocumentIds = new Set<string>();
+    for (let index = 0; index < request.writes.length; index += 1) {
+      const write = request.writes[index];
+      for (const document of write.documents) {
+        if (seenDocumentIds.has(document.documentId)) {
+          const failure = InMemoryProjectionStore.createInvalidRequestFailure(
+            `duplicate document write in atomic-all batch: documentId='${document.documentId}'`
+          );
+          return {
+            status: 'rejected',
+            highestWatermark: null,
+            failedAtIndex: index,
+            failure,
+            reason: failure.message,
+            committedCount: 0
+          };
+        }
+
+        seenDocumentIds.add(document.documentId);
+      }
+    }
 
     const applyDocumentWrite = (write: ProjectionStoreDocumentWrite<TState>): void => {
       if (write.mode === 'full') {

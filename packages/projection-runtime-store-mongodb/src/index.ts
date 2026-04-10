@@ -7,6 +7,7 @@ export type {
   ProjectionStoreAtomicManyCommittedResult,
   ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
+  ProjectionStoreRfc6902Operation,
   ProjectionStoreFailureCategory,
   ProjectionStoreWriteFailure,
   ProjectionStoreWritePrecondition,

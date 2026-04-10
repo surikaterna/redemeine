@@ -417,4 +417,118 @@ describe('MongoProjectionStore', () => {
       });
     }
   });
+
+  test('commitAtomicMany applies RFC6902 patch operations instead of merge patch', async () => {
+    const { store } = createStore<Record<string, unknown>>();
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-rfc',
+          documents: [
+            {
+              documentId: 'doc-rfc',
+              mode: 'full',
+              fullDocument: { total: 1, nested: { keep: true, remove: 'x' } },
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(seeded.status).toBe('committed');
+
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-rfc',
+          documents: [
+            {
+              documentId: 'doc-rfc',
+              mode: 'patch',
+              patch: [
+                { op: 'replace', path: '/nested/keep', value: false },
+                { op: 'remove', path: '/nested/remove' },
+                { op: 'add', path: '/status', value: 'open' }
+              ],
+              checkpoint: { sequence: 2 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-rfc')).toEqual({
+      total: 1,
+      nested: { keep: false },
+      status: 'open'
+    });
+  });
+
+  test('commitAtomicMany uses unordered bulkWrite for atomic-all writes', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const dedupeCollection = createProjectionDedupeCollection();
+
+    let collectionOrdered: boolean | undefined;
+    let dedupeOrdered: boolean | undefined;
+
+    const collectionSpy = {
+      findOne: collection.findOne.bind(collection),
+      deleteOne: collection.deleteOne.bind(collection),
+      deleteMany: collection.deleteMany.bind(collection),
+      updateOne: collection.updateOne.bind(collection),
+      async bulkWrite(...args: Parameters<typeof collection.bulkWrite>): Promise<unknown> {
+        collectionOrdered = args[1]?.ordered;
+        return collection.bulkWrite(...args);
+      }
+    };
+
+    const dedupeSpy = {
+      findOne: dedupeCollection.findOne.bind(dedupeCollection),
+      deleteOne: dedupeCollection.deleteOne.bind(dedupeCollection),
+      deleteMany: dedupeCollection.deleteMany.bind(dedupeCollection),
+      updateOne: dedupeCollection.updateOne.bind(dedupeCollection),
+      async bulkWrite(...args: Parameters<typeof dedupeCollection.bulkWrite>): Promise<unknown> {
+        dedupeOrdered = args[1]?.ordered;
+        return dedupeCollection.bulkWrite(...args);
+      }
+    };
+
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection: collectionSpy,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: dedupeSpy,
+      mongoClient: createFakeMongoClient()
+    });
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-unordered',
+          documents: [
+            {
+              documentId: 'doc-unordered',
+              mode: 'full',
+              fullDocument: { total: 1 },
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: {
+            upserts: [{ key: 'invoice:unordered:1', checkpoint: { sequence: 1 } }]
+          }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+    expect(collectionOrdered).toBe(false);
+    expect(dedupeOrdered).toBe(false);
+  });
 });

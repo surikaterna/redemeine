@@ -56,6 +56,7 @@ export type {
   ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
   ProjectionDocumentWriteMode,
+  ProjectionStoreRfc6902Operation,
   ProjectionStoreFailureCategory,
   ProjectionStoreWriteFailure,
   ProjectionStoreWritePrecondition,

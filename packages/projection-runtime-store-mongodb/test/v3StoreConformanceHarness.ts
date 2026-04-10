@@ -27,7 +27,12 @@ type V3ConformanceStore = {
         | {
           documentId: string;
           mode: 'patch';
-          patch: Record<string, unknown>;
+          patch: ReadonlyArray<{
+            op: 'add' | 'remove' | 'replace' | 'move' | 'copy' | 'test';
+            path: string;
+            value?: unknown;
+            from?: string;
+          }>;
           checkpoint: Checkpoint;
           precondition?: {
             expectedRevision?: number | null;
@@ -77,16 +82,10 @@ export function runV3StoreConformance(
                 mode: 'full',
                 fullDocument: { total: 5, status: 'open' },
                 checkpoint: { sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' }
-              },
-              {
-                documentId: 'doc-1',
-                mode: 'patch',
-                patch: { total: 6 },
-                checkpoint: { sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' }
               }
             ],
             dedupe: {
-              upserts: [{ key: 'invoice:1:6', checkpoint: { sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' } }]
+              upserts: [{ key: 'invoice:1:5', checkpoint: { sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' } }]
             }
           },
           {
@@ -94,13 +93,16 @@ export function runV3StoreConformance(
             documents: [
               {
                 documentId: 'doc-2',
-                mode: 'full',
-                fullDocument: { total: 3, status: 'open' },
-                checkpoint: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' }
+                mode: 'patch',
+                patch: [
+                  { op: 'add', path: '/status', value: 'open' },
+                  { op: 'add', path: '/total', value: 3 }
+                ],
+                checkpoint: { sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' }
               }
             ],
             dedupe: {
-              upserts: [{ key: 'invoice:2:3', checkpoint: { sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' } }]
+              upserts: [{ key: 'invoice:2:6', checkpoint: { sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' } }]
             }
           }
         ]
@@ -110,14 +112,62 @@ export function runV3StoreConformance(
       if (result.status === 'committed') {
         expect(result.committedCount).toBe(2);
         expect(result.highestWatermark).toEqual({ sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' });
-        expect(result.byLaneWatermark?.['invoice-summary:doc-1']).toEqual({ sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' });
-        expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
+        expect(result.byLaneWatermark?.['invoice-summary:doc-1']).toEqual({ sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' });
+        expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({ sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' });
       }
 
-      expect(await store.load('doc-1')).toEqual({ total: 6, status: 'open' });
+      expect(await store.load('doc-1')).toEqual({ total: 5, status: 'open' });
       expect(await store.load('doc-2')).toEqual({ total: 3, status: 'open' });
-      expect(await store.getDedupeCheckpoint('invoice:1:6')).toEqual({ sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' });
-      expect(await store.getDedupeCheckpoint('invoice:2:3')).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
+      expect(await store.getDedupeCheckpoint('invoice:1:5')).toEqual({ sequence: 5, timestamp: '2026-04-09T00:00:05.000Z' });
+      expect(await store.getDedupeCheckpoint('invoice:2:6')).toEqual({ sequence: 6, timestamp: '2026-04-09T00:00:06.000Z' });
+    });
+
+    test('commitAtomicMany rejects duplicate document writes in one atomic batch', async () => {
+      const store = createStore();
+
+      const result = await store.commitAtomicMany({
+        mode: 'atomic-all',
+        writes: [
+          {
+            routingKeySource: 'invoice-summary:doc-1',
+            documents: [
+              {
+                documentId: 'doc-1',
+                mode: 'full',
+                fullDocument: { total: 1 },
+                checkpoint: { sequence: 1 }
+              }
+            ],
+            dedupe: { upserts: [] }
+          },
+          {
+            routingKeySource: 'invoice-summary:doc-2',
+            documents: [
+              {
+                documentId: 'doc-1',
+                mode: 'patch',
+                patch: [{ op: 'replace', path: '/total', value: 2 }],
+                checkpoint: { sequence: 2 }
+              }
+            ],
+            dedupe: { upserts: [] }
+          }
+        ]
+      });
+
+      expect(result).toEqual({
+        status: 'rejected',
+        highestWatermark: null,
+        failedAtIndex: 1,
+        failure: {
+          category: 'terminal',
+          code: 'invalid-request',
+          message: "duplicate document write in atomic-all batch: documentId='doc-1'",
+          retryable: false
+        },
+        reason: "duplicate document write in atomic-all batch: documentId='doc-1'",
+        committedCount: 0
+      });
     });
 
     test('commitAtomicMany returns rejected and null watermark on invalid request', async () => {
@@ -171,7 +221,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-1',
                 mode: 'patch',
-                patch: { total: 4 },
+                patch: [{ op: 'replace', path: '/total', value: 4 }],
                 checkpoint: { sequence: 4 },
                 precondition: { expectedRevision: 2 }
               }

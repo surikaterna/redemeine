@@ -3,6 +3,7 @@ import type {
   ProjectionStoreAtomicManyCommittedResult as CoreProjectionStoreAtomicManyCommittedResult,
   ProjectionStoreAtomicManyRejectedResult as CoreProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult as CoreProjectionStoreAtomicManyResult,
+  ProjectionStoreRfc6902Operation as CoreProjectionStoreRfc6902Operation,
   ProjectionStoreFailureCategory as CoreProjectionStoreFailureCategory,
   ProjectionStoreWriteFailure as CoreProjectionStoreWriteFailure,
   ProjectionStoreWritePrecondition as CoreProjectionStoreWritePrecondition,
@@ -44,6 +45,7 @@ export interface IProjectionStore<TState = unknown> {
 export type ProjectionStoreAtomicManyCommittedResult = CoreProjectionStoreAtomicManyCommittedResult;
 export type ProjectionStoreAtomicManyRejectedResult = CoreProjectionStoreAtomicManyRejectedResult;
 export type ProjectionStoreAtomicManyResult = CoreProjectionStoreAtomicManyResult;
+export type ProjectionStoreRfc6902Operation = CoreProjectionStoreRfc6902Operation;
 export type ProjectionStoreFailureCategory = CoreProjectionStoreFailureCategory;
 export type ProjectionStoreWriteFailure = CoreProjectionStoreWriteFailure;
 export type ProjectionStoreWritePrecondition = CoreProjectionStoreWritePrecondition;

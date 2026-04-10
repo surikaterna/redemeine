@@ -39,6 +39,7 @@ import type {
   ProjectionShardLeaseRenewResult,
   ProjectionShardOwnerIdentity,
   ProjectionStoreWriteFailure,
+  ProjectionStoreRfc6902Operation,
   ProjectionRouterFanoutEnvelope,
   ProjectionStoreWriteWatermark,
   ProjectionGenerationSwitchContract,
@@ -379,7 +380,7 @@ describe('projection-runtime-core contract types', () => {
     const patchWrite: ProjectionStoreDocumentWrite = {
       documentId: 'doc-1',
       mode: 'patch',
-      patch: { total: 12 },
+      patch: [{ op: 'replace', path: '/total', value: 12 }],
       checkpoint: { sequence: 12 }
     };
 
@@ -390,8 +391,19 @@ describe('projection-runtime-core contract types', () => {
 
     expect(patchWrite.mode).toBe('patch');
     if (patchWrite.mode === 'patch') {
-      expect(patchWrite.patch.total).toBe(12);
+      expect(patchWrite.patch).toEqual([{ op: 'replace', path: '/total', value: 12 }]);
     }
+  });
+
+  test('store patch contract uses RFC6902 operations', () => {
+    const operations: ProjectionStoreRfc6902Operation[] = [
+      { op: 'add', path: '/status', value: 'open' },
+      { op: 'replace', path: '/total', value: 21 },
+      { op: 'test', path: '/total', value: 21 }
+    ];
+
+    expect(operations.map((operation) => operation.op)).toEqual(['add', 'replace', 'test']);
+    expect(operations[1]?.path).toBe('/total');
   });
 
   test('store atomicMany contract exposes highest watermark and durable dedupe semantics', async () => {
@@ -483,7 +495,7 @@ describe('projection-runtime-core contract types', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
-              patch: { total: 21 },
+              patch: [{ op: 'replace', path: '/total', value: 21 }],
               checkpoint: { sequence: 21 }
             }
           ],

@@ -16,19 +16,13 @@ describe('InMemoryProjectionStore v3 conformance', () => {
               mode: 'full',
               fullDocument: { total: 10, status: 'open' },
               checkpoint: { sequence: 10, timestamp: '2026-04-09T00:00:10.000Z' }
-            },
-            {
-              documentId: 'doc-1',
-              mode: 'patch',
-              patch: { total: 12 },
-              checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
             }
           ],
           dedupe: {
             upserts: [
               {
-                key: 'invoice:1:12',
-                checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
+                key: 'invoice:1:10',
+                checkpoint: { sequence: 10, timestamp: '2026-04-09T00:00:10.000Z' }
               }
             ]
           }
@@ -38,16 +32,19 @@ describe('InMemoryProjectionStore v3 conformance', () => {
           documents: [
             {
               documentId: 'doc-2',
-              mode: 'full',
-              fullDocument: { total: 8, status: 'open' },
-              checkpoint: { sequence: 8, timestamp: '2026-04-09T00:00:08.000Z' }
+              mode: 'patch',
+              patch: [
+                { op: 'add', path: '/status', value: 'open' },
+                { op: 'add', path: '/total', value: 12 }
+              ],
+              checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
             }
           ],
           dedupe: {
             upserts: [
               {
-                key: 'invoice:2:8',
-                checkpoint: { sequence: 8, timestamp: '2026-04-09T00:00:08.000Z' }
+                key: 'invoice:2:12',
+                checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
               }
             ]
           }
@@ -63,20 +60,20 @@ describe('InMemoryProjectionStore v3 conformance', () => {
         timestamp: '2026-04-09T00:00:12.000Z'
       });
       expect(result.byLaneWatermark?.['invoice-summary:doc-1']).toEqual({
+        sequence: 10,
+        timestamp: '2026-04-09T00:00:10.000Z'
+      });
+      expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({
         sequence: 12,
         timestamp: '2026-04-09T00:00:12.000Z'
       });
-      expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({
-        sequence: 8,
-        timestamp: '2026-04-09T00:00:08.000Z'
-      });
     }
 
-    expect(await store.load('doc-1')).toEqual({ total: 12, status: 'open' });
-    expect(await store.load('doc-2')).toEqual({ total: 8, status: 'open' });
-    expect(await store.getDedupeCheckpoint('invoice:1:12')).toEqual({
-      sequence: 12,
-      timestamp: '2026-04-09T00:00:12.000Z'
+    expect(await store.load('doc-1')).toEqual({ total: 10, status: 'open' });
+    expect(await store.load('doc-2')).toEqual({ total: 12, status: 'open' });
+    expect(await store.getDedupeCheckpoint('invoice:1:10')).toEqual({
+      sequence: 10,
+      timestamp: '2026-04-09T00:00:10.000Z'
     });
   });
 
@@ -106,8 +103,8 @@ describe('InMemoryProjectionStore v3 conformance', () => {
   test('commitAtomicMany rejects at failing index and keeps atomic-all behavior', async () => {
     const store = new InMemoryProjectionStore<Record<string, unknown>>();
 
-    const throwingPatch: Record<string, unknown> = {};
-    Object.defineProperty(throwingPatch, 'total', {
+    const throwingValue: Record<string, unknown> = {};
+    Object.defineProperty(throwingValue, 'total', {
       enumerable: true,
       get() {
         throw new Error('injected patch evaluation failure');
@@ -137,7 +134,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-2',
               mode: 'patch',
-              patch: throwingPatch,
+              patch: [{ op: 'add', path: '/total', value: throwingValue }],
               checkpoint: { sequence: 2 }
             }
           ],
@@ -198,7 +195,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
-              patch: { total: 4 },
+              patch: [{ op: 'replace', path: '/total', value: 4 }],
               checkpoint: { sequence: 4 },
               precondition: { expectedRevision: 2 }
             }
