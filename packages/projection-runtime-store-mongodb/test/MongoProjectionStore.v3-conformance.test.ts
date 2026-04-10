@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MongoProjectionStore } from '../src';
 import {
+  createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
   createProjectionLinkCollection
@@ -12,7 +13,8 @@ describe('shared v3 conformance', () => {
     return new MongoProjectionStore<Record<string, unknown>>({
       collection: createProjectionDocumentCollection<Record<string, unknown>>(),
       linkCollection: createProjectionLinkCollection(),
-      dedupeCollection: createProjectionDedupeCollection()
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
     });
   });
 
@@ -25,24 +27,30 @@ describe('shared v3 conformance', () => {
       findOne: dedupeCollection.findOne.bind(dedupeCollection),
       deleteOne: dedupeCollection.deleteOne.bind(dedupeCollection),
       deleteMany: dedupeCollection.deleteMany.bind(dedupeCollection),
-      async updateOne(
-        filter: Record<string, unknown>,
-        update: Record<string, unknown>,
-        options?: { upsert?: boolean }
-      ): Promise<unknown> {
-        if (shouldFail && filter._id === 'invoice:2:2') {
+      updateOne: dedupeCollection.updateOne.bind(dedupeCollection),
+      async bulkWrite(...args: Parameters<typeof dedupeCollection.bulkWrite>): Promise<unknown> {
+        const hasFailingOp = args[0].some((operation) => {
+          if (!('updateOne' in operation) || !operation.updateOne) {
+            return false;
+          }
+
+          return (operation.updateOne.filter as { _id?: string })._id === 'invoice:2:2';
+        });
+
+        if (shouldFail && hasFailingOp) {
           shouldFail = false;
           throw new Error('injected dedupe failure');
         }
 
-        return dedupeCollection.updateOne(filter, update, options);
+        return dedupeCollection.bulkWrite(...args);
       }
     };
 
     const store = new MongoProjectionStore<Record<string, unknown>>({
       collection,
       linkCollection: createProjectionLinkCollection(),
-      dedupeCollection: failingDedupeCollection
+      dedupeCollection: failingDedupeCollection,
+      mongoClient: createFakeMongoClient()
     });
 
     const result = await store.commitAtomicMany({

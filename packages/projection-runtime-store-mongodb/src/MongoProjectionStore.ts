@@ -1,4 +1,13 @@
 import type {
+  AnyBulkWriteOperation,
+  ClientSession,
+  MongoServerError,
+  TransactionOptions,
+  UpdateOptions,
+  BulkWriteOptions,
+  FindOptions
+} from 'mongodb';
+import type {
   Checkpoint,
   IProjectionStore,
   ProjectionStoreAtomicManyResult,
@@ -6,23 +15,58 @@ import type {
   ProjectionStoreDocumentWrite
 } from './contracts';
 import {
+  ProjectionStoreAtomicManyError,
   assertWritePrecondition,
   createInvalidRequestFailure,
+  createStoreFailure,
   toWriteFailure
 } from './storeFailures';
 import type {
   MongoProjectionStoreOptions,
-  ProjectionDedupeRecord,
   ProjectionDocumentRecord
 } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
 
+const TRANSACTION_NOT_SUPPORTED_CODES = new Set<number>([20, 303, 263]);
+
+const isMongoTransactionError = (error: unknown): error is Error => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const name = error.name;
+  return name === 'MongoServerError' || name === 'MongoTransactionError' || name === 'MongoCompatibilityError';
+};
+
+const isTransactionNotSupportedError = (error: unknown): boolean => {
+  if (!isMongoTransactionError(error)) {
+    return false;
+  }
+
+  const maybeServerError = error as MongoServerError;
+  if (typeof maybeServerError.code === 'number' && TRANSACTION_NOT_SUPPORTED_CODES.has(maybeServerError.code)) {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('transaction numbers are only allowed') ||
+    message.includes('replica set') ||
+    message.includes('does not support transactions') ||
+    message.includes('transaction is not supported')
+  );
+};
+
+const withSession = <T extends object>(options: T, session: ClientSession): T & { session: ClientSession } => ({
+  ...options,
+  session
+});
+
+type TransactionExecutor = <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>;
+
 /**
- * Mongo-backed projection store adapter.
- *
- * This class depends only on a minimal collection-like surface so tests can
- * use in-memory mocks without requiring a live MongoDB server.
+ * Mongo-backed projection store adapter with transaction-backed atomicity.
  */
 export class MongoProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private readonly now: () => string;
@@ -37,24 +81,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void> {
-    const document: ProjectionDocumentRecord<TState> = {
-      _id: documentId,
-      state,
-      checkpoint,
-      updatedAt: this.now()
-    };
-
-    await this.options.collection.updateOne(
-      { _id: documentId },
-      {
-        $set: {
-          state: document.state,
-          checkpoint: document.checkpoint,
-          updatedAt: document.updatedAt
-        }
-      },
-      { upsert: true }
-    );
+    await this.saveWithSession(documentId, state, checkpoint);
   }
 
   async delete(documentId: string): Promise<void> {
@@ -68,40 +95,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     cursor: Checkpoint;
     dedupe: { upserts: Array<{ key: string; checkpoint: Checkpoint }> };
   }): Promise<void> {
-    for (const document of write.documents) {
-      await this.save(document.documentId, document.state, document.checkpoint);
-    }
+    const execute = this.createTransactionExecutor();
 
-    for (const link of write.links) {
-      const _id = `${link.aggregateType}:${link.aggregateId}`;
-      await this.options.linkCollection.updateOne(
-        { _id },
-        {
-          $setOnInsert: {
-            aggregateType: link.aggregateType,
-            aggregateId: link.aggregateId,
-            targetDocId: link.targetDocId,
-            createdAt: this.now()
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    await this.save(write.cursorKey, {} as TState, write.cursor);
-
-    for (const dedupe of write.dedupe.upserts) {
-      await this.options.dedupeCollection.updateOne(
-        { _id: dedupe.key },
-        {
-          $set: {
-            checkpoint: dedupe.checkpoint,
-            updatedAt: this.now()
-          }
-        },
-        { upsert: true }
-      );
-    }
+    await execute(async (session) => {
+      await this.persistCommitAtomicWithBulkWrite(write, session);
+    });
   }
 
   async commitAtomicMany(
@@ -134,48 +132,82 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     const byLaneWatermark: Record<string, Checkpoint> = {};
     let highestWatermark: Checkpoint | null = null;
     let failedAtIndex = 0;
-    const originalDocuments = new Map<string, ProjectionDocumentRecord<TState> | null>();
-    const originalDedupe = new Map<string, ProjectionDedupeRecord | null>();
 
-    const runInTransaction = this.options.executeInTransaction ?? (async <T>(work: () => Promise<T>): Promise<T> => work());
+    const execute = this.createTransactionExecutor();
 
     try {
-      await runInTransaction(async () => {
+      await execute(async (session) => {
         for (let index = 0; index < request.writes.length; index += 1) {
           failedAtIndex = index;
           const write = request.writes[index];
           let laneWatermark: Checkpoint | null = null;
+          const documentOps: Array<AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>> = [];
+          const stagedDocuments = new Map<string, ProjectionDocumentRecord<TState>>();
 
           for (const document of write.documents) {
-            if (!originalDocuments.has(document.documentId)) {
-              const existing = await this.options.collection.findOne({ _id: document.documentId });
-              originalDocuments.set(document.documentId, existing ? { ...existing } : null);
-            }
+            const staged = stagedDocuments.get(document.documentId);
+            const current =
+              staged ??
+              (await this.options.collection.findOne(
+                { _id: document.documentId },
+                withSession({} as FindOptions<ProjectionDocumentRecord<TState>>, session)
+              ));
+            const nextState = this.resolveNextDocumentState(document, current);
 
-            await this.persistDocumentWrite(document);
+            stagedDocuments.set(document.documentId, {
+              _id: document.documentId,
+              state: nextState,
+              checkpoint: document.checkpoint,
+              updatedAt: this.now()
+            });
+
+            documentOps.push({
+              updateOne: {
+                filter: { _id: document.documentId },
+                update: {
+                  $set: {
+                    state: nextState,
+                    checkpoint: document.checkpoint,
+                    updatedAt: this.now()
+                  }
+                },
+                upsert: true
+              }
+            });
             laneWatermark = this.chooseHigherWatermark(laneWatermark, document.checkpoint);
             highestWatermark = this.chooseHigherWatermark(highestWatermark, document.checkpoint);
           }
 
-          for (const dedupe of write.dedupe.upserts) {
-            if (!originalDedupe.has(dedupe.key)) {
-              const existing = await this.options.dedupeCollection.findOne({ _id: dedupe.key });
-              originalDedupe.set(dedupe.key, existing ? { ...existing } : null);
-            }
+          if (documentOps.length > 0) {
+            await this.options.collection.bulkWrite(
+              documentOps,
+              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+            );
+          }
 
-            await this.options.dedupeCollection.updateOne(
-              { _id: dedupe.key },
-              {
-                $set: {
-                  checkpoint: dedupe.checkpoint,
-                  updatedAt: this.now()
-                }
-              },
-              { upsert: true }
+          if (write.dedupe.upserts.length > 0) {
+            await this.options.dedupeCollection.bulkWrite(
+              write.dedupe.upserts.map<AnyBulkWriteOperation<{ _id: string; checkpoint: Checkpoint; updatedAt: string }>>(
+                (dedupe) => ({
+                  updateOne: {
+                    filter: { _id: dedupe.key },
+                    update: {
+                      $set: {
+                        checkpoint: dedupe.checkpoint,
+                        updatedAt: this.now()
+                      }
+                    },
+                    upsert: true
+                  }
+                })
+              ),
+              withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
             );
 
-            laneWatermark = this.chooseHigherWatermark(laneWatermark, dedupe.checkpoint);
-            highestWatermark = this.chooseHigherWatermark(highestWatermark, dedupe.checkpoint);
+            for (const dedupe of write.dedupe.upserts) {
+              laneWatermark = this.chooseHigherWatermark(laneWatermark, dedupe.checkpoint);
+              highestWatermark = this.chooseHigherWatermark(highestWatermark, dedupe.checkpoint);
+            }
           }
 
           if (laneWatermark) {
@@ -184,9 +216,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
         }
       });
     } catch (error) {
-      await this.rollbackAtomicMany(originalDocuments, originalDedupe);
       const failure = toWriteFailure(error);
-
       return {
         status: 'rejected',
         highestWatermark: null,
@@ -220,13 +250,153 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return row ? row.checkpoint : null;
   }
 
-  private async persistDocumentWrite(write: ProjectionStoreDocumentWrite<TState>): Promise<void> {
-    const current = await this.options.collection.findOne({ _id: write.documentId });
+  private async persistCommitAtomicWithBulkWrite(
+    write: {
+      documents: Array<{ documentId: string; state: TState; checkpoint: Checkpoint }>;
+      links: Array<{ aggregateType: string; aggregateId: string; targetDocId: string }>;
+      cursorKey: string;
+      cursor: Checkpoint;
+      dedupe: { upserts: Array<{ key: string; checkpoint: Checkpoint }> };
+    },
+    session: ClientSession
+  ): Promise<void> {
+    const projectionOps: Array<AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>> = [];
+
+    for (const document of write.documents) {
+      projectionOps.push({
+        updateOne: {
+          filter: { _id: document.documentId },
+          update: {
+            $set: {
+              state: document.state,
+              checkpoint: document.checkpoint,
+              updatedAt: this.now()
+            }
+          },
+          upsert: true
+        }
+      });
+    }
+
+    projectionOps.push({
+      updateOne: {
+        filter: { _id: write.cursorKey },
+        update: {
+          $set: {
+            state: {} as TState,
+            checkpoint: write.cursor,
+            updatedAt: this.now()
+          }
+        },
+        upsert: true
+      }
+    });
+
+    if (projectionOps.length > 0) {
+      await this.options.collection.bulkWrite(
+        projectionOps,
+        withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+      );
+    }
+
+    if (write.links.length > 0) {
+      await this.options.linkCollection.bulkWrite(
+        write.links.map((link) => ({
+          updateOne: {
+            filter: { _id: `${link.aggregateType}:${link.aggregateId}` },
+            update: {
+              $setOnInsert: {
+                aggregateType: link.aggregateType,
+                aggregateId: link.aggregateId,
+                targetDocId: link.targetDocId,
+                createdAt: this.now()
+              }
+            },
+            upsert: true
+          }
+        })),
+        withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+      );
+    }
+
+    if (write.dedupe.upserts.length > 0) {
+      await this.options.dedupeCollection.bulkWrite(
+        write.dedupe.upserts.map((dedupe) => ({
+          updateOne: {
+            filter: { _id: dedupe.key },
+            update: {
+              $set: {
+                checkpoint: dedupe.checkpoint,
+                updatedAt: this.now()
+              }
+            },
+            upsert: true
+          }
+        })),
+        withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: true }, session)
+      );
+    }
+  }
+
+  private async saveWithSession(
+    documentId: string,
+    state: TState,
+    checkpoint: Checkpoint,
+    session?: ClientSession
+  ): Promise<void> {
+    const updateOptions: Pick<UpdateOptions, 'upsert' | 'session'> | undefined = session
+      ? withSession<Pick<UpdateOptions, 'upsert'>>({ upsert: true }, session)
+      : { upsert: true };
+
+    await this.options.collection.updateOne(
+      { _id: documentId },
+      {
+        $set: {
+          state,
+          checkpoint,
+          updatedAt: this.now()
+        }
+      },
+      updateOptions
+    );
+  }
+
+  private createTransactionExecutor(): TransactionExecutor {
+    return async <T>(work: (session: ClientSession) => Promise<T>): Promise<T> => {
+      const session = this.options.mongoClient.startSession();
+
+      try {
+        const result = await session.withTransaction(
+          async () => work(session),
+          this.options.transactionOptions as TransactionOptions | undefined
+        );
+        return result as T;
+      } catch (error) {
+        if (isTransactionNotSupportedError(error)) {
+          throw new ProjectionStoreAtomicManyError(
+            createStoreFailure(
+              'terminal',
+              'transactions-not-supported',
+              'MongoDB transactions are required for atomic projection store operations. Configure a replica set or sharded deployment with transactions enabled.'
+            )
+          );
+        }
+
+        throw error;
+      } finally {
+        await session.endSession();
+      }
+    };
+  }
+
+  private resolveNextDocumentState(
+    write: ProjectionStoreDocumentWrite<TState>,
+    current: ProjectionDocumentRecord<TState> | null
+  ): TState {
     assertWritePrecondition(write.documentId, current?.checkpoint ?? null, write.precondition);
 
     if (write.mode === 'full') {
-      await this.save(write.documentId, write.fullDocument, write.checkpoint);
-      return;
+      return write.fullDocument;
     }
 
     const currentState = current?.state;
@@ -240,7 +410,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       ...write.patch
     } as TState;
 
-    await this.save(write.documentId, nextState, write.checkpoint);
+    return nextState;
   }
 
   private chooseHigherWatermark(current: Checkpoint | null, next: Checkpoint): Checkpoint {
@@ -264,47 +434,5 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       sequence: checkpoint.sequence,
       ...(checkpoint.timestamp ? { timestamp: checkpoint.timestamp } : {})
     };
-  }
-
-  private async rollbackAtomicMany(
-    originalDocuments: Map<string, ProjectionDocumentRecord<TState> | null>,
-    originalDedupe: Map<string, ProjectionDedupeRecord | null>
-  ): Promise<void> {
-    for (const [documentId, snapshot] of originalDocuments.entries()) {
-      if (!snapshot) {
-        await this.options.collection.deleteOne({ _id: documentId });
-        continue;
-      }
-
-      await this.options.collection.updateOne(
-        { _id: documentId },
-        {
-          $set: {
-            state: snapshot.state,
-            checkpoint: snapshot.checkpoint,
-            updatedAt: snapshot.updatedAt
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    for (const [dedupeKey, snapshot] of originalDedupe.entries()) {
-      if (!snapshot) {
-        await this.options.dedupeCollection.deleteOne({ _id: dedupeKey });
-        continue;
-      }
-
-      await this.options.dedupeCollection.updateOne(
-        { _id: dedupeKey },
-        {
-          $set: {
-            checkpoint: snapshot.checkpoint,
-            updatedAt: snapshot.updatedAt
-          }
-        },
-        { upsert: true }
-      );
-    }
   }
 }

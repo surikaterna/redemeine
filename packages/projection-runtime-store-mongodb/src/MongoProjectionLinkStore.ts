@@ -20,12 +20,6 @@ export class MongoProjectionLinkStore implements IProjectionLinkStore {
 
   async addLink(aggregateType: string, aggregateId: string, targetDocId: string): Promise<void> {
     const _id = toLinkId(aggregateType, aggregateId);
-    const existing = await this.options.collection.findOne({ _id });
-
-    if (existing) {
-      return;
-    }
-
     const record: ProjectionLinkRecord = {
       _id,
       aggregateType,
@@ -34,17 +28,24 @@ export class MongoProjectionLinkStore implements IProjectionLinkStore {
       createdAt: this.now()
     };
 
-    await this.options.collection.updateOne(
-      { _id },
-      {
-        $setOnInsert: {
-          aggregateType: record.aggregateType,
-          aggregateId: record.aggregateId,
-          targetDocId: record.targetDocId,
-          createdAt: record.createdAt
+    await this.options.collection.bulkWrite(
+      [
+        {
+          updateOne: {
+            filter: { _id },
+            update: {
+              $setOnInsert: {
+                aggregateType: record.aggregateType,
+                aggregateId: record.aggregateId,
+                targetDocId: record.targetDocId,
+                createdAt: record.createdAt
+              }
+            },
+            upsert: true
+          }
         }
-      },
-      { upsert: true }
+      ],
+      { ordered: true }
     );
   }
 
