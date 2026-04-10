@@ -10,6 +10,7 @@ import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory
 import { MongoProjectionStore } from '../../projection-runtime-store-mongodb/src';
 import { createMongoRuntimeCoreStore } from '../../projection-runtime-store-mongodb/test/runtimeCoreStoreHarness';
 import {
+  createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
   createProjectionLinkCollection
@@ -277,7 +278,8 @@ describe('RT3-13 validation matrix: watermark semantics', () => {
         store: new MongoProjectionStore<Record<string, unknown>>({
           collection: createProjectionDocumentCollection<Record<string, unknown>>(),
           linkCollection: createProjectionLinkCollection(),
-          dedupeCollection: createProjectionDedupeCollection()
+          dedupeCollection: createProjectionDedupeCollection(),
+          mongoClient: createFakeMongoClient()
         })
       }
     ];

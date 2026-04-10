@@ -2,6 +2,7 @@ import type { Checkpoint, IProjectionStore, ProjectionAtomicWrite } from '../../
 import { MongoProjectionStore } from '../src';
 import type { InMemoryMongoCollection } from './mocks';
 import {
+  createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
   createProjectionLinkCollection
@@ -79,7 +80,8 @@ export const createMongoRuntimeCoreStore = <TState = unknown>() => {
   const store = new MongoProjectionStore<TState>({
     collection,
     linkCollection,
-    dedupeCollection
+    dedupeCollection,
+    mongoClient: createFakeMongoClient()
   });
 
   return {

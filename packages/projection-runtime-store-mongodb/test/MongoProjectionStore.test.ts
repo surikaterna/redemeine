@@ -1,13 +1,23 @@
 import { describe, expect, test } from '@jest/globals';
 import type { Checkpoint, IProjectionStore } from '../src/contracts';
 import { MongoProjectionStore } from '../src';
-import { createProjectionDedupeCollection, createProjectionDocumentCollection, createProjectionLinkCollection } from './mocks';
+import {
+  createFakeMongoClient,
+  createProjectionDedupeCollection,
+  createProjectionDocumentCollection,
+  createProjectionLinkCollection
+} from './mocks';
 
 const createStore = <TState = unknown>() => {
   const collection = createProjectionDocumentCollection<TState>();
   const linkCollection = createProjectionLinkCollection();
   const dedupeCollection = createProjectionDedupeCollection();
-  const store = new MongoProjectionStore<TState>({ collection, linkCollection, dedupeCollection });
+  const store = new MongoProjectionStore<TState>({
+    collection,
+    linkCollection,
+    dedupeCollection,
+    mongoClient: createFakeMongoClient()
+  });
   return { store, collection, linkCollection, dedupeCollection };
 };
 
@@ -28,7 +38,13 @@ describe('MongoProjectionStore', () => {
     const linkCollection = createProjectionLinkCollection();
     const dedupeCollection = createProjectionDedupeCollection();
     const now = () => '2026-04-09T00:00:00.000Z';
-    const store = new MongoProjectionStore<{ count: number }>({ collection, linkCollection, dedupeCollection, now });
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection,
+      linkCollection,
+      dedupeCollection,
+      now,
+      mongoClient: createFakeMongoClient()
+    });
 
     const checkpoint: Checkpoint = { sequence: 11, timestamp: '2026-04-09T00:00:00.000Z' };
     await store.save('doc-1', { count: 42 }, checkpoint);
@@ -72,7 +88,13 @@ describe('MongoProjectionStore', () => {
     const linkCollection = createProjectionLinkCollection();
     const dedupeCollection = createProjectionDedupeCollection();
     const now = () => '2026-04-09T00:00:00.000Z';
-    const store = new MongoProjectionStore<{ count: number }>({ collection, linkCollection, dedupeCollection, now });
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection,
+      linkCollection,
+      dedupeCollection,
+      now,
+      mongoClient: createFakeMongoClient()
+    });
 
     await store.commitAtomic({
       documents: [
@@ -123,7 +145,7 @@ describe('MongoProjectionStore', () => {
     ]);
   });
 
-  test('commitAtomic failure before first write leaves no partial state or dedupe/cursor drift', async () => {
+  test('commitAtomic failure on projection bulkWrite leaves no partial state or dedupe/cursor drift', async () => {
     const collection = createProjectionDocumentCollection<{ count: number }>();
     const linkCollection = createProjectionLinkCollection();
     const dedupeCollection = createProjectionDedupeCollection();
@@ -132,14 +154,8 @@ describe('MongoProjectionStore', () => {
       findOne: collection.findOne.bind(collection),
       deleteOne: collection.deleteOne.bind(collection),
       deleteMany: collection.deleteMany.bind(collection),
-      async updateOne(
-        filter: Record<string, unknown>,
-        update: Record<string, unknown>,
-        options?: { upsert?: boolean }
-      ): Promise<unknown> {
-        void filter;
-        void update;
-        void options;
+      updateOne: collection.updateOne.bind(collection),
+      async bulkWrite(): Promise<unknown> {
         throw new Error('injected pre-write failure');
       }
     };
@@ -147,7 +163,8 @@ describe('MongoProjectionStore', () => {
     const store = new MongoProjectionStore<{ count: number }>({
       collection: failingCollection,
       linkCollection,
-      dedupeCollection
+      dedupeCollection,
+      mongoClient: createFakeMongoClient()
     });
 
     await expect(
@@ -192,7 +209,13 @@ describe('MongoProjectionStore', () => {
     const linkCollection = createProjectionLinkCollection();
     const dedupeCollection = createProjectionDedupeCollection();
     const now = () => '2026-04-09T00:00:00.000Z';
-    const store = new MongoProjectionStore<{ count: number }>({ collection, linkCollection, dedupeCollection, now });
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection,
+      linkCollection,
+      dedupeCollection,
+      now,
+      mongoClient: createFakeMongoClient()
+    });
 
     const write = {
       documents: [
@@ -240,7 +263,7 @@ describe('MongoProjectionStore', () => {
     expect(dedupeCollection.snapshot()).toHaveLength(1);
   });
 
-  test('commitAtomic fault during dedupe upsert recovers deterministically on retry without duplicate artifacts', async () => {
+  test('commitAtomic fault during dedupe bulkWrite recovers deterministically on retry without duplicate artifacts', async () => {
     const collection = createProjectionDocumentCollection<{ count: number }>();
     const linkCollection = createProjectionLinkCollection();
     const dedupeCollection = createProjectionDedupeCollection();
@@ -250,17 +273,14 @@ describe('MongoProjectionStore', () => {
       findOne: dedupeCollection.findOne.bind(dedupeCollection),
       deleteOne: dedupeCollection.deleteOne.bind(dedupeCollection),
       deleteMany: dedupeCollection.deleteMany.bind(dedupeCollection),
-      async updateOne(
-        filter: Record<string, unknown>,
-        update: Record<string, unknown>,
-        options?: { upsert?: boolean }
-      ): Promise<unknown> {
+      updateOne: dedupeCollection.updateOne.bind(dedupeCollection),
+      async bulkWrite(...args: Parameters<typeof dedupeCollection.bulkWrite>): Promise<unknown> {
         if (shouldFailDedupeWrite) {
           shouldFailDedupeWrite = false;
           throw new Error('injected dedupe write failure');
         }
 
-        return dedupeCollection.updateOne(filter, update, options);
+        return dedupeCollection.bulkWrite(...args);
       }
     };
 
@@ -269,7 +289,8 @@ describe('MongoProjectionStore', () => {
       collection,
       linkCollection,
       dedupeCollection: failingDedupeCollection,
-      now
+      now,
+      mongoClient: createFakeMongoClient()
     });
 
     const write = {
@@ -317,5 +338,83 @@ describe('MongoProjectionStore', () => {
     expect(collection.snapshot()).toHaveLength(2);
     expect(linkCollection.snapshot()).toHaveLength(1);
     expect(dedupeCollection.snapshot()).toHaveLength(1);
+  });
+
+  test('commitAtomic uses bulkWrite for projection, links, and dedupe paths', async () => {
+    const { store, collection, linkCollection, dedupeCollection } = createStore<{ count: number }>();
+
+    await store.commitAtomic({
+      documents: [
+        {
+          documentId: 'doc-bulk-path',
+          state: { count: 11 },
+          checkpoint: { sequence: 11 }
+        }
+      ],
+      links: [
+        {
+          aggregateType: 'invoice',
+          aggregateId: 'inv-bulk-path',
+          targetDocId: 'doc-bulk-path'
+        }
+      ],
+      cursorKey: '__cursor__bulk-path',
+      cursor: { sequence: 11 },
+      dedupe: {
+        upserts: [{ key: 'invoice:inv-bulk-path:11', checkpoint: { sequence: 11 } }]
+      }
+    });
+
+    expect(collection.operationLog.some((entry) => entry.op === 'bulkWrite')).toBe(true);
+    expect(linkCollection.operationLog.some((entry) => entry.op === 'bulkWrite')).toBe(true);
+    expect(dedupeCollection.operationLog.some((entry) => entry.op === 'bulkWrite')).toBe(true);
+  });
+
+  test('commitAtomicMany rejects with terminal failure when transactions are unsupported', async () => {
+    const mongoClient = createFakeMongoClient({
+      failWithTransactionError: Object.assign(
+        new Error('Transaction numbers are only allowed on a replica set member or mongos'),
+        {
+          name: 'MongoServerError',
+          code: 20
+        }
+      )
+    });
+
+    const store = new MongoProjectionStore<{ count: number }>({
+      collection: createProjectionDocumentCollection<{ count: number }>(),
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient
+    });
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'full',
+              fullDocument: { count: 1 },
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.failure).toEqual({
+        category: 'terminal',
+        code: 'transactions-not-supported',
+        message:
+          'MongoDB transactions are required for atomic projection store operations. Configure a replica set or sharded deployment with transactions enabled.',
+        retryable: false
+      });
+    }
   });
 });

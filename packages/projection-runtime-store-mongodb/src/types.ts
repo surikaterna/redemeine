@@ -1,4 +1,14 @@
 import type { Checkpoint } from './contracts';
+import type {
+  AnyBulkWriteOperation,
+  ClientSession,
+  MongoClient,
+  TransactionOptions,
+  UpdateOptions,
+  DeleteOptions,
+  FindOptions,
+  BulkWriteOptions
+} from 'mongodb';
 
 export interface ProjectionDocumentRecord<TState = unknown> {
   _id: string;
@@ -22,21 +32,29 @@ export interface ProjectionDedupeRecord {
 }
 
 export interface MongoCollectionLike<TDocument> {
-  findOne(filter: Record<string, unknown>): Promise<TDocument | null>;
+  findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
   updateOne(
     filter: Record<string, unknown>,
     update: Record<string, unknown>,
-    options?: { upsert?: boolean }
+    options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown>;
-  deleteOne(filter: Record<string, unknown>): Promise<unknown>;
-  deleteMany(filter: Record<string, unknown>): Promise<unknown>;
+  bulkWrite(
+    operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>,
+    options?: Pick<BulkWriteOptions, 'ordered' | 'session'>
+  ): Promise<unknown>;
+  deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
+  deleteMany(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
 }
+
+export type MongoClientLike = Pick<MongoClient, 'startSession'>;
+export type MongoClientSessionLike = Pick<ClientSession, 'withTransaction' | 'endSession'>;
 
 export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
   linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
   dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
-  executeInTransaction?: <T>(work: () => Promise<T>) => Promise<T>;
+  mongoClient: MongoClientLike;
+  transactionOptions?: TransactionOptions;
   now?: () => string;
 }
 
