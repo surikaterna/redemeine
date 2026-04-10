@@ -60,6 +60,13 @@
       "name": "@redemeine/projection",
       "version": "0.1.0",
     },
+    "packages/projection-router-core": {
+      "name": "@redemeine/projection-router-core",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/projection": "workspace:*",
+      },
+    },
     "packages/projection-runtime": {
       "name": "@redemeine/projection-runtime",
       "version": "0.1.0",
@@ -87,6 +94,19 @@
       "dependencies": {
         "@redemeine/projection-runtime-core": "workspace:*",
       },
+    },
+    "packages/projection-worker-core": {
+      "name": "@redemeine/projection-worker-core",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/projection": "workspace:*",
+        "@redemeine/projection-router-core": "workspace:*",
+        "@redemeine/projection-runtime-core": "workspace:*",
+      },
+    },
+    "packages/projection-worker-lite": {
+      "name": "@redemeine/projection-worker-lite",
+      "version": "0.1.0",
     },
     "packages/root-runner": {
       "name": "@redemeine/root-runner",
@@ -329,6 +349,8 @@
 
     "@redemeine/projection": ["@redemeine/projection@workspace:packages/projection"],
 
+    "@redemeine/projection-router-core": ["@redemeine/projection-router-core@workspace:packages/projection-router-core"],
+
     "@redemeine/projection-runtime": ["@redemeine/projection-runtime@workspace:packages/projection-runtime"],
 
     "@redemeine/projection-runtime-core": ["@redemeine/projection-runtime-core@workspace:packages/projection-runtime-core"],
@@ -336,6 +358,10 @@
     "@redemeine/projection-runtime-store-inmemory": ["@redemeine/projection-runtime-store-inmemory@workspace:packages/projection-runtime-store-inmemory"],
 
     "@redemeine/projection-runtime-store-mongodb": ["@redemeine/projection-runtime-store-mongodb@workspace:packages/projection-runtime-store-mongodb"],
+
+    "@redemeine/projection-worker-core": ["@redemeine/projection-worker-core@workspace:packages/projection-worker-core"],
+
+    "@redemeine/projection-worker-lite": ["@redemeine/projection-worker-lite@workspace:packages/projection-worker-lite"],
 
     "@redemeine/root-runner": ["@redemeine/root-runner@workspace:packages/root-runner"],
 
