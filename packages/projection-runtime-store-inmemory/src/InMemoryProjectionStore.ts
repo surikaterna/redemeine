@@ -60,6 +60,10 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   }
 
   private static decodePathSegment(segment: string): string {
+    if (/~(?![01])/u.test(segment)) {
+      throw new Error(`Invalid RFC6902 JSON Pointer escape sequence in segment "${segment}".`);
+    }
+
     return segment.replace(/~1/g, '/').replace(/~0/g, '~');
   }
 
@@ -72,7 +76,11 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       return [];
     }
 
-    const normalized = path.startsWith('/') ? path.slice(1) : path;
+    if (!path.startsWith('/')) {
+      throw new Error(`Invalid RFC6902 JSON Pointer path "${path}".`);
+    }
+
+    const normalized = path.slice(1);
     if (!normalized) {
       return [];
     }
@@ -84,7 +92,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     return /^\d+$/.test(token);
   }
 
-  private static getContainer(root: unknown, tokens: string[]): { parent: any; key: string | undefined } {
+  private static getContainer(root: unknown, tokens: string[], path: string): { parent: any; key: string | undefined } {
     if (tokens.length === 0) {
       return { parent: undefined, key: undefined };
     }
@@ -95,13 +103,15 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       const nextToken = tokens[index + 1];
 
       if (Array.isArray(current)) {
-        const arrayIndex = Number(token);
-        if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+        if (!InMemoryProjectionStore.isIndexToken(token)) {
           throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
         }
-        if (current[arrayIndex] === undefined || current[arrayIndex] === null) {
-          current[arrayIndex] = InMemoryProjectionStore.isIndexToken(nextToken) ? [] : {};
+
+        const arrayIndex = Number(token);
+        if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+          throw new Error(`RFC6902 path not found "${path}".`);
         }
+
         current = current[arrayIndex];
         continue;
       }
@@ -110,13 +120,43 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
         throw new Error(`Cannot traverse RFC6902 path through non-object value at "${token}".`);
       }
 
-      if (!(token in current) || current[token] === undefined || current[token] === null) {
-        current[token] = InMemoryProjectionStore.isIndexToken(nextToken) ? [] : {};
+      if (!(token in current)) {
+        throw new Error(`RFC6902 path not found "${path}".`);
       }
+
       current = current[token];
     }
 
     return { parent: current, key: tokens[tokens.length - 1] };
+  }
+
+  private static getValueAtPath(root: any, path: string): unknown {
+    const tokens = InMemoryProjectionStore.pathTokens(path);
+
+    let current: unknown = root;
+    for (const token of tokens) {
+      if (Array.isArray(current)) {
+        if (!InMemoryProjectionStore.isIndexToken(token)) {
+          throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
+        }
+
+        const index = Number(token);
+        if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+          throw new Error(`RFC6902 path not found "${path}".`);
+        }
+
+        current = current[index];
+        continue;
+      }
+
+      if (!current || typeof current !== 'object' || !(token in current)) {
+        throw new Error(`RFC6902 path not found "${path}".`);
+      }
+
+      current = (current as Record<string, unknown>)[token];
+    }
+
+    return current;
   }
 
   private static removeAtPath(root: any, path: string): unknown {
@@ -125,7 +165,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       throw new Error('Removing document root is not supported.');
     }
 
-    const { parent, key } = InMemoryProjectionStore.getContainer(root, tokens);
+    const { parent, key } = InMemoryProjectionStore.getContainer(root, tokens, path);
     if (Array.isArray(parent)) {
       if (key === undefined) {
         throw new Error('Missing RFC6902 array key.');
@@ -142,6 +182,10 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
     if (!parent || typeof parent !== 'object' || key === undefined) {
       throw new Error(`Invalid RFC6902 remove path "${path}".`);
+    }
+
+    if (!(key in parent)) {
+      throw new Error(`RFC6902 path not found "${path}".`);
     }
 
     const removed = parent[key];
@@ -172,10 +216,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
         throw new Error('RFC6902 copy operation requires "from".');
       }
 
-      let source: unknown = target;
-      for (const token of InMemoryProjectionStore.pathTokens(operation.from)) {
-        source = (source as Record<string, unknown> | undefined)?.[token];
-      }
+      const source = InMemoryProjectionStore.getValueAtPath(target, operation.from);
 
       InMemoryProjectionStore.applyRfc6902Operation(target, {
         op: 'add',
@@ -186,10 +227,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     }
 
     if (operation.op === 'test') {
-      let current: unknown = target;
-      for (const token of tokens) {
-        current = (current as Record<string, unknown> | undefined)?.[token];
-      }
+      const current = InMemoryProjectionStore.getValueAtPath(target, operation.path);
 
       if (JSON.stringify(operation.value) !== JSON.stringify(current)) {
         throw new Error(`RFC6902 test failed at path "${operation.path}".`);
@@ -202,7 +240,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       throw new Error('Replacing document root is not supported.');
     }
 
-    const { parent, key } = InMemoryProjectionStore.getContainer(target, tokens);
+    const { parent, key } = InMemoryProjectionStore.getContainer(target, tokens, operation.path);
 
     if (Array.isArray(parent)) {
       if (key === undefined) {
@@ -432,11 +470,19 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
       }
 
       const current = stagedDocuments.get(write.documentId);
-      stagedDocuments.set(write.documentId, {
-        state: InMemoryProjectionStore.applyPatchDocument(current?.state, write.patch),
-        checkpoint: InMemoryProjectionStore.cloneCheckpoint(write.checkpoint),
-        updatedAt: new Date().toISOString()
-      });
+      try {
+        stagedDocuments.set(write.documentId, {
+          state: InMemoryProjectionStore.applyPatchDocument(current?.state, write.patch),
+          checkpoint: InMemoryProjectionStore.cloneCheckpoint(write.checkpoint),
+          updatedAt: new Date().toISOString()
+        });
+      } catch (error) {
+        throw new ProjectionStoreAtomicManyError(
+          InMemoryProjectionStore.createInvalidRequestFailure(
+            error instanceof Error ? error.message : 'invalid patch request'
+          )
+        );
+      }
     };
 
     for (let index = 0; index < request.writes.length; index += 1) {

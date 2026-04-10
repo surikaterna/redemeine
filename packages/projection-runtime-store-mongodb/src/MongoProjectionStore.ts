@@ -68,6 +68,14 @@ type TransactionExecutor = <T>(work: (session: ClientSession) => Promise<T>) => 
 
 const decodePathSegment = (segment: string): string => segment.replace(/~1/g, '/').replace(/~0/g, '~');
 
+const decodePathSegmentStrict = (segment: string): string => {
+  if (/~(?![01])/u.test(segment)) {
+    throw new Error(`Invalid RFC6902 JSON Pointer escape sequence in segment "${segment}".`);
+  }
+
+  return decodePathSegment(segment);
+};
+
 const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const pathTokens = (path: string): string[] => {
@@ -75,17 +83,21 @@ const pathTokens = (path: string): string[] => {
     return [];
   }
 
-  const normalized = path.startsWith('/') ? path.slice(1) : path;
+  if (!path.startsWith('/')) {
+    throw new Error(`Invalid RFC6902 JSON Pointer path "${path}".`);
+  }
+
+  const normalized = path.slice(1);
   if (!normalized) {
     return [];
   }
 
-  return normalized.split('/').map(decodePathSegment);
+  return normalized.split('/').map(decodePathSegmentStrict);
 };
 
 const isIndexToken = (token: string): boolean => /^\d+$/.test(token);
 
-const getContainer = (root: unknown, tokens: string[]): { parent: any; key: string | undefined } => {
+const getContainer = (root: unknown, tokens: string[], path: string): { parent: any; key: string | undefined } => {
   if (tokens.length === 0) {
     return { parent: undefined, key: undefined };
   }
@@ -93,16 +105,17 @@ const getContainer = (root: unknown, tokens: string[]): { parent: any; key: stri
   let current: any = root;
   for (let index = 0; index < tokens.length - 1; index += 1) {
     const token = tokens[index];
-    const nextToken = tokens[index + 1];
 
     if (Array.isArray(current)) {
-      const arrayIndex = Number(token);
-      if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+      if (!isIndexToken(token)) {
         throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
       }
-      if (current[arrayIndex] === undefined || current[arrayIndex] === null) {
-        current[arrayIndex] = isIndexToken(nextToken) ? [] : {};
+
+      const arrayIndex = Number(token);
+      if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
+        throw new Error(`RFC6902 path not found "${path}".`);
       }
+
       current = current[arrayIndex];
       continue;
     }
@@ -111,13 +124,43 @@ const getContainer = (root: unknown, tokens: string[]): { parent: any; key: stri
       throw new Error(`Cannot traverse RFC6902 path through non-object value at "${token}".`);
     }
 
-    if (!(token in current) || current[token] === undefined || current[token] === null) {
-      current[token] = isIndexToken(nextToken) ? [] : {};
+    if (!(token in current)) {
+      throw new Error(`RFC6902 path not found "${path}".`);
     }
+
     current = current[token];
   }
 
   return { parent: current, key: tokens[tokens.length - 1] };
+};
+
+const getValueAtPath = (root: unknown, path: string): unknown => {
+  const tokens = pathTokens(path);
+
+  let current: unknown = root;
+  for (const token of tokens) {
+    if (Array.isArray(current)) {
+      if (!isIndexToken(token)) {
+        throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
+      }
+
+      const index = Number(token);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        throw new Error(`RFC6902 path not found "${path}".`);
+      }
+
+      current = current[index];
+      continue;
+    }
+
+    if (!current || typeof current !== 'object' || !(token in current)) {
+      throw new Error(`RFC6902 path not found "${path}".`);
+    }
+
+    current = (current as Record<string, unknown>)[token];
+  }
+
+  return current;
 };
 
 const removeAtPath = (root: any, path: string): unknown => {
@@ -126,7 +169,7 @@ const removeAtPath = (root: any, path: string): unknown => {
     throw new Error('Removing document root is not supported.');
   }
 
-  const { parent, key } = getContainer(root, tokens);
+  const { parent, key } = getContainer(root, tokens, path);
   if (Array.isArray(parent)) {
     if (key === undefined) {
       throw new Error('Missing RFC6902 array key.');
@@ -143,6 +186,10 @@ const removeAtPath = (root: any, path: string): unknown => {
 
   if (!parent || typeof parent !== 'object' || key === undefined) {
     throw new Error(`Invalid RFC6902 remove path "${path}".`);
+  }
+
+  if (!(key in parent)) {
+    throw new Error(`RFC6902 path not found "${path}".`);
   }
 
   const removed = parent[key];
@@ -173,20 +220,14 @@ const applyRfc6902Operation = (target: Record<string, unknown>, operation: Proje
       throw new Error('RFC6902 copy operation requires "from".');
     }
 
-    let source: unknown = target;
-    for (const token of pathTokens(operation.from)) {
-      source = (source as Record<string, unknown> | undefined)?.[token];
-    }
+    const source = getValueAtPath(target, operation.from);
 
     applyRfc6902Operation(target, { op: 'add', path: operation.path, value: deepClone(source) });
     return;
   }
 
   if (operation.op === 'test') {
-    let current: unknown = target;
-    for (const token of tokens) {
-      current = (current as Record<string, unknown> | undefined)?.[token];
-    }
+    const current = getValueAtPath(target, operation.path);
 
     if (JSON.stringify(operation.value) !== JSON.stringify(current)) {
       throw new Error(`RFC6902 test failed at path "${operation.path}".`);
@@ -199,7 +240,7 @@ const applyRfc6902Operation = (target: Record<string, unknown>, operation: Proje
     throw new Error('Replacing document root is not supported.');
   }
 
-  const { parent, key } = getContainer(target, tokens);
+  const { parent, key } = getContainer(target, tokens, operation.path);
 
   if (Array.isArray(parent)) {
     if (key === undefined) {
@@ -608,7 +649,14 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
         ? (currentState as Record<string, unknown>)
         : {};
 
-    const nextState = applyRfc6902Patch(base, write.patch) as TState;
+    let nextState: TState;
+    try {
+      nextState = applyRfc6902Patch(base, write.patch) as TState;
+    } catch (error) {
+      throw new ProjectionStoreAtomicManyError(
+        createInvalidRequestFailure(error instanceof Error ? error.message : 'invalid patch request')
+      );
+    }
 
     return nextState;
   }

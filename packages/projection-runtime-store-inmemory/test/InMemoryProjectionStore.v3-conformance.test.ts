@@ -152,10 +152,10 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       expect(result.committedCount).toBe(0);
       expect(result.reason).toBe('injected patch evaluation failure');
       expect(result.failure).toEqual({
-        category: 'transient',
-        code: 'write-failed',
+        category: 'terminal',
+        code: 'invalid-request',
         message: 'injected patch evaluation failure',
-        retryable: true
+        retryable: false
       });
     }
 
@@ -217,5 +217,75 @@ describe('InMemoryProjectionStore v3 conformance', () => {
     }
 
     expect(await store.load('doc-1')).toEqual({ total: 3 });
+  });
+
+  test('commitAtomicMany rejects patch add when parent path is missing', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'patch',
+              patch: [{ op: 'add', path: '/a/b', value: 1 }],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.failure).toEqual({
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'RFC6902 path not found "/a/b".',
+        retryable: false
+      });
+      expect(result.reason).toBe('RFC6902 path not found "/a/b".');
+    }
+
+    expect(await store.load('doc-1')).toBeNull();
+  });
+
+  test('commitAtomicMany rejects patch path without leading slash', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'patch',
+              patch: [{ op: 'add', path: 'a', value: 1 }],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.failure).toEqual({
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'Invalid RFC6902 JSON Pointer path "a".',
+        retryable: false
+      });
+      expect(result.reason).toBe('Invalid RFC6902 JSON Pointer path "a".');
+    }
+
+    expect(await store.load('doc-1')).toBeNull();
   });
 });
