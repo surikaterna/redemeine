@@ -80,13 +80,10 @@ const config: Config = {
           label: 'Documentation',
         },
         {
-          // We change 'type: docSidebar' to a direct 'to' link
-          // This ensures Docusaurus knows exactly which URL to hit
-          type: 'doc',
-          docId: 'api/index',
+          to: '/docs/api/',
           label: 'API Reference',
           position: 'left',
-          docsPluginId: 'default',
+          activeBaseRegex: '/docs/api/',
         },
         {
           href: 'https://github.com/surikaterna/redemeine',
