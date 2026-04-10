@@ -381,3 +381,12 @@ Depot End-to-End: An integration test successfully dispatches a Command, which e
 - Keep `SagaAggregate` as the authoritative write model, and consider adding a `createMirage`-style DX overlay/facade for bridge ergonomics without allowing invariant bypass.
 - Consider durable per-saga inbound inbox/queue semantics (persist-before-ack, idempotency keys, replay-safe drains) so queued inbound work survives server restarts.
 - Clarify the `referenceAdapters` API boundary by separating stable SPI contracts from in-memory reference implementations and test-harness surfaces.
+
+## Deferred PR27 rework follow-ups (tracked in beads)
+
+This scope is intentionally deferred and tracked in `bd` (no PR27 carry-over replay in this bead):
+
+- `redemeine-e47.5`: Saga-runtime durable inbox semantics (persist-before-ack)
+- `redemeine-e47.6`: Reintroduce `@redemeine/otel` package on current runtime
+- `redemeine-e47.7`: Restore trace-correlation continuity E2E coverage
+- `redemeine-e47.8`: Canonical inspection hook envelope parity
