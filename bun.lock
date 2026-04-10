@@ -11,6 +11,7 @@
       "devDependencies": {
         "@jest/globals": "^30.3.0",
         "@types/jest": "^30.0.0",
+        "@types/node": "^24.7.2",
         "docusaurus-plugin-typedoc": "^1.4.2",
         "eslint": "^8.57.1",
         "eslint-config-surikat": "^5.0.0",
@@ -58,10 +59,6 @@
     "packages/projection": {
       "name": "@redemeine/projection",
       "version": "0.1.0",
-      "dependencies": {
-        "@redemeine/projection-runtime-core": "workspace:*",
-        "@redemeine/projection-runtime-store-inmemory": "workspace:*",
-      },
     },
     "packages/projection-runtime": {
       "name": "@redemeine/projection-runtime",

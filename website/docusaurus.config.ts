@@ -48,7 +48,7 @@ const config: Config = {
       {
         id: 'default',
         entryPoints: ['../src/redemeine.ts'],
-        tsconfig: '../tsconfig.json',
+        tsconfig: '../tsconfig.typedoc.json',
         out: '../docs/api',
         // Critical for CI success:
         cleanOutputDir: true,
@@ -80,13 +80,10 @@ const config: Config = {
           label: 'Documentation',
         },
         {
-          // We change 'type: docSidebar' to a direct 'to' link
-          // This ensures Docusaurus knows exactly which URL to hit
           to: '/docs/api/',
           label: 'API Reference',
           position: 'left',
-          // This keeps the apiSidebar active when on this page
-          activeBaseRegex: `/docs/api/`,
+          activeBaseRegex: '/docs/api/',
         },
         {
           href: 'https://github.com/surikaterna/redemeine',

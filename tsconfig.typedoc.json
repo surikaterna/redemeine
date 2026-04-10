@@ -3,6 +3,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "moduleResolution": "node",
+    "types": ["node"],
     "paths": {
       "@redemeine/aggregate": ["packages/aggregate/src/index.ts"],
       "@redemeine/kernel": ["packages/kernel/src/index.ts"],
