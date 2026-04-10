@@ -26,7 +26,7 @@ function HomepageHeader() {
           <Link
             className="button button--outline button--secondary button--lg margin-left--md"
             style={{ color: '#fff', borderColor: '#fff' }}
-            to="/docs/api">
+            to="/docs/api/">
             API Reference
           </Link>
         </div>

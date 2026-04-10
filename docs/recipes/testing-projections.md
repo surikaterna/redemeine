@@ -103,3 +103,30 @@ const next = produce(state, (draft) => {
 - `fromCursor` is **exclusive** (`sequence > fromCursor.sequence`).
 - `nextCursor` points to the **last processed event** (not last + 1).
 - If no events are returned, keep the cursor unchanged.
+
+## 7) Reverse semantics contract (spec-level)
+
+For reverse mutation planning, the current contract is intentionally explicit and narrow:
+
+- **Relink is `remove` + `add` only**. There is no `replace` operation in the contract.
+- **`reverseSubscribe` supports multi-target** (`targetDocIds` can be one id or many).
+- **Missing target is warn-and-skip** for remove paths (`relink` removals and `unsubscribe`).
+
+Reference implementation-level contract helpers:
+
+- `planReverseSubscribe(spec)`
+- `planReverseRelink(spec)`
+- `planReverseUnsubscribe(spec)`
+
+Contract fixtures/tests live in:
+
+- `packages/projection/test/fixtures/reverse-semantics.contract.fixture.ts`
+- `packages/projection/test/reverse-semantics-contract.test.ts`
+
+## 8) Projection runtime v3 operations and release gates
+
+For operational rollout guidance and release evidence requirements for runtime vNext, see:
+
+- [Projection Runtime v3: Operational Runbook and Release Gates](/docs/architecture/projection-runtime-vnext-runbook)
+
+This runbook documents frozen semantics (`.join` unchanged, `.reverseSubscribe`, `context.unsubscribeFrom`, explicit remove+add relink, and missing-target warn-and-skip), runtime guarantees (atomic write path, durable dedupe, and catch-up-to-live cutover), validation matrix commands for router/worker/store integration, worker-lite limitations, and the command-based gate checklist used for release sign-off.

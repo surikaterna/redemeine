@@ -47,15 +47,17 @@
     "typecheck:turbo": "turbo run typecheck --continue",
     "typecheck:legacy": "bunx tsc -p ./",
     "test-compile": "bun run typecheck:legacy",
-    "lint": "bun run lint:turbo",
+    "lint": "bun run lint:principles && bun run lint:turbo",
     "lint:turbo": "turbo run lint --continue",
+    "lint:principles": "node ./bin/check-code-principles.js",
     "lint:legacy": "bunx eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "docs:typedoc": "typedoc",
     "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
     "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt",
     "docs:install": "bun install --cwd website",
     "docs:dev": "bun run --cwd website start",
-    "docs:build": "bun run --cwd website build",
+    "docs:build": "bun run docs:install && bun run --cwd website build",
+    "check:projection-runtime-boundaries": "node ./bin/check-projection-runtime-boundaries.js",
     "verify:workspace": "bunx turbo run typecheck build test --continue"
   },
   "workspaces": [
@@ -63,6 +65,7 @@
   ],
   "devDependencies": {
     "@jest/globals": "^30.3.0",
+    "@types/node": "^24.7.2",
     "@types/jest": "^30.0.0",
     "docusaurus-plugin-typedoc": "^1.4.2",
     "eslint": "^8.57.1",

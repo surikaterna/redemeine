@@ -3,6 +3,7 @@ import {
   createProjection,
   ProjectionBuilder,
   ProjectionDefinition,
+  ProjectionContext,
   ProjectionEvent,
   AggregateDefinition,
   AggregateEventPayloadMap,
@@ -631,6 +632,19 @@ describe('createProjection Edge Cases', () => {
 // ============================================================================
 
 describe('createProjection Type Exports', () => {
+  test('ProjectionContext exposes only subscribeTo/unsubscribeFrom', () => {
+    const context: ProjectionContext = {
+      subscribeTo() {
+        // no-op
+      },
+      unsubscribeFrom() {
+        // no-op
+      }
+    };
+
+    expect(Object.keys(context).sort()).toEqual(['subscribeTo', 'unsubscribeFrom']);
+  });
+
   test('ProjectionBuilder interface is exported', () => {
     // This is a compile-time test
     const builder: ProjectionBuilder<InvoiceState> = createProjection<InvoiceState>(
