@@ -71,3 +71,51 @@ export {
   type ProducedEvent,
   createPendingEvents,
 } from './pending';
+
+export type {
+  DownstreamEvent,
+  EventStreamSnapshot,
+  EventStreamEvents,
+  EventStreamAdded,
+  EventStreamRemoved,
+  EventStreamEnvelope,
+  ProjectionSnapshot,
+  ProjectionDelta,
+  ProjectionRemoved,
+  ProjectionEnvelope,
+  ConfigSnapshot,
+  ConfigDelta,
+  ConfigEnvelope,
+  EventStreamFeedInput,
+  ProjectionFeedInput,
+  ConfigFeedInput,
+  DownstreamSyncService,
+  FeedEnvelopeListener,
+  FeedConsumerOptions,
+  EnvelopeProcessResult,
+  ConsumeResult,
+  EventStreamConsumer,
+} from './downstream';
+
+export { createEventStreamConsumer } from './downstream';
+
+export {
+  type UpstreamCommandMetadata,
+  type UpstreamCommandEnvelope,
+  type UpstreamBatchRequest,
+  type AcceptedCommandResult,
+  type RejectedCommandResult,
+  type DuplicateCommandResult,
+  type UpstreamCommandResult,
+  type UpstreamBatchResult,
+  type UpstreamSyncService,
+  type ConnectionState,
+  type ConnectionStateListener,
+  type Unsubscribe,
+  type IConnectionMonitor,
+  type DrainResult,
+  type DrainResultListener,
+  type QueueDrainOptions,
+  type QueueDrain,
+  createQueueDrain,
+} from './upstream';
