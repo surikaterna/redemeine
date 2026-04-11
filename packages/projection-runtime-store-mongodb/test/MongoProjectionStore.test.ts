@@ -1,12 +1,15 @@
 import { describe, expect, test } from '@jest/globals';
 import type { Checkpoint, IProjectionStore } from '../src/contracts';
 import { MongoProjectionStore } from '../src';
+import { enablePatches, produceWithPatches, type Draft, type Patch as ImmerPatch } from 'immer';
 import {
   createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
   createProjectionLinkCollection
 } from './mocks';
+
+enablePatches();
 
 const createStore = <TState = unknown>() => {
   const collection = createProjectionDocumentCollection<TState>();
@@ -19,6 +22,91 @@ const createStore = <TState = unknown>() => {
     mongoClient: createFakeMongoClient()
   });
   return { store, collection, linkCollection, dedupeCollection };
+};
+
+const encodePointerSegment = (segment: string): string => segment.replace(/~/g, '~0').replace(/\//g, '~1');
+
+const toPointerPath = (segments: ReadonlyArray<string | number>): string => {
+  if (segments.length === 0) {
+    return '';
+  }
+
+  return `/${segments.map((segment) => encodePointerSegment(String(segment))).join('/')}`;
+};
+
+const toRfc6902Patch = (
+  patches: ReadonlyArray<ImmerPatch>
+): Array<{ op: 'add' | 'replace' | 'remove'; path: string; value?: unknown }> => {
+  return patches.map((patch) => {
+    const path = toPointerPath(patch.path);
+    if (patch.op === 'remove') {
+      return { op: 'remove', path };
+    }
+
+    return {
+      op: patch.op,
+      path,
+      value: patch.value
+    };
+  });
+};
+
+const buildPatchScenario = <TState extends Record<string, unknown>>(
+  before: TState,
+  mutate: (draft: Draft<TState>) => void,
+  refinePatch?: (args: {
+    before: TState;
+    after: TState;
+    rawPatch: Array<{ op: 'add' | 'replace' | 'remove'; path: string; value?: unknown }>;
+  }) => Array<Record<string, unknown>>
+): {
+  before: TState;
+  fullDocument: TState;
+  patch: Array<Record<string, unknown>>;
+} => {
+  const [fullDocument, patches] = produceWithPatches(before, mutate);
+  const rawPatch = toRfc6902Patch(patches);
+  return {
+    before,
+    fullDocument,
+    patch: refinePatch ? refinePatch({ before, after: fullDocument, rawPatch }) : rawPatch
+  };
+};
+
+const parseTrailingIndex = (path: string, arrayPointerPrefix: string): number | null => {
+  if (!path.startsWith(`${arrayPointerPrefix}/`)) {
+    return null;
+  }
+
+  const token = path.slice(arrayPointerPrefix.length + 1);
+  if (!/^\d+$/u.test(token)) {
+    return null;
+  }
+
+  return Number(token);
+};
+
+const deriveSingleRemoveFromImmerShift = (
+  rawPatch: Array<{ op: 'add' | 'replace' | 'remove'; path: string; value?: unknown }>,
+  arrayPointerPrefix: string
+): Array<Record<string, unknown>> => {
+  const firstReplace = rawPatch.find((entry) => entry.op === 'replace' && entry.path.startsWith(`${arrayPointerPrefix}/`));
+  if (firstReplace) {
+    const removeIndex = parseTrailingIndex(firstReplace.path, arrayPointerPrefix);
+    if (removeIndex !== null) {
+      return [{ op: 'remove', path: `${arrayPointerPrefix}/${removeIndex}` }];
+    }
+  }
+
+  const removeEntry = rawPatch.find((entry) => entry.op === 'remove' && entry.path.startsWith(`${arrayPointerPrefix}/`));
+  if (removeEntry) {
+    const removeIndex = parseTrailingIndex(removeEntry.path, arrayPointerPrefix);
+    if (removeIndex !== null) {
+      return [{ op: 'remove', path: `${arrayPointerPrefix}/${removeIndex}` }];
+    }
+  }
+
+  throw new Error(`Could not derive remove operation for ${arrayPointerPrefix} from immer patch.`);
 };
 
 describe('MongoProjectionStore', () => {
@@ -649,6 +737,418 @@ describe('MongoProjectionStore', () => {
     expect(stageSet['state.lines']).toBeDefined();
     expect(stageSet.checkpoint).toEqual({ sequence: 3 });
     expect(typeof stageSet.updatedAt).toBe('string');
+  });
+
+  test('immer scenario: remove-first on 20+ array uses single $pop:-1 and preserves final state', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const scenario = buildPatchScenario(
+      {
+        items: Array.from({ length: 25 }, (_, index) => `item-${index}`)
+      },
+      (draft) => {
+        draft.items.splice(0, 1);
+      },
+      ({ rawPatch }) => deriveSingleRemoveFromImmerShift(rawPatch, '/items')
+    );
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-remove-first-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-remove-first',
+              mode: 'full',
+              fullDocument: scenario.before,
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+    expect(seeded.status).toBe('committed');
+
+    const opLogOffset = collection.operationLog.length;
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-remove-first',
+          documents: [
+            {
+              documentId: 'doc-immer-remove-first',
+              mode: 'patch',
+              fullDocument: scenario.fullDocument,
+              patch: scenario.patch as never,
+              checkpoint: { sequence: 2 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-immer-remove-first')).toEqual(scenario.fullDocument);
+
+    const newUpdateOps = collection.operationLog
+      .slice(opLogOffset)
+      .filter((entry) => entry.op === 'updateOne') as Array<{ detail?: { update?: Record<string, unknown> } }>;
+    expect(newUpdateOps).toHaveLength(1);
+
+    const update = newUpdateOps[0]?.detail?.update ?? {};
+    expect(Array.isArray(update)).toBe(false);
+    expect((update.$pop as Record<string, unknown>)['state.items']).toBe(-1);
+    expect((update.$set as Record<string, unknown>)['state.items']).toBeUndefined();
+    expect((update.$set as Record<string, unknown>).state).toBeUndefined();
+  });
+
+  test('immer scenario: remove-middle on large array uses pipeline and single update op', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const scenario = buildPatchScenario(
+      {
+        items: Array.from({ length: 31 }, (_, index) => `line-${index}`)
+      },
+      (draft) => {
+        draft.items.splice(13, 1);
+      },
+      ({ rawPatch }) => deriveSingleRemoveFromImmerShift(rawPatch, '/items')
+    );
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-remove-middle-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-remove-middle',
+              mode: 'full',
+              fullDocument: scenario.before,
+              checkpoint: { sequence: 10 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+    expect(seeded.status).toBe('committed');
+
+    const opLogOffset = collection.operationLog.length;
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-remove-middle',
+          documents: [
+            {
+              documentId: 'doc-immer-remove-middle',
+              mode: 'patch',
+              fullDocument: scenario.fullDocument,
+              patch: scenario.patch as never,
+              checkpoint: { sequence: 11 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-immer-remove-middle')).toEqual(scenario.fullDocument);
+
+    const newUpdateOps = collection.operationLog
+      .slice(opLogOffset)
+      .filter((entry) => entry.op === 'updateOne') as Array<{
+      detail?: { update?: ReadonlyArray<Record<string, unknown>> | Record<string, unknown> };
+    }>;
+    expect(newUpdateOps).toHaveLength(1);
+
+    const update = newUpdateOps[0]?.detail?.update;
+    expect(Array.isArray(update)).toBe(true);
+    if (!Array.isArray(update)) {
+      throw new Error('expected remove-middle patch to compile as update pipeline');
+    }
+
+    expect(update[0]?.$set).toBeDefined();
+    expect((update[0]?.$set as Record<string, unknown>)['state.items']).toBeDefined();
+  });
+
+  test('immer scenario: append and indexed append both compile to $push with one op each', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const appendScenario = buildPatchScenario(
+      { items: ['a', 'b'] },
+      (draft) => {
+        draft.items.push('c');
+      },
+      ({ rawPatch }) => {
+        const addEntry = rawPatch.find((entry) => entry.op === 'add' && entry.path.startsWith('/items/'));
+        if (!addEntry) {
+          throw new Error('Expected append scenario to include add patch for /items');
+        }
+        return [{ op: 'add', path: '/items/-', value: addEntry.value }];
+      }
+    );
+
+    const indexedAppendScenario = buildPatchScenario({ items: ['x', 'y'] }, (draft) => {
+      draft.items.splice(draft.items.length, 0, 'z');
+    });
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-append-dash-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-append-dash',
+              mode: 'full',
+              fullDocument: appendScenario.before,
+              checkpoint: { sequence: 20 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        },
+        {
+          routingKeySource: 'invoice-summary:doc-immer-append-index-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-append-index',
+              mode: 'full',
+              fullDocument: indexedAppendScenario.before,
+              checkpoint: { sequence: 20 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+    expect(seeded.status).toBe('committed');
+
+    const opLogOffset = collection.operationLog.length;
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-append-dash',
+          documents: [
+            {
+              documentId: 'doc-immer-append-dash',
+              mode: 'patch',
+              fullDocument: appendScenario.fullDocument,
+              patch: appendScenario.patch as never,
+              checkpoint: { sequence: 21 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        },
+        {
+          routingKeySource: 'invoice-summary:doc-immer-append-index',
+          documents: [
+            {
+              documentId: 'doc-immer-append-index',
+              mode: 'patch',
+              fullDocument: indexedAppendScenario.fullDocument,
+              patch: indexedAppendScenario.patch as never,
+              checkpoint: { sequence: 21 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-immer-append-dash')).toEqual(appendScenario.fullDocument);
+    expect(await store.load('doc-immer-append-index')).toEqual(indexedAppendScenario.fullDocument);
+
+    const newUpdateOps = collection.operationLog
+      .slice(opLogOffset)
+      .filter((entry) => entry.op === 'updateOne') as Array<{ detail?: { update?: Record<string, unknown> } }>;
+    expect(newUpdateOps).toHaveLength(2);
+
+    for (const operation of newUpdateOps) {
+      const update = operation.detail?.update ?? {};
+      expect(Array.isArray(update)).toBe(false);
+      expect((update.$push as Record<string, unknown>)['state.items']).toBeDefined();
+      expect((update.$set as Record<string, unknown>).state).toBeUndefined();
+    }
+  });
+
+  test('immer scenario: move/reorder patch compiles to parent array set in single op', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const scenario = buildPatchScenario(
+      {
+        items: ['a', 'b', 'c', 'd', 'e']
+      },
+      (draft) => {
+        const [moved] = draft.items.splice(1, 1);
+        draft.items.splice(3, 0, moved);
+      },
+      () => [{ op: 'move', from: '/items/1', path: '/items/3' }]
+    );
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-move-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-move',
+              mode: 'full',
+              fullDocument: scenario.before,
+              checkpoint: { sequence: 30 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+    expect(seeded.status).toBe('committed');
+
+    const opLogOffset = collection.operationLog.length;
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-move',
+          documents: [
+            {
+              documentId: 'doc-immer-move',
+              mode: 'patch',
+              fullDocument: scenario.fullDocument,
+              patch: scenario.patch as never,
+              checkpoint: { sequence: 31 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-immer-move')).toEqual(scenario.fullDocument);
+
+    const newUpdateOps = collection.operationLog
+      .slice(opLogOffset)
+      .filter((entry) => entry.op === 'updateOne') as Array<{ detail?: { update?: Record<string, unknown> } }>;
+    expect(newUpdateOps).toHaveLength(1);
+
+    const update = newUpdateOps[0]?.detail?.update ?? {};
+    expect(Array.isArray(update)).toBe(false);
+    expect((update.$set as Record<string, unknown>)['state.items']).toEqual(scenario.fullDocument.items);
+    expect(((update.$push as Record<string, unknown> | undefined) ?? {})['state.items']).toBeUndefined();
+    expect(((update.$pop as Record<string, unknown> | undefined) ?? {})['state.items']).toBeUndefined();
+  });
+
+  test('immer scenario: nested set+delete compiles to $set+$unset in single op', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const scenario = buildPatchScenario(
+      {
+        profile: {
+          settings: {
+            theme: 'light',
+            obsolete: true,
+            locale: 'sv-SE'
+          }
+        }
+      },
+      (draft) => {
+        draft.profile.settings.theme = 'dark';
+        delete draft.profile.settings.obsolete;
+      }
+    );
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-nested-seed',
+          documents: [
+            {
+              documentId: 'doc-immer-nested',
+              mode: 'full',
+              fullDocument: scenario.before,
+              checkpoint: { sequence: 40 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+    expect(seeded.status).toBe('committed');
+
+    const opLogOffset = collection.operationLog.length;
+    const patched = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-immer-nested',
+          documents: [
+            {
+              documentId: 'doc-immer-nested',
+              mode: 'patch',
+              fullDocument: scenario.fullDocument,
+              patch: scenario.patch as never,
+              checkpoint: { sequence: 41 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(patched.status).toBe('committed');
+    expect(await store.load('doc-immer-nested')).toEqual(scenario.fullDocument);
+
+    const newUpdateOps = collection.operationLog
+      .slice(opLogOffset)
+      .filter((entry) => entry.op === 'updateOne') as Array<{ detail?: { update?: Record<string, unknown> } }>;
+    expect(newUpdateOps).toHaveLength(1);
+
+    const update = newUpdateOps[0]?.detail?.update ?? {};
+    expect(Array.isArray(update)).toBe(false);
+    expect((update.$set as Record<string, unknown>)['state.profile.settings.theme']).toBe('dark');
+    expect((update.$unset as Record<string, unknown>)['state.profile.settings.obsolete']).toBe('');
+    expect((update.$set as Record<string, unknown>).state).toBeUndefined();
   });
 
   test('commitAtomicMany compiles unsafe dotted key patch with dynamic field pipeline', async () => {

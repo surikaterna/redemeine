@@ -95,6 +95,9 @@
         "@redemeine/projection-runtime-core": "workspace:*",
         "mongodb": "^6.18.0",
       },
+      "devDependencies": {
+        "immer": "^10.2.0",
+      },
     },
     "packages/projection-worker-core": {
       "name": "@redemeine/projection-worker-core",
