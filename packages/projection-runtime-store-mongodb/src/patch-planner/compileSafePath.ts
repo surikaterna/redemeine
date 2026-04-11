@@ -129,15 +129,15 @@ const removeArrayAtPath = <TState>(runtime: PlannerRuntime<TState>, tokens: read
   }
 
   runtime.state.exprGuards.push(buildTypeGuardExpr(parent, 'array'));
-  const resultingLength = parentState.value.length;
-  if (removeAtIndex === 0 || removeAtIndex === resultingLength) {
+  const currentLength = parentState.value.length;
+  if (removeAtIndex === 0 || removeAtIndex === currentLength) {
     runtime.state.pop[mongoParentPath] = removeAtIndex === 0 ? -1 : 1;
     delete runtime.state.set[mongoParentPath];
     runtime.state.unset.delete(mongoParentPath);
     return true;
   }
 
-  if (removeAtIndex > 0 && removeAtIndex < resultingLength && runtime.state.pipeline === null && !hasPushOrPop(runtime)) {
+  if (removeAtIndex > 0 && removeAtIndex < currentLength && runtime.state.pipeline === null && !hasPushOrPop(runtime)) {
     runtime.state.pipeline = buildMiddleArrayRemovePipeline(mongoParentPath, removeAtIndex);
     return true;
   }

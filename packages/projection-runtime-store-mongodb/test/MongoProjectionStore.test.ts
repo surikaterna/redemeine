@@ -6,7 +6,8 @@ import {
   createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
-  createProjectionLinkCollection
+  createProjectionLinkCollection,
+  InMemoryMongoCollection
 } from './mocks';
 
 enablePatches();
@@ -1277,14 +1278,19 @@ describe('MongoProjectionStore', () => {
 
     const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
     const latestUpdate = updateOperations[updateOperations.length - 1] as
-      | { detail?: { update?: Record<string, unknown> } }
+      | { detail?: { update?: ReadonlyArray<Record<string, unknown>> | Record<string, unknown> } }
       | undefined;
-    const updateDoc = latestUpdate?.detail?.update as Record<string, unknown>;
-    const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
+    const update = latestUpdate?.detail?.update;
 
-    expect(setDoc.state).toEqual(nextState);
-    expect(setDoc.checkpoint).toEqual({ sequence: 7, timestamp: '2026-04-11T12:00:00.000Z' });
-    expect(setDoc.updatedAt).toBe('2026-04-11T12:00:00.000Z');
+    expect(Array.isArray(update)).toBe(true);
+    if (!Array.isArray(update)) {
+      throw new Error('expected root replace to compile as update pipeline');
+    }
+
+    const stageSet = (update[0]?.$set as Record<string, unknown>) ?? {};
+    expect(stageSet.state).toEqual(nextState);
+    expect(stageSet.checkpoint).toEqual({ sequence: 7, timestamp: '2026-04-11T12:00:00.000Z' });
+    expect(stageSet.updatedAt).toBe('2026-04-11T12:00:00.000Z');
   });
 
   test('commitAtomicMany uses unordered bulkWrite for atomic-all writes', async () => {
@@ -1346,5 +1352,57 @@ describe('MongoProjectionStore', () => {
     expect(result.status).toBe('committed');
     expect(collectionOrdered).toBe(false);
     expect(dedupeOrdered).toBe(false);
+  });
+
+  test('commitAtomicMany passes session to all collection operations within transaction', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const dedupeCollection = createProjectionDedupeCollection();
+
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection,
+      mongoClient: createFakeMongoClient()
+    });
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-session-check',
+          documents: [
+            {
+              documentId: 'doc-session-check',
+              mode: 'full',
+              fullDocument: { total: 1 },
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: {
+            upserts: [{ key: 'invoice:session-check:1', checkpoint: { sequence: 1 } }]
+          }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+
+    const collectionSessionEntries = collection.sessionLog.filter(
+      (entry) => entry.method === 'bulkWrite'
+    );
+    expect(collectionSessionEntries.length).toBeGreaterThan(0);
+    for (const entry of collectionSessionEntries) {
+      expect(entry.session).toBeDefined();
+      expect(entry.session).not.toBeNull();
+    }
+
+    const dedupeSessionEntries = dedupeCollection.sessionLog.filter(
+      (entry) => entry.method === 'bulkWrite'
+    );
+    expect(dedupeSessionEntries.length).toBeGreaterThan(0);
+    for (const entry of dedupeSessionEntries) {
+      expect(entry.session).toBeDefined();
+      expect(entry.session).not.toBeNull();
+    }
   });
 });

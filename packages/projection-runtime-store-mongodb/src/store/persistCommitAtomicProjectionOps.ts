@@ -1,11 +1,7 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, ClientSession } from 'mongodb';
 import type { ProjectionDocumentRecord } from '../types';
 import type { CommitAtomicWrite } from './persistCommitAtomicTypes';
-
-const withSession = <T extends object>(options: T, session: ClientSession): T & { session: ClientSession } => ({
-  ...options,
-  session
-});
+import { withSession } from './withSession';
 
 const buildProjectionOps = <TState>(
   write: CommitAtomicWrite<TState>,

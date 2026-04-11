@@ -1,7 +1,6 @@
 import type { Checkpoint } from './contracts';
 import type {
   AnyBulkWriteOperation,
-  ClientSession,
   MongoClient,
   TransactionOptions,
   UpdateOptions,
@@ -47,7 +46,6 @@ export interface MongoCollectionLike<TDocument> {
 }
 
 export type MongoClientLike = Pick<MongoClient, 'startSession'>;
-export type MongoClientSessionLike = Pick<ClientSession, 'withTransaction' | 'endSession'>;
 
 export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;

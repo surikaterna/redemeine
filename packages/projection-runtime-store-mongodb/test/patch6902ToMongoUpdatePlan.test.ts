@@ -459,4 +459,41 @@ describe('patch6902ToMongoUpdatePlan', () => {
 
     expect((plan.pipeline[0]?.$set as Record<string, unknown>).state).toEqual(fullDocument);
   });
+
+  test('scenario: remove last array element via post-removal fullDocument compiles as $pop:1', () => {
+    const fullDocument = {
+      items: ['a', 'b']
+    };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '/items/2' }], fullDocument);
+
+    expect(plan.mode).toBe('compiled-update-document');
+    if (plan.mode !== 'compiled-update-document') {
+      throw new Error('expected compiled-update-document');
+    }
+
+    expect(plan.set).toEqual({});
+    expect(plan.unset).toEqual([]);
+    expect(plan.push).toEqual({});
+    expect(plan.pop).toEqual({ items: 1 });
+  });
+
+  test('scenario: replace at empty-string key via pointer "/" targets empty-key property', () => {
+    const fullDocument = {
+      '': 42,
+      other: 1
+    };
+
+    const plan = patch6902ToMongoUpdatePlan(
+      [{ op: 'replace', path: '/', value: 42 }],
+      fullDocument
+    );
+
+    expect(plan.mode).toBe('compiled-update-document');
+    if (plan.mode !== 'compiled-update-document') {
+      throw new Error('expected compiled-update-document');
+    }
+
+    expect(plan.set).toEqual({ '': 42 });
+  });
 });
