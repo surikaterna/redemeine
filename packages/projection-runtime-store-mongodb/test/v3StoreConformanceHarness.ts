@@ -27,6 +27,7 @@ type V3ConformanceStore = {
         | {
           documentId: string;
           mode: 'patch';
+          fullDocument: Record<string, unknown>;
           patch: ReadonlyArray<{
             op: 'add' | 'remove' | 'replace' | 'move' | 'copy' | 'test';
             path: string;
@@ -94,6 +95,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-2',
                 mode: 'patch',
+                fullDocument: { status: 'open', total: 3 },
                 patch: [
                   { op: 'add', path: '/status', value: 'open' },
                   { op: 'add', path: '/total', value: 3 }
@@ -146,6 +148,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-1',
                 mode: 'patch',
+                fullDocument: { total: 2 },
                 patch: [{ op: 'replace', path: '/total', value: 2 }],
                 checkpoint: { sequence: 2 }
               }
@@ -221,6 +224,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-1',
                 mode: 'patch',
+                fullDocument: { total: 4 },
                 patch: [{ op: 'replace', path: '/total', value: 4 }],
                 checkpoint: { sequence: 4 },
                 precondition: { expectedRevision: 2 }
@@ -275,7 +279,7 @@ export function runV3StoreConformance(
       }
     });
 
-    test('commitAtomicMany rejects patch add when parent path is missing', async () => {
+    test('commitAtomicMany uses caller fullDocument when patch cannot be safely compiled', async () => {
       const store = createStore();
 
       const result = await store.commitAtomicMany({
@@ -287,6 +291,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-1',
                 mode: 'patch',
+                fullDocument: { a: { b: 1 } },
                 patch: [{ op: 'add', path: '/a/b', value: 1 }],
                 checkpoint: { sequence: 1 }
               }
@@ -296,21 +301,8 @@ export function runV3StoreConformance(
         ]
       });
 
-      expect(result).toEqual({
-        status: 'rejected',
-        highestWatermark: null,
-        failedAtIndex: 0,
-        failure: {
-          category: 'terminal',
-          code: 'invalid-request',
-          message: 'RFC6902 path not found "/a/b".',
-          retryable: false
-        },
-        reason: 'RFC6902 path not found "/a/b".',
-        committedCount: 0
-      });
-
-      expect(await store.load('doc-1')).toBeNull();
+      expect(result.status).toBe('committed');
+      expect(await store.load('doc-1')).toEqual({ a: { b: 1 } });
     });
 
     test('commitAtomicMany rejects patch path without leading slash', async () => {
@@ -325,6 +317,7 @@ export function runV3StoreConformance(
               {
                 documentId: 'doc-1',
                 mode: 'patch',
+                fullDocument: { a: 1 },
                 patch: [{ op: 'add', path: 'a', value: 1 }],
                 checkpoint: { sequence: 1 }
               }

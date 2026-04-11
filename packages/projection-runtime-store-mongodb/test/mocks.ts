@@ -17,13 +17,76 @@ import type {
 
 type AnyRecord = Record<string, unknown>;
 
+const getByPath = (doc: AnyRecord, path: string): unknown => {
+  if (!path.includes('.')) {
+    return doc[path];
+  }
+
+  const parts = path.split('.');
+  let current: unknown = doc;
+  for (const part of parts) {
+    if (!current || typeof current !== 'object') {
+      return undefined;
+    }
+
+    current = (current as AnyRecord)[part];
+  }
+
+  return current;
+};
+
+const setByPath = (doc: AnyRecord, path: string, value: unknown): void => {
+  if (!path.includes('.')) {
+    doc[path] = value;
+    return;
+  }
+
+  const parts = path.split('.');
+  let current: AnyRecord = doc;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const part = parts[index] as string;
+    const next = current[part];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      current[part] = {};
+    }
+    current = current[part] as AnyRecord;
+  }
+
+  const leaf = parts[parts.length - 1] as string;
+  current[leaf] = value;
+};
+
+const unsetByPath = (doc: AnyRecord, path: string): void => {
+  if (!path.includes('.')) {
+    delete doc[path];
+    return;
+  }
+
+  const parts = path.split('.');
+  let current: unknown = doc;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const part = parts[index] as string;
+    if (!current || typeof current !== 'object') {
+      return;
+    }
+    current = (current as AnyRecord)[part];
+  }
+
+  if (!current || typeof current !== 'object') {
+    return;
+  }
+
+  const leaf = parts[parts.length - 1] as string;
+  delete (current as AnyRecord)[leaf];
+};
+
 const matches = <TDocument extends AnyRecord>(
   doc: TDocument,
   filter: Record<string, unknown>
 ): boolean => {
   const keys = Object.keys(filter);
   for (const key of keys) {
-    if (doc[key] !== filter[key]) {
+    if (getByPath(doc, key) !== filter[key]) {
       return false;
     }
   }
@@ -71,7 +134,12 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     void options;
     this.operationLog.push({ op: 'findOne', detail: { filter } });
     if (typeof filter._id === 'string') {
-      return this.records.get(filter._id) ?? null;
+      const candidate = this.records.get(filter._id);
+      if (!candidate) {
+        return null;
+      }
+
+      return matches(candidate as AnyRecord, filter) ? candidate : null;
     }
 
     for (const value of this.records.values()) {
@@ -96,11 +164,18 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     }
 
     const base = current ?? (({ _id: filter._id }) as TDocument);
-    const set = (update.$set as Partial<TDocument> | undefined) ?? {};
+    const set = (update.$set as Record<string, unknown> | undefined) ?? {};
+    const unset = (update.$unset as Record<string, unknown> | undefined) ?? {};
     const setOnInsert =
       !current ? ((update.$setOnInsert as Partial<TDocument> | undefined) ?? {}) : {};
-    const next = { ...base, ...setOnInsert, ...set } as TDocument;
-    this.records.set(next._id, next);
+    const next = { ...base, ...setOnInsert } as AnyRecord;
+    for (const [path, value] of Object.entries(set)) {
+      setByPath(next, path, value);
+    }
+    for (const path of Object.keys(unset)) {
+      unsetByPath(next, path);
+    }
+    this.records.set(next._id as string, next as TDocument);
 
     return {
       matchedCount: current ? 1 : 0,

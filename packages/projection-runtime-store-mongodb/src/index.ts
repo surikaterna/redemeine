@@ -30,3 +30,11 @@ export type {
 
 export { MongoProjectionStore } from './MongoProjectionStore';
 export { MongoProjectionLinkStore, toLinkId } from './MongoProjectionLinkStore';
+export {
+  patch6902ToMongoUpdatePlan
+} from './patch6902ToMongoUpdatePlan';
+export type {
+  MongoPatchCompiledPlan,
+  MongoPatchFallbackPlan,
+  MongoPatchUpdatePlan
+} from './patch6902ToMongoUpdatePlan';
