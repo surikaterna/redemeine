@@ -80,6 +80,71 @@ const unsetByPath = (doc: AnyRecord, path: string): void => {
   delete (current as AnyRecord)[leaf];
 };
 
+const isExpressionObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const evaluateExpression = (expression: unknown, root: AnyRecord): unknown => {
+  if (Array.isArray(expression)) {
+    return expression.map((entry) => evaluateExpression(entry, root));
+  }
+
+  if (typeof expression === 'string' && expression.startsWith('$')) {
+    const path = expression.slice(1);
+    return getByPath(root, path);
+  }
+
+  if (!isExpressionObject(expression)) {
+    return expression;
+  }
+
+  if ('$concatArrays' in expression) {
+    const parts = evaluateExpression(expression.$concatArrays, root);
+    if (!Array.isArray(parts)) {
+      return [];
+    }
+
+    return parts.flatMap((part) => (Array.isArray(part) ? part : []));
+  }
+
+  if ('$slice' in expression) {
+    const args = evaluateExpression(expression.$slice, root);
+    if (!Array.isArray(args) || args.length === 0 || !Array.isArray(args[0])) {
+      return [];
+    }
+
+    const source = args[0];
+    const start = typeof args[1] === 'number' ? args[1] : 0;
+    if (args.length < 3) {
+      if (start >= 0) {
+        return source.slice(0, start);
+      }
+
+      return source.slice(start);
+    }
+
+    const count = typeof args[2] === 'number' ? args[2] : 0;
+    return source.slice(start, start + count);
+  }
+
+  if ('$size' in expression) {
+    const value = evaluateExpression(expression.$size, root);
+    return Array.isArray(value) ? value.length : 0;
+  }
+
+  if ('$subtract' in expression) {
+    const args = evaluateExpression(expression.$subtract, root);
+    if (!Array.isArray(args) || args.length !== 2) {
+      return 0;
+    }
+
+    const left = typeof args[0] === 'number' ? args[0] : 0;
+    const right = typeof args[1] === 'number' ? args[1] : 0;
+    return left - right;
+  }
+
+  return expression;
+};
+
 const matches = <TDocument extends AnyRecord>(
   doc: TDocument,
   filter: Record<string, unknown>
@@ -153,7 +218,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
 
   async updateOne(
     filter: Record<string, unknown>,
-    update: Record<string, unknown>,
+    update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
     options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown> {
     this.operationLog.push({ op: 'updateOne', detail: { filter, update } });
@@ -164,17 +229,59 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     }
 
     const base = current ?? (({ _id: filter._id }) as TDocument);
-    const set = (update.$set as Record<string, unknown> | undefined) ?? {};
-    const unset = (update.$unset as Record<string, unknown> | undefined) ?? {};
-    const setOnInsert =
-      !current ? ((update.$setOnInsert as Partial<TDocument> | undefined) ?? {}) : {};
-    const next = { ...base, ...setOnInsert } as AnyRecord;
-    for (const [path, value] of Object.entries(set)) {
-      setByPath(next, path, value);
+    const next = { ...base } as AnyRecord;
+
+    if (Array.isArray(update)) {
+      for (const stage of update) {
+        const set = (stage.$set as Record<string, unknown> | undefined) ?? {};
+        for (const [path, value] of Object.entries(set)) {
+          setByPath(next, path, evaluateExpression(value, next));
+        }
+      }
+    } else {
+      const set = (update.$set as Record<string, unknown> | undefined) ?? {};
+      const unset = (update.$unset as Record<string, unknown> | undefined) ?? {};
+      const push = (update.$push as Record<string, unknown> | undefined) ?? {};
+      const pop = (update.$pop as Record<string, unknown> | undefined) ?? {};
+      const setOnInsert =
+        !current ? ((update.$setOnInsert as Partial<TDocument> | undefined) ?? {}) : {};
+
+      Object.assign(next, setOnInsert);
+
+      for (const [path, value] of Object.entries(set)) {
+        setByPath(next, path, value);
+      }
+
+      for (const [path, value] of Object.entries(push)) {
+        const currentValue = getByPath(next, path);
+        if (Array.isArray(currentValue)) {
+          currentValue.push(value);
+        } else {
+          setByPath(next, path, [value]);
+        }
+      }
+
+      for (const [path, value] of Object.entries(pop)) {
+        const currentValue = getByPath(next, path);
+        if (!Array.isArray(currentValue) || currentValue.length === 0) {
+          continue;
+        }
+
+        if (value === -1) {
+          currentValue.shift();
+          continue;
+        }
+
+        if (value === 1) {
+          currentValue.pop();
+        }
+      }
+
+      for (const path of Object.keys(unset)) {
+        unsetByPath(next, path);
+      }
     }
-    for (const path of Object.keys(unset)) {
-      unsetByPath(next, path);
-    }
+
     this.records.set(next._id as string, next as TDocument);
 
     return {

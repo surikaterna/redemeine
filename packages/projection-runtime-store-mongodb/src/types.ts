@@ -35,7 +35,7 @@ export interface MongoCollectionLike<TDocument> {
   findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
   updateOne(
     filter: Record<string, unknown>,
-    update: Record<string, unknown>,
+    update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
     options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown>;
   bulkWrite(

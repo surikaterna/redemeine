@@ -436,6 +436,36 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       };
     }
 
+    const filter: Record<string, unknown> = { _id: write.documentId };
+    for (const guard of plan.testGuards) {
+      filter[`state.${guard.path}`] = guard.value;
+    }
+
+    if (plan.mode === 'compiled-update-pipeline') {
+      const pipeline = plan.pipeline.map((stage) => {
+        if (!stage.$set || typeof stage.$set !== 'object') {
+          return stage;
+        }
+
+        return {
+          ...stage,
+          $set: {
+            ...stage.$set,
+            checkpoint: write.checkpoint,
+            updatedAt: this.now()
+          }
+        };
+      });
+
+      return {
+        updateOne: {
+          filter,
+          update: pipeline,
+          upsert: true
+        }
+      };
+    }
+
     const setDoc: Record<string, unknown> = {
       ...baseSet
     };
@@ -448,9 +478,12 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       updateDoc.$unset = Object.fromEntries(plan.unset.map((path) => [`state.${path}`, '']));
     }
 
-    const filter: Record<string, unknown> = { _id: write.documentId };
-    for (const guard of plan.testGuards) {
-      filter[`state.${guard.path}`] = guard.value;
+    if (Object.keys(plan.push).length > 0) {
+      updateDoc.$push = Object.fromEntries(Object.entries(plan.push).map(([path, value]) => [`state.${path}`, value]));
+    }
+
+    if (Object.keys(plan.pop).length > 0) {
+      updateDoc.$pop = Object.fromEntries(Object.entries(plan.pop).map(([path, value]) => [`state.${path}`, value]));
     }
 
     return {
