@@ -44,3 +44,15 @@ export type {
 
 // Error codes and error class (value exports)
 export { SyncErrorCode, SyncRuntimeError } from './errors';
+
+// Validation
+export { validateEnvelope } from './validation';
+export type { ValidationResult } from './validation';
+
+// Registration resolver
+export { createRegistrationResolver } from './registration-resolver';
+export type { RegistrationResolver } from './registration-resolver';
+
+// Batch processor
+export { createAggregateRuntimeProcessor } from './processor';
+export type { AggregateRuntimeProcessor } from './processor';
