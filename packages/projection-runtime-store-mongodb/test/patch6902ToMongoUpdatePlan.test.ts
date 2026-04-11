@@ -374,7 +374,7 @@ describe('patch6902ToMongoUpdatePlan', () => {
     expect(plan.pipeline[0]?.$set).toBeDefined();
   });
 
-  test('falls back for unsafe mixed with safe paths', () => {
+  test('compiles ordered pipeline for unsafe mixed with safe paths', () => {
     const fullDocument = {
       'a.b': 1,
       safe: true
@@ -388,24 +388,75 @@ describe('patch6902ToMongoUpdatePlan', () => {
       fullDocument
     );
 
-    expect(plan).toEqual({
-      mode: 'fallback-full-document',
-      fullDocument,
-      fallbackReason: 'unsafe-path-mixed-with-safe-paths',
-      cacheKey: plan.cacheKey
-    });
+    expect(plan.mode).toBe('compiled-update-pipeline');
+    if (plan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+
+    const stageSet = (plan.pipeline[0]?.$set as Record<string, unknown>) ?? {};
+    expect(stageSet.state).toBeDefined();
   });
 
-  test('falls back deterministically for root add', () => {
+  test('compiles deterministic root add as whole-state pipeline set', () => {
     const fullDocument = { total: 1 };
 
     const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '', value: { total: 1 } }], fullDocument);
 
-    expect(plan).toEqual({
-      mode: 'fallback-full-document',
-      fullDocument,
-      fallbackReason: 'add-root-path-not-compiled',
-      cacheKey: plan.cacheKey
-    });
+    expect(plan.mode).toBe('compiled-update-pipeline');
+    if (plan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+
+    expect((plan.pipeline[0]?.$set as Record<string, unknown>).state).toEqual(fullDocument);
+  });
+
+  test('compiles deterministic root remove/copy/move as whole-state pipeline set', () => {
+    const removePlan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '' }], { after: 'ignored' });
+    expect(removePlan.mode).toBe('compiled-update-pipeline');
+    if (removePlan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+    expect((removePlan.pipeline[0]?.$set as Record<string, unknown>).state).toBeNull();
+
+    const copyState = { copied: true };
+    const copyPlan = patch6902ToMongoUpdatePlan([{ op: 'copy', from: '/from', path: '' }], copyState);
+    expect(copyPlan.mode).toBe('compiled-update-pipeline');
+    if (copyPlan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+    expect((copyPlan.pipeline[0]?.$set as Record<string, unknown>).state).toEqual(copyState);
+
+    const moveState = { moved: true };
+    const movePlan = patch6902ToMongoUpdatePlan([{ op: 'move', from: '/from', path: '' }], moveState);
+    expect(movePlan.mode).toBe('compiled-update-pipeline');
+    if (movePlan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+    expect((movePlan.pipeline[0]?.$set as Record<string, unknown>).state).toEqual(moveState);
+  });
+
+  test('compiles broader ordered mixed array/object sequence as pipeline', () => {
+    const fullDocument = {
+      profile: { status: 'published', title: 'new' },
+      lines: ['a', 'x', 'b', 'd'],
+      'meta.tag': 'v2'
+    };
+
+    const plan = patch6902ToMongoUpdatePlan(
+      [
+        { op: 'replace', path: '/profile/title', value: 'new' },
+        { op: 'remove', path: '/lines/1' },
+        { op: 'add', path: '/lines/2', value: 'b' },
+        { op: 'add', path: '/meta.tag', value: 'v2' }
+      ],
+      fullDocument
+    );
+
+    expect(plan.mode).toBe('compiled-update-pipeline');
+    if (plan.mode !== 'compiled-update-pipeline') {
+      throw new Error('expected compiled-update-pipeline');
+    }
+
+    expect((plan.pipeline[0]?.$set as Record<string, unknown>).state).toEqual(fullDocument);
   });
 });
