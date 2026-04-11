@@ -119,3 +119,20 @@ export {
   type QueueDrain,
   createQueueDrain,
 } from './upstream';
+
+export {
+  type PendingEventSummary,
+  type LaneLagMetrics,
+  type SyncHealthMetrics,
+  type ConnectionChangedAlert,
+  type QueueDepthThresholdAlert,
+  type SyncLagThresholdAlert,
+  type PendingEventThresholdAlert,
+  type SyncAlert,
+  type IMetricSink,
+  type HealthSnapshotDependencies,
+  captureHealthSnapshot,
+  type SyncHealthThresholds,
+  defaultThresholds,
+  checkThresholds,
+} from './health';
