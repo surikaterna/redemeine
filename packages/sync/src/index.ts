@@ -50,7 +50,6 @@ export type {
   CommandMetadata,
   QueuedCommand,
   ICommandQueue,
-  SyncLane as StoreSyncLane,
   Checkpoint,
   ICheckpointStore,
 } from './store';
