@@ -651,7 +651,7 @@ describe('MongoProjectionStore', () => {
     expect(typeof stageSet.updatedAt).toBe('string');
   });
 
-  test('commitAtomicMany falls back deterministically to fullDocument when patch path is unsafe', async () => {
+  test('commitAtomicMany compiles unsafe dotted key patch with dynamic field pipeline', async () => {
     const collection = createProjectionDocumentCollection<Record<string, unknown>>();
     const store = new MongoProjectionStore<Record<string, unknown>>({
       collection,
@@ -661,8 +661,7 @@ describe('MongoProjectionStore', () => {
     });
 
     const fullDocument = {
-      'a.b': 1,
-      safe: true
+      'a.b': 1
     };
 
     const result = await store.commitAtomicMany({
@@ -675,10 +674,10 @@ describe('MongoProjectionStore', () => {
               documentId: 'doc-fallback-scenarios',
               mode: 'patch',
               fullDocument,
-              patch: [{ op: 'add', path: '/a.b', value: 1 }],
-              checkpoint: { sequence: 1 }
-            }
-          ],
+               patch: [{ op: 'add', path: '/a.b', value: 1 }],
+               checkpoint: { sequence: 1 }
+             }
+           ],
           dedupe: { upserts: [] }
         }
       ]
@@ -689,13 +688,57 @@ describe('MongoProjectionStore', () => {
 
     const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
     const latestUpdate = updateOperations[updateOperations.length - 1] as
-      | { detail?: { update?: Record<string, unknown> } }
+      | { detail?: { update?: ReadonlyArray<Record<string, unknown>> | Record<string, unknown> } }
       | undefined;
     const updateDoc = latestUpdate?.detail?.update;
-    const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
+    expect(Array.isArray(updateDoc)).toBe(true);
+    if (!Array.isArray(updateDoc)) {
+      throw new Error('expected update pipeline array');
+    }
 
-    expect(setDoc.state).toEqual(fullDocument);
-    expect(setDoc['state.a.b']).toBeUndefined();
+    const stageSet = (updateDoc[0]?.$set as Record<string, unknown>) ?? {};
+    expect(stageSet.state).toBeDefined();
+    expect(stageSet['state.a.b']).toBeUndefined();
+  });
+
+  test('commitAtomicMany emits telemetry with mode fallback reason and cache metadata', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const telemetry: Array<Record<string, unknown>> = [];
+
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient(),
+      patchPlanTelemetry: (event) => telemetry.push(event as unknown as Record<string, unknown>)
+    });
+
+    const write = {
+      routingKeySource: 'invoice-summary:doc-telemetry',
+      documents: [
+        {
+          documentId: 'doc-telemetry',
+          mode: 'patch' as const,
+          fullDocument: { lines: ['a', 'b', 'c'] },
+          patch: [{ op: 'add' as const, path: '/lines/-', value: 'c' }],
+          checkpoint: { sequence: 1 }
+        }
+      ],
+      dedupe: { upserts: [] }
+    };
+
+    const first = await store.commitAtomicMany({ mode: 'atomic-all', writes: [write] });
+    expect(first.status).toBe('committed');
+
+    const second = await store.commitAtomicMany({ mode: 'atomic-all', writes: [write] });
+    expect(second.status).toBe('committed');
+
+    expect(telemetry).toHaveLength(2);
+    expect(telemetry[0]?.mode).toBe('compiled-update-document');
+    expect(telemetry[0]?.cacheHit).toBe(false);
+    expect(telemetry[1]?.cacheHit).toBe(true);
+    expect(typeof telemetry[0]?.cacheKey).toBe('string');
+    expect(telemetry[0]?.fallbackReason).toBeUndefined();
   });
 
   test('commitAtomicMany uses unordered bulkWrite for atomic-all writes', async () => {

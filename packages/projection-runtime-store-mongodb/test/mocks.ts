@@ -17,6 +17,73 @@ import type {
 
 type AnyRecord = Record<string, unknown>;
 
+const isRecord = (value: unknown): value is AnyRecord => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const deepEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) {
+    return true;
+  }
+
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    for (let index = 0; index < left.length; index += 1) {
+      if (!deepEqual(left[index], right[index])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+
+    for (const key of leftKeys) {
+      if (!Object.prototype.hasOwnProperty.call(right, key)) {
+        return false;
+      }
+      if (!deepEqual(left[key], right[key])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  return false;
+};
+
+const cloneValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => cloneValue(entry));
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneValue(entry)]));
+  }
+
+  return value;
+};
+
+const setFieldImmutable = (input: unknown, field: string, value: unknown): unknown => {
+  const base = isRecord(input) ? { ...input } : {};
+  base[field] = value;
+  return base;
+};
+
+const unsetFieldImmutable = (input: unknown, field: string): unknown => {
+  const base = isRecord(input) ? { ...input } : {};
+  delete base[field];
+  return base;
+};
+
 const getByPath = (doc: AnyRecord, path: string): unknown => {
   if (!path.includes('.')) {
     return doc[path];
@@ -142,6 +209,87 @@ const evaluateExpression = (expression: unknown, root: AnyRecord): unknown => {
     return left - right;
   }
 
+  if ('$eq' in expression) {
+    const args = evaluateExpression(expression.$eq, root);
+    if (!Array.isArray(args) || args.length !== 2) {
+      return false;
+    }
+
+    return deepEqual(args[0], args[1]);
+  }
+
+  if ('$and' in expression) {
+    const args = evaluateExpression(expression.$and, root);
+    if (!Array.isArray(args)) {
+      return false;
+    }
+
+    return args.every((entry) => entry === true);
+  }
+
+  if ('$ne' in expression) {
+    const args = evaluateExpression(expression.$ne, root);
+    if (!Array.isArray(args) || args.length !== 2) {
+      return false;
+    }
+
+    return !deepEqual(args[0], args[1]);
+  }
+
+  if ('$type' in expression) {
+    const value = evaluateExpression(expression.$type, root);
+    if (value === undefined) {
+      return 'missing';
+    }
+    if (value === null) {
+      return 'null';
+    }
+    if (Array.isArray(value)) {
+      return 'array';
+    }
+    if (typeof value === 'object') {
+      return 'object';
+    }
+    if (typeof value === 'boolean') {
+      return 'bool';
+    }
+    if (typeof value === 'number') {
+      return 'double';
+    }
+    return 'string';
+  }
+
+  if ('$getField' in expression && isRecord(expression.$getField)) {
+    const input = evaluateExpression(expression.$getField.input, root);
+    const field = evaluateExpression(expression.$getField.field, root);
+    if (!isRecord(input) || typeof field !== 'string') {
+      return undefined;
+    }
+
+    return input[field];
+  }
+
+  if ('$setField' in expression && isRecord(expression.$setField)) {
+    const input = evaluateExpression(expression.$setField.input, root);
+    const field = evaluateExpression(expression.$setField.field, root);
+    const value = evaluateExpression(expression.$setField.value, root);
+    if (typeof field !== 'string') {
+      return input;
+    }
+
+    return setFieldImmutable(input, field, cloneValue(value));
+  }
+
+  if ('$unsetField' in expression && isRecord(expression.$unsetField)) {
+    const input = evaluateExpression(expression.$unsetField.input, root);
+    const field = evaluateExpression(expression.$unsetField.field, root);
+    if (typeof field !== 'string') {
+      return input;
+    }
+
+    return unsetFieldImmutable(input, field);
+  }
+
   return expression;
 };
 
@@ -151,8 +299,17 @@ const matches = <TDocument extends AnyRecord>(
 ): boolean => {
   const keys = Object.keys(filter);
   for (const key of keys) {
+    if (key === '$expr') {
+      if (evaluateExpression(filter.$expr, doc as AnyRecord) !== true) {
+        return false;
+      }
+      continue;
+    }
+
     if (getByPath(doc, key) !== filter[key]) {
-      return false;
+      if (!deepEqual(getByPath(doc, key), filter[key])) {
+        return false;
+      }
     }
   }
   return true;

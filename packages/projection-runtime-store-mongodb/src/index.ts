@@ -22,6 +22,8 @@ export type {
 export type {
   MongoCollectionLike,
   MongoProjectionStoreOptions,
+  MongoPatchPlanTelemetryEvent,
+  MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,

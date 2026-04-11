@@ -56,9 +56,25 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   mongoClient: MongoClientLike;
   transactionOptions?: TransactionOptions;
   now?: () => string;
+  patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
+  patchPlanCacheMaxEntries?: number;
 }
 
 export interface MongoProjectionLinkStoreOptions {
   collection: MongoCollectionLike<ProjectionLinkRecord>;
   now?: () => string;
+}
+
+export type MongoPatchPlanMode =
+  | 'compiled-update-document'
+  | 'compiled-update-pipeline'
+  | 'fallback-full-document';
+
+export interface MongoPatchPlanTelemetryEvent {
+  documentId: string;
+  mode: MongoPatchPlanMode;
+  fallbackReason?: string;
+  cacheKey: string;
+  cacheHit: boolean;
+  patchLength: number;
 }
