@@ -1,10 +1,11 @@
 /**
  * Core batch processor for the aggregate sync runtime.
- * Processes command-only envelopes through the aggregate lifecycle:
- * validate → resolve → idempotency → hydrate → dispatch → save.
+ * Processes command-only and command_with_events envelopes through
+ * the aggregate lifecycle: validate → resolve → idempotency → sequence → hydrate → dispatch → save.
+ * For command_with_events, delegates conflict resolution to per-aggregate plugins.
  */
 
-import type { SyncEnvelope, CommandOnlyEnvelope } from './envelopes';
+import type { SyncEnvelope, CommandOnlyEnvelope, CommandWithEventsEnvelope } from './envelopes';
 import type { AggregateRegistration } from './runtime';
 import type { IAuditSink } from './adapters';
 import type { BatchResult, EnvelopeResult } from './batch-result';
@@ -12,6 +13,8 @@ import type { AggregateRuntimeOptions, AggregateInstance, IDepot } from './optio
 import { SyncErrorCode } from './errors';
 import { validateEnvelope, type ValidationResult } from './validation';
 import { createRegistrationResolver, type RegistrationResolver } from './registration-resolver';
+import { createSequenceEnforcer, type SequenceEnforcer } from './sequence-enforcer';
+import { handleConflict } from './conflict-handler';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -124,6 +127,7 @@ function dispatchCommand(
 async function processCommandOnly(
   envelope: CommandOnlyEnvelope,
   resolver: RegistrationResolver,
+  sequenceEnforcer: SequenceEnforcer,
   options: AggregateRuntimeOptions,
   auditSink: IAuditSink,
 ): Promise<EnvelopeResult> {
@@ -150,6 +154,35 @@ async function processCommandOnly(
   );
   if (duplicateResult !== undefined) {
     return duplicateResult;
+  }
+
+  // Sequence enforcement
+  const sequenceResult = await sequenceEnforcer.enforce(
+    envelope.aggregateType,
+    envelope.aggregateId,
+    envelope.sequence,
+  );
+
+  if (sequenceResult.status === 'duplicate_sequence') {
+    auditSink.emit({
+      type: 'duplicate',
+      envelopeId: envelope.envelopeId,
+      aggregateType: envelope.aggregateType,
+      aggregateId: envelope.aggregateId,
+    });
+    return { status: 'duplicate', envelopeId: envelope.envelopeId };
+  }
+
+  if (sequenceResult.status === 'gap' || sequenceResult.status === 'out_of_order') {
+    auditSink.emit({
+      type: 'rejected',
+      envelopeId: envelope.envelopeId,
+      reason: `${SyncErrorCode.SEQUENCE_GAP}: expected ${sequenceResult.expected}, received ${sequenceResult.received}`,
+    });
+    return rejectEnvelope(
+      envelope.envelopeId,
+      `${SyncErrorCode.SEQUENCE_GAP}: expected sequence ${sequenceResult.expected}, received ${sequenceResult.received}`,
+    );
   }
 
   // Lazy hydrate
@@ -181,6 +214,146 @@ async function processCommandOnly(
   return { status: 'accepted', envelopeId: envelope.envelopeId };
 }
 
+async function processCommandWithEvents(
+  envelope: CommandWithEventsEnvelope,
+  resolver: RegistrationResolver,
+  sequenceEnforcer: SequenceEnforcer,
+  options: AggregateRuntimeOptions,
+  auditSink: IAuditSink,
+): Promise<EnvelopeResult> {
+  // Resolve registration
+  const registration = resolver.resolve(envelope.aggregateType);
+  if (registration === undefined) {
+    auditSink.emit({
+      type: 'rejected',
+      envelopeId: envelope.envelopeId,
+      reason: `Unknown aggregate type: ${envelope.aggregateType}`,
+    });
+    return rejectEnvelope(
+      envelope.envelopeId,
+      `${SyncErrorCode.UNKNOWN_AGGREGATE}: Unknown aggregate type "${envelope.aggregateType}"`,
+    );
+  }
+
+  // Idempotency check
+  const duplicateResult = await checkIdempotency(
+    envelope.envelopeId,
+    envelope.aggregateType,
+    envelope.aggregateId,
+    options,
+  );
+  if (duplicateResult !== undefined) {
+    return duplicateResult;
+  }
+
+  // Sequence enforcement
+  const sequenceResult = await sequenceEnforcer.enforce(
+    envelope.aggregateType,
+    envelope.aggregateId,
+    envelope.sequence,
+  );
+
+  if (sequenceResult.status === 'duplicate_sequence') {
+    auditSink.emit({
+      type: 'duplicate',
+      envelopeId: envelope.envelopeId,
+      aggregateType: envelope.aggregateType,
+      aggregateId: envelope.aggregateId,
+    });
+    return { status: 'duplicate', envelopeId: envelope.envelopeId };
+  }
+
+  if (sequenceResult.status === 'gap' || sequenceResult.status === 'out_of_order') {
+    auditSink.emit({
+      type: 'rejected',
+      envelopeId: envelope.envelopeId,
+      reason: `${SyncErrorCode.SEQUENCE_GAP}: expected ${sequenceResult.expected}, received ${sequenceResult.received}`,
+    });
+    return rejectEnvelope(
+      envelope.envelopeId,
+      `${SyncErrorCode.SEQUENCE_GAP}: expected sequence ${sequenceResult.expected}, received ${sequenceResult.received}`,
+    );
+  }
+
+  // Lazy hydrate
+  const instance = await hydrateAggregate(
+    options.depot,
+    envelope.aggregateType,
+    envelope.aggregateId,
+  );
+
+  // Dispatch command → produces local events
+  const producedEvents = dispatchCommand(
+    registration,
+    envelope.commandType,
+    instance.state,
+    envelope.payload,
+  );
+
+  // Compare local vs upstream events via conflict handler
+  const conflictResult = handleConflict({
+    producedEvents,
+    upstreamEvents: envelope.events,
+    resolver: registration.conflictResolver,
+    aggregateType: envelope.aggregateType,
+    aggregateId: envelope.aggregateId,
+    envelopeId: envelope.envelopeId,
+  });
+
+  if (conflictResult.outcome === 'no_conflict') {
+    await options.depot.save(envelope.aggregateType, envelope.aggregateId, producedEvents);
+    auditSink.emit({
+      type: 'accepted',
+      envelopeId: envelope.envelopeId,
+      aggregateType: envelope.aggregateType,
+      aggregateId: envelope.aggregateId,
+    });
+    return { status: 'accepted', envelopeId: envelope.envelopeId };
+  }
+
+  if (conflictResult.outcome === 'unresolved') {
+    auditSink.emit({
+      type: 'conflict',
+      envelopeId: envelope.envelopeId,
+      aggregateType: envelope.aggregateType,
+      aggregateId: envelope.aggregateId,
+      decision: 'unresolved',
+    });
+    return rejectEnvelope(
+      envelope.envelopeId,
+      `${SyncErrorCode.PROCESSING_ERROR}: ${conflictResult.reason}`,
+    );
+  }
+
+  // outcome === 'resolved'
+  const { decision } = conflictResult;
+
+  // Emit conflict audit signal for any conflict (even resolved ones)
+  auditSink.emit({
+    type: 'conflict',
+    envelopeId: envelope.envelopeId,
+    aggregateType: envelope.aggregateType,
+    aggregateId: envelope.aggregateId,
+    decision: decision.decision,
+  });
+
+  if (decision.decision === 'reject') {
+    return rejectEnvelope(
+      envelope.envelopeId,
+      `${SyncErrorCode.PROCESSING_ERROR}: conflict rejected: ${decision.reason}`,
+    );
+  }
+
+  // accept → save upstream events; override → save override events
+  await options.depot.save(envelope.aggregateType, envelope.aggregateId, conflictResult.events);
+
+  return {
+    status: 'conflict_resolved',
+    envelopeId: envelope.envelopeId,
+    decision,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch per envelope type
 // ---------------------------------------------------------------------------
@@ -188,6 +361,7 @@ async function processCommandOnly(
 async function processEnvelope(
   envelope: SyncEnvelope,
   resolver: RegistrationResolver,
+  sequenceEnforcer: SequenceEnforcer,
   options: AggregateRuntimeOptions,
 ): Promise<EnvelopeResult> {
   // Validate structure
@@ -219,20 +393,11 @@ async function processEnvelope(
 
   // Process command_only
   if (envelope.type === 'command_only') {
-    return processCommandOnly(envelope, resolver, options, options.auditSink);
+    return processCommandOnly(envelope, resolver, sequenceEnforcer, options, options.auditSink);
   }
 
-  // command_with_events: not implemented in this bead (4gs.4 scope)
-  // For now, reject with processing error to avoid silent drops
-  options.auditSink.emit({
-    type: 'rejected',
-    envelopeId: envelope.envelopeId,
-    reason: 'command_with_events processing not yet implemented',
-  });
-  return rejectEnvelope(
-    envelope.envelopeId,
-    `${SyncErrorCode.PROCESSING_ERROR}: command_with_events processing not yet implemented`,
-  );
+  // Process command_with_events
+  return processCommandWithEvents(envelope, resolver, sequenceEnforcer, options, options.auditSink);
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +412,7 @@ export function createAggregateRuntimeProcessor(
   options: AggregateRuntimeOptions,
 ): AggregateRuntimeProcessor {
   const resolver = createRegistrationResolver(options.registrations);
+  const sequenceEnforcer = createSequenceEnforcer(options.orderingStore);
 
   return {
     async processBatch(
@@ -257,7 +423,7 @@ export function createAggregateRuntimeProcessor(
 
       for (let i = 0; i < envelopes.length; i++) {
         try {
-          const result = await processEnvelope(envelopes[i], resolver, options);
+          const result = await processEnvelope(envelopes[i], resolver, sequenceEnforcer, options);
 
           // Stop on first failure (rejected = failure for batch semantics)
           if (result.status === 'rejected') {

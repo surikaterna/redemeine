@@ -56,3 +56,11 @@ export type { RegistrationResolver } from './registration-resolver';
 // Batch processor
 export { createAggregateRuntimeProcessor } from './processor';
 export type { AggregateRuntimeProcessor } from './processor';
+
+// Sequence enforcer
+export { createSequenceEnforcer } from './sequence-enforcer';
+export type { SequenceEnforcer, SequenceCheckResult } from './sequence-enforcer';
+
+// Conflict handler
+export { handleConflict, eventsMatch } from './conflict-handler';
+export type { ConflictHandlerContext, ConflictHandlerResult } from './conflict-handler';
