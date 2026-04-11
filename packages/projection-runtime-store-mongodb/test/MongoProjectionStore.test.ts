@@ -476,7 +476,7 @@ describe('MongoProjectionStore', () => {
     });
   });
 
-  test('commitAtomicMany uses compiled patch plan for common deep object and array removals', async () => {
+  test('commitAtomicMany uses compiled update document mode for indexed replace and remove-first/last', async () => {
     const collection = createProjectionDocumentCollection<Record<string, unknown>>();
     const store = new MongoProjectionStore<Record<string, unknown>>({
       collection,
@@ -487,7 +487,8 @@ describe('MongoProjectionStore', () => {
 
     const fullDocument = {
       profile: { address: { city: 'Gothenburg' } },
-      lines: ['a', 'c', 'd', 'e']
+      lines: ['b', 'c', 'd'],
+      tail: ['x', 'y']
     };
 
     const result = await store.commitAtomicMany({
@@ -502,7 +503,8 @@ describe('MongoProjectionStore', () => {
               fullDocument,
               patch: [
                 { op: 'replace', path: '/profile/address/city', value: 'Gothenburg' },
-                { op: 'remove', path: '/lines/1' }
+                { op: 'remove', path: '/lines/0' },
+                { op: 'remove', path: '/tail/2' }
               ],
               checkpoint: { sequence: 1 }
             }
@@ -518,12 +520,135 @@ describe('MongoProjectionStore', () => {
     const latestUpdate = updateOperations[updateOperations.length - 1] as
       | { detail?: { update?: Record<string, unknown> } }
       | undefined;
-    const updateDoc = latestUpdate?.detail?.update;
+    const updateDoc = latestUpdate?.detail?.update as Record<string, unknown>;
     const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
 
     expect(setDoc['state.profile.address.city']).toBe('Gothenburg');
-    expect(setDoc['state.lines']).toEqual(['a', 'c', 'd', 'e']);
+    expect(setDoc['state.lines']).toBeUndefined();
     expect(setDoc.state).toBeUndefined();
+    expect((updateDoc.$pop as Record<string, unknown>)['state.lines']).toBe(-1);
+    expect((updateDoc.$pop as Record<string, unknown>)['state.tail']).toBe(1);
+  });
+
+  test('commitAtomicMany uses compiled update document mode for append and indexed append equivalence', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-append-scenarios',
+          documents: [
+            {
+              documentId: 'doc-append-scenarios',
+              mode: 'patch',
+              fullDocument: {
+                lines: ['a', 'b', 'c'],
+                tags: ['x', 'y']
+              },
+              patch: [
+                { op: 'add', path: '/lines/-', value: 'c' },
+                { op: 'add', path: '/tags/1', value: 'y' }
+              ],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+
+    const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
+    const latestUpdate = updateOperations[updateOperations.length - 1] as
+      | { detail?: { update?: Record<string, unknown> } }
+      | undefined;
+    const updateDoc = latestUpdate?.detail?.update as Record<string, unknown>;
+    const pushDoc = (updateDoc.$push as Record<string, unknown>) ?? {};
+
+    expect(pushDoc['state.lines']).toBe('c');
+    expect(pushDoc['state.tags']).toBe('y');
+  });
+
+  test('commitAtomicMany uses compiled update pipeline mode for remove-middle', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const seeded = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-pipeline-remove-middle-seed',
+          documents: [
+            {
+              documentId: 'doc-pipeline-remove-middle',
+              mode: 'full',
+              fullDocument: {
+                lines: ['a', 'b', 'c', 'd', 'e']
+              },
+              checkpoint: { sequence: 2 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(seeded.status).toBe('committed');
+
+    const fullDocument = {
+      lines: ['a', 'c', 'd', 'e']
+    };
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-pipeline-remove-middle',
+          documents: [
+            {
+              documentId: 'doc-pipeline-remove-middle',
+              mode: 'patch',
+              fullDocument,
+              patch: [{ op: 'remove', path: '/lines/1' }],
+              checkpoint: { sequence: 3 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+    expect(await store.load('doc-pipeline-remove-middle')).toEqual(fullDocument);
+
+    const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
+    const latestUpdate = updateOperations[updateOperations.length - 1] as
+      | { detail?: { update?: ReadonlyArray<Record<string, unknown>> | Record<string, unknown> } }
+      | undefined;
+    const update = latestUpdate?.detail?.update;
+
+    expect(Array.isArray(update)).toBe(true);
+    if (!Array.isArray(update)) {
+      throw new Error('expected update pipeline array');
+    }
+
+    const stageSet = (update[0]?.$set as Record<string, unknown>) ?? {};
+    expect(stageSet['state.lines']).toBeDefined();
+    expect(stageSet.checkpoint).toEqual({ sequence: 3 });
+    expect(typeof stageSet.updatedAt).toBe('string');
   });
 
   test('commitAtomicMany falls back deterministically to fullDocument when patch path is unsafe', async () => {

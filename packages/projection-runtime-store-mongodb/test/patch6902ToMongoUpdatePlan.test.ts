@@ -13,9 +13,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     );
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { profile: fullDocument.profile },
       unset: [],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
@@ -31,14 +33,16 @@ describe('patch6902ToMongoUpdatePlan', () => {
     );
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { 'profile.address.city': 'Gothenburg' },
       unset: [],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
 
-  test('scenario: remove first array element compiles as parent array set', () => {
+  test('scenario: remove first array element compiles as $pop:-1', () => {
     const fullDocument = {
       lines: ['b', 'c', 'd']
     };
@@ -46,14 +50,16 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '/lines/0' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
-      set: { lines: ['b', 'c', 'd'] },
+      mode: 'compiled-update-document',
+      set: {},
       unset: [],
+      push: {},
+      pop: { lines: -1 },
       testGuards: []
     });
   });
 
-  test('scenario: remove middle element in long array compiles as parent array set', () => {
+  test('scenario: remove middle element compiles as update pipeline', () => {
     const fullDocument = {
       lines: ['a', 'b', 'd', 'e', 'f']
     };
@@ -61,14 +67,26 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '/lines/2' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
-      set: { lines: ['a', 'b', 'd', 'e', 'f'] },
-      unset: [],
+      mode: 'compiled-update-pipeline',
+      pipeline: [
+        {
+          $set: {
+            'state.lines': {
+              $concatArrays: [
+                { $slice: ['$state.lines', 2] },
+                {
+                  $slice: ['$state.lines', 3, { $subtract: [{ $size: '$state.lines' }, 3] }]
+                }
+              ]
+            }
+          }
+        }
+      ],
       testGuards: []
     });
   });
 
-  test('scenario: remove last array element compiles as parent array set', () => {
+  test('scenario: remove last array element compiles as $pop:1', () => {
     const fullDocument = {
       lines: ['a', 'b', 'c']
     };
@@ -76,9 +94,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '/lines/3' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
-      set: { lines: ['a', 'b', 'c'] },
+      mode: 'compiled-update-document',
+      set: {},
       unset: [],
+      push: {},
+      pop: { lines: 1 },
       testGuards: []
     });
   });
@@ -91,9 +111,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '/meta/status', value: 'open' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { 'meta.status': 'open' },
       unset: [],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
@@ -106,9 +128,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '/meta/obsolete' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: {},
       unset: ['meta.obsolete'],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
@@ -127,9 +151,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     );
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { 'nested.keep': false },
       unset: [],
+      push: {},
+      pop: {},
       testGuards: [{ path: 'nested.keep', value: true }]
     });
   });
@@ -143,9 +169,11 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'copy', from: '/total', path: '/snapshotTotal' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { snapshotTotal: 7 },
       unset: [],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
@@ -158,25 +186,96 @@ describe('patch6902ToMongoUpdatePlan', () => {
     const plan = patch6902ToMongoUpdatePlan([{ op: 'move', from: '/from', path: '/to' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
+      mode: 'compiled-update-document',
       set: { to: 'value' },
       unset: ['from'],
+      push: {},
+      pop: {},
       testGuards: []
     });
   });
 
-  test('scenario: add array element by index compiles as parent array set', () => {
+  test('scenario: add array append by dash compiles as $push', () => {
     const fullDocument = {
       lines: ['a', 'b', 'c']
     };
 
-    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '/lines/1', value: 'b' }], fullDocument);
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '/lines/-', value: 'c' }], fullDocument);
 
     expect(plan).toEqual({
-      mode: 'compiled',
-      set: { lines: ['a', 'b', 'c'] },
+      mode: 'compiled-update-document',
+      set: {},
       unset: [],
+      push: { lines: 'c' },
+      pop: {},
       testGuards: []
+    });
+  });
+
+  test('scenario: indexed append equivalence compiles as $push', () => {
+    const fullDocument = {
+      lines: ['a', 'b', 'c']
+    };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '/lines/2', value: 'c' }], fullDocument);
+
+    expect(plan).toEqual({
+      mode: 'compiled-update-document',
+      set: {},
+      unset: [],
+      push: { lines: 'c' },
+      pop: {},
+      testGuards: []
+    });
+  });
+
+  test('scenario: indexed replace compiles as direct set', () => {
+    const fullDocument = {
+      lines: ['a', 'B', 'c']
+    };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'replace', path: '/lines/1', value: 'B' }], fullDocument);
+
+    expect(plan).toEqual({
+      mode: 'compiled-update-document',
+      set: { 'lines.1': 'B' },
+      unset: [],
+      push: {},
+      pop: {},
+      testGuards: []
+    });
+  });
+
+  test('falls back for non-append indexed add into middle of array', () => {
+    const fullDocument = {
+      lines: ['a', 'x', 'b', 'c']
+    };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '/lines/1', value: 'x' }], fullDocument);
+
+    expect(plan).toEqual({
+      mode: 'fallback-full-document',
+      fullDocument
+    });
+  });
+
+  test('falls back for mixed middle-remove pipeline and additional ops', () => {
+    const fullDocument = {
+      lines: ['a', 'c', 'd'],
+      status: 'open'
+    };
+
+    const plan = patch6902ToMongoUpdatePlan(
+      [
+        { op: 'remove', path: '/lines/1' },
+        { op: 'add', path: '/status', value: 'open' }
+      ],
+      fullDocument
+    );
+
+    expect(plan).toEqual({
+      mode: 'fallback-full-document',
+      fullDocument
     });
   });
 
