@@ -9,6 +9,8 @@ import type { SyncEnvelope, CommandOnlyEnvelope, CommandWithEventsEnvelope } fro
 import type { IAuditSink } from './adapters';
 import type { BatchResult, EnvelopeResult } from './batch-result';
 import type { AggregateRuntimeOptions } from './options';
+import type { AuditContext } from './audit';
+import { createAuditRecord } from './audit';
 import { SyncErrorCode } from './errors';
 import { validateEnvelope, type ValidationResult } from './validation';
 import { createRegistrationResolver, type RegistrationResolver } from './registration-resolver';
@@ -82,6 +84,7 @@ async function processCommandOnly(
   sequenceEnforcer: SequenceEnforcer,
   options: AggregateRuntimeOptions,
   auditSink: IAuditSink,
+  auditCtx: AuditContext,
 ): Promise<EnvelopeResult> {
   const preflight = await runPreflight(envelope, resolver, sequenceEnforcer, options, auditSink);
   if (preflight.ok === false) {
@@ -90,12 +93,13 @@ async function processCommandOnly(
 
   await options.depot.save(envelope.aggregateType, envelope.aggregateId, preflight.producedEvents);
 
-  auditSink.emit({
-    type: 'accepted',
+  const signal = {
+    type: 'accepted' as const,
     envelopeId: envelope.envelopeId,
     aggregateType: envelope.aggregateType,
     aggregateId: envelope.aggregateId,
-  });
+  };
+  auditSink.emit(createAuditRecord(signal, auditCtx));
 
   return { status: 'accepted', envelopeId: envelope.envelopeId };
 }
@@ -106,6 +110,7 @@ async function processCommandWithEvents(
   sequenceEnforcer: SequenceEnforcer,
   options: AggregateRuntimeOptions,
   auditSink: IAuditSink,
+  auditCtx: AuditContext,
 ): Promise<EnvelopeResult> {
   const preflight = await runPreflight(envelope, resolver, sequenceEnforcer, options, auditSink);
   if (preflight.ok === false) {
@@ -123,23 +128,25 @@ async function processCommandWithEvents(
 
   if (conflictResult.outcome === 'no_conflict') {
     await options.depot.save(envelope.aggregateType, envelope.aggregateId, preflight.producedEvents);
-    auditSink.emit({
-      type: 'accepted',
+    const signal = {
+      type: 'accepted' as const,
       envelopeId: envelope.envelopeId,
       aggregateType: envelope.aggregateType,
       aggregateId: envelope.aggregateId,
-    });
+    };
+    auditSink.emit(createAuditRecord(signal, auditCtx));
     return { status: 'accepted', envelopeId: envelope.envelopeId };
   }
 
   if (conflictResult.outcome === 'unresolved') {
-    auditSink.emit({
-      type: 'conflict',
+    const signal = {
+      type: 'conflict' as const,
       envelopeId: envelope.envelopeId,
       aggregateType: envelope.aggregateType,
       aggregateId: envelope.aggregateId,
-      decision: 'unresolved',
-    });
+      decision: 'unresolved' as const,
+    };
+    auditSink.emit(createAuditRecord(signal, auditCtx));
     return rejectEnvelope(
       envelope.envelopeId,
       `${SyncErrorCode.PROCESSING_ERROR}: ${conflictResult.reason}`,
@@ -149,13 +156,14 @@ async function processCommandWithEvents(
   // outcome === 'resolved'
   const { decision } = conflictResult;
 
-  auditSink.emit({
-    type: 'conflict',
+  const conflictSignal = {
+    type: 'conflict' as const,
     envelopeId: envelope.envelopeId,
     aggregateType: envelope.aggregateType,
     aggregateId: envelope.aggregateId,
     decision: decision.decision,
-  });
+  };
+  auditSink.emit(createAuditRecord(conflictSignal, auditCtx));
 
   if (decision.decision === 'reject') {
     return rejectEnvelope(
@@ -182,7 +190,10 @@ async function processEnvelope(
   resolver: RegistrationResolver,
   sequenceEnforcer: SequenceEnforcer,
   options: AggregateRuntimeOptions,
+  ingestedAt: string,
 ): Promise<EnvelopeResult> {
+  const startTime = Date.now();
+
   // Validate structure
   const validation = validateEnvelope(envelope);
   if (isInvalidResult(validation)) {
@@ -210,13 +221,22 @@ async function processEnvelope(
     );
   }
 
+  // Build audit context for enriched records
+  const auditCtx: AuditContext = {
+    occurredAt: envelope.occurredAt,
+    ingestedAt,
+    aggregateType: envelope.aggregateType,
+    aggregateId: envelope.aggregateId,
+    startTime,
+  };
+
   // Process command_only
   if (envelope.type === 'command_only') {
-    return processCommandOnly(envelope, resolver, sequenceEnforcer, options, options.auditSink);
+    return processCommandOnly(envelope, resolver, sequenceEnforcer, options, options.auditSink, auditCtx);
   }
 
   // Process command_with_events
-  return processCommandWithEvents(envelope, resolver, sequenceEnforcer, options, options.auditSink);
+  return processCommandWithEvents(envelope, resolver, sequenceEnforcer, options, options.auditSink, auditCtx);
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +262,7 @@ export function createAggregateRuntimeProcessor(
 
       for (let i = 0; i < envelopes.length; i++) {
         try {
-          const result = await processEnvelope(envelopes[i], resolver, sequenceEnforcer, options);
+          const result = await processEnvelope(envelopes[i], resolver, sequenceEnforcer, options, ingestedAt);
 
           // Stop on first failure (rejected = failure for batch semantics)
           if (result.status === 'rejected') {
