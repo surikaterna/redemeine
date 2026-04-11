@@ -326,6 +326,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
   private static readonly allCollections = new Set<InMemoryMongoCollection<{ _id: string }>>();
   private readonly records = new Map<string, TDocument>();
   readonly operationLog: Array<{ op: 'bulkWrite' | 'updateOne' | 'deleteOne' | 'deleteMany' | 'findOne'; detail?: unknown }> = [];
+  readonly sessionLog: Array<{ method: string; session: unknown }> = [];
 
   constructor() {
     InMemoryMongoCollection.allCollections.add(this as unknown as InMemoryMongoCollection<{ _id: string }>);
@@ -379,6 +380,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown> {
     this.operationLog.push({ op: 'updateOne', detail: { filter, update } });
+    this.sessionLog.push({ method: 'updateOne', session: options?.session });
     const current = await this.findOne(filter);
 
     if (!current && !options?.upsert) {
@@ -452,8 +454,8 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>,
     options?: Pick<BulkWriteOptions, 'ordered' | 'session'>
   ): Promise<unknown> {
-    void options;
     this.operationLog.push({ op: 'bulkWrite', detail: { count: operations.length } });
+    this.sessionLog.push({ method: 'bulkWrite', session: options?.session });
 
     let modifiedCount = 0;
     let upsertedCount = 0;
@@ -492,8 +494,8 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
   }
 
   async deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown> {
-    void options;
     this.operationLog.push({ op: 'deleteOne', detail: { filter } });
+    this.sessionLog.push({ method: 'deleteOne', session: options?.session });
     if (typeof filter._id === 'string') {
       return { deletedCount: this.records.delete(filter._id) ? 1 : 0 };
     }
@@ -509,8 +511,8 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
   }
 
   async deleteMany(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown> {
-    void options;
     this.operationLog.push({ op: 'deleteMany', detail: { filter } });
+    this.sessionLog.push({ method: 'deleteMany', session: options?.session });
     let deleted = 0;
     for (const [key, value] of this.records.entries()) {
       if (matches(value as AnyRecord, filter)) {

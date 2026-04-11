@@ -7,11 +7,7 @@ import type {
 } from '../contracts';
 import { assertWritePrecondition, createInvalidRequestFailure, toWriteFailure } from '../storeFailures';
 import type { ProjectionDocumentRecord } from '../types';
-
-const withSession = <T extends object>(options: T, session: ClientSession): T & { session: ClientSession } => ({
-  ...options,
-  session
-});
+import { withSession } from './withSession';
 
 const cloneCheckpoint = (checkpoint: Checkpoint): Checkpoint => ({
   sequence: checkpoint.sequence,

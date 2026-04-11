@@ -15,12 +15,7 @@ export const parsePointer = (path: string): string[] => {
     throw new Error(`Invalid RFC6902 JSON Pointer path "${path}".`);
   }
 
-  const normalized = path.slice(1);
-  if (!normalized) {
-    return [];
-  }
-
-  return normalized.split('/').map(decodePathSegmentStrict);
+  return path.slice(1).split('/').map(decodePathSegmentStrict);
 };
 
 export const isArrayIndexLike = (token: string): boolean => token === '-' || /^\d+$/u.test(token);

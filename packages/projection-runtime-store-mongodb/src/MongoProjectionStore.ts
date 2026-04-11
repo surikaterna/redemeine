@@ -12,17 +12,13 @@ import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
+import { withSession } from './store/withSession';
 import type {
   MongoPatchPlanTelemetryEvent,
   MongoProjectionStoreOptions
 } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
-
-const withSession = <T extends object>(options: T, session: ClientSession): T & { session: ClientSession } => ({
-  ...options,
-  session
-});
 
 /**
  * Mongo-backed projection store adapter with transaction-backed atomicity.
