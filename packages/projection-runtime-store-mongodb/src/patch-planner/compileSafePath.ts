@@ -1,11 +1,11 @@
 import { fallback } from './fallback';
+import { tryCompileDeterministicRootOp } from './compileRootOperation';
 import { buildPresenceGuardExpr, buildStrictEqualityExpr, buildTypeGuardExpr } from './exprBuilders';
 import { toMongoPath } from './mongoPath';
 import { buildMiddleArrayInsertPipeline, buildMiddleArrayRemovePipeline } from './pipelineBuilders';
 import { isArrayIndexLike, isNumericArrayIndex, parentTokens, parsePointer } from './pointer';
 import { readAtPointer, readAtTokens } from './stateReader';
 import type {
-  MongoPatchCompiledUpdatePipelinePlan,
   MongoPatchFallbackPlan,
   PatchOperationEntry,
   PlannerRuntime
@@ -174,37 +174,6 @@ const removeAtPath = <TState>(runtime: PlannerRuntime<TState>, path: string): bo
   }
 
   return removeObjectAtPath(runtime, tokens);
-};
-
-const tryCompileDeterministicRootOp = <TState>(
-  runtime: PlannerRuntime<TState>,
-  entry: PatchOperationEntry
-): MongoPatchCompiledUpdatePipelinePlan | MongoPatchFallbackPlan<TState> | null => {
-  const { cacheKey, fullDocument, state } = runtime;
-  if (entry.tokens.length !== 0) {
-    return null;
-  }
-
-  if (entry.op.op === 'test') {
-    state.exprGuards.push(buildStrictEqualityExpr([], entry.op.value));
-    return null;
-  }
-
-  if (runtime.entries.some((candidate) => candidate.op.op !== 'test' && candidate !== entry)) {
-    return fallback(fullDocument, 'op-root-path-mixed-with-other-mutations', cacheKey);
-  }
-
-  if (['add', 'replace', 'remove', 'copy', 'move'].includes(entry.op.op)) {
-    return {
-      mode: 'compiled-update-pipeline',
-      pipeline: [{ $set: { state: entry.op.op === 'remove' ? null : fullDocument } }],
-      testGuards: state.testGuards,
-      exprGuards: state.exprGuards,
-      cacheKey
-    };
-  }
-
-  return fallback(fullDocument, 'unsupported-operation', cacheKey);
 };
 
 const compileTestOperation = <TState>(
