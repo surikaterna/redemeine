@@ -6,15 +6,15 @@
  */
 
 import type { SyncEnvelope, CommandOnlyEnvelope, CommandWithEventsEnvelope } from './envelopes';
-import type { AggregateRegistration } from './runtime';
 import type { IAuditSink } from './adapters';
 import type { BatchResult, EnvelopeResult } from './batch-result';
-import type { AggregateRuntimeOptions, AggregateInstance, IDepot } from './options';
+import type { AggregateRuntimeOptions } from './options';
 import { SyncErrorCode } from './errors';
 import { validateEnvelope, type ValidationResult } from './validation';
 import { createRegistrationResolver, type RegistrationResolver } from './registration-resolver';
 import { createSequenceEnforcer, type SequenceEnforcer } from './sequence-enforcer';
 import { handleConflict } from './conflict-handler';
+import { runPreflight } from './preflight';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -73,56 +73,8 @@ function buildCompletedBatch(
 }
 
 // ---------------------------------------------------------------------------
-// Single-envelope processing
+// Per-envelope-type processing
 // ---------------------------------------------------------------------------
-
-async function checkIdempotency(
-  envelopeId: string,
-  aggregateType: string,
-  aggregateId: string,
-  options: AggregateRuntimeOptions,
-): Promise<EnvelopeResult | undefined> {
-  const reserved = await options.idempotencyStore.reserve(envelopeId);
-  if (!reserved) {
-    options.auditSink.emit({
-      type: 'duplicate',
-      envelopeId,
-      aggregateType,
-      aggregateId,
-    });
-    return { status: 'duplicate', envelopeId };
-  }
-  return undefined;
-}
-
-async function hydrateAggregate(
-  depot: IDepot,
-  aggregateType: string,
-  aggregateId: string,
-): Promise<AggregateInstance> {
-  const existing = await depot.get(aggregateType, aggregateId);
-  if (existing !== undefined) {
-    return existing;
-  }
-  return { state: undefined, version: 0 };
-}
-
-function dispatchCommand(
-  registration: AggregateRegistration,
-  commandType: string,
-  state: unknown,
-  payload: unknown,
-): ReadonlyArray<unknown> {
-  const handler = registration.commandHandlers[commandType];
-  if (handler === undefined) {
-    throw new Error(`No handler registered for command "${commandType}" on aggregate "${registration.aggregateType}"`);
-  }
-  const result = handler(state, payload);
-  if (Array.isArray(result)) {
-    return result as ReadonlyArray<unknown>;
-  }
-  return [result];
-}
 
 async function processCommandOnly(
   envelope: CommandOnlyEnvelope,
@@ -131,79 +83,13 @@ async function processCommandOnly(
   options: AggregateRuntimeOptions,
   auditSink: IAuditSink,
 ): Promise<EnvelopeResult> {
-  // Resolve registration
-  const registration = resolver.resolve(envelope.aggregateType);
-  if (registration === undefined) {
-    auditSink.emit({
-      type: 'rejected',
-      envelopeId: envelope.envelopeId,
-      reason: `Unknown aggregate type: ${envelope.aggregateType}`,
-    });
-    return rejectEnvelope(
-      envelope.envelopeId,
-      `${SyncErrorCode.UNKNOWN_AGGREGATE}: Unknown aggregate type "${envelope.aggregateType}"`,
-    );
+  const preflight = await runPreflight(envelope, resolver, sequenceEnforcer, options, auditSink);
+  if (preflight.ok === false) {
+    return preflight.result;
   }
 
-  // Idempotency check
-  const duplicateResult = await checkIdempotency(
-    envelope.envelopeId,
-    envelope.aggregateType,
-    envelope.aggregateId,
-    options,
-  );
-  if (duplicateResult !== undefined) {
-    return duplicateResult;
-  }
+  await options.depot.save(envelope.aggregateType, envelope.aggregateId, preflight.producedEvents);
 
-  // Sequence enforcement
-  const sequenceResult = await sequenceEnforcer.enforce(
-    envelope.aggregateType,
-    envelope.aggregateId,
-    envelope.sequence,
-  );
-
-  if (sequenceResult.status === 'duplicate_sequence') {
-    auditSink.emit({
-      type: 'duplicate',
-      envelopeId: envelope.envelopeId,
-      aggregateType: envelope.aggregateType,
-      aggregateId: envelope.aggregateId,
-    });
-    return { status: 'duplicate', envelopeId: envelope.envelopeId };
-  }
-
-  if (sequenceResult.status === 'gap' || sequenceResult.status === 'out_of_order') {
-    auditSink.emit({
-      type: 'rejected',
-      envelopeId: envelope.envelopeId,
-      reason: `${SyncErrorCode.SEQUENCE_GAP}: expected ${sequenceResult.expected}, received ${sequenceResult.received}`,
-    });
-    return rejectEnvelope(
-      envelope.envelopeId,
-      `${SyncErrorCode.SEQUENCE_GAP}: expected sequence ${sequenceResult.expected}, received ${sequenceResult.received}`,
-    );
-  }
-
-  // Lazy hydrate
-  const instance = await hydrateAggregate(
-    options.depot,
-    envelope.aggregateType,
-    envelope.aggregateId,
-  );
-
-  // Dispatch command
-  const events = dispatchCommand(
-    registration,
-    envelope.commandType,
-    instance.state,
-    envelope.payload,
-  );
-
-  // Save events
-  await options.depot.save(envelope.aggregateType, envelope.aggregateId, events);
-
-  // Emit accepted signal
   auditSink.emit({
     type: 'accepted',
     envelopeId: envelope.envelopeId,
@@ -221,87 +107,22 @@ async function processCommandWithEvents(
   options: AggregateRuntimeOptions,
   auditSink: IAuditSink,
 ): Promise<EnvelopeResult> {
-  // Resolve registration
-  const registration = resolver.resolve(envelope.aggregateType);
-  if (registration === undefined) {
-    auditSink.emit({
-      type: 'rejected',
-      envelopeId: envelope.envelopeId,
-      reason: `Unknown aggregate type: ${envelope.aggregateType}`,
-    });
-    return rejectEnvelope(
-      envelope.envelopeId,
-      `${SyncErrorCode.UNKNOWN_AGGREGATE}: Unknown aggregate type "${envelope.aggregateType}"`,
-    );
+  const preflight = await runPreflight(envelope, resolver, sequenceEnforcer, options, auditSink);
+  if (preflight.ok === false) {
+    return preflight.result;
   }
 
-  // Idempotency check
-  const duplicateResult = await checkIdempotency(
-    envelope.envelopeId,
-    envelope.aggregateType,
-    envelope.aggregateId,
-    options,
-  );
-  if (duplicateResult !== undefined) {
-    return duplicateResult;
-  }
-
-  // Sequence enforcement
-  const sequenceResult = await sequenceEnforcer.enforce(
-    envelope.aggregateType,
-    envelope.aggregateId,
-    envelope.sequence,
-  );
-
-  if (sequenceResult.status === 'duplicate_sequence') {
-    auditSink.emit({
-      type: 'duplicate',
-      envelopeId: envelope.envelopeId,
-      aggregateType: envelope.aggregateType,
-      aggregateId: envelope.aggregateId,
-    });
-    return { status: 'duplicate', envelopeId: envelope.envelopeId };
-  }
-
-  if (sequenceResult.status === 'gap' || sequenceResult.status === 'out_of_order') {
-    auditSink.emit({
-      type: 'rejected',
-      envelopeId: envelope.envelopeId,
-      reason: `${SyncErrorCode.SEQUENCE_GAP}: expected ${sequenceResult.expected}, received ${sequenceResult.received}`,
-    });
-    return rejectEnvelope(
-      envelope.envelopeId,
-      `${SyncErrorCode.SEQUENCE_GAP}: expected sequence ${sequenceResult.expected}, received ${sequenceResult.received}`,
-    );
-  }
-
-  // Lazy hydrate
-  const instance = await hydrateAggregate(
-    options.depot,
-    envelope.aggregateType,
-    envelope.aggregateId,
-  );
-
-  // Dispatch command → produces local events
-  const producedEvents = dispatchCommand(
-    registration,
-    envelope.commandType,
-    instance.state,
-    envelope.payload,
-  );
-
-  // Compare local vs upstream events via conflict handler
   const conflictResult = handleConflict({
-    producedEvents,
+    producedEvents: preflight.producedEvents,
     upstreamEvents: envelope.events,
-    resolver: registration.conflictResolver,
+    resolver: preflight.registration.conflictResolver,
     aggregateType: envelope.aggregateType,
     aggregateId: envelope.aggregateId,
     envelopeId: envelope.envelopeId,
   });
 
   if (conflictResult.outcome === 'no_conflict') {
-    await options.depot.save(envelope.aggregateType, envelope.aggregateId, producedEvents);
+    await options.depot.save(envelope.aggregateType, envelope.aggregateId, preflight.producedEvents);
     auditSink.emit({
       type: 'accepted',
       envelopeId: envelope.envelopeId,
@@ -328,7 +149,6 @@ async function processCommandWithEvents(
   // outcome === 'resolved'
   const { decision } = conflictResult;
 
-  // Emit conflict audit signal for any conflict (even resolved ones)
   auditSink.emit({
     type: 'conflict',
     envelopeId: envelope.envelopeId,
@@ -344,7 +164,6 @@ async function processCommandWithEvents(
     );
   }
 
-  // accept → save upstream events; override → save override events
   await options.depot.save(envelope.aggregateType, envelope.aggregateId, conflictResult.events);
 
   return {
