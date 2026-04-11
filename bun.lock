@@ -40,6 +40,13 @@
         "@redemeine/kernel": "workspace:*",
       },
     },
+    "packages/aggregate-runtime": {
+      "name": "@redemeine/aggregate-runtime",
+      "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/kernel": "workspace:*",
+      },
+    },
     "packages/kernel": {
       "name": "@redemeine/kernel",
       "version": "0.1.0",
@@ -131,6 +138,10 @@
         "@redemeine/aggregate": "workspace:*",
         "@redemeine/saga": "workspace:*",
       },
+    },
+    "packages/sync": {
+      "name": "@redemeine/sync",
+      "version": "0.1.0",
     },
     "packages/testing": {
       "name": "@redemeine/testing",
@@ -349,6 +360,8 @@
 
     "@redemeine/aggregate": ["@redemeine/aggregate@workspace:packages/aggregate"],
 
+    "@redemeine/aggregate-runtime": ["@redemeine/aggregate-runtime@workspace:packages/aggregate-runtime"],
+
     "@redemeine/kernel": ["@redemeine/kernel@workspace:packages/kernel"],
 
     "@redemeine/mirage": ["@redemeine/mirage@workspace:packages/mirage"],
@@ -374,6 +387,8 @@
     "@redemeine/saga": ["@redemeine/saga@workspace:packages/saga"],
 
     "@redemeine/saga-runtime": ["@redemeine/saga-runtime@workspace:packages/saga-runtime"],
+
+    "@redemeine/sync": ["@redemeine/sync@workspace:packages/sync"],
 
     "@redemeine/testing": ["@redemeine/testing@workspace:packages/testing"],
 
