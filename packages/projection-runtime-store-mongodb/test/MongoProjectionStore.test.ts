@@ -476,6 +476,103 @@ describe('MongoProjectionStore', () => {
     });
   });
 
+  test('commitAtomicMany uses compiled patch plan for common deep object and array removals', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const fullDocument = {
+      profile: { address: { city: 'Gothenburg' } },
+      lines: ['a', 'c', 'd', 'e']
+    };
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-compiled-scenarios',
+          documents: [
+            {
+              documentId: 'doc-compiled-scenarios',
+              mode: 'patch',
+              fullDocument,
+              patch: [
+                { op: 'replace', path: '/profile/address/city', value: 'Gothenburg' },
+                { op: 'remove', path: '/lines/1' }
+              ],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+
+    const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
+    const latestUpdate = updateOperations[updateOperations.length - 1] as
+      | { detail?: { update?: Record<string, unknown> } }
+      | undefined;
+    const updateDoc = latestUpdate?.detail?.update;
+    const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
+
+    expect(setDoc['state.profile.address.city']).toBe('Gothenburg');
+    expect(setDoc['state.lines']).toEqual(['a', 'c', 'd', 'e']);
+    expect(setDoc.state).toBeUndefined();
+  });
+
+  test('commitAtomicMany falls back deterministically to fullDocument when patch path is unsafe', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient()
+    });
+
+    const fullDocument = {
+      'a.b': 1,
+      safe: true
+    };
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-fallback-scenarios',
+          documents: [
+            {
+              documentId: 'doc-fallback-scenarios',
+              mode: 'patch',
+              fullDocument,
+              patch: [{ op: 'add', path: '/a.b', value: 1 }],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+    expect(await store.load('doc-fallback-scenarios')).toEqual(fullDocument);
+
+    const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
+    const latestUpdate = updateOperations[updateOperations.length - 1] as
+      | { detail?: { update?: Record<string, unknown> } }
+      | undefined;
+    const updateDoc = latestUpdate?.detail?.update;
+    const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
+
+    expect(setDoc.state).toEqual(fullDocument);
+    expect(setDoc['state.a.b']).toBeUndefined();
+  });
+
   test('commitAtomicMany uses unordered bulkWrite for atomic-all writes', async () => {
     const collection = createProjectionDocumentCollection<Record<string, unknown>>();
     const dedupeCollection = createProjectionDedupeCollection();
