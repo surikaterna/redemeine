@@ -1241,6 +1241,52 @@ describe('MongoProjectionStore', () => {
     expect(telemetry[0]?.fallbackReason).toBeUndefined();
   });
 
+  test('commitAtomicMany applies compiled root replace with state/checkpoint/updatedAt metadata', async () => {
+    const collection = createProjectionDocumentCollection<Record<string, unknown>>();
+    const now = () => '2026-04-11T12:00:00.000Z';
+    const store = new MongoProjectionStore<Record<string, unknown>>({
+      collection,
+      linkCollection: createProjectionLinkCollection(),
+      dedupeCollection: createProjectionDedupeCollection(),
+      mongoClient: createFakeMongoClient(),
+      now
+    });
+
+    const nextState = { total: 10, status: 'paid' };
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-root-replace',
+          documents: [
+            {
+              documentId: 'doc-root-replace',
+              mode: 'patch',
+              fullDocument: nextState,
+              patch: [{ op: 'replace', path: '', value: nextState }],
+              checkpoint: { sequence: 7, timestamp: '2026-04-11T12:00:00.000Z' }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+    expect(await store.load('doc-root-replace')).toEqual(nextState);
+
+    const updateOperations = collection.operationLog.filter((entry) => entry.op === 'updateOne');
+    const latestUpdate = updateOperations[updateOperations.length - 1] as
+      | { detail?: { update?: Record<string, unknown> } }
+      | undefined;
+    const updateDoc = latestUpdate?.detail?.update as Record<string, unknown>;
+    const setDoc = (updateDoc?.$set as Record<string, unknown> | undefined) ?? {};
+
+    expect(setDoc.state).toEqual(nextState);
+    expect(setDoc.checkpoint).toEqual({ sequence: 7, timestamp: '2026-04-11T12:00:00.000Z' });
+    expect(setDoc.updatedAt).toBe('2026-04-11T12:00:00.000Z');
+  });
+
   test('commitAtomicMany uses unordered bulkWrite for atomic-all writes', async () => {
     const collection = createProjectionDocumentCollection<Record<string, unknown>>();
     const dedupeCollection = createProjectionDedupeCollection();
