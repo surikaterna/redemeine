@@ -64,3 +64,11 @@ export type { SequenceEnforcer, SequenceCheckResult } from './sequence-enforcer'
 // Conflict handler
 export { handleConflict, eventsMatch } from './conflict-handler';
 export type { ConflictHandlerContext, ConflictHandlerResult } from './conflict-handler';
+
+// Audit records (observability)
+export { createAuditRecord } from './audit';
+export type { AuditRecord, AuditContext } from './audit';
+
+// Batch report (observability)
+export { createBatchReport } from './batch-report';
+export type { BatchReport } from './batch-report';
