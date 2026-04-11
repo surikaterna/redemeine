@@ -7,6 +7,7 @@ export type {
   ProjectionStoreAtomicManyCommittedResult,
   ProjectionStoreAtomicManyRejectedResult,
   ProjectionStoreAtomicManyResult,
+  ProjectionStoreRfc6902Operation,
   ProjectionStoreFailureCategory,
   ProjectionStoreWriteFailure,
   ProjectionStoreWritePrecondition,
@@ -21,6 +22,8 @@ export type {
 export type {
   MongoCollectionLike,
   MongoProjectionStoreOptions,
+  MongoPatchPlanTelemetryEvent,
+  MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
@@ -29,3 +32,17 @@ export type {
 
 export { MongoProjectionStore } from './MongoProjectionStore';
 export { MongoProjectionLinkStore, toLinkId } from './MongoProjectionLinkStore';
+export {
+  patch6902ToMongoUpdatePlan
+} from './patch6902ToMongoUpdatePlan';
+export { createPatchPlanTelemetryReport } from './patchPlanTelemetryReport';
+export type {
+  MongoPatchPlanTelemetryReport,
+  MongoPatchPlanModeSummary,
+  MongoPatchLengthStats
+} from './patchPlanTelemetryReport';
+export type {
+  MongoPatchCompiledPlan,
+  MongoPatchFallbackPlan,
+  MongoPatchUpdatePlan
+} from './patch6902ToMongoUpdatePlan';

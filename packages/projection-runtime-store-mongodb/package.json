@@ -15,11 +15,16 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "test": "bun test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "lint": "bunx tsc -p tsconfig.json --noEmit",
+    "bench:patch-planner-store": "bun bench/patchPlannerStore.bench.ts"
   },
   "dependencies": {
-    "@redemeine/projection-runtime-core": "workspace:*"
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "mongodb": "^6.18.0"
+  },
+  "devDependencies": {
+    "immer": "^10.2.0"
   }
 }

@@ -27,6 +27,13 @@ export type ProjectionStoreAtomicManyResult =
 
 export type ProjectionDocumentWriteMode = 'full' | 'patch';
 
+export interface ProjectionStoreRfc6902Operation {
+  op: 'add' | 'remove' | 'replace' | 'move' | 'copy' | 'test';
+  path: string;
+  value?: unknown;
+  from?: string;
+}
+
 export type ProjectionStoreFailureCategory = 'conflict' | 'transient' | 'terminal';
 
 export interface ProjectionStoreWriteFailure {
@@ -59,17 +66,27 @@ export interface ProjectionStoreFullDocumentWrite<TState = unknown> {
   precondition?: ProjectionStoreWritePrecondition;
 }
 
-export interface ProjectionStorePatchDocumentWrite {
+export interface ProjectionStorePatchDocumentWrite<TState = unknown> {
   documentId: string;
   mode: 'patch';
-  patch: Record<string, unknown>;
+  /**
+   * Caller-provided full document state after patch application.
+   *
+   * Required for stores that can safely compile patch operations to partial
+   * updates and otherwise fallback to full-document writes without pre-read.
+   */
+  fullDocument: TState;
+  /**
+   * RFC6902 JSON Patch operations applied in-order.
+   */
+  patch: ReadonlyArray<ProjectionStoreRfc6902Operation>;
   checkpoint: Checkpoint;
   precondition?: ProjectionStoreWritePrecondition;
 }
 
 export type ProjectionStoreDocumentWrite<TState = unknown> =
   | ProjectionStoreFullDocumentWrite<TState>
-  | ProjectionStorePatchDocumentWrite;
+  | ProjectionStorePatchDocumentWrite<TState>;
 
 /**
  * Durable dedupe updates that must persist with projection writes.
@@ -86,6 +103,10 @@ export interface ProjectionStoreAtomicWrite<TState = unknown> {
 
 export interface ProjectionStoreCommitAtomicManyRequest<TState = unknown> {
   mode: 'atomic-all';
+  /**
+   * Contract invariant: at most one document write per documentId across the entire
+   * atomic batch. Duplicate document writes are invalid-request terminal failures.
+   */
   writes: ReadonlyArray<ProjectionStoreAtomicWrite<TState>>;
 }
 

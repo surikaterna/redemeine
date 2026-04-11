@@ -16,19 +16,13 @@ describe('InMemoryProjectionStore v3 conformance', () => {
               mode: 'full',
               fullDocument: { total: 10, status: 'open' },
               checkpoint: { sequence: 10, timestamp: '2026-04-09T00:00:10.000Z' }
-            },
-            {
-              documentId: 'doc-1',
-              mode: 'patch',
-              patch: { total: 12 },
-              checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
             }
           ],
           dedupe: {
             upserts: [
               {
-                key: 'invoice:1:12',
-                checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
+                key: 'invoice:1:10',
+                checkpoint: { sequence: 10, timestamp: '2026-04-09T00:00:10.000Z' }
               }
             ]
           }
@@ -38,16 +32,20 @@ describe('InMemoryProjectionStore v3 conformance', () => {
           documents: [
             {
               documentId: 'doc-2',
-              mode: 'full',
-              fullDocument: { total: 8, status: 'open' },
-              checkpoint: { sequence: 8, timestamp: '2026-04-09T00:00:08.000Z' }
+              mode: 'patch',
+              fullDocument: { status: 'open', total: 12 },
+              patch: [
+                { op: 'add', path: '/status', value: 'open' },
+                { op: 'add', path: '/total', value: 12 }
+              ],
+              checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
             }
           ],
           dedupe: {
             upserts: [
               {
-                key: 'invoice:2:8',
-                checkpoint: { sequence: 8, timestamp: '2026-04-09T00:00:08.000Z' }
+                key: 'invoice:2:12',
+                checkpoint: { sequence: 12, timestamp: '2026-04-09T00:00:12.000Z' }
               }
             ]
           }
@@ -63,20 +61,20 @@ describe('InMemoryProjectionStore v3 conformance', () => {
         timestamp: '2026-04-09T00:00:12.000Z'
       });
       expect(result.byLaneWatermark?.['invoice-summary:doc-1']).toEqual({
+        sequence: 10,
+        timestamp: '2026-04-09T00:00:10.000Z'
+      });
+      expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({
         sequence: 12,
         timestamp: '2026-04-09T00:00:12.000Z'
       });
-      expect(result.byLaneWatermark?.['invoice-summary:doc-2']).toEqual({
-        sequence: 8,
-        timestamp: '2026-04-09T00:00:08.000Z'
-      });
     }
 
-    expect(await store.load('doc-1')).toEqual({ total: 12, status: 'open' });
-    expect(await store.load('doc-2')).toEqual({ total: 8, status: 'open' });
-    expect(await store.getDedupeCheckpoint('invoice:1:12')).toEqual({
-      sequence: 12,
-      timestamp: '2026-04-09T00:00:12.000Z'
+    expect(await store.load('doc-1')).toEqual({ total: 10, status: 'open' });
+    expect(await store.load('doc-2')).toEqual({ total: 12, status: 'open' });
+    expect(await store.getDedupeCheckpoint('invoice:1:10')).toEqual({
+      sequence: 10,
+      timestamp: '2026-04-09T00:00:10.000Z'
     });
   });
 
@@ -103,11 +101,11 @@ describe('InMemoryProjectionStore v3 conformance', () => {
     });
   });
 
-  test('commitAtomicMany rejects at failing index and keeps atomic-all behavior', async () => {
+  test('commitAtomicMany accepts caller fullDocument for patch writes without evaluating patch values', async () => {
     const store = new InMemoryProjectionStore<Record<string, unknown>>();
 
-    const throwingPatch: Record<string, unknown> = {};
-    Object.defineProperty(throwingPatch, 'total', {
+    const throwingValue: Record<string, unknown> = {};
+    Object.defineProperty(throwingValue, 'total', {
       enumerable: true,
       get() {
         throw new Error('injected patch evaluation failure');
@@ -137,7 +135,8 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-2',
               mode: 'patch',
-              patch: throwingPatch,
+              fullDocument: { total: throwingValue },
+              patch: [{ op: 'add', path: '/total', value: throwingValue }],
               checkpoint: { sequence: 2 }
             }
           ],
@@ -148,22 +147,14 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       ]
     });
 
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.highestWatermark).toBeNull();
-      expect(result.failedAtIndex).toBe(1);
-      expect(result.committedCount).toBe(0);
-      expect(result.reason).toBe('injected patch evaluation failure');
-      expect(result.failure).toEqual({
-        category: 'transient',
-        code: 'write-failed',
-        message: 'injected patch evaluation failure',
-        retryable: true
-      });
+    expect(result.status).toBe('committed');
+    if (result.status === 'committed') {
+      expect(result.committedCount).toBe(2);
+      expect(result.highestWatermark).toEqual({ sequence: 2 });
     }
 
-    expect(await store.load('doc-1')).toBeNull();
-    expect(await store.getDedupeCheckpoint('invoice:1:1')).toBeNull();
+    expect(await store.load('doc-1')).toEqual({ total: 1 });
+    expect(await store.getDedupeCheckpoint('invoice:1:1')).toEqual({ sequence: 1 });
   });
 
   test('commitAtomicMany enforces OCC precondition on expected revision', async () => {
@@ -198,7 +189,8 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
-              patch: { total: 4 },
+              fullDocument: { total: 4 },
+              patch: [{ op: 'replace', path: '/total', value: 4 }],
               checkpoint: { sequence: 4 },
               precondition: { expectedRevision: 2 }
             }
@@ -220,5 +212,67 @@ describe('InMemoryProjectionStore v3 conformance', () => {
     }
 
     expect(await store.load('doc-1')).toEqual({ total: 3 });
+  });
+
+  test('commitAtomicMany accepts syntactically valid patch with missing parent when fullDocument is provided', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'patch',
+              fullDocument: { a: { b: 1 } },
+              patch: [{ op: 'add', path: '/a/b', value: 1 }],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('committed');
+    expect(await store.load('doc-1')).toEqual({ a: { b: 1 } });
+  });
+
+  test('commitAtomicMany rejects patch path without leading slash', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'patch',
+              fullDocument: { a: 1 },
+              patch: [{ op: 'add', path: 'a', value: 1 }],
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status === 'rejected') {
+      expect(result.failure).toEqual({
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'Invalid RFC6902 JSON Pointer path "a".',
+        retryable: false
+      });
+      expect(result.reason).toBe('Invalid RFC6902 JSON Pointer path "a".');
+    }
+
+    expect(await store.load('doc-1')).toBeNull();
   });
 });

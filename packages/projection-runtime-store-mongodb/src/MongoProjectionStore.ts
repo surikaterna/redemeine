@@ -1,34 +1,41 @@
 import type {
+  ClientSession,
+  UpdateOptions
+} from 'mongodb';
+import type {
   Checkpoint,
   IProjectionStore,
   ProjectionStoreAtomicManyResult,
-  ProjectionStoreCommitAtomicManyRequest,
-  ProjectionStoreDocumentWrite
+  ProjectionStoreCommitAtomicManyRequest
 } from './contracts';
-import {
-  assertWritePrecondition,
-  createInvalidRequestFailure,
-  toWriteFailure
-} from './storeFailures';
+import { commitAtomicMany } from './store/commitAtomicMany';
+import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
+import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
+import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
+import { withSession } from './store/withSession';
 import type {
-  MongoProjectionStoreOptions,
-  ProjectionDedupeRecord,
-  ProjectionDocumentRecord
+  MongoPatchPlanTelemetryEvent,
+  MongoProjectionStoreOptions
 } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
 
 /**
- * Mongo-backed projection store adapter.
- *
- * This class depends only on a minimal collection-like surface so tests can
- * use in-memory mocks without requiring a live MongoDB server.
+ * Mongo-backed projection store adapter with transaction-backed atomicity.
  */
 export class MongoProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private readonly now: () => string;
+  private readonly patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
+  private readonly patchPlanCacheMaxEntries: number;
+  private readonly patchPlanCache = new Map<
+    string,
+    { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
+  >();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
     this.now = options.now ?? defaultNow;
+    this.patchPlanTelemetry = options.patchPlanTelemetry;
+    this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
   }
 
   async load(documentId: string): Promise<TState | null> {
@@ -37,24 +44,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async save(documentId: string, state: TState, checkpoint: Checkpoint): Promise<void> {
-    const document: ProjectionDocumentRecord<TState> = {
-      _id: documentId,
-      state,
-      checkpoint,
-      updatedAt: this.now()
-    };
-
-    await this.options.collection.updateOne(
-      { _id: documentId },
-      {
-        $set: {
-          state: document.state,
-          checkpoint: document.checkpoint,
-          updatedAt: document.updatedAt
-        }
-      },
-      { upsert: true }
-    );
+    await this.saveWithSession(documentId, state, checkpoint);
   }
 
   async delete(documentId: string): Promise<void> {
@@ -68,141 +58,29 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     cursor: Checkpoint;
     dedupe: { upserts: Array<{ key: string; checkpoint: Checkpoint }> };
   }): Promise<void> {
-    for (const document of write.documents) {
-      await this.save(document.documentId, document.state, document.checkpoint);
-    }
+    const execute = this.createTransactionExecutor();
 
-    for (const link of write.links) {
-      const _id = `${link.aggregateType}:${link.aggregateId}`;
-      await this.options.linkCollection.updateOne(
-        { _id },
-        {
-          $setOnInsert: {
-            aggregateType: link.aggregateType,
-            aggregateId: link.aggregateId,
-            targetDocId: link.targetDocId,
-            createdAt: this.now()
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    await this.save(write.cursorKey, {} as TState, write.cursor);
-
-    for (const dedupe of write.dedupe.upserts) {
-      await this.options.dedupeCollection.updateOne(
-        { _id: dedupe.key },
-        {
-          $set: {
-            checkpoint: dedupe.checkpoint,
-            updatedAt: this.now()
-          }
-        },
-        { upsert: true }
-      );
-    }
+    await execute(async (session) => {
+      await persistCommitAtomicWithBulkWrite(write, session, this.options, this.now);
+    });
   }
 
-  async commitAtomicMany(
-    request: ProjectionStoreCommitAtomicManyRequest<TState>
-  ): Promise<ProjectionStoreAtomicManyResult> {
-    if (request.mode !== 'atomic-all') {
-      const failure = createInvalidRequestFailure(`unsupported mode: ${request.mode}`);
-      return {
-        status: 'rejected',
-        highestWatermark: null,
-        failedAtIndex: 0,
-        failure,
-        reason: failure.message,
-        committedCount: 0
-      };
-    }
-
-    if (request.writes.length === 0) {
-      const failure = createInvalidRequestFailure('no writes');
-      return {
-        status: 'rejected',
-        highestWatermark: null,
-        failedAtIndex: 0,
-        failure,
-        reason: failure.message,
-        committedCount: 0
-      };
-    }
-
-    const byLaneWatermark: Record<string, Checkpoint> = {};
-    let highestWatermark: Checkpoint | null = null;
-    let failedAtIndex = 0;
-    const originalDocuments = new Map<string, ProjectionDocumentRecord<TState> | null>();
-    const originalDedupe = new Map<string, ProjectionDedupeRecord | null>();
-
-    const runInTransaction = this.options.executeInTransaction ?? (async <T>(work: () => Promise<T>): Promise<T> => work());
-
-    try {
-      await runInTransaction(async () => {
-        for (let index = 0; index < request.writes.length; index += 1) {
-          failedAtIndex = index;
-          const write = request.writes[index];
-          let laneWatermark: Checkpoint | null = null;
-
-          for (const document of write.documents) {
-            if (!originalDocuments.has(document.documentId)) {
-              const existing = await this.options.collection.findOne({ _id: document.documentId });
-              originalDocuments.set(document.documentId, existing ? { ...existing } : null);
-            }
-
-            await this.persistDocumentWrite(document);
-            laneWatermark = this.chooseHigherWatermark(laneWatermark, document.checkpoint);
-            highestWatermark = this.chooseHigherWatermark(highestWatermark, document.checkpoint);
-          }
-
-          for (const dedupe of write.dedupe.upserts) {
-            if (!originalDedupe.has(dedupe.key)) {
-              const existing = await this.options.dedupeCollection.findOne({ _id: dedupe.key });
-              originalDedupe.set(dedupe.key, existing ? { ...existing } : null);
-            }
-
-            await this.options.dedupeCollection.updateOne(
-              { _id: dedupe.key },
-              {
-                $set: {
-                  checkpoint: dedupe.checkpoint,
-                  updatedAt: this.now()
-                }
-              },
-              { upsert: true }
-            );
-
-            laneWatermark = this.chooseHigherWatermark(laneWatermark, dedupe.checkpoint);
-            highestWatermark = this.chooseHigherWatermark(highestWatermark, dedupe.checkpoint);
-          }
-
-          if (laneWatermark) {
-            byLaneWatermark[write.routingKeySource] = laneWatermark;
-          }
-        }
-      });
-    } catch (error) {
-      await this.rollbackAtomicMany(originalDocuments, originalDedupe);
-      const failure = toWriteFailure(error);
-
-      return {
-        status: 'rejected',
-        highestWatermark: null,
-        failedAtIndex,
-        failure,
-        reason: failure.message,
-        committedCount: 0
-      };
-    }
-
-    return {
-      status: 'committed',
-      highestWatermark: highestWatermark ?? { sequence: 0 },
-      byLaneWatermark,
-      committedCount: request.writes.length
-    };
+  async commitAtomicMany(request: ProjectionStoreCommitAtomicManyRequest<TState>): Promise<ProjectionStoreAtomicManyResult> {
+    return commitAtomicMany({
+      execute: this.createTransactionExecutor(),
+      request,
+      collection: this.options.collection,
+      dedupeCollection: this.options.dedupeCollection,
+      now: this.now,
+      buildDocumentWriteOperation: (write) =>
+        buildDocumentWriteOperation({
+          write,
+          now: this.now,
+          patchPlanCache: this.patchPlanCache,
+          patchPlanCacheMaxEntries: this.patchPlanCacheMaxEntries,
+          patchPlanTelemetry: this.patchPlanTelemetry
+        })
+    });
   }
 
   async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
@@ -220,91 +98,34 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return row ? row.checkpoint : null;
   }
 
-  private async persistDocumentWrite(write: ProjectionStoreDocumentWrite<TState>): Promise<void> {
-    const current = await this.options.collection.findOne({ _id: write.documentId });
-    assertWritePrecondition(write.documentId, current?.checkpoint ?? null, write.precondition);
-
-    if (write.mode === 'full') {
-      await this.save(write.documentId, write.fullDocument, write.checkpoint);
-      return;
-    }
-
-    const currentState = current?.state;
-    const base =
-      currentState && typeof currentState === 'object' && !Array.isArray(currentState)
-        ? (currentState as Record<string, unknown>)
-        : {};
-
-    const nextState = {
-      ...base,
-      ...write.patch
-    } as TState;
-
-    await this.save(write.documentId, nextState, write.checkpoint);
-  }
-
-  private chooseHigherWatermark(current: Checkpoint | null, next: Checkpoint): Checkpoint {
-    if (!current) {
-      return this.cloneCheckpoint(next);
-    }
-
-    if (next.sequence > current.sequence) {
-      return this.cloneCheckpoint(next);
-    }
-
-    if (next.sequence === current.sequence && next.timestamp && (!current.timestamp || next.timestamp > current.timestamp)) {
-      return this.cloneCheckpoint(next);
-    }
-
-    return current;
-  }
-
-  private cloneCheckpoint(checkpoint: Checkpoint): Checkpoint {
-    return {
-      sequence: checkpoint.sequence,
-      ...(checkpoint.timestamp ? { timestamp: checkpoint.timestamp } : {})
-    };
-  }
-
-  private async rollbackAtomicMany(
-    originalDocuments: Map<string, ProjectionDocumentRecord<TState> | null>,
-    originalDedupe: Map<string, ProjectionDedupeRecord | null>
+  private async saveWithSession(
+    documentId: string,
+    state: TState,
+    checkpoint: Checkpoint,
+    session?: ClientSession
   ): Promise<void> {
-    for (const [documentId, snapshot] of originalDocuments.entries()) {
-      if (!snapshot) {
-        await this.options.collection.deleteOne({ _id: documentId });
-        continue;
-      }
+    const updateOptions: Pick<UpdateOptions, 'upsert' | 'session'> | undefined = session
+      ? withSession<Pick<UpdateOptions, 'upsert'>>({ upsert: true }, session)
+      : { upsert: true };
 
-      await this.options.collection.updateOne(
-        { _id: documentId },
-        {
-          $set: {
-            state: snapshot.state,
-            checkpoint: snapshot.checkpoint,
-            updatedAt: snapshot.updatedAt
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    for (const [dedupeKey, snapshot] of originalDedupe.entries()) {
-      if (!snapshot) {
-        await this.options.dedupeCollection.deleteOne({ _id: dedupeKey });
-        continue;
-      }
-
-      await this.options.dedupeCollection.updateOne(
-        { _id: dedupeKey },
-        {
-          $set: {
-            checkpoint: snapshot.checkpoint,
-            updatedAt: snapshot.updatedAt
-          }
-        },
-        { upsert: true }
-      );
-    }
+    await this.options.collection.updateOne(
+      { _id: documentId },
+      {
+        $set: {
+          state,
+          checkpoint,
+          updatedAt: this.now()
+        }
+      },
+      updateOptions
+    );
   }
+
+  private createTransactionExecutor(): TransactionExecutor {
+    return createTransactionExecutor(
+      () => this.options.mongoClient.startSession(),
+      this.options.transactionOptions
+    );
+  }
+
 }
