@@ -21,6 +21,7 @@ import {
 } from './storeFailures';
 import { patch6902ToMongoUpdatePlan } from './patch6902ToMongoUpdatePlan';
 import type {
+  MongoPatchPlanTelemetryEvent,
   MongoProjectionStoreOptions,
   ProjectionDocumentRecord
 } from './types';
@@ -69,9 +70,17 @@ type TransactionExecutor = <T>(work: (session: ClientSession) => Promise<T>) => 
  */
 export class MongoProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private readonly now: () => string;
+  private readonly patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
+  private readonly patchPlanCacheMaxEntries: number;
+  private readonly patchPlanCache = new Map<
+    string,
+    { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
+  >();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
     this.now = options.now ?? defaultNow;
+    this.patchPlanTelemetry = options.patchPlanTelemetry;
+    this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
   }
 
   async load(documentId: string): Promise<TState | null> {
@@ -413,13 +422,28 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     }
 
     let plan;
+    let cacheHit = false;
     try {
       plan = patch6902ToMongoUpdatePlan(write.patch, write.fullDocument);
+      cacheHit = this.patchPlanCache.has(plan.cacheKey);
+      this.updatePlanCache(plan.cacheKey, {
+        mode: plan.mode,
+        fallbackReason: plan.mode === 'fallback-full-document' ? plan.fallbackReason : undefined
+      });
     } catch (error) {
       throw new ProjectionStoreAtomicManyError(
         createInvalidRequestFailure(error instanceof Error ? error.message : 'invalid patch request')
       );
     }
+
+    this.patchPlanTelemetry?.({
+      documentId: write.documentId,
+      mode: plan.mode,
+      fallbackReason: plan.mode === 'fallback-full-document' ? plan.fallbackReason : undefined,
+      cacheKey: plan.cacheKey,
+      cacheHit,
+      patchLength: write.patch.length
+    });
 
     if (plan.mode === 'fallback-full-document') {
       return {
@@ -439,6 +463,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     const filter: Record<string, unknown> = { _id: write.documentId };
     for (const guard of plan.testGuards) {
       filter[`state.${guard.path}`] = guard.value;
+    }
+    if (plan.exprGuards.length > 0) {
+      filter.$expr = plan.exprGuards.length === 1 ? plan.exprGuards[0] : { $and: plan.exprGuards };
     }
 
     if (plan.mode === 'compiled-update-pipeline') {
@@ -493,6 +520,26 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
         upsert: true
       }
     };
+  }
+
+  private updatePlanCache(
+    cacheKey: string,
+    value: { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
+  ): void {
+    if (this.patchPlanCache.has(cacheKey)) {
+      this.patchPlanCache.delete(cacheKey);
+    }
+
+    this.patchPlanCache.set(cacheKey, value);
+
+    while (this.patchPlanCache.size > this.patchPlanCacheMaxEntries) {
+      const oldest = this.patchPlanCache.keys().next();
+      if (oldest.done) {
+        break;
+      }
+
+      this.patchPlanCache.delete(oldest.value);
+    }
   }
 
   private chooseHigherWatermark(current: Checkpoint | null, next: Checkpoint): Checkpoint {
