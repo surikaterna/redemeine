@@ -496,6 +496,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     const setDoc: Record<string, unknown> = {
       ...baseSet
     };
+    if (plan.setState !== undefined) {
+      setDoc.state = plan.setState;
+    }
     for (const [path, value] of Object.entries(plan.set)) {
       setDoc[`state.${path}`] = value;
     }

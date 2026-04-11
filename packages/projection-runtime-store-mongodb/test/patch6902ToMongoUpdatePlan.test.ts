@@ -396,15 +396,46 @@ describe('patch6902ToMongoUpdatePlan', () => {
     });
   });
 
-  test('falls back deterministically for root add', () => {
+  test('compiles root add as direct full state set', () => {
     const fullDocument = { total: 1 };
 
-    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '', value: { total: 1 } }], fullDocument);
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'add', path: '', value: fullDocument }], fullDocument);
+
+    expect(plan.mode).toBe('compiled-update-document');
+    if (plan.mode !== 'compiled-update-document') {
+      throw new Error('expected compiled-update-document');
+    }
+
+    expect(plan.setState).toEqual(fullDocument);
+    expect(plan.set).toEqual({});
+    expect(plan.unset).toEqual([]);
+    expect(plan.push).toEqual({});
+    expect(plan.pop).toEqual({});
+  });
+
+  test('compiles root replace as direct full state set', () => {
+    const fullDocument = { total: 2, status: 'open' };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'replace', path: '', value: fullDocument }], fullDocument);
+
+    expect(plan.mode).toBe('compiled-update-document');
+    if (plan.mode !== 'compiled-update-document') {
+      throw new Error('expected compiled-update-document');
+    }
+
+    expect(plan.setState).toEqual(fullDocument);
+    expect(plan.set).toEqual({});
+  });
+
+  test('falls back deterministically for root remove', () => {
+    const fullDocument = { total: 1 };
+
+    const plan = patch6902ToMongoUpdatePlan([{ op: 'remove', path: '' }], fullDocument);
 
     expect(plan).toEqual({
       mode: 'fallback-full-document',
       fullDocument,
-      fallbackReason: 'add-root-path-not-compiled',
+      fallbackReason: 'remove-root-path-not-compiled',
       cacheKey: plan.cacheKey
     });
   });

@@ -12,6 +12,7 @@ type MongoPatchBaseCompiledPlan = {
 
 export type MongoPatchCompiledUpdateDocumentPlan = MongoPatchBaseCompiledPlan & {
   mode: 'compiled-update-document';
+  setState?: unknown;
   set: Readonly<Record<MongoScalarPath, unknown>>;
   unset: ReadonlyArray<MongoScalarPath>;
   push: Readonly<Record<MongoScalarPath, unknown>>;
@@ -317,6 +318,7 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
   const testGuards: Array<MongoPatchTestGuard> = [];
   const exprGuards: Array<Record<string, unknown>> = [];
   let pipeline: ReadonlyArray<Record<string, unknown>> | null = null;
+  let setState: TState | undefined;
 
   const hasPushOrPop = (): boolean => Object.keys(push).length > 0 || Object.keys(pop).length > 0;
 
@@ -634,6 +636,14 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
     }
 
     if (operation.op === 'remove') {
+      if (tokens.length === 0) {
+        return fallback(fullDocument, 'remove-root-path-not-compiled', cacheKey);
+      }
+
+      if (setState !== undefined) {
+        return fallback(fullDocument, 'root-replacement-mixed-with-non-root-mutations', cacheKey);
+      }
+
       if (!removeAtPath(operation.path)) {
         return fallback(fullDocument, 'remove-not-compileable', cacheKey);
       }
@@ -642,7 +652,16 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
 
     if (operation.op === 'replace' || operation.op === 'add') {
       if (tokens.length === 0) {
-        return fallback(fullDocument, `${operation.op}-root-path-not-compiled`, cacheKey);
+        if (pipeline !== null || hasPushOrPop() || unset.size > 0 || Object.keys(set).length > 0) {
+          return fallback(fullDocument, `${operation.op}-root-path-mixed-with-other-mutations`, cacheKey);
+        }
+
+        setState = fullDocument;
+        continue;
+      }
+
+      if (setState !== undefined) {
+        return fallback(fullDocument, 'root-replacement-mixed-with-non-root-mutations', cacheKey);
       }
 
       const leaf = tokens[tokens.length - 1] ?? '';
@@ -685,6 +704,14 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
         throw new Error('RFC6902 copy operation requires "from".');
       }
 
+      if (tokens.length === 0 || parsePointer(operation.from).length === 0) {
+        return fallback(fullDocument, 'copy-root-path-not-compiled', cacheKey);
+      }
+
+      if (setState !== undefined) {
+        return fallback(fullDocument, 'root-replacement-mixed-with-non-root-mutations', cacheKey);
+      }
+
       const fromTokens = parsePointer(operation.from);
       if (fromTokens.length > 0) {
         exprGuards.push(buildPresenceGuardExpr(fromTokens));
@@ -699,6 +726,14 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
     if (operation.op === 'move') {
       if (!operation.from) {
         throw new Error('RFC6902 move operation requires "from".');
+      }
+
+      if (tokens.length === 0 || parsePointer(operation.from).length === 0) {
+        return fallback(fullDocument, 'move-root-path-not-compiled', cacheKey);
+      }
+
+      if (setState !== undefined) {
+        return fallback(fullDocument, 'root-replacement-mixed-with-non-root-mutations', cacheKey);
       }
 
       const fromTokens = parsePointer(operation.from);
@@ -755,6 +790,7 @@ export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
 
   return {
     mode: 'compiled-update-document',
+    ...(setState !== undefined ? { setState } : {}),
     set,
     unset: [...unset.values()],
     push,

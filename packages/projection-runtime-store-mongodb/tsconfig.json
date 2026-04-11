@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "moduleResolution": "node",
+    "ignoreDeprecations": "5.0",
     "rootDir": "src",
     "outDir": "dist"
   },

@@ -35,6 +35,12 @@ export { MongoProjectionLinkStore, toLinkId } from './MongoProjectionLinkStore';
 export {
   patch6902ToMongoUpdatePlan
 } from './patch6902ToMongoUpdatePlan';
+export { createPatchPlanTelemetryReport } from './patchPlanTelemetryReport';
+export type {
+  MongoPatchPlanTelemetryReport,
+  MongoPatchPlanModeSummary,
+  MongoPatchLengthStats
+} from './patchPlanTelemetryReport';
 export type {
   MongoPatchCompiledPlan,
   MongoPatchFallbackPlan,
