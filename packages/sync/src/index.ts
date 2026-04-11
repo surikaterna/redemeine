@@ -53,3 +53,21 @@ export type {
   Checkpoint,
   ICheckpointStore,
 } from './store';
+
+export {
+  type ReconciliationResult,
+  type ConfirmedOutcome,
+  type SupersededOutcome,
+  type NewOutcome,
+  type AlreadyConfirmedOutcome,
+  type ErrorOutcome,
+  type AuthoritativeEvent,
+  type EventMatcher,
+  defaultEventMatcher,
+  ReconciliationDispatcher,
+  type EventApplier,
+  type RebuildResult,
+  rebuildFromConfirmed,
+  type ProducedEvent,
+  createPendingEvents,
+} from './pending';
