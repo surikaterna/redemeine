@@ -33,6 +33,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-2',
               mode: 'patch',
+              fullDocument: { status: 'open', total: 12 },
               patch: [
                 { op: 'add', path: '/status', value: 'open' },
                 { op: 'add', path: '/total', value: 12 }
@@ -100,7 +101,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
     });
   });
 
-  test('commitAtomicMany rejects at failing index and keeps atomic-all behavior', async () => {
+  test('commitAtomicMany accepts caller fullDocument for patch writes without evaluating patch values', async () => {
     const store = new InMemoryProjectionStore<Record<string, unknown>>();
 
     const throwingValue: Record<string, unknown> = {};
@@ -134,6 +135,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-2',
               mode: 'patch',
+              fullDocument: { total: throwingValue },
               patch: [{ op: 'add', path: '/total', value: throwingValue }],
               checkpoint: { sequence: 2 }
             }
@@ -145,22 +147,14 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       ]
     });
 
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.highestWatermark).toBeNull();
-      expect(result.failedAtIndex).toBe(1);
-      expect(result.committedCount).toBe(0);
-      expect(result.reason).toBe('injected patch evaluation failure');
-      expect(result.failure).toEqual({
-        category: 'terminal',
-        code: 'invalid-request',
-        message: 'injected patch evaluation failure',
-        retryable: false
-      });
+    expect(result.status).toBe('committed');
+    if (result.status === 'committed') {
+      expect(result.committedCount).toBe(2);
+      expect(result.highestWatermark).toEqual({ sequence: 2 });
     }
 
-    expect(await store.load('doc-1')).toBeNull();
-    expect(await store.getDedupeCheckpoint('invoice:1:1')).toBeNull();
+    expect(await store.load('doc-1')).toEqual({ total: 1 });
+    expect(await store.getDedupeCheckpoint('invoice:1:1')).toEqual({ sequence: 1 });
   });
 
   test('commitAtomicMany enforces OCC precondition on expected revision', async () => {
@@ -195,6 +189,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
+              fullDocument: { total: 4 },
               patch: [{ op: 'replace', path: '/total', value: 4 }],
               checkpoint: { sequence: 4 },
               precondition: { expectedRevision: 2 }
@@ -219,7 +214,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
     expect(await store.load('doc-1')).toEqual({ total: 3 });
   });
 
-  test('commitAtomicMany rejects patch add when parent path is missing', async () => {
+  test('commitAtomicMany accepts syntactically valid patch with missing parent when fullDocument is provided', async () => {
     const store = new InMemoryProjectionStore<Record<string, unknown>>();
 
     const result = await store.commitAtomicMany({
@@ -231,6 +226,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
+              fullDocument: { a: { b: 1 } },
               patch: [{ op: 'add', path: '/a/b', value: 1 }],
               checkpoint: { sequence: 1 }
             }
@@ -240,18 +236,8 @@ describe('InMemoryProjectionStore v3 conformance', () => {
       ]
     });
 
-    expect(result.status).toBe('rejected');
-    if (result.status === 'rejected') {
-      expect(result.failure).toEqual({
-        category: 'terminal',
-        code: 'invalid-request',
-        message: 'RFC6902 path not found "/a/b".',
-        retryable: false
-      });
-      expect(result.reason).toBe('RFC6902 path not found "/a/b".');
-    }
-
-    expect(await store.load('doc-1')).toBeNull();
+    expect(result.status).toBe('committed');
+    expect(await store.load('doc-1')).toEqual({ a: { b: 1 } });
   });
 
   test('commitAtomicMany rejects patch path without leading slash', async () => {
@@ -266,6 +252,7 @@ describe('InMemoryProjectionStore v3 conformance', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
+              fullDocument: { a: 1 },
               patch: [{ op: 'add', path: 'a', value: 1 }],
               checkpoint: { sequence: 1 }
             }

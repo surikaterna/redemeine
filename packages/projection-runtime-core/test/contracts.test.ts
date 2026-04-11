@@ -380,6 +380,7 @@ describe('projection-runtime-core contract types', () => {
     const patchWrite: ProjectionStoreDocumentWrite = {
       documentId: 'doc-1',
       mode: 'patch',
+      fullDocument: { total: 12 },
       patch: [{ op: 'replace', path: '/total', value: 12 }],
       checkpoint: { sequence: 12 }
     };
@@ -495,6 +496,7 @@ describe('projection-runtime-core contract types', () => {
             {
               documentId: 'doc-1',
               mode: 'patch',
+              fullDocument: { total: 21 },
               patch: [{ op: 'replace', path: '/total', value: 21 }],
               checkpoint: { sequence: 21 }
             }

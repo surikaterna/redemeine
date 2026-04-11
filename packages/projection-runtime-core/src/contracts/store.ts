@@ -66,9 +66,16 @@ export interface ProjectionStoreFullDocumentWrite<TState = unknown> {
   precondition?: ProjectionStoreWritePrecondition;
 }
 
-export interface ProjectionStorePatchDocumentWrite {
+export interface ProjectionStorePatchDocumentWrite<TState = unknown> {
   documentId: string;
   mode: 'patch';
+  /**
+   * Caller-provided full document state after patch application.
+   *
+   * Required for stores that can safely compile patch operations to partial
+   * updates and otherwise fallback to full-document writes without pre-read.
+   */
+  fullDocument: TState;
   /**
    * RFC6902 JSON Patch operations applied in-order.
    */
@@ -79,7 +86,7 @@ export interface ProjectionStorePatchDocumentWrite {
 
 export type ProjectionStoreDocumentWrite<TState = unknown> =
   | ProjectionStoreFullDocumentWrite<TState>
-  | ProjectionStorePatchDocumentWrite;
+  | ProjectionStorePatchDocumentWrite<TState>;
 
 /**
  * Durable dedupe updates that must persist with projection writes.

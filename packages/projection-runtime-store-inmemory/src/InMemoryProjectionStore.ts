@@ -293,6 +293,18 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     return next as TDoc;
   }
 
+  private static validatePatchOperationStructure(operation: ProjectionStoreRfc6902Operation): void {
+    InMemoryProjectionStore.pathTokens(operation.path);
+
+    if ((operation.op === 'move' || operation.op === 'copy') && !operation.from) {
+      throw new Error(`RFC6902 ${operation.op} operation requires "from".`);
+    }
+
+    if (operation.from) {
+      InMemoryProjectionStore.pathTokens(operation.from);
+    }
+  }
+
   private static createFailure(
     category: ProjectionStoreWriteFailure['category'],
     code: string,
@@ -471,8 +483,12 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
       const current = stagedDocuments.get(write.documentId);
       try {
+        for (const operation of write.patch) {
+          InMemoryProjectionStore.validatePatchOperationStructure(operation);
+        }
+
         stagedDocuments.set(write.documentId, {
-          state: InMemoryProjectionStore.applyPatchDocument(current?.state, write.patch),
+          state: write.fullDocument,
           checkpoint: InMemoryProjectionStore.cloneCheckpoint(write.checkpoint),
           updatedAt: new Date().toISOString()
         });

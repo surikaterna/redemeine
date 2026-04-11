@@ -450,6 +450,11 @@ describe('MongoProjectionStore', () => {
             {
               documentId: 'doc-rfc',
               mode: 'patch',
+              fullDocument: {
+                total: 1,
+                nested: { keep: false },
+                status: 'open'
+              },
               patch: [
                 { op: 'replace', path: '/nested/keep', value: false },
                 { op: 'remove', path: '/nested/remove' },

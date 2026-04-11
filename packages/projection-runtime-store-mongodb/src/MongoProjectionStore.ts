@@ -4,16 +4,13 @@ import type {
   MongoServerError,
   TransactionOptions,
   UpdateOptions,
-  BulkWriteOptions,
-  FindOptions
+  BulkWriteOptions
 } from 'mongodb';
 import type {
   Checkpoint,
   IProjectionStore,
   ProjectionStoreAtomicManyResult,
-  ProjectionStoreCommitAtomicManyRequest,
-  ProjectionStoreDocumentWrite,
-  ProjectionStoreRfc6902Operation
+  ProjectionStoreCommitAtomicManyRequest
 } from './contracts';
 import {
   ProjectionStoreAtomicManyError,
@@ -22,6 +19,7 @@ import {
   createStoreFailure,
   toWriteFailure
 } from './storeFailures';
+import { patch6902ToMongoUpdatePlan } from './patch6902ToMongoUpdatePlan';
 import type {
   MongoProjectionStoreOptions,
   ProjectionDocumentRecord
@@ -65,227 +63,6 @@ const withSession = <T extends object>(options: T, session: ClientSession): T & 
 });
 
 type TransactionExecutor = <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>;
-
-const decodePathSegment = (segment: string): string => segment.replace(/~1/g, '/').replace(/~0/g, '~');
-
-const decodePathSegmentStrict = (segment: string): string => {
-  if (/~(?![01])/u.test(segment)) {
-    throw new Error(`Invalid RFC6902 JSON Pointer escape sequence in segment "${segment}".`);
-  }
-
-  return decodePathSegment(segment);
-};
-
-const deepClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-
-const pathTokens = (path: string): string[] => {
-  if (path === '') {
-    return [];
-  }
-
-  if (!path.startsWith('/')) {
-    throw new Error(`Invalid RFC6902 JSON Pointer path "${path}".`);
-  }
-
-  const normalized = path.slice(1);
-  if (!normalized) {
-    return [];
-  }
-
-  return normalized.split('/').map(decodePathSegmentStrict);
-};
-
-const isIndexToken = (token: string): boolean => /^\d+$/.test(token);
-
-const getContainer = (root: unknown, tokens: string[], path: string): { parent: any; key: string | undefined } => {
-  if (tokens.length === 0) {
-    return { parent: undefined, key: undefined };
-  }
-
-  let current: any = root;
-  for (let index = 0; index < tokens.length - 1; index += 1) {
-    const token = tokens[index];
-
-    if (Array.isArray(current)) {
-      if (!isIndexToken(token)) {
-        throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
-      }
-
-      const arrayIndex = Number(token);
-      if (!Number.isInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= current.length) {
-        throw new Error(`RFC6902 path not found "${path}".`);
-      }
-
-      current = current[arrayIndex];
-      continue;
-    }
-
-    if (typeof current !== 'object' || current === null) {
-      throw new Error(`Cannot traverse RFC6902 path through non-object value at "${token}".`);
-    }
-
-    if (!(token in current)) {
-      throw new Error(`RFC6902 path not found "${path}".`);
-    }
-
-    current = current[token];
-  }
-
-  return { parent: current, key: tokens[tokens.length - 1] };
-};
-
-const getValueAtPath = (root: unknown, path: string): unknown => {
-  const tokens = pathTokens(path);
-
-  let current: unknown = root;
-  for (const token of tokens) {
-    if (Array.isArray(current)) {
-      if (!isIndexToken(token)) {
-        throw new Error(`Invalid RFC6902 path segment "${token}" for array.`);
-      }
-
-      const index = Number(token);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
-        throw new Error(`RFC6902 path not found "${path}".`);
-      }
-
-      current = current[index];
-      continue;
-    }
-
-    if (!current || typeof current !== 'object' || !(token in current)) {
-      throw new Error(`RFC6902 path not found "${path}".`);
-    }
-
-    current = (current as Record<string, unknown>)[token];
-  }
-
-  return current;
-};
-
-const removeAtPath = (root: any, path: string): unknown => {
-  const tokens = pathTokens(path);
-  if (tokens.length === 0) {
-    throw new Error('Removing document root is not supported.');
-  }
-
-  const { parent, key } = getContainer(root, tokens, path);
-  if (Array.isArray(parent)) {
-    if (key === undefined) {
-      throw new Error('Missing RFC6902 array key.');
-    }
-
-    const index = Number(key);
-    if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
-      throw new Error(`Invalid RFC6902 remove index "${key}".`);
-    }
-
-    const [removed] = parent.splice(index, 1);
-    return removed;
-  }
-
-  if (!parent || typeof parent !== 'object' || key === undefined) {
-    throw new Error(`Invalid RFC6902 remove path "${path}".`);
-  }
-
-  if (!(key in parent)) {
-    throw new Error(`RFC6902 path not found "${path}".`);
-  }
-
-  const removed = parent[key];
-  delete parent[key];
-  return removed;
-};
-
-const applyRfc6902Operation = (target: Record<string, unknown>, operation: ProjectionStoreRfc6902Operation): void => {
-  const tokens = pathTokens(operation.path);
-
-  if (operation.op === 'remove') {
-    removeAtPath(target, operation.path);
-    return;
-  }
-
-  if (operation.op === 'move') {
-    if (!operation.from) {
-      throw new Error('RFC6902 move operation requires "from".');
-    }
-
-    const moved = removeAtPath(target, operation.from);
-    applyRfc6902Operation(target, { op: 'add', path: operation.path, value: moved });
-    return;
-  }
-
-  if (operation.op === 'copy') {
-    if (!operation.from) {
-      throw new Error('RFC6902 copy operation requires "from".');
-    }
-
-    const source = getValueAtPath(target, operation.from);
-
-    applyRfc6902Operation(target, { op: 'add', path: operation.path, value: deepClone(source) });
-    return;
-  }
-
-  if (operation.op === 'test') {
-    const current = getValueAtPath(target, operation.path);
-
-    if (JSON.stringify(operation.value) !== JSON.stringify(current)) {
-      throw new Error(`RFC6902 test failed at path "${operation.path}".`);
-    }
-
-    return;
-  }
-
-  if (tokens.length === 0) {
-    throw new Error('Replacing document root is not supported.');
-  }
-
-  const { parent, key } = getContainer(target, tokens, operation.path);
-
-  if (Array.isArray(parent)) {
-    if (key === undefined) {
-      throw new Error('Missing RFC6902 array key.');
-    }
-
-    const index = key === '-' ? parent.length : Number(key);
-    if (!Number.isInteger(index) || index < 0 || index > parent.length) {
-      throw new Error(`Invalid RFC6902 array index "${key}".`);
-    }
-
-    if (operation.op === 'add') {
-      parent.splice(index, 0, deepClone(operation.value));
-      return;
-    }
-
-    if (index >= parent.length) {
-      throw new Error(`Invalid RFC6902 replace index "${key}".`);
-    }
-
-    parent[index] = deepClone(operation.value);
-    return;
-  }
-
-  if (!parent || typeof parent !== 'object' || key === undefined) {
-    throw new Error(`Invalid RFC6902 path "${operation.path}".`);
-  }
-
-  if (operation.op === 'replace' && !(key in parent)) {
-    throw new Error(`RFC6902 replace path not found "${operation.path}".`);
-  }
-
-  parent[key] = deepClone(operation.value);
-};
-
-const applyRfc6902Patch = (
-  base: Record<string, unknown>,
-  operations: ReadonlyArray<ProjectionStoreRfc6902Operation>
-): Record<string, unknown> => {
-  const next = deepClone(base);
-  for (const operation of operations) {
-    applyRfc6902Operation(next, operation);
-  }
-  return next;
-};
 
 /**
  * Mongo-backed projection store adapter with transaction-backed atomicity.
@@ -386,38 +163,17 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
           const write = request.writes[index];
           let laneWatermark: Checkpoint | null = null;
           const documentOps: Array<AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>> = [];
-          const stagedDocuments = new Map<string, ProjectionDocumentRecord<TState>>();
 
           for (const document of write.documents) {
-            const staged = stagedDocuments.get(document.documentId);
-            const current =
-              staged ??
-              (await this.options.collection.findOne(
+            if (document.precondition) {
+              const current = await this.options.collection.findOne(
                 { _id: document.documentId },
-                withSession({} as FindOptions<ProjectionDocumentRecord<TState>>, session)
-              ));
-            const nextState = this.resolveNextDocumentState(document, current);
+                withSession({}, session)
+              );
+              assertWritePrecondition(document.documentId, current?.checkpoint ?? null, document.precondition);
+            }
 
-            stagedDocuments.set(document.documentId, {
-              _id: document.documentId,
-              state: nextState,
-              checkpoint: document.checkpoint,
-              updatedAt: this.now()
-            });
-
-            documentOps.push({
-              updateOne: {
-                filter: { _id: document.documentId },
-                update: {
-                  $set: {
-                    state: nextState,
-                    checkpoint: document.checkpoint,
-                    updatedAt: this.now()
-                  }
-                },
-                upsert: true
-              }
-            });
+            documentOps.push(this.buildDocumentWriteOperation(document));
             laneWatermark = this.chooseHigherWatermark(laneWatermark, document.checkpoint);
             highestWatermark = this.chooseHigherWatermark(highestWatermark, document.checkpoint);
           }
@@ -633,32 +389,77 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     };
   }
 
-  private resolveNextDocumentState(
-    write: ProjectionStoreDocumentWrite<TState>,
-    current: ProjectionDocumentRecord<TState> | null
-  ): TState {
-    assertWritePrecondition(write.documentId, current?.checkpoint ?? null, write.precondition);
+  private buildDocumentWriteOperation(
+    write: ProjectionStoreCommitAtomicManyRequest<TState>['writes'][number]['documents'][number]
+  ): AnyBulkWriteOperation<ProjectionDocumentRecord<TState>> {
+    const baseSet = {
+      checkpoint: write.checkpoint,
+      updatedAt: this.now()
+    };
 
     if (write.mode === 'full') {
-      return write.fullDocument;
+      return {
+        updateOne: {
+          filter: { _id: write.documentId },
+          update: {
+            $set: {
+              state: write.fullDocument,
+              ...baseSet
+            }
+          },
+          upsert: true
+        }
+      };
     }
 
-    const currentState = current?.state;
-    const base =
-      currentState && typeof currentState === 'object' && !Array.isArray(currentState)
-        ? (currentState as Record<string, unknown>)
-        : {};
-
-    let nextState: TState;
+    let plan;
     try {
-      nextState = applyRfc6902Patch(base, write.patch) as TState;
+      plan = patch6902ToMongoUpdatePlan(write.patch, write.fullDocument);
     } catch (error) {
       throw new ProjectionStoreAtomicManyError(
         createInvalidRequestFailure(error instanceof Error ? error.message : 'invalid patch request')
       );
     }
 
-    return nextState;
+    if (plan.mode === 'fallback-full-document') {
+      return {
+        updateOne: {
+          filter: { _id: write.documentId },
+          update: {
+            $set: {
+              state: plan.fullDocument,
+              ...baseSet
+            }
+          },
+          upsert: true
+        }
+      };
+    }
+
+    const setDoc: Record<string, unknown> = {
+      ...baseSet
+    };
+    for (const [path, value] of Object.entries(plan.set)) {
+      setDoc[`state.${path}`] = value;
+    }
+
+    const updateDoc: Record<string, unknown> = { $set: setDoc };
+    if (plan.unset.length > 0) {
+      updateDoc.$unset = Object.fromEntries(plan.unset.map((path) => [`state.${path}`, '']));
+    }
+
+    const filter: Record<string, unknown> = { _id: write.documentId };
+    for (const guard of plan.testGuards) {
+      filter[`state.${guard.path}`] = guard.value;
+    }
+
+    return {
+      updateOne: {
+        filter,
+        update: updateDoc,
+        upsert: true
+      }
+    };
   }
 
   private chooseHigherWatermark(current: Checkpoint | null, next: Checkpoint): Checkpoint {
