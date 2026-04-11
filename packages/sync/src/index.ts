@@ -1,2 +1,12 @@
 // @redemeine/sync - Edge Sync Runtime contracts
-// Barrel exports will be added as modules are implemented
+
+export {
+  type NodeCapabilities,
+  type NodeRole,
+  type NodeIdentity,
+  resolveRole,
+  createNodeIdentity,
+  createOriginCapabilities,
+  createRelayCapabilities,
+  createLeafCapabilities,
+} from './capabilities';
