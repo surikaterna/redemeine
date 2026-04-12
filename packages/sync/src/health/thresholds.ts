@@ -20,12 +20,6 @@ export interface SyncHealthThresholds {
 
   /** Per-lane sync lag (ms) at which a critical alert is raised. */
   readonly syncLagCriticalMs: number;
-
-  /** Pending event count at which a warning alert is raised. */
-  readonly pendingEventWarning: number;
-
-  /** Pending event count at which a critical alert is raised. */
-  readonly pendingEventCritical: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,8 +33,6 @@ export function defaultThresholds(): SyncHealthThresholds {
     queueDepthCritical: 500,
     syncLagWarningMs: 30_000,
     syncLagCriticalMs: 120_000,
-    pendingEventWarning: 50,
-    pendingEventCritical: 200,
   };
 }
 
@@ -77,23 +69,6 @@ export function checkThresholds(
       type: 'queue_depth_threshold',
       depth: metrics.commandQueueDepth,
       threshold: thresholds.queueDepthWarning,
-      timestamp: now,
-    });
-  }
-
-  // --- Pending events ---
-  if (metrics.pendingEventCount.total >= thresholds.pendingEventCritical) {
-    alerts.push({
-      type: 'pending_event_threshold',
-      count: metrics.pendingEventCount.total,
-      threshold: thresholds.pendingEventCritical,
-      timestamp: now,
-    });
-  } else if (metrics.pendingEventCount.total >= thresholds.pendingEventWarning) {
-    alerts.push({
-      type: 'pending_event_threshold',
-      count: metrics.pendingEventCount.total,
-      threshold: thresholds.pendingEventWarning,
       timestamp: now,
     });
   }

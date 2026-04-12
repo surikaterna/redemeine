@@ -2,19 +2,6 @@ import type { ConnectionState } from '../upstream/connection-state';
 import type { SyncLane } from '../manifest/lanes';
 
 // ---------------------------------------------------------------------------
-// Pending event summary
-// ---------------------------------------------------------------------------
-
-/** Breakdown of pending (unconfirmed) events across streams. */
-export interface PendingEventSummary {
-  /** Total number of pending events across all streams. */
-  readonly total: number;
-
-  /** Pending event count keyed by stream identifier. */
-  readonly byStream: Readonly<Record<string, number>>;
-}
-
-// ---------------------------------------------------------------------------
 // Per-lane lag metrics
 // ---------------------------------------------------------------------------
 
@@ -55,8 +42,8 @@ export interface SyncHealthMetrics {
   /** Number of commands waiting in the outbound queue. */
   readonly commandQueueDepth: number;
 
-  /** Summary of pending (unconfirmed) events. */
-  readonly pendingEventCount: PendingEventSummary;
+  /** Number of in-flight commands (same as commandQueueDepth). */
+  readonly inFlightCommandCount: number;
 
   /** Replication lag metrics per sync lane. */
   readonly perLaneSyncLag: Readonly<Record<SyncLane, LaneLagMetrics>>;

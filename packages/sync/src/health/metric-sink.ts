@@ -31,14 +31,6 @@ export interface SyncLagThresholdAlert {
   readonly timestamp: string;
 }
 
-/** Alert raised when the pending event count exceeds a threshold. */
-export interface PendingEventThresholdAlert {
-  readonly type: 'pending_event_threshold';
-  readonly count: number;
-  readonly threshold: number;
-  readonly timestamp: string;
-}
-
 /**
  * Discriminated union of all sync alerts.
  *
@@ -47,8 +39,7 @@ export interface PendingEventThresholdAlert {
 export type SyncAlert =
   | ConnectionChangedAlert
   | QueueDepthThresholdAlert
-  | SyncLagThresholdAlert
-  | PendingEventThresholdAlert;
+  | SyncLagThresholdAlert;
 
 // ---------------------------------------------------------------------------
 // Metric sink adapter contract

@@ -37,16 +37,6 @@ export {
 } from './manifest';
 
 export type {
-  EventStatus,
-  StoredEvent,
-  AggregateSnapshot,
-  NewEvent,
-  SaveEventOptions,
-  SaveEventResult,
-  ConfirmResult,
-  SupersedeResult,
-  ReadStreamOptions,
-  ISyncEventStore,
   CommandMetadata,
   QueuedCommand,
   ICommandQueue,
@@ -55,22 +45,22 @@ export type {
 } from './store';
 
 export {
-  type ReconciliationResult,
-  type ConfirmedOutcome,
-  type SupersededOutcome,
-  type NewOutcome,
-  type AlreadyConfirmedOutcome,
+  type SyncEvent,
+  type IReconciliationEventStoreAdapter,
+  type UpstreamSnapshot,
+  type ConflictRecord,
+  type IConflictArchive,
+  type MatchedOutcome,
+  type ConflictOutcome,
+  type AppliedOutcome,
   type ErrorOutcome,
-  type AuthoritativeEvent,
+  type ReconciliationOutcome,
+  type ReconciliationServiceOptions,
   type EventMatcher,
+  type IReconciliationService,
   defaultEventMatcher,
-  ReconciliationDispatcher,
-  type EventApplier,
-  type RebuildResult,
-  rebuildFromConfirmed,
-  type ProducedEvent,
-  createPendingEvents,
-} from './pending';
+  createReconciliationService,
+} from './reconciliation';
 
 export type {
   DownstreamEvent,
@@ -121,13 +111,11 @@ export {
 } from './upstream';
 
 export {
-  type PendingEventSummary,
   type LaneLagMetrics,
   type SyncHealthMetrics,
   type ConnectionChangedAlert,
   type QueueDepthThresholdAlert,
   type SyncLagThresholdAlert,
-  type PendingEventThresholdAlert,
   type SyncAlert,
   type IMetricSink,
   type HealthSnapshotDependencies,
