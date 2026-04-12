@@ -6,136 +6,73 @@ import type {
 import type { ProjectionEnvelope } from '../src/downstream/projection-envelope';
 import type { ConfigEnvelope } from '../src/downstream/config-envelope';
 import type {
-  ISyncEventStore,
-  AggregateSnapshot,
-  StoredEvent,
-  NewEvent,
-  SaveEventOptions,
-  SaveEventResult,
-  ConfirmResult,
-  SupersedeResult,
-  ReadStreamOptions,
-  EventStatus,
   ICheckpointStore,
   Checkpoint,
   SyncLane,
 } from '../src/store';
 import type { EnvelopeProcessResult } from '../src/downstream/feed-consumer';
-import { ReconciliationDispatcher } from '../src/pending';
+import type {
+  IReconciliationEventStoreAdapter,
+  UpstreamSnapshot,
+  SyncEvent,
+} from '../src/reconciliation/event-store-adapter';
+import type { IReconciliationService } from '../src/reconciliation/reconciliation-service';
+import type { ReconciliationOutcome } from '../src/reconciliation/reconciliation-result';
+import { createReconciliationService } from '../src/reconciliation/reconciliation-service';
 import { createEventStreamConsumer } from '../src/downstream/feed-consumer';
 
 // ---------------------------------------------------------------------------
 // In-memory mock stores
 // ---------------------------------------------------------------------------
 
-function createMockEventStore(): ISyncEventStore & {
-  events: StoredEvent[];
-  snapshots: AggregateSnapshot[];
+function createMockEventStoreAdapter(): IReconciliationEventStoreAdapter & {
+  events: Map<string, SyncEvent[]>;
+  snapshots: UpstreamSnapshot[];
 } {
-  const events: StoredEvent[] = [];
-  const snapshots: AggregateSnapshot[] = [];
-  let nextId = 1;
+  const events = new Map<string, SyncEvent[]>();
+  const snapshots: UpstreamSnapshot[] = [];
 
   return {
     events,
     snapshots,
 
+    async findEventsByCommandId(
+      streamId: string,
+      commandId: string,
+    ): Promise<ReadonlyArray<SyncEvent>> {
+      const streamEvents = events.get(streamId) ?? [];
+      return streamEvents.filter(
+        (e) => e.metadata?.command?.id === commandId,
+      );
+    },
+
+    async replaceEventsByCommandId(
+      streamId: string,
+      commandId: string,
+      authoritativeEvents: ReadonlyArray<SyncEvent>,
+    ): Promise<ReadonlyArray<SyncEvent>> {
+      const streamEvents = events.get(streamId) ?? [];
+      const displaced = streamEvents.filter(
+        (e) => e.metadata?.command?.id === commandId,
+      );
+      const remaining = streamEvents.filter(
+        (e) => e.metadata?.command?.id !== commandId,
+      );
+      remaining.push(...authoritativeEvents);
+      events.set(streamId, remaining);
+      return displaced;
+    },
+
     async saveEvents(
       streamId: string,
-      newEvents: ReadonlyArray<NewEvent>,
-      options: SaveEventOptions,
-    ): Promise<SaveEventResult> {
-      let version = events.filter((e) => e.streamId === streamId).length;
-      const eventIds: string[] = [];
-
-      for (const event of newEvents) {
-        version += 1;
-        const id = `evt-${nextId++}`;
-        eventIds.push(id);
-        events.push({
-          id,
-          streamId,
-          type: event.type,
-          payload: event.payload,
-          status: options.status,
-          commandId: options.commandId,
-          version,
-          occurredAt: event.occurredAt,
-          ingestedAt: new Date().toISOString(),
-        });
-      }
-
-      return { eventIds, nextVersion: version };
+      newEvents: ReadonlyArray<SyncEvent>,
+    ): Promise<void> {
+      const existing = events.get(streamId) ?? [];
+      existing.push(...newEvents);
+      events.set(streamId, existing);
     },
 
-    async confirmEvents(commandId: string): Promise<ConfirmResult> {
-      let confirmedCount = 0;
-      for (const event of events) {
-        if (event.commandId === commandId && event.status === 'pending') {
-          (event as { status: EventStatus }).status = 'confirmed';
-          confirmedCount++;
-        }
-      }
-      return { confirmedCount };
-    },
-
-    async supersedeEvents(
-      commandId: string,
-      replacements: ReadonlyArray<NewEvent>,
-    ): Promise<SupersedeResult> {
-      let supersededCount = 0;
-      const replacementEventIds: string[] = [];
-
-      const pendingEvent = events.find(
-        (e) => e.commandId === commandId && e.status === 'pending',
-      );
-      const streamId = pendingEvent?.streamId ?? 'unknown';
-
-      for (const event of events) {
-        if (event.commandId === commandId && event.status === 'pending') {
-          (event as { status: EventStatus }).status = 'superseded';
-          supersededCount++;
-        }
-      }
-
-      let version = events.filter((e) => e.streamId === streamId).length;
-      for (const r of replacements) {
-        version += 1;
-        const id = `evt-${nextId++}`;
-        replacementEventIds.push(id);
-        events.push({
-          id,
-          streamId,
-          type: r.type,
-          payload: r.payload,
-          status: 'confirmed',
-          commandId,
-          version,
-          occurredAt: r.occurredAt,
-          ingestedAt: new Date().toISOString(),
-        });
-      }
-
-      return { supersededCount, replacementEventIds };
-    },
-
-    async *readStream(
-      streamId: string,
-      options?: ReadStreamOptions,
-    ): AsyncIterable<StoredEvent> {
-      for (const event of events) {
-        if (event.streamId !== streamId) continue;
-        if (options?.confirmedOnly && event.status !== 'confirmed') continue;
-        if (options?.fromVersion && event.version < options.fromVersion) continue;
-        yield event;
-      }
-    },
-
-    async loadSnapshot(_streamId: string): Promise<AggregateSnapshot | undefined> {
-      return undefined;
-    },
-
-    async importSnapshot(snapshot: AggregateSnapshot): Promise<void> {
+    async importSnapshot(snapshot: UpstreamSnapshot): Promise<void> {
       snapshots.push(snapshot);
     },
   };
@@ -409,21 +346,23 @@ describe('ConfigEnvelope discrimination', () => {
 // ---------------------------------------------------------------------------
 
 describe('EventStreamConsumer', () => {
-  let eventStore: ReturnType<typeof createMockEventStore>;
+  let eventStoreAdapter: ReturnType<typeof createMockEventStoreAdapter>;
   let checkpointStore: ReturnType<typeof createMockCheckpointStore>;
-  let dispatcher: ReconciliationDispatcher;
+  let reconciliationService: IReconciliationService;
 
   beforeEach(() => {
-    eventStore = createMockEventStore();
+    eventStoreAdapter = createMockEventStoreAdapter();
     checkpointStore = createMockCheckpointStore();
-    dispatcher = new ReconciliationDispatcher(eventStore);
+    reconciliationService = createReconciliationService({
+      eventStoreAdapter,
+    });
   });
 
   test('snapshot import processed correctly', async () => {
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -446,24 +385,26 @@ describe('EventStreamConsumer', () => {
     expect(result.errors).toBe(0);
 
     // Verify snapshot was imported
-    expect(eventStore.snapshots).toHaveLength(1);
-    expect(eventStore.snapshots[0].streamId).toBe('order-123');
-    expect(eventStore.snapshots[0].version).toBe(5);
-    expect(eventStore.snapshots[0].state).toEqual({ items: ['A1'] });
+    expect(eventStoreAdapter.snapshots).toHaveLength(1);
+    expect(eventStoreAdapter.snapshots[0].streamId).toBe('order-123');
+    expect(eventStoreAdapter.snapshots[0].version).toBe(5);
+    expect(eventStoreAdapter.snapshots[0].state).toEqual({ items: ['A1'] });
   });
 
   test('events trigger reconciliation', async () => {
-    // Pre-seed pending events
-    await eventStore.saveEvents(
-      'order-123',
-      [{ type: 'item.added', payload: { sku: 'A1' }, occurredAt: '2026-01-01T00:00:00Z' }],
-      { status: 'pending', commandId: 'cmd-1' },
-    );
+    // Pre-seed local events for cmd-1
+    eventStoreAdapter.events.set('order-123', [
+      {
+        type: 'item.added',
+        payload: { sku: 'A1' },
+        metadata: { command: { id: 'cmd-1' } },
+      },
+    ]);
 
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -492,21 +433,15 @@ describe('EventStreamConsumer', () => {
     expect(result.processed).toBe(1);
     expect(result.reconciled).toBe(1);
     expect(result.errors).toBe(0);
-
-    // Verify pending event was confirmed via reconciliation
-    const confirmed = eventStore.events.filter(
-      (e) => e.commandId === 'cmd-1' && e.status === 'confirmed',
-    );
-    expect(confirmed.length).toBeGreaterThan(0);
   });
 
   test('stream_added emits lifecycle signal via listener', async () => {
     const received: EventStreamEnvelope[] = [];
 
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
       onEnvelope: (envelope) => {
         received.push(envelope);
@@ -537,9 +472,9 @@ describe('EventStreamConsumer', () => {
     const received: EventStreamEnvelope[] = [];
 
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
       onEnvelope: (envelope) => {
         received.push(envelope);
@@ -568,9 +503,9 @@ describe('EventStreamConsumer', () => {
 
   test('checkpoint saved after each processed envelope', async () => {
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -614,12 +549,12 @@ describe('EventStreamConsumer', () => {
   });
 
   test('handles errors gracefully without losing checkpoint', async () => {
-    // Create a store that fails on importSnapshot
-    const failingStore = createMockEventStore();
-    const originalImport = failingStore.importSnapshot.bind(failingStore);
+    // Create an adapter that fails on importSnapshot on 2nd call
+    const failingAdapter = createMockEventStoreAdapter();
     let callCount = 0;
 
-    failingStore.importSnapshot = async (snapshot: AggregateSnapshot): Promise<void> => {
+    const originalImport = failingAdapter.importSnapshot.bind(failingAdapter);
+    failingAdapter.importSnapshot = async (snapshot: UpstreamSnapshot): Promise<void> => {
       callCount++;
       if (callCount === 2) {
         throw new Error('storage full');
@@ -627,12 +562,14 @@ describe('EventStreamConsumer', () => {
       return originalImport(snapshot);
     };
 
-    const failingDispatcher = new ReconciliationDispatcher(failingStore);
+    const failingService = createReconciliationService({
+      eventStoreAdapter: failingAdapter,
+    });
 
     const consumer = createEventStreamConsumer({
-      eventStore: failingStore,
+      eventStoreAdapter: failingAdapter,
       checkpointStore,
-      reconciliationDispatcher: failingDispatcher,
+      reconciliationService: failingService,
       nodeId: 'node-1',
     });
 
@@ -677,17 +614,17 @@ describe('EventStreamConsumer', () => {
     expect(checkpoint).toBe('2');
 
     // First snapshot was imported successfully
-    expect(failingStore.snapshots).toHaveLength(1);
-    expect(failingStore.snapshots[0].streamId).toBe('order-1');
+    expect(failingAdapter.snapshots).toHaveLength(1);
+    expect(failingAdapter.snapshots[0].streamId).toBe('order-1');
   });
 
   test('listener receives both envelope and result for each processed item', async () => {
     const received: Array<{ envelope: EventStreamEnvelope; result: EnvelopeProcessResult }> = [];
 
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
       onEnvelope: (envelope, result) => {
         received.push({ envelope, result });
@@ -733,9 +670,9 @@ describe('EventStreamConsumer', () => {
 
   test('getCheckpoint returns undefined when no checkpoint saved', async () => {
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -745,9 +682,9 @@ describe('EventStreamConsumer', () => {
 
   test('consumes empty feed without error', async () => {
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -762,9 +699,9 @@ describe('EventStreamConsumer', () => {
 
   test('events with multiple commands are each reconciled', async () => {
     const consumer = createEventStreamConsumer({
-      eventStore,
+      eventStoreAdapter,
       checkpointStore,
-      reconciliationDispatcher: dispatcher,
+      reconciliationService,
       nodeId: 'node-1',
     });
 
@@ -801,9 +738,14 @@ describe('EventStreamConsumer', () => {
     expect(result.reconciled).toBe(1);  // 1 events envelope
     expect(result.processed).toBe(1);
 
-    // Both command IDs should have events applied as "new" (no pending)
-    const cmd1Events = eventStore.events.filter((e) => e.commandId === 'cmd-1');
-    const cmd2Events = eventStore.events.filter((e) => e.commandId === 'cmd-2');
+    // Both command IDs should have events applied (no local events existed)
+    const streamEvents = eventStoreAdapter.events.get('order-1') ?? [];
+    const cmd1Events = streamEvents.filter(
+      (e) => e.metadata?.command?.id === 'cmd-1',
+    );
+    const cmd2Events = streamEvents.filter(
+      (e) => e.metadata?.command?.id === 'cmd-2',
+    );
     expect(cmd1Events.length).toBeGreaterThan(0);
     expect(cmd2Events.length).toBeGreaterThan(0);
   });

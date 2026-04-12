@@ -1,7 +1,6 @@
 // Sync health and observability contracts
 
 export type {
-  PendingEventSummary,
   LaneLagMetrics,
   SyncHealthMetrics,
 } from './sync-health-metrics';
@@ -10,7 +9,6 @@ export type {
   ConnectionChangedAlert,
   QueueDepthThresholdAlert,
   SyncLagThresholdAlert,
-  PendingEventThresholdAlert,
   SyncAlert,
   IMetricSink,
 } from './metric-sink';

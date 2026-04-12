@@ -1,13 +1,11 @@
 import { describe, test, expect } from 'bun:test';
 import type {
   SyncHealthMetrics,
-  PendingEventSummary,
   LaneLagMetrics,
   SyncAlert,
   ConnectionChangedAlert,
   QueueDepthThresholdAlert,
   SyncLagThresholdAlert,
-  PendingEventThresholdAlert,
   IMetricSink,
   HealthSnapshotDependencies,
   SyncHealthThresholds,
@@ -36,7 +34,7 @@ describe('SyncHealthMetrics', () => {
     const metrics: SyncHealthMetrics = {
       connectionStatus: 'online',
       commandQueueDepth: 5,
-      pendingEventCount: { total: 3, byStream: { 'stream-1': 2, 'stream-2': 1 } },
+      inFlightCommandCount: 5,
       perLaneSyncLag: {
         events: { localCheckpoint: 'cp-1', upstreamHead: 'head-1', estimatedLag: 500 },
         projections: { localCheckpoint: undefined, upstreamHead: undefined, estimatedLag: undefined },
@@ -55,7 +53,7 @@ describe('SyncHealthMetrics', () => {
 
     expect(metrics.connectionStatus).toBe('online');
     expect(metrics.commandQueueDepth).toBe(5);
-    expect(metrics.pendingEventCount.total).toBe(3);
+    expect(metrics.inFlightCommandCount).toBe(5);
     expect(metrics.nodeId).toBe('node-1');
   });
 
@@ -67,12 +65,6 @@ describe('SyncHealthMetrics', () => {
       };
       expect(metrics.connectionStatus).toBe(state);
     }
-  });
-
-  test('PendingEventSummary has correct shape', () => {
-    const summary: PendingEventSummary = { total: 0, byStream: {} };
-    expect(summary.total).toBe(0);
-    expect(summary.byStream).toEqual({});
   });
 
   test('LaneLagMetrics supports undefined values', () => {
@@ -97,7 +89,6 @@ describe('SyncAlert', () => {
       { type: 'connection_changed', from: 'online', to: 'offline', timestamp: '2026-01-01T00:00:00Z' },
       { type: 'queue_depth_threshold', depth: 150, threshold: 100, timestamp: '2026-01-01T00:00:00Z' },
       { type: 'sync_lag_threshold', lane: 'events', lag: 60_000, threshold: 30_000, timestamp: '2026-01-01T00:00:00Z' },
-      { type: 'pending_event_threshold', count: 75, threshold: 50, timestamp: '2026-01-01T00:00:00Z' },
     ];
 
     for (const alert of alerts) {
@@ -119,11 +110,6 @@ describe('SyncAlert', () => {
           expect(_narrowed.lag).toBe(60_000);
           break;
         }
-        case 'pending_event_threshold': {
-          const _narrowed: PendingEventThresholdAlert = alert;
-          expect(_narrowed.count).toBe(75);
-          break;
-        }
       }
     }
   });
@@ -132,7 +118,6 @@ describe('SyncAlert', () => {
   type _CheckConnection = AssertExtends<ConnectionChangedAlert, SyncAlert>;
   type _CheckQueue = AssertExtends<QueueDepthThresholdAlert, SyncAlert>;
   type _CheckLag = AssertExtends<SyncLagThresholdAlert, SyncAlert>;
-  type _CheckPending = AssertExtends<PendingEventThresholdAlert, SyncAlert>;
 });
 
 // ---------------------------------------------------------------------------
@@ -182,8 +167,6 @@ describe('defaultThresholds', () => {
     expect(t.queueDepthCritical).toBeGreaterThan(t.queueDepthWarning);
     expect(t.syncLagWarningMs).toBeGreaterThan(0);
     expect(t.syncLagCriticalMs).toBeGreaterThan(t.syncLagWarningMs);
-    expect(t.pendingEventWarning).toBeGreaterThan(0);
-    expect(t.pendingEventCritical).toBeGreaterThan(t.pendingEventWarning);
   });
 });
 
@@ -197,14 +180,11 @@ describe('checkThresholds', () => {
     queueDepthCritical: 500,
     syncLagWarningMs: 30_000,
     syncLagCriticalMs: 120_000,
-    pendingEventWarning: 50,
-    pendingEventCritical: 200,
   };
 
   test('produces no alerts when all metrics are within limits', () => {
     const metrics = makeMetrics({
       commandQueueDepth: 10,
-      pendingEventCount: { total: 5, byStream: {} },
     });
 
     const alerts = checkThresholds(metrics, thresholds);
@@ -233,20 +213,6 @@ describe('checkThresholds', () => {
     expect(queueAlerts).toHaveLength(1);
     if (queueAlerts[0].type === 'queue_depth_threshold') {
       expect(queueAlerts[0].threshold).toBe(500);
-    }
-  });
-
-  test('produces pending_event_threshold alert', () => {
-    const metrics = makeMetrics({
-      pendingEventCount: { total: 75, byStream: { 'stream-1': 75 } },
-    });
-    const alerts = checkThresholds(metrics, thresholds);
-
-    const pendingAlert = alerts.find((a) => a.type === 'pending_event_threshold');
-    expect(pendingAlert).toBeDefined();
-    if (pendingAlert!.type === 'pending_event_threshold') {
-      expect(pendingAlert!.count).toBe(75);
-      expect(pendingAlert!.threshold).toBe(50);
     }
   });
 
@@ -281,7 +247,6 @@ describe('checkThresholds', () => {
   test('produces multiple alerts when multiple thresholds exceeded', () => {
     const metrics = makeMetrics({
       commandQueueDepth: 200,
-      pendingEventCount: { total: 300, byStream: {} },
       perLaneSyncLag: {
         events: { localCheckpoint: 'cp-1', upstreamHead: 'head-1', estimatedLag: 150_000 },
         projections: { localCheckpoint: undefined, upstreamHead: undefined, estimatedLag: 45_000 },
@@ -293,7 +258,6 @@ describe('checkThresholds', () => {
 
     const types = alerts.map((a) => a.type);
     expect(types).toContain('queue_depth_threshold');
-    expect(types).toContain('pending_event_threshold');
     expect(types).toContain('sync_lag_threshold');
     // events lane critical + projections lane warning = 2 lag alerts
     expect(alerts.filter((a) => a.type === 'sync_lag_threshold')).toHaveLength(2);
@@ -341,12 +305,9 @@ describe('captureHealthSnapshot', () => {
 
     expect(snapshot.connectionStatus).toBe('online');
     expect(snapshot.commandQueueDepth).toBe(7);
+    expect(snapshot.inFlightCommandCount).toBe(7);
     expect(snapshot.nodeId).toBe('test-node-1');
     expect(snapshot.capturedAt).toBeDefined();
-
-    // Pending events default to zero (TODO adapter not yet available)
-    expect(snapshot.pendingEventCount.total).toBe(0);
-    expect(snapshot.pendingEventCount.byStream).toEqual({});
 
     // Events lane has a checkpoint
     expect(snapshot.perLaneSyncLag.events.localCheckpoint).toBe('cursor-42');
@@ -374,7 +335,7 @@ function makeMetrics(overrides?: Partial<SyncHealthMetrics>): SyncHealthMetrics 
   return {
     connectionStatus: 'online',
     commandQueueDepth: 0,
-    pendingEventCount: { total: 0, byStream: {} },
+    inFlightCommandCount: 0,
     perLaneSyncLag: {
       events: { localCheckpoint: undefined, upstreamHead: undefined, estimatedLag: undefined },
       projections: { localCheckpoint: undefined, upstreamHead: undefined, estimatedLag: undefined },

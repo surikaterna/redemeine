@@ -62,10 +62,7 @@ export async function captureHealthSnapshot(
   return {
     connectionStatus,
     commandQueueDepth,
-    // TODO: pendingEventCount requires an adapter that can query the
-    // event store for pending event counts by stream. Set to zero
-    // until that adapter support is available.
-    pendingEventCount: { total: 0, byStream: {} },
+    inFlightCommandCount: commandQueueDepth,
     perLaneSyncLag,
     lastSyncTimestamp,
     nodeId: deps.nodeId,

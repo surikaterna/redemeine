@@ -142,6 +142,9 @@
     "packages/sync": {
       "name": "@redemeine/sync",
       "version": "0.1.0",
+      "dependencies": {
+        "@redemeine/kernel": "workspace:*",
+      },
     },
     "packages/testing": {
       "name": "@redemeine/testing",

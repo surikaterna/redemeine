@@ -2,9 +2,13 @@
 // Feed Consumer — Event Stream Lane Consumption
 // ---------------------------------------------------------------------------
 
-import type { ISyncEventStore } from '../store/sync-event-store';
 import type { ICheckpointStore, Checkpoint } from '../store/checkpoint-store';
-import type { ReconciliationDispatcher, AuthoritativeEvent } from '../pending/reconciliation-dispatcher';
+import type {
+  IReconciliationEventStoreAdapter,
+  UpstreamSnapshot,
+  SyncEvent,
+} from '../reconciliation/event-store-adapter';
+import type { IReconciliationService } from '../reconciliation/reconciliation-service';
 import type { EventStreamEnvelope, DownstreamEvent } from './event-stream-envelope';
 
 // ---------------------------------------------------------------------------
@@ -27,14 +31,14 @@ export type FeedEnvelopeListener = (
 
 /** Options for constructing a feed consumer. */
 export interface FeedConsumerOptions {
-  /** Store adapter for persisting events and snapshots. */
-  readonly eventStore: ISyncEventStore;
+  /** Adapter for event store operations needed by reconciliation. */
+  readonly eventStoreAdapter: IReconciliationEventStoreAdapter;
 
   /** Store adapter for persisting per-lane checkpoints. */
   readonly checkpointStore: ICheckpointStore;
 
-  /** Dispatcher for reconciling authoritative events against pending. */
-  readonly reconciliationDispatcher: ReconciliationDispatcher;
+  /** Service for reconciling authoritative events against local. */
+  readonly reconciliationService: IReconciliationService;
 
   /** Identifier of the local downstream node. */
   readonly nodeId: string;
@@ -90,14 +94,17 @@ export interface EventStreamConsumer {
 // ---------------------------------------------------------------------------
 
 /**
- * Converts a {@link DownstreamEvent} to an {@link AuthoritativeEvent}
- * for use with the reconciliation dispatcher.
+ * Converts a {@link DownstreamEvent} to a kernel {@link Event}
+ * with metadata.command.id for reconciliation.
  */
-function toAuthoritative(event: DownstreamEvent): AuthoritativeEvent {
+function toAuthoritative(event: DownstreamEvent): SyncEvent {
   return {
     type: event.type,
     payload: event.payload,
-    eventId: event.eventId,
+    id: event.eventId,
+    metadata: {
+      command: { id: event.commandId },
+    },
   };
 }
 
@@ -106,24 +113,25 @@ function toAuthoritative(event: DownstreamEvent): AuthoritativeEvent {
  */
 async function processSnapshot(
   envelope: Extract<EventStreamEnvelope, { type: 'snapshot' }>,
-  eventStore: ISyncEventStore,
+  eventStoreAdapter: IReconciliationEventStoreAdapter,
 ): Promise<EnvelopeProcessResult> {
-  await eventStore.importSnapshot({
+  const snapshot: UpstreamSnapshot = {
     streamId: envelope.streamId,
     version: envelope.version,
     state: envelope.state,
     snapshotAt: envelope.snapshotAt,
-  });
+  };
+  await eventStoreAdapter.importSnapshot(snapshot);
   return { envelopeType: 'snapshot', success: true };
 }
 
 /**
- * Processes an events envelope by reconciling each event's command
- * against pending events in the local store.
+ * Processes an events envelope by reconciling each command group
+ * against local events via the reconciliation service.
  */
 async function processEvents(
   envelope: Extract<EventStreamEnvelope, { type: 'events' }>,
-  dispatcher: ReconciliationDispatcher,
+  reconciliationService: IReconciliationService,
 ): Promise<EnvelopeProcessResult> {
   // Group events by commandId for batch reconciliation
   const byCommand = new Map<string, DownstreamEvent[]>();
@@ -138,7 +146,7 @@ async function processEvents(
   }
 
   for (const [commandId, events] of byCommand) {
-    await dispatcher.reconcile(
+    await reconciliationService.reconcile(
       commandId,
       envelope.streamId,
       events.map(toAuthoritative),
@@ -185,16 +193,16 @@ async function saveCheckpointAfterEnvelope(
 
 /**
  * Creates an {@link EventStreamConsumer} that processes event stream
- * feed envelopes, reconciles authoritative events with pending, and
+ * feed envelopes, reconciles authoritative events with local, and
  * persists checkpoints after each processed envelope for crash safety.
  */
 export function createEventStreamConsumer(
   options: FeedConsumerOptions,
 ): EventStreamConsumer {
   const {
-    eventStore,
+    eventStoreAdapter,
     checkpointStore,
-    reconciliationDispatcher,
+    reconciliationService,
     onEnvelope,
   } = options;
 
@@ -213,11 +221,11 @@ export function createEventStreamConsumer(
         try {
           switch (envelope.type) {
             case 'snapshot':
-              result = await processSnapshot(envelope, eventStore);
+              result = await processSnapshot(envelope, eventStoreAdapter);
               snapshots++;
               break;
             case 'events':
-              result = await processEvents(envelope, reconciliationDispatcher);
+              result = await processEvents(envelope, reconciliationService);
               reconciled++;
               break;
             case 'stream_added':
