@@ -12,6 +12,7 @@ export interface BridgeableAggregate<S extends object> {
         commands: Record<string, string>;
         events: Record<string, string>;
     };
+    commandCreators: Record<string, (...args: unknown[]) => Command>;
 }
 
 export interface DemeineCompatibleAggregate<S extends object = object> {
@@ -103,11 +104,6 @@ export function createDemeineBridge<S extends object>(
         eventMethodMap.set(methodName, typeStr);
     }
 
-    // Pre-compute convenience command shortcuts: commandKey → commandType
-    const commandShortcutMap = new Map<string, string>();
-    for (const [key, typeStr] of Object.entries(builder.types.commands)) {
-        commandShortcutMap.set(key, typeStr);
-    }
 
     return function factory(id: string): DemeineCompatibleAggregate<S> {
         let state: S = structuredClone(builder.initialState);
@@ -236,15 +232,12 @@ export function createDemeineBridge<S extends object>(
             };
         }
 
-        // Generate convenience command shortcuts: aggregate.commandName(payload)
-        // Routes through _sink for proper validation, ID generation, and interceptor support
-        for (const [key, commandType] of commandShortcutMap) {
-            agg[key] = function (payload: unknown) {
-                return agg._sink({
-                    type: commandType,
-                    payload,
-                    aggregateId: id
-                } as any);
+        // Generate convenience command shortcuts: aggregate.commandName(...args)
+        // Uses commandCreators which respects pack functions for positional-arg support
+        for (const [key] of Object.entries(builder.types.commands)) {
+            agg[key] = function (...args: unknown[]) {
+                const command = (builder.commandCreators as any)[key](...args);
+                return agg._sink(command);
             };
         }
 

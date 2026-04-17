@@ -287,3 +287,35 @@ describe('createDemeineBridge', () => {
         expect((agg._uncommittedEvents[0] as any).aggregateId).toBe('test-shortcuts-5');
     });
 });
+
+describe('packed command support', () => {
+    const packedBuilder = createAggregate<{ name: string; email: string }, 'user'>('user', { name: '', email: '' })
+        .events({
+            registered: (state: any, event: any) => {
+                state.name = event.payload.name;
+                state.email = event.payload.email;
+            }
+        })
+        .commands((emit) => ({
+            register: {
+                pack: (name: string, email: string) => ({ name, email }),
+                handler: (_state: any, payload: { name: string; email: string }) => emit.registered(payload)
+            }
+        }))
+        .build();
+
+    const packedFactory = createDemeineBridge(packedBuilder);
+
+    test('convenience shortcut respects pack function with positional args', async () => {
+        const agg = packedFactory('packed-1');
+        await agg.register('Alice', 'alice@example.com');
+        expect(agg._state.name).toBe('Alice');
+        expect(agg._state.email).toBe('alice@example.com');
+    });
+
+    test('packed command events have correct payload', async () => {
+        const agg = packedFactory('packed-2');
+        await agg.register('Bob', 'bob@example.com');
+        expect(agg._uncommittedEvents[0].payload).toEqual({ name: 'Bob', email: 'bob@example.com' });
+    });
+});
