@@ -103,6 +103,12 @@ export function createDemeineBridge<S extends object>(
         eventMethodMap.set(methodName, typeStr);
     }
 
+    // Pre-compute convenience command shortcuts: commandKey → commandType
+    const commandShortcutMap = new Map<string, string>();
+    for (const [key, typeStr] of Object.entries(builder.types.commands)) {
+        commandShortcutMap.set(key, typeStr);
+    }
+
     return function factory(id: string): DemeineCompatibleAggregate<S> {
         let state: S = structuredClone(builder.initialState);
         let version = 0;
@@ -227,6 +233,17 @@ export function createDemeineBridge<S extends object>(
             agg[methodName] = function (event: Event) {
                 state = builder.apply(state, event);
                 return undefined;
+            };
+        }
+
+        // Generate convenience command shortcuts: aggregate.commandName(payload)
+        for (const [key, commandType] of commandShortcutMap) {
+            agg[key] = function (payload: unknown) {
+                return agg._process({
+                    type: commandType,
+                    payload,
+                    id: createIdentity()
+                } as any);
             };
         }
 

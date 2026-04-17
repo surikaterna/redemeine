@@ -247,4 +247,43 @@ describe('createDemeineBridge', () => {
         const agg = factory('test-id-18');
         expect(() => agg.applyDeleted()).not.toThrow();
     });
+
+    test('convenience command shortcuts exist for all commands', () => {
+        const agg = factory('test-shortcuts-1');
+        expect(typeof agg.addItem).toBe('function');
+        expect(typeof agg.confirm).toBe('function');
+        expect(typeof agg.cancel).toBe('function');
+    });
+
+    test('convenience shortcut dispatches command and updates state', async () => {
+        const agg = factory('test-shortcuts-2');
+        await agg.addItem({ name: 'Widget' });
+        expect(agg._state.items).toContainEqual({ name: 'Widget' });
+        expect(agg._uncommittedEvents).toHaveLength(1);
+        expect(agg.getVersion()).toBe(1);
+    });
+
+    test('convenience shortcut returns the aggregate (chainable)', async () => {
+        const agg = factory('test-shortcuts-3');
+        const result = await agg.confirm();
+        expect(result).toBe(agg);
+        expect(agg._state.status).toBe('confirmed');
+    });
+
+    test('convenience shortcuts work in sequence', async () => {
+        const agg = factory('test-shortcuts-4');
+        await agg.addItem({ name: 'A' });
+        await agg.addItem({ name: 'B' });
+        await agg.confirm();
+        expect(agg._state.items).toEqual([{ name: 'A' }, { name: 'B' }]);
+        expect(agg._state.status).toBe('confirmed');
+        expect(agg.getVersion()).toBe(3);
+        expect(agg._uncommittedEvents).toHaveLength(3);
+    });
+
+    test('convenience shortcut events have correct aggregateId', async () => {
+        const agg = factory('test-shortcuts-5');
+        await agg.addItem({ name: 'Test' });
+        expect((agg._uncommittedEvents[0] as any).aggregateId).toBe('test-shortcuts-5');
+    });
 });
