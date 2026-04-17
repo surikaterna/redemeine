@@ -224,4 +224,56 @@ it('should throw an error when processing an unknown command', () => {
     expect(events[0].type).toBe('test.packed.event');
     expect(events[0].payload).toEqual({ status: 'active', code: 200 });
   });
+
+  it('should expose types map with resolved command and event type strings', () => {
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
+      .events({
+        opened: (state, event: Event<{ id: string }>) => {
+          state.id = event.payload.id;
+        },
+        itemAdded: (state, event: Event<string>) => {
+          state.items.push(event.payload);
+        }
+      })
+      .commands((emit) => ({
+        open: (state, id: string) => emit.opened({ id }),
+        addItem: (state, item: string) => emit.itemAdded(item)
+      }))
+      .build();
+
+    expect(aggregate.types).toBeDefined();
+    expect(aggregate.types.commands).toEqual({
+      open: 'test.open.command',
+      addItem: 'test.add_item.command'
+    });
+    expect(aggregate.types.events).toEqual({
+      opened: 'test.opened.event',
+      itemAdded: 'test.item.added.event'
+    });
+  });
+
+  it('should include overridden names in types map', () => {
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
+      .events({
+        closed: (state) => { state.status = 'closed'; }
+      })
+      .commands((emit) => ({
+        close: () => emit.closed()
+      }))
+      .overrideEventNames({ closed: 'legacy.closed.v1.event' })
+      .overrideCommandNames({ close: 'legacy.close.v1.command' })
+      .build();
+
+    expect(aggregate.types.commands).toEqual({ close: 'legacy.close.v1.command' });
+    expect(aggregate.types.events).toEqual({ closed: 'legacy.closed.v1.event' });
+  });
+
+  it('should include mixin types in the types map', () => {
+    const aggregate = createAggregate<TestState, 'test'>('test', initialState)
+      .mixins(counterMixin)
+      .build();
+
+    expect(aggregate.types.commands.increment).toBe('legacy.counter.increment.command');
+    expect(aggregate.types.events.incremented).toBe('legacy.counter.incremented.event');
+  });
 });

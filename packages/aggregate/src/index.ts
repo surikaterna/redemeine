@@ -1,4 +1,5 @@
 export * from './createAggregate';
+export { createContractFromAggregate } from './createContractFromAggregate';
 export * from './createEntity';
 export * from './createMixin';
 export * from './bindContext';
