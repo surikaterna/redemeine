@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { colors, parseArgs } from '../src/cli/utils';
+import { extractZodSchemas } from '../src/cli/extractZodSchemas';
 import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from '../src/cli/templates';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -202,13 +203,63 @@ function addEntity(name: string, aggregateName?: string | boolean) {
   }
 }
 
+async function extractSchemas(options: Record<string, string | boolean>) {
+  const entry = options.entry;
+  const exportName = options.export;
+  const out = options.out;
+
+  if (!entry || typeof entry !== 'string') {
+    console.log(colors.red('Error: --entry <path> is required.'));
+    process.exit(1);
+  }
+  if (!exportName || typeof exportName !== 'string') {
+    console.log(colors.red('Error: --export <name> is required.'));
+    process.exit(1);
+  }
+  if (!out || typeof out !== 'string') {
+    console.log(colors.red('Error: --out <path> is required.'));
+    process.exit(1);
+  }
+
+  const tsconfig = typeof options.tsconfig === 'string'
+    ? path.resolve(process.cwd(), options.tsconfig)
+    : path.resolve(process.cwd(), 'tsconfig.json');
+
+  const dateHandling = typeof options['date-handling'] === 'string'
+    ? (options['date-handling'] as 'string' | 'date')
+    : 'string';
+
+  const noState = options['no-state'] === true || options['no-state'] === 'true';
+
+  try {
+    extractZodSchemas({
+      tsconfig,
+      entry: path.resolve(process.cwd(), entry),
+      aggregateExport: exportName,
+      outFile: path.resolve(process.cwd(), out),
+      dateHandling,
+      includeState: !noState,
+    });
+    console.log(colors.green(`Zod schemas written to ${out}`));
+  } catch (err: any) {
+    console.log(colors.red(`extract-schemas failed: ${err.message}`));
+    process.exit(1);
+  }
+}
+
 async function main() {
   const { command, name, options } = parseArgs(process.argv);
 
-  if (command !== 'help' && !['init', 'add-entity'].includes(command)) {
-    console.log(colors.red(`Unknown command: \${command || '<empty>'}`));
-    console.log(colors.cyan('Available commands: init <name>, add-entity <name> --to <aggregateName>'));
+  if (command !== 'help' && !['init', 'add-entity', 'extract-schemas'].includes(command)) {
+    console.log(colors.red(`Unknown command: ${command || '<empty>'}`));
+    console.log(colors.cyan('Available commands: init <name>, add-entity <name> --to <aggregateName>, extract-schemas --entry <path> --export <name> --out <path>'));
     process.exit(1);
+  }
+
+  // extract-schemas does not need preFlightCheck
+  if (command === 'extract-schemas') {
+    await extractSchemas(options);
+    return;
   }
 
   await preFlightCheck();
@@ -217,7 +268,7 @@ async function main() {
     case 'init':
       initAggregate(name);
       console.log(colors.green('\nNext Steps:'));
-      console.log(colors.cyan(`1. Check src/domains/\${name}/contract.ts to define your schema.`));
+      console.log(colors.cyan(`1. Check src/domains/${name}/contract.ts to define your schema.`));
       console.log(colors.cyan(`2. Run 'bunx redemeine add-entity' to add nested collections.`));
       console.log(colors.cyan(`3. Use 'bunx tsc' to verify your new aggregate.`));
       break;
