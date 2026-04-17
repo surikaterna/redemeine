@@ -365,6 +365,10 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
             commands: Record<string, { meta?: TMeta }>;
             events: Record<string, { meta?: TMeta }>;
         };
+        types: {
+            commands: Record<string, string>;
+            events: Record<string, string>;
+        };
         plugins: RedemeinePlugin<TPlugins>[];
         __registryType?: Registry;
 
@@ -675,6 +679,16 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 return acc;
             }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[]>);
 
+            const commandTypesByKey = Object.keys(allCommandsMap).reduce((acc, key) => {
+                acc[key] = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
+                return acc;
+            }, {} as Record<string, string>);
+
+            const eventTypesByKey = Object.keys(allEvents).reduce((acc, key) => {
+                acc[key] = allEventOverrides[key] || _namingStrategy.event(aggregateName, key);
+                return acc;
+            }, {} as Record<string, string>);
+
             return {
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides, commandHandlerByType),
@@ -691,6 +705,10 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 metadata: {
                     commands: metadataByCommandType,
                     events: metadataByEventType
+                },
+                types: {
+                    commands: commandTypesByKey,
+                    events: eventTypesByKey
                 },
                 plugins: _plugins as RedemeinePlugin<TPlugins>[]
             };
