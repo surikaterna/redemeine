@@ -237,12 +237,13 @@ export function createDemeineBridge<S extends object>(
         }
 
         // Generate convenience command shortcuts: aggregate.commandName(payload)
+        // Routes through _sink for proper validation, ID generation, and interceptor support
         for (const [key, commandType] of commandShortcutMap) {
             agg[key] = function (payload: unknown) {
-                return agg._process({
+                return agg._sink({
                     type: commandType,
                     payload,
-                    id: createIdentity()
+                    aggregateId: id
                 } as any);
             };
         }
