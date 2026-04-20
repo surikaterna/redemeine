@@ -26,6 +26,7 @@ export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityR
     initialState: S;
     process: (state: S, command: Command<any, string>) => Event[];
     apply: (state: S, event: Event) => S;
+    applyToDraft?: (draft: S, event: Event) => void;
     hooks?: AggregateHooks<S>;
     commandCreators: {
         [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
