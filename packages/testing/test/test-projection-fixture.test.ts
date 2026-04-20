@@ -4,7 +4,7 @@ import { testProjection } from '../src/testProjection';
 import type { TestProjectionEvent } from '../src/testProjection';
 
 const invoiceAgg = {
-  __aggregateType: 'invoice' as const,
+  aggregateType: 'invoice' as const,
   pure: {
     eventProjectors: {
       created: (_state: unknown, event: { payload: { invoiceId: string; orderId: string; amount: number } }) => {
@@ -15,7 +15,7 @@ const invoiceAgg = {
 };
 
 const orderAgg = {
-  __aggregateType: 'order' as const,
+  aggregateType: 'order' as const,
   pure: {
     eventProjectors: {
       shipped: (_state: unknown, event: { payload: { orderId: string; carrier: string } }) => {

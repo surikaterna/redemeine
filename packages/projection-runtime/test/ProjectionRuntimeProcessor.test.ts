@@ -117,14 +117,14 @@ function createProjectionDefinition(name: string, identity?: (event: ProjectionC
     identity: identity ?? ((event: ProjectionCommit) => event.aggregateId),
     subscriptions: [],
     fromStream: {
-      aggregate: { __aggregateType: 'order' },
+      aggregate: { aggregateType: 'order' },
       handlers: {
         'order.created': (state: TestState, event: ProjectionCommit, context: any) => {
           state.total += Number(event.payload.amount ?? 0);
           state.appliedSequences.push(event.sequence);
           const customerId = event.payload.customerId;
           if (typeof customerId === 'string') {
-            context.subscribeTo({ __aggregateType: 'customer' }, customerId);
+            context.subscribeTo({ aggregateType: 'customer' }, customerId);
           }
         },
         'order.updated': (state: TestState, event: ProjectionCommit) => {
@@ -135,7 +135,7 @@ function createProjectionDefinition(name: string, identity?: (event: ProjectionC
     },
     joinStreams: [
       {
-        aggregate: { __aggregateType: 'customer' },
+        aggregate: { aggregateType: 'customer' },
         handlers: {
           'customer.updated': (state: TestState, event: ProjectionCommit) => {
             state.customerName = String(event.payload.name);

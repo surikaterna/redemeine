@@ -53,7 +53,7 @@ const PLUGIN_INVOKE_TYPING_IDENTITY: CanonicalSagaIdentityInput = {
 };
 
 const InvoiceAggregate = {
-  __aggregateType: 'invoice',
+  aggregateType: 'invoice',
   pure: {
     eventProjectors: {
       created: (_state: unknown, _event: { payload: { invoiceId: string; amount: number } }) => undefined

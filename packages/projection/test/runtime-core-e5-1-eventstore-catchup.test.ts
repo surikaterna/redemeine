@@ -79,7 +79,7 @@ class RecordingEventStoreReader {
 }
 
 const invoiceAgg = {
-  __aggregateType: 'invoice',
+  aggregateType: 'invoice',
   initialState: {},
   pure: { eventProjectors: {} }
 };

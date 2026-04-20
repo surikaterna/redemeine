@@ -39,7 +39,7 @@ const initialInvoiceState: InvoiceState = {
 };
 
 const invoiceAgg = {
-  __aggregateType: 'invoice' as const,
+  aggregateType: 'invoice' as const,
   pure: {
     eventProjectors: {
       created: (_state: unknown, event: { payload: InvoiceCreatedPayload }) => {
@@ -55,7 +55,7 @@ const invoiceAgg = {
 
 // Define the aggregate definition for use in projections
 const invoiceAggDef: AggregateDefinition<InvoiceState, { created: InvoiceCreatedPayload; paid: InvoicePaidPayload }> = {
-  __aggregateType: 'invoice',
+  aggregateType: 'invoice',
   initialState: initialInvoiceState,
   pure: {
     eventProjectors: invoiceAgg.pure.eventProjectors
@@ -80,7 +80,7 @@ const initialOrderState: OrderState = {
 };
 
 const orderAgg = {
-  __aggregateType: 'order' as const,
+  aggregateType: 'order' as const,
   pure: {
     eventProjectors: {
       itemAdded: (_state: unknown, event: { payload: { itemId: string } }) => {
@@ -95,7 +95,7 @@ const orderAgg = {
 };
 
 const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string }; shipped: OrderShippedPayload }> = {
-  __aggregateType: 'order',
+  aggregateType: 'order',
   initialState: initialOrderState,
   pure: {
     eventProjectors: orderAgg.pure.eventProjectors
@@ -359,7 +359,7 @@ describe('createProjection Builder Chaining', () => {
     }
     const initial2: OrderState2 = { id: '', status: '' };
     const agg2Def: AggregateDefinition<OrderState2, { updated: { status: string } }> = {
-      __aggregateType: 'order2',
+      aggregateType: 'order2',
       initialState: initial2,
       pure: {
         eventProjectors: {}

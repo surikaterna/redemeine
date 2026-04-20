@@ -26,7 +26,7 @@ export const conformanceIdentity: CanonicalSagaIdentityInput = {
 };
 
 export const ConformanceAggregate = {
-  __aggregateType: 'conformance',
+  aggregateType: 'conformance',
   pure: {
     eventProjectors: {
       started: (

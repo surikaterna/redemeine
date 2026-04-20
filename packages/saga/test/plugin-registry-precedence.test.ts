@@ -16,7 +16,7 @@ const REGISTRY_PRECEDENCE_IDENTITY: CanonicalSagaIdentityInput = {
 };
 
 const EventAggregate = {
-  __aggregateType: 'event',
+  aggregateType: 'event',
   pure: {
     eventProjectors: {
       received: (_state: unknown, _event: { payload: { id: string } }) => undefined

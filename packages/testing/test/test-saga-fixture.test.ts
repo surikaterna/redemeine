@@ -6,7 +6,7 @@ import {
 import { testSaga, type TestSagaFixture } from '../src';
 
 const PaymentAggregate = {
-  __aggregateType: 'payment',
+  aggregateType: 'payment',
   pure: {
     eventProjectors: {
       started: (_state: unknown, _event: { payload: { id: string } }) => undefined

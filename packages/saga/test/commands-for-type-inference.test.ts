@@ -8,7 +8,7 @@ const BILLING_SAGA_IDENTITY: CanonicalSagaIdentityInput = {
 };
 
 const BillingAggregate = {
-  __aggregateType: 'billing',
+  aggregateType: 'billing',
   pure: {
     eventProjectors: {
       started: (_state: unknown, _event: { payload: { invoiceId: string } }) => undefined
