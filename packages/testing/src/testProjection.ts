@@ -26,6 +26,9 @@ export interface TestProjectionDefinition<TState> {
     readonly handlers: Record<string, (state: Draft<TState>, event: TestProjectionEvent, ctx: TestProjectionContext) => void>;
   }[];
   readonly initialState: (documentId: string) => TState;
+  readonly hooks?: {
+    readonly afterEach?: (state: Draft<TState>, event: TestProjectionEvent) => void;
+  };
 }
 
 enablePatches();
@@ -139,6 +142,9 @@ export function testProjection<TState>(projection: TestProjectionDefinition<TSta
       const [nextState, patches] = produceWithPatches(state, (draft) => {
         if (handler) {
           handler(draft, event, context);
+        }
+        if (projection.hooks?.afterEach) {
+          projection.hooks.afterEach(draft, event);
         }
       });
 

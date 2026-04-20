@@ -37,6 +37,9 @@ type RuntimeProjectionDefinition<TState extends PlainObject> = {
   }>;
   initialState: (documentId: string) => TState;
   identity: (event: ProjectionCommit) => string | readonly string[];
+  hooks?: {
+    afterEach?: (state: TState, event: ProjectionCommit) => void;
+  };
 };
 
 type ProjectionPersistenceContract<TState extends PlainObject> = ProjectionReadContract<TState> &
@@ -117,6 +120,10 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
         const context = this.createContext();
 
         handler(pending.state as never, commit as never, context);
+
+        if (this.options.projection.hooks?.afterEach) {
+          this.options.projection.hooks.afterEach(pending.state, commit);
+        }
 
         const subscriptions = context.getSubscriptions();
         for (const subscription of subscriptions) {

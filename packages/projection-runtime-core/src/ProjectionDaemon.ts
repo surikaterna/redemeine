@@ -310,6 +310,9 @@ export class ProjectionDaemon<TState = unknown> {
             if (handler) {
               handler(draft, event, context);
             }
+            if (projection.hooks?.afterEach) {
+              projection.hooks.afterEach(draft as TState, event);
+            }
           });
 
           for (const unsubscription of context.getUnsubscriptions()) {

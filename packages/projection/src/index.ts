@@ -13,7 +13,8 @@ export type {
   ProjectionStreamDefinition,
   JoinStreamDefinition,
   ProjectionDefinition,
-  ProjectionBuilder
+  ProjectionBuilder,
+  ProjectionHooks
 } from './createProjection';
 export {
   reverseSemanticsContract,
