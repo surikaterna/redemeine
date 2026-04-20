@@ -1,7 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { createProjection } from '../../projection/src';
-import { testProjection } from '../src/testProjection';
-import type { TestProjectionEvent } from '../src/testProjection';
+import { testProjection, TestProjectionEvent } from '../src/testProjection';
 
 const invoiceAgg = {
   aggregateType: 'invoice' as const,
@@ -134,5 +133,47 @@ describe('testProjection fixture', () => {
       { op: 'add', path: ['shipments', 0], value: 'ord-1' },
       { op: 'add', path: ['shipments', 1], value: 'post' }
     ]);
+  });
+
+  it('invokes afterEach hook after handler', () => {
+    const testAgg = {
+      aggregateType: 'counter' as const,
+      pure: {
+        eventProjectors: {
+          incremented: (_state: unknown, _event: { payload: { amount: number } }) => {}
+        }
+      }
+    };
+
+    type CounterState = { count: number; hookCalled: boolean };
+
+    const projection = createProjection<CounterState>('counter-view', () => ({
+      count: 0,
+      hookCalled: false
+    }))
+      .hooks({
+        afterEach: (state) => {
+          state.hookCalled = true;
+        }
+      })
+      .from(testAgg, {
+        incremented: (state, event) => {
+          state.count += event.payload.amount;
+        }
+      })
+      .build();
+
+    const fixture = testProjection(projection);
+    const { state } = fixture.applyEvent({
+      aggregateType: 'counter',
+      aggregateId: 'c-1',
+      type: 'counter.incremented.event',
+      payload: { amount: 5 },
+      sequence: 1,
+      timestamp: '2026-04-20T10:00:00Z'
+    });
+
+    expect(state.count).toBe(5);
+    expect(state.hookCalled).toBe(true);
   });
 });

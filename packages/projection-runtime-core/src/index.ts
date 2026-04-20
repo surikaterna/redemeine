@@ -32,7 +32,8 @@ export type {
   JoinStreamDefinition,
   ReverseSubscribeStreamDefinition,
   ProjectionDefinition,
-  ProjectionBuilder
+  ProjectionBuilder,
+  ProjectionHooks
 } from './createProjection';
 export { ProjectionDaemon } from './ProjectionDaemon';
 export type { ProjectionDaemonOptions, BatchStats } from './ProjectionDaemon';

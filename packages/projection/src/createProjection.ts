@@ -2,6 +2,12 @@ import { ProjectionEvent as BaseProjectionEvent } from './types';
 
 type Draft<TState> = TState;
 
+/** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
+export interface ProjectionHooks<TState> {
+  /** Runs after every event handler — receives mutable state and the raw event */
+  afterEach?: (state: TState, event: BaseProjectionEvent) => void;
+}
+
 /**
  * Event shape passed to projection handlers with narrowed payload type.
  */
@@ -173,6 +179,8 @@ export interface ProjectionDefinition<TState = unknown> {
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   /** Subscriptions captured during projection definition */
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
+  /** Cross-cutting hooks that run around event handlers */
+  hooks?: ProjectionHooks<TState>;
 }
 
 /**
@@ -213,6 +221,11 @@ export interface ProjectionBuilder<TState> {
   ): ProjectionBuilder<TState>;
   
   /**
+   * Register cross-cutting hooks that run around event handlers
+   */
+  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
+
+  /**
    * Build the final projection definition
    */
   build(): ProjectionDefinition<TState>;
@@ -227,6 +240,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _identity: (event: BaseProjectionEvent) => string | readonly string[];
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
+  private _hooks: ProjectionHooks<TState> = {};
 
   constructor(name: string, initialState: (id: string) => TState) {
     this._name = name;
@@ -288,6 +302,11 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState> {
+    this._hooks = { ...this._hooks, ...hooks };
+    return this;
+  }
+
   build(): ProjectionDefinition<TState> {
     if (!this._fromStream) {
       throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
@@ -299,7 +318,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       joinStreams: this._joinStreams,
       initialState: this._initialState,
       identity: this._identity,
-      subscriptions: []
+      subscriptions: [],
+      hooks: this._hooks
     };
   }
 }
