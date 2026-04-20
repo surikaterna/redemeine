@@ -1,4 +1,4 @@
-import { MirageCoreSymbol, createMirage, type BuiltAggregate } from '@redemeine/mirage';
+import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate } from '@redemeine/mirage';
 import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
@@ -341,7 +341,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     const aggregateId = resolveAggregateId(command);
     const mirage = getOrCreateMirage(aggregate, aggregateId);
 
-    await Promise.resolve(mirage.dispatch(command));
+    await Promise.resolve(mirageDispatch(mirage, command));
 
     const core = (mirage as any)[MirageCoreSymbol] as {
       getPendingResults(): { events: DomainEvent[] };
