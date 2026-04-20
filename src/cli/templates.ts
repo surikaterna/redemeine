@@ -24,7 +24,7 @@ import { InitialState, Commands, Events } from './contract';
 import * as selectors from './selectors';
 
 export const ${aggregateName}Aggregate = createAggregate('${aggregateName}', InitialState)
-  .naming('targeted') // Uses "Targeted" dot-notation logic
+  // .naming(namingStrategies.snakeCase) // Use for legacy demeine-compatible snake_case events
   // .extends(BaseAggregate) // Example of inheriting from another aggregate
   .commands(Commands)
   .events(Events)

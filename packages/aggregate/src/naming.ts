@@ -1,6 +1,6 @@
 import type { EventType, NamingStrategy } from '@redemeine/kernel';
 
-const toSnakeCase = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+export const toSnakeCase = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
 export const formatCommandType = (aggregateName: string, prop: string, path?: string) => {
     const commandName = toSnakeCase(prop);
@@ -32,6 +32,28 @@ export const defaultNamingStrategy: NamingStrategy = {
     command: formatCommandType,
     event: formatTargetedEventType
 };
+
+export const formatSnakeCaseEventType = (aggregateName: string, prop: string, path?: string): EventType => {
+    const eventName = toSnakeCase(prop);
+    if (path) return `${aggregateName}.${path}.${eventName}.event` as EventType;
+    return `${aggregateName}.${eventName}.event` as EventType;
+};
+
+/** Predefined naming strategy presets for common conventions */
+export const namingStrategies = {
+    /** Default: commands use snake_case, events use targeted dot-notation path splitting */
+    targeted: defaultNamingStrategy,
+    /** Flat with snake_case for both commands and events — matches legacy demeine conventions */
+    snakeCase: {
+        command: formatCommandType,
+        event: formatSnakeCaseEventType,
+    } as NamingStrategy,
+    /** Flat with no case conversion — preserves camelCase prop names verbatim */
+    flat: {
+        command: formatCommandType,
+        event: formatFlatEventType,
+    } as NamingStrategy,
+} as const;
 
 export const parseTargetedEventPath = (eventType: string, aggregateName: string) => {
     const prefix = aggregateName + '.';
