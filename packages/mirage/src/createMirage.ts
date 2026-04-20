@@ -1072,13 +1072,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                             return makeCollectionProxy([...statePath, prop], [mount.commandPrefix], mount, context);
                         }
 
-                        const legacyListMount: MountMetadata = {
-                            kind: 'list',
-                            commandPrefix: prop,
-                            statePath: [...statePath, prop],
-                            pk: 'id'
-                        };
-                        return makeCollectionProxy([...statePath, prop], [...commandPath, prop], legacyListMount, context);
+                        return createReadonlyDeepProxy(value);
                     }
 
                     if (typeof value === 'object' && value !== null) {

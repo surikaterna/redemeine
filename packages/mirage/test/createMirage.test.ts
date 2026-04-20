@@ -104,17 +104,48 @@ describe('Mirage tests', () => {
         expect(uncommitted[0].payload).toBe(42);
     });
 
-    test('should execute targeted commands via deep proxy recursively', () => {
-        const builder = setupBuilder();
-        const live = createMirage(builder, 'agg-1');
+    test('should execute targeted commands via entity list', () => {
+        const lineEntity = createEntity<{ id: string; qty: number }, 'line'>('line')
+            .events({
+                updated: (line, event: Event<{ id: string; qty: number }>) => {
+                    line.qty = event.payload.qty;
+                }
+            })
+            .commands((emit) => ({
+                update: {
+                    pack: (lineId: string, qty: number) => ({ id: lineId, qty }),
+                    handler: (line, payload) => emit.updated(payload)
+                }
+            }))
+            .build();
 
-        (live as any).line('123').update({ qty: 99 });
+        interface LineTestState {
+            value: number;
+            line: { id: string; qty: number }[];
+        }
+
+        const aggregate = createAggregate<LineTestState, 'test'>('test', {
+            value: 0,
+            line: [{ id: '123', qty: 1 }]
+        })
+            .entityList('line', lineEntity)
+            .events({
+                updated: (state: any, event: Event<number>) => {
+                    state.value = event.payload;
+                }
+            })
+            .commands((emit) => ({
+                update: (state: any, value: number) => emit.updated(value)
+            }))
+            .build();
+
+        const live = createMirage(aggregate, 'agg-1');
+        live.line('123').update(99);
 
         const uncommitted = extractUncommittedEvents(live);
-
         expect(uncommitted.length).toBe(1);
         expect(uncommitted[0].type).toBe('test.line.updated.event');
-        expect(uncommitted[0].payload).toEqual({ qty: 99, lineId: '123', id: '123' });
+        expect(uncommitted[0].payload).toEqual({ id: '123', qty: 99 });
     });
 
     test('should allow reading readable states directly from live object natively', async () => {
@@ -245,7 +276,7 @@ describe('Mirage tests', () => {
             .build();
 
         const live = createMirage(aggregate, 'p1');
-        (live as any).identifiers.VAT.verify();
+        live.identifiers.VAT.verify();
 
         expect(live.identifiers.VAT.verified).toBe(true);
     });
