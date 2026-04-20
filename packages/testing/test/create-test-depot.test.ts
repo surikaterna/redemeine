@@ -20,7 +20,7 @@ type OrderedCounterView = {
 };
 
 const CounterAggregate = {
-  __aggregateType: 'counter',
+  aggregateType: 'counter',
   initialState: { count: 0 } as CounterState,
   process(state: CounterState, command: { type: string; payload: { id: string; amount: number } }) {
     if (command.type === 'counter.increment.command') {

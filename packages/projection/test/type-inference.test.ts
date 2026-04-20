@@ -32,7 +32,7 @@ interface OrderDeliveredPayload {
 // ============================================================================
 
 const invoiceAgg = {
-  __aggregateType: 'invoice' as const,
+  aggregateType: 'invoice' as const,
   pure: {
     eventProjectors: {
       created: (_state: unknown, event: { payload: InvoiceCreatedPayload }) => {
@@ -46,7 +46,7 @@ const invoiceAgg = {
 };
 
 const orderAgg = {
-  __aggregateType: 'order' as const,
+  aggregateType: 'order' as const,
   pure: {
     eventProjectors: {
       shipped: (_state: unknown, event: { payload: OrderShippedPayload }) => {
@@ -202,7 +202,7 @@ describe('Type Inference for Projections', () => {
 
   it('should preserve type inference when chaining multiple .join() calls', () => {
     const shipmentAgg = {
-      __aggregateType: 'shipment' as const,
+      aggregateType: 'shipment' as const,
       pure: {
         eventProjectors: {
           dispatched: (_state: unknown, event: { payload: { dispatchId: string } }) => {

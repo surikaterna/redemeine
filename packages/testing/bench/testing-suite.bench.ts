@@ -113,7 +113,7 @@ async function benchmarkProjectionFixture(iterations: number): Promise<BenchResu
   type CounterState = { total: number; events: number };
 
   const counterAggregate = {
-    __aggregateType: 'counter' as const,
+    aggregateType: 'counter' as const,
     pure: {
       eventProjectors: {
         incremented: (_state: unknown, _event: { payload: { amount: number } }) => undefined
@@ -161,7 +161,7 @@ async function benchmarkProjectionFixture(iterations: number): Promise<BenchResu
 
 async function benchmarkSagaFixture(iterations: number): Promise<BenchResult> {
   const PaymentAggregate = {
-    __aggregateType: 'payment',
+    aggregateType: 'payment',
     commandCreators: {
       'payment.capture': (id: string) => ({
         type: 'payment.capture',
@@ -249,7 +249,7 @@ async function benchmarkDepotFixture(iterations: number): Promise<BenchResult> {
   type CounterView = { id: string; total: number; events: number };
 
   const CounterAggregate = {
-    __aggregateType: 'counter',
+    aggregateType: 'counter',
     initialState: { count: 0 } as CounterState,
     process(_state: CounterState, command: { type: string; payload: { id: string; amount: number } }) {
       if (command.type === 'counter.increment.command') {

@@ -342,6 +342,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
      * Finalizes and compiles the aggregate.
      */
     build: () => {
+        aggregateType: Name;
         initialState: S;
         process: (state: S, command: Command<unknown, string>) => Event[];
         apply: (state: S, event: Event) => S;
@@ -690,6 +691,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             }, {} as Record<string, string>);
 
             return {
+                aggregateType: aggregateName,
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides, commandHandlerByType),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors),

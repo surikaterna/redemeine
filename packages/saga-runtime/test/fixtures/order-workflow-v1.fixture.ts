@@ -75,7 +75,7 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
     'payments.authorize.failed': () => undefined,
     'inventory.reserve.failed': () => undefined
   })
-  .on({ __aggregateType: 'orders', pure: { eventProjectors: {} }, commandCreators: {} } as const, {
+  .on({ aggregateType: 'orders', pure: { eventProjectors: {} }, commandCreators: {} } as const, {
     placed: (state: OrderWorkflowState, event: { payload: { orderId: string; amount: number; sku: string; quantity: number } }, ctx: any) => {
       ctx.actions.inventory
         .reserve({

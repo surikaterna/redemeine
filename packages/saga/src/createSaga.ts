@@ -744,7 +744,7 @@ export interface SagaAggregateDefinition<
   TCommandCreators extends SagaCommandCreators = SagaCommandCreators,
   TAggregateType extends string = string
 > {
-  readonly __aggregateType?: TAggregateType;
+  readonly aggregateType?: TAggregateType;
   readonly pure: {
     readonly eventProjectors: TEventProjectors;
   };
@@ -755,7 +755,7 @@ type CommandCreatorsOf<TAggregate extends SagaAggregateDefinition> = TAggregate[
 type EventProjectorsOf<TAggregate extends SagaAggregateDefinition> = TAggregate['pure']['eventProjectors'];
 
 type AggregateTypeOf<TAggregate extends SagaAggregateDefinition> =
-  TAggregate extends { __aggregateType: infer TAggregateType extends string }
+  TAggregate extends { aggregateType: infer TAggregateType extends string }
     ? TAggregateType
     : string;
 
@@ -1713,7 +1713,7 @@ interface SagaDefinitionDraft<
 }
 
 function getAggregateType(aggregate: SagaAggregateDefinition): string {
-  return aggregate.__aggregateType ?? 'unknown';
+  return aggregate.aggregateType ?? 'unknown';
 }
 
 function resolveSagaIdentity(options: CreateSagaOptions<SagaPluginManifestList>): SagaIdentityMetadata {

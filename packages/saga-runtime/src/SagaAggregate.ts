@@ -527,7 +527,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
 
   return {
     ...built,
-    __aggregateType: aggregateName,
+    aggregateType: aggregateName,
     windowLimits
   };
 }

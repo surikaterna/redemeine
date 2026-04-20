@@ -37,7 +37,7 @@ const LegacyPlugin = defineSagaPlugin({
 });
 
 const InvoiceAggregate = {
-  __aggregateType: 'invoice',
+  aggregateType: 'invoice',
   pure: {
     eventProjectors: {
       created: (_state: unknown, _event: { payload: { invoiceId: string } }) => undefined

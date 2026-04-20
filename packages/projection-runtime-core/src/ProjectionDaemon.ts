@@ -41,8 +41,8 @@ export interface BatchStats {
 }
 
 interface RuntimeProjectionContext extends ProjectionContext {
-  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
-  getUnsubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  getSubscriptions(): Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
+  getUnsubscriptions(): Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 }
 
 class SubscriptionOrchestrator<TState = unknown> {
@@ -313,23 +313,23 @@ export class ProjectionDaemon<TState = unknown> {
           });
 
           for (const unsubscription of context.getUnsubscriptions()) {
-            const linkKey = `${unsubscription.aggregate.__aggregateType}:${unsubscription.aggregateId}`;
+            const linkKey = `${unsubscription.aggregate.aggregateType}:${unsubscription.aggregateId}`;
             pendingLinkAdds.delete(linkKey);
 
             pendingLinkRemoves.set(linkKey, {
-              aggregateType: unsubscription.aggregate.__aggregateType,
+              aggregateType: unsubscription.aggregate.aggregateType,
               aggregateId: unsubscription.aggregateId,
               targetDocId
             });
           }
 
           for (const subscription of context.getSubscriptions()) {
-            const linkKey = `${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`;
+            const linkKey = `${subscription.aggregate.aggregateType}:${subscription.aggregateId}`;
             const removed = pendingLinkRemoves.get(linkKey);
 
             if (removed) {
               pendingLinkAdds.set(linkKey, {
-                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateType: subscription.aggregate.aggregateType,
                 aggregateId: subscription.aggregateId,
                 targetDocId
               });
@@ -346,7 +346,7 @@ export class ProjectionDaemon<TState = unknown> {
                 });
 
                 pendingLinkAdds.set(linkKey, {
-                  aggregateType: subscription.aggregate.__aggregateType,
+                  aggregateType: subscription.aggregate.aggregateType,
                   aggregateId: subscription.aggregateId,
                   targetDocId
                 });
@@ -356,19 +356,19 @@ export class ProjectionDaemon<TState = unknown> {
             }
 
             const existingTarget = await this.options.store.resolveTarget(
-              subscription.aggregate.__aggregateType,
+              subscription.aggregate.aggregateType,
               subscription.aggregateId
             );
 
             if (existingTarget && existingTarget !== targetDocId) {
               pendingLinkRemoves.set(linkKey, {
-                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateType: subscription.aggregate.aggregateType,
                 aggregateId: subscription.aggregateId,
                 targetDocId: existingTarget
               });
 
               pendingLinkAdds.set(linkKey, {
-                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateType: subscription.aggregate.aggregateType,
                 aggregateId: subscription.aggregateId,
                 targetDocId
               });
@@ -377,7 +377,7 @@ export class ProjectionDaemon<TState = unknown> {
 
             if (!existingTarget) {
               pendingLinkAdds.set(linkKey, {
-                aggregateType: subscription.aggregate.__aggregateType,
+                aggregateType: subscription.aggregate.aggregateType,
                 aggregateId: subscription.aggregateId,
                 targetDocId
               });
@@ -471,7 +471,7 @@ export class ProjectionDaemon<TState = unknown> {
     const { projection } = this.options;
 
     // Check if this is a .from stream event
-    if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
+    if (event.aggregateType === projection.fromStream.aggregate.aggregateType) {
       const identity = projection.identity(event);
       const docIds = Array.isArray(identity) ? identity : [identity];
       return { targetDocIds: Array.from(new Set(docIds)) };
@@ -479,7 +479,7 @@ export class ProjectionDaemon<TState = unknown> {
 
     // Check if this is a .join stream event
     const joinStream = projection.joinStreams?.find(
-      js => js.aggregate.__aggregateType === event.aggregateType
+      js => js.aggregate.aggregateType === event.aggregateType
     );
 
     if (joinStream) {
@@ -532,8 +532,8 @@ export class ProjectionDaemon<TState = unknown> {
    * Create the context object passed to handlers
    */
   private createContext(): RuntimeProjectionContext {
-    const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
-    const unsubscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+    const subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }> = [];
+    const unsubscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }> = [];
 
     return {
       subscribeTo(aggregate, aggregateId) {
@@ -543,14 +543,14 @@ export class ProjectionDaemon<TState = unknown> {
         unsubscriptions.push({ aggregate, aggregateId });
       },
       getSubscriptions() {
-        const remaining = new Map<string, { aggregate: { __aggregateType: string }; aggregateId: string }>();
+        const remaining = new Map<string, { aggregate: { aggregateType: string }; aggregateId: string }>();
 
         for (const subscription of subscriptions) {
-          remaining.set(`${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`, subscription);
+          remaining.set(`${subscription.aggregate.aggregateType}:${subscription.aggregateId}`, subscription);
         }
 
         for (const unsubscription of unsubscriptions) {
-          remaining.delete(`${unsubscription.aggregate.__aggregateType}:${unsubscription.aggregateId}`);
+          remaining.delete(`${unsubscription.aggregate.aggregateType}:${unsubscription.aggregateId}`);
         }
 
         return Array.from(remaining.values());
@@ -577,13 +577,13 @@ export class ProjectionDaemon<TState = unknown> {
 
     // Check .from stream handlers
     const fromHandlers = projection.fromStream.handlers;
-    if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
+    if (event.aggregateType === projection.fromStream.aggregate.aggregateType) {
       return resolve(fromHandlers);
     }
 
     // Check .join stream handlers
     for (const joinStream of projection.joinStreams || []) {
-      if (event.aggregateType === joinStream.aggregate.__aggregateType) {
+      if (event.aggregateType === joinStream.aggregate.aggregateType) {
         return resolve(joinStream.handlers);
       }
     }

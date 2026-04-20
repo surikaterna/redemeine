@@ -12,11 +12,11 @@ export interface ProjectionDaemonOptions<TState extends Record<string, unknown> 
   projection: {
     name: string;
     fromStream: {
-      aggregate: { __aggregateType: string };
+      aggregate: { aggregateType: string };
       handlers: Record<string, (state: TState, event: ProjectionCommit, context: unknown) => void>;
     };
     joinStreams?: Array<{
-      aggregate: { __aggregateType: string };
+      aggregate: { aggregateType: string };
       handlers: Record<string, (state: TState, event: ProjectionCommit, context: unknown) => void>;
     }>;
     initialState: (documentId: string) => TState;

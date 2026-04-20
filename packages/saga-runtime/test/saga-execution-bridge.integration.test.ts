@@ -22,7 +22,7 @@ const {
 };
 
 const OrderAggregate = {
-  __aggregateType: 'orders',
+  aggregateType: 'orders',
   pure: {
     eventProjectors: {
       started: (

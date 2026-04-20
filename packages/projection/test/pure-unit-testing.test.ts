@@ -9,7 +9,7 @@ function produce<TState>(state: TState, recipe: (draft: TState) => void): TState
 // These types would normally come from the projection framework
 // We're demonstrating the testing pattern that developers will use
 interface AggregateDefinition<State, Payload> {
-  __aggregateType: string;
+  aggregateType: string;
   initialState: State;
   pure: {
     eventProjectors: Record<string, (state: State, event: { payload: Payload }) => void>;
@@ -42,7 +42,7 @@ interface OrderSummaryState {
 
 // Test aggregate definition
 const orderAgg: AggregateDefinition<OrderSummaryState, OrderCreatedPayload | OrderShippedPayload> = {
-  __aggregateType: 'order',
+  aggregateType: 'order',
   initialState: { orderId: '', customerId: '', totalAmount: 0, itemCount: 0, shippedAt: null, trackingNumber: null, status: 'pending' },
   pure: {
     eventProjectors: {
@@ -54,7 +54,7 @@ const orderAgg: AggregateDefinition<OrderSummaryState, OrderCreatedPayload | Ord
 
 describe('Pure Unit Testing of Projection Handlers', () => {
   it('defines a typed aggregate fixture for projection tests', () => {
-    expect(orderAgg.__aggregateType).toBe('order');
+    expect(orderAgg.aggregateType).toBe('order');
   });
 
   describe('Testing handlers in isolation', () => {

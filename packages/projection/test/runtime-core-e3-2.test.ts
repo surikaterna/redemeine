@@ -160,13 +160,13 @@ class FailOnRuntimeModeCommitProjectionStore<TState> extends RecordingProjection
 }
 
 const invoiceAgg = {
-  __aggregateType: 'invoice',
+  aggregateType: 'invoice',
   initialState: {},
   pure: { eventProjectors: {} }
 };
 
 const customerAgg = {
-  __aggregateType: 'customer',
+  aggregateType: 'customer',
   initialState: {},
   pure: { eventProjectors: {} }
 };
