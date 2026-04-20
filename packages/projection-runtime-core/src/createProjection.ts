@@ -58,7 +58,7 @@ export type AggregateEventPayloadByKey<
 > = AggregateEventPayloadMap<TAggregate>[TEventKey];
 
 type AggregateTypeOf<TAggregate> =
-  TAggregate extends { __aggregateType: infer TAggregateType extends string }
+  TAggregate extends { aggregateType: infer TAggregateType extends string }
     ? TAggregateType
     : string;
 
@@ -72,7 +72,7 @@ type HandlerEventTypeByKey<TAggregate, TEventKey extends string> =
  * Aggregate definition interface - defines an aggregate that can be used in projections
  */
 export interface AggregateDefinition<TState, TPayloads extends Record<string, unknown>> {
-  __aggregateType: string;
+  aggregateType: string;
   initialState: TState;
   pure: {
     eventProjectors: Record<string, Function>;
@@ -91,12 +91,12 @@ export interface ProjectionContext {
    * Subscribe to events from another aggregate
    * Used for .join semantics to correlate related aggregates
    */
-  subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
+  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
 
   /**
    * Remove a prior subscription for a related aggregate stream.
    */
-  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
+  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
 }
 
 /**
@@ -146,7 +146,7 @@ export interface ProjectionStreamDefinition<TState> {
  */
 export interface JoinStreamDefinition<TState> {
   /** The aggregate type for this joined stream */
-  aggregate: { __aggregateType: string };
+  aggregate: { aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
 }
@@ -156,7 +156,7 @@ export interface JoinStreamDefinition<TState> {
  */
 export interface ReverseSubscribeStreamDefinition<TState> {
   /** The aggregate type for this reverse stream */
-  aggregate: { __aggregateType: string };
+  aggregate: { aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
 }
@@ -178,7 +178,7 @@ export interface ProjectionDefinition<TState = unknown> {
   /** Identity resolver - determines which document ID(s) receive an event */
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   /** Subscriptions captured during projection definition */
-  subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 }
 
 /**
@@ -213,7 +213,7 @@ export interface ProjectionBuilder<TState> {
   /**
    * Add a joined stream for correlating related aggregates
    */
-  join<TAggregate extends { __aggregateType: string }>(
+  join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
@@ -221,7 +221,7 @@ export interface ProjectionBuilder<TState> {
   /**
    * Add a reverse-subscribe stream declaration.
    */
-  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+  reverseSubscribe<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
@@ -282,7 +282,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  join<TAggregate extends { __aggregateType: string }>(
+  join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
@@ -303,7 +303,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  reverseSubscribe<TAggregate extends { __aggregateType: string }>(
+  reverseSubscribe<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {

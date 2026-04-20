@@ -15,8 +15,8 @@ import type { ProjectionPersistenceCapabilities, ProjectionPersistenceMode } fro
 type PlainObject = Record<string, unknown>;
 
 type RuntimeProjectionContext = {
-  subscribeTo: (aggregate: { __aggregateType: string }, aggregateId: string) => void;
-  getSubscriptions: () => Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  subscribeTo: (aggregate: { aggregateType: string }, aggregateId: string) => void;
+  getSubscriptions: () => Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 };
 
 type RuntimeProjectionHandler<TState extends PlainObject> = (
@@ -28,11 +28,11 @@ type RuntimeProjectionHandler<TState extends PlainObject> = (
 type RuntimeProjectionDefinition<TState extends PlainObject> = {
   name: string;
   fromStream: {
-    aggregate: { __aggregateType: string };
+    aggregate: { aggregateType: string };
     handlers: Record<string, RuntimeProjectionHandler<TState>>;
   };
   joinStreams?: Array<{
-    aggregate: { __aggregateType: string };
+    aggregate: { aggregateType: string };
     handlers: Record<string, RuntimeProjectionHandler<TState>>;
   }>;
   initialState: (documentId: string) => TState;
@@ -122,7 +122,7 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
         for (const subscription of subscriptions) {
           await this.options.linkStore.add({
             key: {
-              aggregateType: subscription.aggregate.__aggregateType,
+              aggregateType: subscription.aggregate.aggregateType,
               aggregateId: subscription.aggregateId
             },
             targetDocumentId: documentId
@@ -291,9 +291,9 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   private resolveHandler(commit: ProjectionCommit): RuntimeProjectionHandler<TState> | null {
     const { projection } = this.options;
     const streamHandlers =
-      commit.aggregateType === projection.fromStream.aggregate.__aggregateType
+      commit.aggregateType === projection.fromStream.aggregate.aggregateType
         ? projection.fromStream.handlers
-        : projection.joinStreams?.find((joinStream) => joinStream.aggregate.__aggregateType === commit.aggregateType)?.handlers;
+        : projection.joinStreams?.find((joinStream) => joinStream.aggregate.aggregateType === commit.aggregateType)?.handlers;
 
     if (!streamHandlers) {
       return null;
@@ -313,13 +313,13 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   private async resolveTargetDocumentIds(commit: ProjectionCommit): Promise<string[]> {
     const { projection } = this.options;
 
-    if (commit.aggregateType === projection.fromStream.aggregate.__aggregateType) {
+    if (commit.aggregateType === projection.fromStream.aggregate.aggregateType) {
       const identity = projection.identity(commit);
       const fanout = Array.isArray(identity) ? identity : [identity];
       return this.uniqueDocumentIds(fanout);
     }
 
-    const joinStream = projection.joinStreams?.find((stream) => stream.aggregate.__aggregateType === commit.aggregateType);
+    const joinStream = projection.joinStreams?.find((stream) => stream.aggregate.aggregateType === commit.aggregateType);
     if (!joinStream) {
       return [];
     }
@@ -337,7 +337,7 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   }
 
   private createContext(): RuntimeProjectionContext {
-    const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+    const subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }> = [];
 
     return {
       subscribeTo(aggregate, aggregateId) {

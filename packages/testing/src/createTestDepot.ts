@@ -36,15 +36,15 @@ type ProjectionEvent = {
 };
 
 type ProjectionContext = {
-  subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
+  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
+  getSubscriptions(): Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 };
 
 type ProjectionDefinition<TState = unknown> = RuntimeProjectionDefinition<TState>;
 
 type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any> & {
-  readonly __aggregateType?: string;
+  readonly aggregateType?: string;
 };
 
 type SagaRegistrationLike = {
@@ -149,7 +149,7 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 function getAggregateTypeFromDefinition(aggregate: AggregateDefinitionLike): string {
-  return aggregate.__aggregateType ?? 'unknown';
+  return aggregate.aggregateType ?? 'unknown';
 }
 
 function resolveAggregateId(command: CommandEnvelope): string {

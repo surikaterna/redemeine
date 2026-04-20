@@ -11,18 +11,18 @@ export interface TestProjectionEvent {
 }
 
 export interface TestProjectionContext {
-  subscribeTo(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  unsubscribeFrom(aggregate: { __aggregateType: string }, aggregateId: string): void;
-  getSubscriptions(): Array<{ aggregate: { __aggregateType: string }; aggregateId: string }>;
+  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
+  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
+  getSubscriptions(): Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 }
 
 export interface TestProjectionDefinition<TState> {
   readonly fromStream: {
-    readonly aggregate: { __aggregateType: string };
+    readonly aggregate: { aggregateType: string };
     readonly handlers: Record<string, (state: Draft<TState>, event: TestProjectionEvent, ctx: TestProjectionContext) => void>;
   };
   readonly joinStreams?: readonly {
-    readonly aggregate: { __aggregateType: string };
+    readonly aggregate: { aggregateType: string };
     readonly handlers: Record<string, (state: Draft<TState>, event: TestProjectionEvent, ctx: TestProjectionContext) => void>;
   }[];
   readonly initialState: (documentId: string) => TState;
@@ -42,8 +42,8 @@ export interface TestProjectionFixture<TState> {
 }
 
 function createContext(): TestProjectionContext {
-  const subscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
-  const unsubscriptions: Array<{ aggregate: { __aggregateType: string }; aggregateId: string }> = [];
+  const subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }> = [];
+  const unsubscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }> = [];
 
   return {
     subscribeTo(aggregate, aggregateId) {
@@ -53,14 +53,14 @@ function createContext(): TestProjectionContext {
       unsubscriptions.push({ aggregate, aggregateId });
     },
     getSubscriptions() {
-      const remaining = new Map<string, { aggregate: { __aggregateType: string }; aggregateId: string }>();
+      const remaining = new Map<string, { aggregate: { aggregateType: string }; aggregateId: string }>();
 
       for (const subscription of subscriptions) {
-        remaining.set(`${subscription.aggregate.__aggregateType}:${subscription.aggregateId}`, subscription);
+        remaining.set(`${subscription.aggregate.aggregateType}:${subscription.aggregateId}`, subscription);
       }
 
       for (const unsubscription of unsubscriptions) {
-        remaining.delete(`${unsubscription.aggregate.__aggregateType}:${unsubscription.aggregateId}`);
+        remaining.delete(`${unsubscription.aggregate.aggregateType}:${unsubscription.aggregateId}`);
       }
 
       return Array.from(remaining.values());
@@ -111,12 +111,12 @@ function findHandler<TState>(
     return null;
   };
 
-  if (event.aggregateType === projection.fromStream.aggregate.__aggregateType) {
+  if (event.aggregateType === projection.fromStream.aggregate.aggregateType) {
     return resolve(projection.fromStream.handlers);
   }
 
   for (const joinStream of projection.joinStreams || []) {
-    if (event.aggregateType === joinStream.aggregate.__aggregateType) {
+    if (event.aggregateType === joinStream.aggregate.aggregateType) {
       return resolve(joinStream.handlers);
     }
   }
