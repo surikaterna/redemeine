@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import {
   createProjection,
+  inherit,
   ProjectionBuilder,
   ProjectionDefinition,
   ProjectionContext,
@@ -678,7 +679,7 @@ describe('createProjection Type Exports', () => {
 // Tests: Mirror Projections
 // ============================================================================
 
-describe('createProjection.mirror', () => {
+describe('createProjection .mirror() builder', () => {
   const mirrorableInvoiceAgg = {
     aggregateType: 'invoice' as const,
     initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
@@ -706,7 +707,9 @@ describe('createProjection.mirror', () => {
   };
 
   test('mirrors all aggregate event projectors', () => {
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror');
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg)
+      .build();
 
     expect(projection.name).toBe('invoice-mirror');
     expect(projection.fromStream.aggregate).toBe(mirrorableInvoiceAgg);
@@ -715,17 +718,21 @@ describe('createProjection.mirror', () => {
     expect(Object.keys(projection.fromStream.handlers)).toHaveLength(2);
   });
 
-  test('uses aggregate initialState', () => {
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror');
+  test('uses aggregate initialState when not provided', () => {
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg)
+      .build();
 
     const initial = projection.initialState('inv-1');
     expect(initial).toEqual({ id: '', amount: 0, status: 'pending' });
-    const another = projection.initialState('inv-2');
+    const another = projection.initialState('inv-1');
     expect(initial).not.toBe(another);
   });
 
   test('uses default identity resolver', () => {
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror');
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg)
+      .build();
 
     const event: ProjectionEvent = {
       type: 'invoice.created.event',
@@ -740,7 +747,9 @@ describe('createProjection.mirror', () => {
   });
 
   test('mirrored handlers delegate to applyToDraft', () => {
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror');
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg)
+      .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
     const event = {
@@ -753,11 +762,7 @@ describe('createProjection.mirror', () => {
     };
 
     const handler = projection.fromStream.handlers.created;
-    const mockContext: ProjectionContext = {
-      subscribeTo: () => {},
-      unsubscribeFrom: () => {}
-    };
-    handler(state, event, mockContext);
+    handler(state, event, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(state.id).toBe('cust-1');
     expect(state.amount).toBe(250);
@@ -766,23 +771,19 @@ describe('createProjection.mirror', () => {
   test('overrides replace specific handlers', () => {
     let overrideCalled = false;
 
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror', {
-      overrides: {
-        paid: (state, event) => {
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg, {
+        paid: (state: any, event: any) => {
           overrideCalled = true;
           state.status = 'paid';
         }
-      }
-    });
+      })
+      .build();
 
     expect(projection.fromStream.handlers).toHaveProperty('created');
     expect(projection.fromStream.handlers).toHaveProperty('paid');
 
     const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
-    const mockContext: ProjectionContext = {
-      subscribeTo: () => {},
-      unsubscribeFrom: () => {}
-    };
     projection.fromStream.handlers.paid(state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
@@ -790,24 +791,20 @@ describe('createProjection.mirror', () => {
       aggregateId: 'inv-1',
       sequence: 2,
       timestamp: '2024-01-01T00:00:00Z'
-    }, mockContext);
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(overrideCalled).toBe(true);
     expect(state.status).toBe('paid');
   });
 
   test('non-overridden handlers still use applyToDraft', () => {
-    const projection = createProjection.mirror(mirrorableInvoiceAgg, 'invoice-mirror', {
-      overrides: {
-        paid: (state) => { state.status = 'paid'; }
-      }
-    });
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg, {
+        paid: (state: any) => { state.status = 'paid'; }
+      })
+      .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    const mockContext: ProjectionContext = {
-      subscribeTo: () => {},
-      unsubscribeFrom: () => {}
-    };
     projection.fromStream.handlers.created(state, {
       type: 'invoice.created.event',
       payload: { customerId: 'cust-2', amount: 500 },
@@ -815,18 +812,41 @@ describe('createProjection.mirror', () => {
       aggregateId: 'inv-1',
       sequence: 1,
       timestamp: '2024-01-01T00:00:00Z'
-    }, mockContext);
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(state.id).toBe('cust-2');
     expect(state.amount).toBe(500);
   });
+
+  test('inherit.extend in mirror overrides', () => {
+    const projection = createProjection('invoice-mirror')
+      .mirror(mirrorableInvoiceAgg, {
+        paid: inherit.extend((state: any, event: any) => {
+          state.paidAt = 'extended';
+        })
+      })
+      .build();
+
+    const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
+    projection.fromStream.handlers.paid(state, {
+      type: 'invoice.paid.event',
+      payload: { paymentMethod: 'card', reference: 'ref-1' },
+      aggregateType: 'invoice',
+      aggregateId: 'inv-1',
+      sequence: 2,
+      timestamp: '2024-01-01T00:00:00Z'
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
+
+    expect(state.status).toBe('paid');
+    expect(state.paidAt).toBe('extended');
+  });
 });
 
 // ============================================================================
-// Tests: Fallback in .from()
+// Tests: Inherit Token
 // ============================================================================
 
-describe('createProjection fallback', () => {
+describe('createProjection inherit token', () => {
   const mirrorableInvoiceAgg = {
     aggregateType: 'invoice' as const,
     initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
@@ -851,28 +871,19 @@ describe('createProjection fallback', () => {
     metadata: {}
   };
 
-  test('fallback events use aggregate applyToDraft', () => {
+  test('inherit delegates to aggregate applyToDraft', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
       .from(mirrorableInvoiceAgg, {
         created: (state, event) => {
           state.id = 'custom-' + event.payload.customerId;
-          state.amount = event.payload.amount;
-        }
-      }, {
-        fallback: { paid: true }
+        },
+        paid: inherit
       })
       .build();
 
-    expect(projection.fromStream.handlers).toHaveProperty('created');
-    expect(projection.fromStream.handlers).toHaveProperty('paid');
-
     const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
-    const mockContext: ProjectionContext = {
-      subscribeTo: () => {},
-      unsubscribeFrom: () => {}
-    };
     projection.fromStream.handlers.paid(state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
@@ -880,29 +891,50 @@ describe('createProjection fallback', () => {
       aggregateId: 'inv-1',
       sequence: 2,
       timestamp: '2024-01-01T00:00:00Z'
-    }, mockContext);
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(state.status).toBe('paid');
   });
 
-  test('custom handlers are NOT affected by fallback', () => {
+  test('inherit.extend runs applyToDraft then callback', () => {
+    const projection = createProjection<InvoiceState>('invoice-view', () => ({
+      id: '', amount: 0, status: 'pending' as const
+    }))
+      .from(mirrorableInvoiceAgg, {
+        created: inherit,
+        paid: inherit.extend((state, event) => {
+          state.paidAt = event.timestamp;
+        })
+      })
+      .build();
+
+    const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
+    projection.fromStream.handlers.paid(state, {
+      type: 'invoice.paid.event',
+      payload: { paymentMethod: 'card', reference: 'ref-1' },
+      aggregateType: 'invoice',
+      aggregateId: 'inv-1',
+      sequence: 2,
+      timestamp: '2024-06-15T12:00:00Z'
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
+
+    expect(state.status).toBe('paid');
+    expect(state.paidAt).toBe('2024-06-15T12:00:00Z');
+  });
+
+  test('custom handlers are not affected by inherit', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
       .from(mirrorableInvoiceAgg, {
         created: (state, event) => {
           state.id = 'custom-' + event.payload.customerId;
-        }
-      }, {
-        fallback: { paid: true }
+        },
+        paid: inherit
       })
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    const mockContext: ProjectionContext = {
-      subscribeTo: () => {},
-      unsubscribeFrom: () => {}
-    };
     projection.fromStream.handlers.created(state, {
       type: 'invoice.created.event',
       payload: { customerId: 'cust-1', amount: 100 },
@@ -910,40 +942,12 @@ describe('createProjection fallback', () => {
       aggregateId: 'inv-1',
       sequence: 1,
       timestamp: '2024-01-01T00:00:00Z'
-    }, mockContext);
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(state.id).toBe('custom-cust-1');
   });
 
-  test('throws when same event appears in both handlers and fallback', () => {
-    expect(() => {
-      createProjection<InvoiceState>('invoice-view', () => ({
-        id: '', amount: 0, status: 'pending' as const
-      }))
-        .from(mirrorableInvoiceAgg, {
-          created: (state, event) => { state.id = event.payload.customerId; }
-        }, {
-          fallback: { created: true } as any
-        })
-        .build();
-    }).toThrow(/cannot appear in both handlers and fallback/);
-  });
-
-  test('throws when fallback event does not exist on aggregate', () => {
-    expect(() => {
-      createProjection<InvoiceState>('invoice-view', () => ({
-        id: '', amount: 0, status: 'pending' as const
-      }))
-        .from(mirrorableInvoiceAgg, {
-          created: (state) => {}
-        }, {
-          fallback: { nonExistent: true } as any
-        })
-        .build();
-    }).toThrow(/does not exist on aggregate/);
-  });
-
-  test('throws when aggregate lacks applyToDraft', () => {
+  test('throws when inherit used on aggregate without applyToDraft', () => {
     const noApplyAgg = {
       aggregateType: 'invoice' as const,
       pure: {
@@ -958,10 +962,45 @@ describe('createProjection fallback', () => {
       createProjection<InvoiceState>('invoice-view', () => ({
         id: '', amount: 0, status: 'pending' as const
       }))
-        .from(noApplyAgg, {}, {
-          fallback: { created: true } as any
+        .from(noApplyAgg, {
+          created: inherit
         })
         .build();
     }).toThrow(/applyToDraft/);
+  });
+
+  test('createProjection without initialState throws if not using mirror', () => {
+    expect(() => {
+      createProjection('test')
+        .from(mirrorableInvoiceAgg, {
+          created: inherit
+        })
+        .build();
+    }).toThrow(/initial state/);
+  });
+
+  test('inherit.extend callback receives correct event', () => {
+    const projection = createProjection<InvoiceState>('invoice-view', () => ({
+      id: '', amount: 0, status: 'pending' as const
+    }))
+      .from(mirrorableInvoiceAgg, {
+        created: inherit,
+        paid: inherit.extend((state, event) => {
+          state.paidAt = event.payload.reference;
+        })
+      })
+      .build();
+
+    const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
+    projection.fromStream.handlers.paid(state, {
+      type: 'invoice.paid.event',
+      payload: { paymentMethod: 'card', reference: 'pay-ref-42' },
+      aggregateType: 'invoice',
+      aggregateId: 'inv-1',
+      sequence: 2,
+      timestamp: '2024-01-01T00:00:00Z'
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
+
+    expect(state.paidAt).toBe('pay-ref-42');
   });
 });

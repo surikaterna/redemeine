@@ -6,12 +6,13 @@ Type-safe read-model projections for Redemeine event-sourced aggregates.
 
 `@redemeine/projection` defines how domain events are folded into read-model documents. A projection declares which aggregate streams it consumes, how each event type mutates document state, and how events map to document identities. The package produces a `ProjectionDefinition` — a pure data structure that a runtime daemon (not included here) feeds events into.
 
-The projection builder infers event payload types directly from your aggregate's `pure.eventProjectors`, so handler signatures stay in sync with the write model without manual type declarations.
+The builder infers event payload types from your aggregate's `pure.eventProjectors`, so handler signatures stay in sync with the write model without manual type declarations.
 
-Two mechanisms allow read models to reuse the write model's event projectors instead of duplicating the folding logic:
+Three mechanisms reuse write-model projectors instead of duplicating folding logic:
 
-- **`createProjection.mirror()`** clones an entire aggregate's projectors into a projection, with optional per-event overrides.
-- **`fallback`** in `.from()` selectively delegates individual event types back to the aggregate while keeping explicit handlers for the rest.
+- **`inherit`** token — delegates a single event key to the aggregate's `applyToDraft`.
+- **`inherit.extend(fn)`** — delegates first, then runs additional logic on the same draft.
+- **`.mirror()`** builder method — like `.from()`, but unlisted events default to `inherit` instead of skip.
 
 ## Installation
 
@@ -27,18 +28,12 @@ Peer dependencies: `@redemeine/aggregate`.
 import { createAggregate } from '@redemeine/aggregate';
 import { createProjection } from '@redemeine/projection';
 
-// --- Write model ---
-
 interface InvoiceState {
-  customerId: string;
-  amount: number;
-  status: 'draft' | 'sent' | 'paid';
+  customerId: string; amount: number; status: 'draft' | 'sent' | 'paid';
 }
 
 const InvoiceAggregate = createAggregate<InvoiceState, 'invoice'>('invoice', {
-  customerId: '',
-  amount: 0,
-  status: 'draft'
+  customerId: '', amount: 0, status: 'draft'
 })
   .events({
     created: (state, event) => {
@@ -49,20 +44,14 @@ const InvoiceAggregate = createAggregate<InvoiceState, 'invoice'>('invoice', {
     paid: (state) => { state.status = 'paid'; }
   })
   .commands((emit) => ({
-    create: (state, p: { customerId: string; amount: number }) =>
-      emit.created(p),
+    create: (state, p: { customerId: string; amount: number }) => emit.created(p),
     send: (state) => emit.sent(undefined),
     pay:  (state) => emit.paid(undefined)
   }))
   .build();
 
-// --- Read model ---
-
 interface InvoiceSummary {
-  customerId: string;
-  amount: number;
-  status: string;
-  paidAt: string | null;
+  customerId: string; amount: number; status: string; paidAt: string | null;
 }
 
 const invoiceSummary = createProjection<InvoiceSummary>(
@@ -74,9 +63,7 @@ const invoiceSummary = createProjection<InvoiceSummary>(
       state.customerId = event.payload.customerId;
       state.amount = event.payload.amount;
     },
-    sent: (state) => {
-      state.status = 'sent';
-    },
+    sent: (state) => { state.status = 'sent'; },
     paid: (state, event) => {
       state.status = 'paid';
       state.paidAt = event.timestamp;
@@ -85,13 +72,11 @@ const invoiceSummary = createProjection<InvoiceSummary>(
   .build();
 ```
 
-The `event` parameter in each handler is fully typed — `event.payload` carries the exact payload shape declared on the aggregate's event projector for that key.
+`event.payload` in each handler is fully typed from the aggregate's event projector for that key.
 
 ## Core Concepts
 
 ### Projection Definition
-
-A projection definition is a plain object that describes:
 
 | Field | Purpose |
 |-------|---------|
@@ -102,220 +87,178 @@ A projection definition is a plain object that describes:
 | `identity` | Maps an event to one or more document IDs |
 | `hooks` | Cross-cutting lifecycle hooks |
 
-The definition is inert data. It does not process events on its own — a runtime daemon reads this structure to wire up subscriptions and apply events.
+The definition is inert data. A runtime daemon reads this structure to wire up subscriptions and apply events.
 
 ### The Builder API
 
-Projections are built using a fluent chain:
-
 ```typescript
 createProjection<TState>(name, initialStateFn)
-  .from(aggregate, handlers, options?)   // primary stream (required)
-  .join(aggregate, handlers)             // correlated stream (optional, repeatable)
-  .identity(fn)                          // custom document routing (optional)
-  .initialState(fn)                      // override initial state (optional)
-  .hooks({ afterEach })                  // lifecycle hooks (optional)
-  .build()                               // -> ProjectionDefinition<TState>
+  .from(aggregate, handlers)               // primary stream (required)
+  .join(aggregate, handlers)               // correlated stream (optional, repeatable)
+  .identity(fn)                            // custom document routing (optional)
+  .initialState(fn)                        // override initial state (optional)
+  .hooks({ afterEach })                    // lifecycle hooks (optional)
+  .build()                                 // -> ProjectionDefinition<TState>
+
+// Or with .mirror():
+createProjection(name)                     // no initialState needed
+  .mirror(aggregate, handlers?)            // unlisted events default to inherit
+  .build()
 ```
 
 ### `.from()` — Primary Stream
 
-Every projection has exactly one primary stream. The aggregate argument determines which event types are valid handler keys.
+The aggregate argument determines valid handler keys. Invalid keys cause compile-time errors. Unhandled events are skipped at runtime.
 
 ```typescript
 .from(InvoiceAggregate, {
   created: (state, event) => {
-    // event.payload: { customerId: string; amount: number }
-    state.customerId = event.payload.customerId;
-    state.amount = event.payload.amount;
+    state.customerId = event.payload.customerId; // fully typed
   },
-  paid: (state, event) => {
-    // event.payload: { paymentMethod: string; reference: string }
-    state.status = 'paid';
+  paid: (state) => { state.status = 'paid'; }
+})
+```
+
+### `.join()` — Correlated Streams
+
+Join additional aggregate streams. Each `.join()` adds a separate stream with the same type inference.
+
+```typescript
+createProjection<DashboardState>('dashboard', () => ({ invoiceTotal: 0, shipmentCount: 0 }))
+  .from(InvoiceAggregate, {
+    created: (state, event) => { state.invoiceTotal += event.payload.amount; }
+  })
+  .join(ShipmentAggregate, {
+    dispatched: (state) => { state.shipmentCount += 1; }
+  })
+  .build();
+```
+
+### `event.type` Narrowing
+
+Inside a handler, `event.type` is narrowed to the handler key or its canonical form (`'created' | 'invoice.created.event'`).
+
+### Identity Resolution
+
+Default: `event.aggregateId`. Override with `.identity()`:
+
+```typescript
+.identity((event) => event.payload.customerId)           // single document
+.identity((event) => [                                    // fan-out
+  `customer-${event.payload.customerId}`, 'global-summary'
+])
+```
+
+### Initial State
+
+Factory receives the document ID. Each document gets its own copy.
+
+```typescript
+createProjection<InvoiceView>('invoices', () => ({ id: '', amount: 0, status: 'draft' }))
+// Override:
+.initialState((documentId) => ({ id: documentId, amount: 0, status: 'draft' }))
+```
+
+When using `.mirror()`, initial state is auto-cloned from the aggregate via `structuredClone` if not provided.
+
+### Hooks
+
+`afterEach` runs after every handler inside the same Immer `produce` pass:
+
+```typescript
+.hooks({
+  afterEach: (state, event) => { state.lastUpdated = event.timestamp; }
+})
+```
+
+## Reusing Aggregate Projectors
+
+When the read model's state shape matches the write model, duplicating folding logic is maintenance overhead and drift risk. All reuse mechanisms require the aggregate to expose `applyToDraft`. Aggregates from `createAggregate(...).build()` provide this automatically.
+
+### `inherit` Token
+
+Use `inherit` in a `.from()` handler map to delegate to `applyToDraft`:
+
+```typescript
+import { createProjection, inherit } from '@redemeine/projection';
+
+.from(InvoiceAggregate, {
+  created:   inherit,
+  sent:      inherit,
+  paid:      inherit.extend((state, event) => {
+    state.paidAt = event.timestamp;
+  }),
+  cancelled: (state, event) => {
+    state.status = 'cancelled';
   }
 })
 ```
 
-Handler keys that do not match an event projector name on the aggregate cause a compile-time error. You can handle a subset of the aggregate's events — unhandled events are silently skipped at runtime.
+Each key accepts one of three values: `inherit` (full delegation), `inherit.extend(fn)` (delegate then augment), or a plain function (fully custom). Structurally exclusive — each key has exactly one treatment.
 
-### `.join()` — Correlated Streams
+### `inherit.extend(fn)`
 
-Join additional aggregate streams to enrich the projection with cross-aggregate data. Each `.join()` call adds a separate stream.
+Calls `applyToDraft` for that event, then runs your function on the resulting draft. Same `(state, event, context)` signature, fully typed via contextual inference.
 
 ```typescript
-const orderDashboard = createProjection<DashboardState>(
-  'order-dashboard',
-  () => ({ invoiceTotal: 0, shipmentCount: 0 })
-)
-  .from(InvoiceAggregate, {
-    created: (state, event) => {
-      state.invoiceTotal += event.payload.amount;
-    }
+paid: inherit.extend((state, event) => {
+  // applyToDraft already set state.status = 'paid'
+  state.paidAt = event.timestamp;
+})
+```
+
+**Caveat**: extracting the extended handler to a variable loses contextual type inference. Either inline it or annotate the variable explicitly.
+
+### `.mirror()` Builder Method
+
+Like `.from()`, but unlisted events default to `inherit` instead of skip. Handlers arg is optional. Auto-clones aggregate `initialState` when not provided.
+
+```typescript
+// 1:1 clone — everything inherited
+createProjection('invoice-mirror').mirror(InvoiceAggregate).build();
+
+// Inherit all, extend one
+createProjection('invoice-mirror')
+  .mirror(InvoiceAggregate, {
+    paid: inherit.extend((state, event) => { state.paidAt = event.timestamp; })
   })
-  .join(ShipmentAggregate, {
-    dispatched: (state, event) => {
-      state.shipmentCount += 1;
-    }
-  })
-  .join(PaymentAggregate, {
-    received: (state, event) => {
-      // correlate payment with order
-    }
+  .build();
+
+// Inherit all, fully override one
+createProjection('invoice-mirror')
+  .mirror(InvoiceAggregate, {
+    cancelled: (state, event) => { state.status = 'cancelled'; }
   })
   .build();
 ```
 
-Type inference works the same way in `.join()` as in `.from()` — each handler's `event.payload` is inferred from the joined aggregate's event projectors. Invalid handler keys are rejected at compile time.
+### Manual `applyToDraft` Escape Hatch
 
-### `event.type` Narrowing
-
-Inside a handler, `event.type` is narrowed to the handler key or its canonical form. For example, inside a `created` handler on an `invoice` aggregate, `event.type` is typed as `'created' | 'invoice.created.event'`. This lets you discriminate events without string manipulation if you need to.
-
-### Identity Resolution
-
-By default, a projection routes events to documents using `event.aggregateId`. Override this with `.identity()`:
+For around-wrapping (logic before *and* after the aggregate projector):
 
 ```typescript
-// Route by a custom field
-.identity((event) => event.payload.customerId)
-
-// Fan-out: one event updates multiple documents
-.identity((event) => [
-  `customer-${event.payload.customerId}`,
-  'global-summary'
-])
-```
-
-The identity function can return a single string or an array of strings. When it returns an array, the event is applied to every listed document.
-
-### Initial State
-
-The initial state factory receives the document ID and returns a fresh state object. Each document gets its own copy — mutations in one document never leak to another.
-
-```typescript
-// Default: provided in createProjection()
-createProjection<InvoiceView>('invoices', () => ({
-  id: '',
-  amount: 0,
-  status: 'draft'
-}))
-
-// Override after construction
-.initialState((documentId) => ({
-  id: documentId,
-  amount: 0,
-  status: 'draft'
-}))
-```
-
-### Hooks
-
-The `afterEach` hook runs after every event handler, regardless of event type. Use it for cross-cutting concerns like metadata tracking.
-
-```typescript
-createProjection<OrderView>('orders', () => ({ /* ... */ lastUpdated: '' }))
-  .from(OrderAggregate, { /* handlers */ })
-  .hooks({
-    afterEach: (state, event) => {
-      state.lastUpdated = event.timestamp;
-    }
-  })
-  .build();
-```
-
-The hook receives the mutable state draft and the raw event. It runs inside the same Immer `produce` pass as the handler, so mutations are safe.
-
-## Reusing Aggregate Projectors
-
-When the read model's state shape matches the write model, duplicating event-folding logic across both is maintenance overhead and a source of drift. The projection package provides two mechanisms to share projectors.
-
-Both require the aggregate to expose `applyToDraft` — a function that applies an event to a mutable state draft without wrapping in Immer's `produce` (since the projection runtime already does that). Aggregates built with `createAggregate(...).build()` expose this automatically.
-
-### `createProjection.mirror()`
-
-Mirror creates a projection that defaults all handlers from the aggregate. The read model gets the exact same state shape and folding logic as the write model.
-
-```typescript
-const invoiceMirror = createProjection.mirror(
-  InvoiceAggregate,
-  'invoice-mirror'
-);
-```
-
-This is equivalent to writing a `createProjection` that manually delegates every event to the aggregate — but without the boilerplate.
-
-Mirror also clones the aggregate's `initialState` (via `structuredClone`), so each document starts from the same defaults.
-
-#### Overriding Specific Handlers
-
-Sometimes the read model needs slightly different behavior for certain events. Pass an `overrides` map to replace individual handlers while keeping the rest from the aggregate:
-
-```typescript
-const invoiceMirror = createProjection.mirror(
-  InvoiceAggregate,
-  'invoice-mirror',
-  {
-    overrides: {
-      paid: (state, event) => {
-        // Custom read-model logic for the paid event
-        state.status = 'paid';
-        state.paidAt = event.timestamp;
-      }
-    }
+.from(InvoiceAggregate, {
+  paid: (state, event) => {
+    state.preProcessedAt = new Date().toISOString();
+    InvoiceAggregate.applyToDraft(state, event);
+    state.postProcessedAt = new Date().toISOString();
   }
-);
+})
 ```
 
-Only `paid` uses custom logic. All other events (`created`, `sent`, etc.) still delegate to `InvoiceAggregate.applyToDraft`.
-
-### `fallback` in `.from()`
-
-Fallback is the inverse of mirror: the projection starts with *no* aggregate handlers, and you explicitly opt individual event types into delegation.
-
-```typescript
-const invoiceView = createProjection<InvoiceView>(
-  'invoice-view',
-  () => ({ customerId: '', amount: 0, status: 'draft', paidAt: null })
-)
-  .from(InvoiceAggregate, {
-    // Custom handler for paid — read model adds paidAt timestamp
-    paid: (state, event) => {
-      state.status = 'paid';
-      state.paidAt = event.timestamp;
-    }
-  }, {
-    // Delegate created and sent to the aggregate's projectors
-    fallback: { created: true, sent: true }
-  })
-  .build();
-```
-
-#### Mutual Exclusivity
-
-An event type cannot appear in both the explicit handlers and the fallback map. This is enforced at two levels:
-
-1. **Type-level**: The `fallback` map's keys are typed as `Exclude<AggregateEventKeys, keyof Handlers>`. If you add `created` to both places, TypeScript reports an error.
-2. **Runtime**: If you bypass the type system (e.g., via `as any`), the builder throws:
-
-```
-Projection 'invoice-view': event 'created' cannot appear in both
-handlers and fallback. Declare it in one place only.
-```
-
-The builder also validates that fallback keys actually exist on the aggregate and that the aggregate provides `applyToDraft`.
-
-### Choosing Between Mirror and Fallback
+### Choosing What to Use
 
 | Scenario | Use |
 |----------|-----|
-| Read model is a 1:1 clone of write model state | `mirror()` |
-| Read model is mostly the same, a few events need custom logic | `mirror()` with `overrides` |
-| Read model has a different state shape, but a few events use identical folding | `fallback` in `.from()` |
-| Read model is fully custom | Plain `createProjection` without mirror or fallback |
+| 1:1 clone of write model state | `.mirror(Agg)` |
+| Mostly the same, a few tweaks | `.mirror(Agg, overrides)` |
+| Cherry-pick delegation for specific events | `.from(Agg, { key: inherit })` |
+| Custom state shape, selective reuse | `.from(Agg, { key: inherit, other: handler })` |
+| Fully custom | `.from(Agg, { key: handler })` |
 
 ## Reverse Semantics Contracts
 
-For projections that need to declare subscription-level add/remove operations (e.g., when a joined stream should be added or removed based on lifecycle events), use `reverseSemanticsContract`:
+For projections that declare subscription-level add/remove operations based on lifecycle events:
 
 ```typescript
 import { reverseSemanticsContract } from '@redemeine/projection';
@@ -326,179 +269,93 @@ const contract = reverseSemanticsContract(
 );
 ```
 
-This produces a `ReverseSemanticsContract` with `adds` and `removes` arrays, each containing `{ aggregateType, aggregateId }` pairs. The runtime uses these to manage cross-stream subscriptions.
+Produces `{ adds, removes }` arrays for runtime subscription management.
 
 ## API Reference
 
-### `createProjection<TState>(name, initialStateFn)`
+### `createProjection(name, initialStateFn?)`
 
-Creates a projection builder.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | `string` | Unique projection name |
-| `initialStateFn` | `(id: string) => TState` | Factory for initial document state |
-
-Returns `ProjectionBuilder<TState>`.
+| Overload | Returns |
+|----------|---------|
+| `createProjection<TState>(name, () => TState)` | `ProjectionBuilder<TState>` |
+| `createProjection(name)` | `ProjectionBuilder<unknown>` (use with `.mirror()`) |
 
 ### `ProjectionBuilder<TState>`
 
 | Method | Description |
 |--------|-------------|
-| `.from(aggregate, handlers, options?)` | Set the primary event stream |
+| `.from(aggregate, handlers)` | Set the primary event stream |
+| `.mirror(aggregate, handlers?)` | Primary stream; unlisted events default to `inherit` |
 | `.join(aggregate, handlers)` | Add a correlated stream |
 | `.identity(fn)` | Override document routing |
 | `.initialState(fn)` | Override initial state factory |
 | `.hooks({ afterEach })` | Register lifecycle hooks |
 | `.build()` | Produce the final `ProjectionDefinition` |
 
-### `.from()` Options
+### `inherit` Token
 
 ```typescript
-.from(aggregate, handlers, {
-  fallback?: { [eventKey]: true }
-})
+inherit                    // InheritToken — delegates to applyToDraft
+inherit.extend(fn)         // InheritExtended — delegates, then runs fn
 ```
 
-The `fallback` map is only available when the aggregate implements `MirrorableAggregateSource` (i.e., has `applyToDraft` and `initialState`).
+### `.mirror()` Signature
 
-### `createProjection.mirror(aggregate, name, options?)`
+```typescript
+.mirror<TAggregate extends MirrorableAggregateSource>(
+  aggregate: TAggregate,
+  handlers?: Partial<HandlerMap>
+): ProjectionBuilder<AggregateStateOf<TAggregate>>
+```
 
-Creates a `ProjectionDefinition` directly (no builder chain needed).
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `aggregate` | `MirrorableAggregateSource` | Built aggregate with `applyToDraft` |
-| `name` | `string` | Unique projection name |
-| `options.overrides` | Handler map | Per-event handler replacements |
-
-Returns `ProjectionDefinition<AggregateStateOf<TAggregate>>`.
+Auto-provides `() => structuredClone(aggregate.initialState)` when `initialState` is not set.
 
 ### `ProjectionDefinition<TState>`
 
-The build output. All fields are populated:
-
-```typescript
-interface ProjectionDefinition<TState> {
-  name: string;
-  fromStream: ProjectionStreamDefinition<TState>;
-  joinStreams?: JoinStreamDefinition<TState>[];
-  initialState: (documentId: string) => TState;
-  identity: (event: ProjectionEvent) => string | readonly string[];
-  subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
-  hooks?: ProjectionHooks<TState>;
-}
-```
+Fields: `name`, `fromStream`, `joinStreams?`, `initialState`, `identity`, `subscriptions`, `hooks?`.
 
 ### `ProjectionContext`
 
-Passed as the third argument to every handler at runtime:
-
-```typescript
-interface ProjectionContext {
-  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
-  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
-}
-```
-
-Use `subscribeTo` in a `.from()` handler to dynamically subscribe the projection to events from a related aggregate instance. Use `unsubscribeFrom` to remove a prior subscription.
+Passed as third argument to handlers at runtime. Methods: `subscribeTo(aggregate, aggregateId)`, `unsubscribeFrom(aggregate, aggregateId)`.
 
 ### Type Utilities
 
-```typescript
-// Extract the event payload map from an aggregate
-type AggregateEventPayloadMap<TAggregate>
-
-// Event key names (union of handler keys)
-type AggregateEventKeys<TAggregate>
-
-// Payload type for a specific event key
-type AggregateEventPayloadByKey<TAggregate, TEventKey>
-
-// State type from an aggregate's initialState
-type AggregateStateOf<TAggregate>
-```
-
-These are useful when building generic projection utilities or testing helpers.
+`AggregateEventPayloadMap<T>`, `AggregateEventKeys<T>`, `AggregateEventPayloadByKey<T, K>`, `AggregateStateOf<T>`.
 
 ## Testing
 
-Projection handlers are pure functions — they take state and an event and mutate the state. No database, no subscriptions, no async. This makes them straightforward to test in isolation.
+Handlers are pure `(draft, event) => void` functions — no database, no subscriptions, no async.
 
 ### Testing a Handler Directly
 
 ```typescript
 import { produce } from 'immer';
 
-// Your handler (extracted or inline)
-const orderCreatedHandler = (
-  state: OrderSummary,
-  event: { payload: { orderId: string; items: Array<{ qty: number; price: number }> } }
-) => {
-  state.orderId = event.payload.orderId;
-  state.totalAmount = event.payload.items.reduce(
-    (sum, item) => sum + item.qty * item.price, 0
+test('paid handler sets status and timestamp', () => {
+  const next = produce(
+    { customerId: '', amount: 0, status: 'draft', paidAt: null } as InvoiceSummary,
+    (draft) => { draft.status = 'paid'; draft.paidAt = '2024-01-15T10:00:00Z'; }
   );
-};
-
-test('orderCreated computes total from line items', () => {
-  const initial: OrderSummary = {
-    orderId: '',
-    totalAmount: 0,
-    status: 'pending'
-  };
-
-  const next = produce(initial, (draft) => {
-    orderCreatedHandler(draft, {
-      payload: {
-        orderId: 'order-1',
-        items: [
-          { qty: 2, price: 25 },
-          { qty: 1, price: 50 }
-        ]
-      }
-    });
-  });
-
-  expect(next.totalAmount).toBe(100);
-  expect(next.orderId).toBe('order-1');
-  expect(initial.totalAmount).toBe(0); // original unchanged
+  expect(next.status).toBe('paid');
 });
 ```
 
 ### Testing the Built Projection
 
-You can also test against the built `ProjectionDefinition` by calling its handlers directly:
-
 ```typescript
-test('projection has correct handlers registered', () => {
-  const projection = createProjection<InvoiceView>('invoices', () => ({
-    id: '', amount: 0, status: 'draft'
-  }))
+test('projection registers correct handlers', () => {
+  const projection = createProjection<InvoiceSummary>(
+    'invoices', () => ({ customerId: '', amount: 0, status: 'draft', paidAt: null })
+  )
     .from(InvoiceAggregate, {
-      created: (state, event) => {
-        state.amount = event.payload.amount;
-      },
-      paid: (state) => {
-        state.status = 'paid';
-      }
+      created: (state, event) => { state.amount = event.payload.amount; },
+      paid: (state) => { state.status = 'paid'; }
     })
     .build();
 
   expect(projection.name).toBe('invoices');
   expect(projection.fromStream.handlers).toHaveProperty('created');
-  expect(projection.fromStream.handlers).toHaveProperty('paid');
-
-  // Test identity resolution
-  const event = {
-    aggregateType: 'invoice',
-    aggregateId: 'inv-1',
-    type: 'invoice.created.event',
-    payload: {},
-    sequence: 1,
-    timestamp: '2024-01-01T00:00:00Z'
-  };
-  expect(projection.identity(event)).toBe('inv-1');
+  expect(projection.identity({ aggregateId: 'inv-1' } as any)).toBe('inv-1');
 });
 ```
 
@@ -506,22 +363,17 @@ test('projection has correct handlers registered', () => {
 
 ```typescript
 test('mirror delegates to aggregate applyToDraft', () => {
-  const projection = createProjection.mirror(InvoiceAggregate, 'mirror');
-
-  const state = { customerId: '', amount: 0, status: 'draft' };
-  const mockContext = { subscribeTo: () => {}, unsubscribeFrom: () => {} };
+  const projection = createProjection('mirror').mirror(InvoiceAggregate).build();
+  const state = { customerId: '', amount: 0, status: 'draft' as const };
+  const ctx = { subscribeTo: () => {}, unsubscribeFrom: () => {} };
 
   projection.fromStream.handlers.created(state, {
-    type: 'invoice.created.event',
-    payload: { customerId: 'cust-1', amount: 250 },
-    aggregateType: 'invoice',
-    aggregateId: 'inv-1',
-    sequence: 1,
+    type: 'invoice.created.event', payload: { customerId: 'cust-1', amount: 250 },
+    aggregateType: 'invoice', aggregateId: 'inv-1', sequence: 1,
     timestamp: '2024-01-01T00:00:00Z'
-  }, mockContext);
+  }, ctx);
 
   expect(state.customerId).toBe('cust-1');
-  expect(state.amount).toBe(250);
 });
 ```
 
@@ -529,20 +381,20 @@ test('mirror delegates to aggregate applyToDraft', () => {
 
 ### Why separate definition from runtime?
 
-The `ProjectionDefinition` is a plain object — it carries no runtime behavior beyond handler functions. This separation means projections are testable without spinning up a daemon, serializable for inspection, and portable across different runtime implementations (in-memory, MongoDB-backed, etc.).
+`ProjectionDefinition` is plain data — testable without a daemon, serializable, portable across runtime implementations.
 
 ### Why infer types from `pure.eventProjectors`?
 
-The aggregate builder already declares the canonical event projector signatures with full payload types. Re-declaring those types in the projection would create a second source of truth that drifts over time. By extracting payload types directly from `eventProjectors`, the projection's handler signatures are always in sync with the write model.
+The aggregate builder declares canonical event projector signatures with full payload types. Extracting from `eventProjectors` keeps handler signatures in sync — no second source of truth.
 
-### Why `applyToDraft` instead of reusing `apply`?
+### Why `applyToDraft` instead of `apply`?
 
-The aggregate's `apply` function wraps event processing in Immer's `produce` — it takes immutable state in and returns immutable state out. But projection handlers already run inside the daemon's `produce` pass. Calling `apply` from inside a handler would nest `produce` calls, which is both inefficient and semantically wrong (the inner `produce` would create an intermediate frozen object that the outer `produce` then tries to mutate).
+Projection handlers already run inside the daemon's Immer `produce` pass. The aggregate's `apply` also wraps in `produce`. Nesting creates a frozen intermediate that the outer pass tries to mutate. `applyToDraft` does the same routing on an already-mutable draft.
 
-`applyToDraft` does the same event routing and projector dispatch, but operates on an already-mutable draft. This makes it safe to call from inside the projection runtime's `produce` without double-wrapping.
+### Why `inherit` instead of `fallback`?
 
-### Why mutual exclusivity for fallback?
+The previous `fallback` used a separate map alongside handlers, requiring mutual-exclusivity validation and `Exclude<>` gymnastics. `inherit` collapses both into a single map — each key has exactly one value. No ambiguity, no overlap checks.
 
-Allowing the same event in both a custom handler and the fallback map creates ambiguity: which one wins? Rather than defining precedence rules that are easy to get wrong, the builder rejects the configuration entirely. You pick one place for each event — explicit handler or fallback delegation — and the intent is always clear.
+### Why `.mirror()` as a builder method?
 
-The type system enforces this with `Exclude<AggregateEventKeys, keyof Handlers>`, so the IDE removes fallback suggestions for events that already have handlers. The runtime check is a safety net for `as any` escapes.
+The previous `createProjection.mirror()` was a static factory bypassing the builder chain — no `.identity()`, `.hooks()`, or `.join()`. As a builder method, `.mirror()` composes with everything else.
