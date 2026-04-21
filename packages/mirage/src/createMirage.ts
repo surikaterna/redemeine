@@ -1302,23 +1302,6 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 }
 
 /**
- * @deprecated Use extractState(), extractUncommittedEvents(), clearUncommittedEvents(), subscribe(), and dispatch() instead.
- */
-export function createLegacyAggregateBridge<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(mirage: Mirage<S, M, Registry, Sel>) {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    return {
-        get id() { return core.id; },
-        get _state() { return core.state; },
-        getVersion: () => core.version,
-        clearUncommittedEvents: () => { core.clearPendingResults(); },
-        getUncommittedEvents: () => [...core.uncommitted],
-    };
-}
-
-/**
  * Returns a copy of all uncommitted events currently buffered by a Mirage instance.
  */
 export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(

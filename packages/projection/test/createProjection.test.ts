@@ -104,6 +104,30 @@ const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string
   metadata: orderAgg.metadata
 };
 
+const mirrorableInvoiceAgg = {
+  aggregateType: 'invoice' as const,
+  initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
+  pure: {
+    eventProjectors: {
+      created: (state: any, event: { payload: InvoiceCreatedPayload }) => {
+        state.id = event.payload.customerId;
+        state.amount = event.payload.amount;
+      },
+      paid: (state: any, event: { payload: InvoicePaidPayload }) => {
+        state.status = 'paid';
+        state.paidAt = event.payload.reference;
+      }
+    }
+  },
+  applyToDraft: (draft: any, event: any) => {
+    const parts = event.type.split('.');
+    const key = parts.length >= 3 ? parts[1] : parts[0];
+    const projector = (mirrorableInvoiceAgg as any).pure.eventProjectors[key];
+    if (projector) projector(draft, event);
+  },
+  metadata: {}
+};
+
 // Compile-time assertion helpers for aggregate event-map extraction
 type InvoiceAggPayloadMap = AggregateEventPayloadMap<typeof invoiceAgg>;
 type InvoiceAggEventKeys = AggregateEventKeys<typeof invoiceAgg>;
@@ -680,31 +704,6 @@ describe('createProjection Type Exports', () => {
 // ============================================================================
 
 describe('createProjection .mirror() builder', () => {
-  const mirrorableInvoiceAgg = {
-    aggregateType: 'invoice' as const,
-    initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
-    pure: {
-      eventProjectors: {
-        created: (state: any, event: { payload: InvoiceCreatedPayload }) => {
-          state.id = event.payload.customerId;
-          state.amount = event.payload.amount;
-        },
-        paid: (state: any, event: { payload: InvoicePaidPayload }) => {
-          state.status = 'paid';
-          state.paidAt = event.payload.reference;
-        }
-      }
-    },
-    applyToDraft: (draft: any, event: any) => {
-      const parts = event.type.split('.');
-      const key = parts.length >= 3 ? parts[1] : parts[0];
-      const projector = mirrorableInvoiceAgg.pure.eventProjectors[key as keyof typeof mirrorableInvoiceAgg.pure.eventProjectors];
-      if (projector) {
-        (projector as any)(draft, event);
-      }
-    },
-    metadata: {}
-  };
 
   test('mirrors all aggregate event projectors', () => {
     const projection = createProjection('invoice-mirror')
@@ -847,29 +846,6 @@ describe('createProjection .mirror() builder', () => {
 // ============================================================================
 
 describe('createProjection inherit token', () => {
-  const mirrorableInvoiceAgg = {
-    aggregateType: 'invoice' as const,
-    initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
-    pure: {
-      eventProjectors: {
-        created: (state: any, event: { payload: InvoiceCreatedPayload }) => {
-          state.id = event.payload.customerId;
-          state.amount = event.payload.amount;
-        },
-        paid: (state: any, event: { payload: InvoicePaidPayload }) => {
-          state.status = 'paid';
-          state.paidAt = event.payload.reference;
-        }
-      }
-    },
-    applyToDraft: (draft: any, event: any) => {
-      const parts = event.type.split('.');
-      const key = parts.length >= 3 ? parts[1] : parts[0];
-      const projector = (mirrorableInvoiceAgg as any).pure.eventProjectors[key];
-      if (projector) projector(draft, event);
-    },
-    metadata: {}
-  };
 
   test('inherit delegates to aggregate applyToDraft', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({

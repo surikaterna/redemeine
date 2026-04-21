@@ -1,7 +1,5 @@
 import { ProjectionEvent as BaseProjectionEvent } from './types';
 
-type Draft<TState> = TState;
-
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
   /** Runs after every event handler — receives mutable state and the raw event */
@@ -112,7 +110,7 @@ export interface ProjectionContext {
  * Handler function for processing events in a projection
  */
 export type ProjectionHandler<TState, TEvent extends BaseProjectionEvent = BaseProjectionEvent> = (
-  state: Draft<TState>,
+  state: TState,
   event: TEvent,
   context: ProjectionContext
 ) => void;
@@ -130,14 +128,15 @@ export type ProjectionHandlers<TState, TPayloads extends Record<string, unknown>
   >;
 };
 
-type ProjectionHandlersForAggregate<TState, TAggregate> = {
-  [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<
-    TState,
-    HandlerEvent<
-      NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
-      HandlerEventTypeByKey<TAggregate, K>
-    >
+/** Constructs the narrowed event type for a specific aggregate event key */
+type AggregateHandlerEvent<TAggregate, K extends AggregateEventKeys<TAggregate>> =
+  HandlerEvent<
+    NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
+    HandlerEventTypeByKey<TAggregate, K>
   >;
+
+type ProjectionHandlersForAggregate<TState, TAggregate> = {
+  [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>;
 };
 
 // --- inherit token ---
@@ -146,20 +145,20 @@ const INHERIT_BRAND = Symbol('inherit');
 
 export interface InheritExtended<TState = any, TEvent = any> {
   readonly __inheritBrand: typeof INHERIT_BRAND;
-  readonly after: (state: Draft<TState>, event: TEvent, context: ProjectionContext) => void;
+  readonly after: (state: TState, event: TEvent, context: ProjectionContext) => void;
 }
 
 export interface InheritToken {
   readonly __inheritBrand: typeof INHERIT_BRAND;
   extend<TState, TEvent>(
-    after: (state: Draft<TState>, event: TEvent, context: ProjectionContext) => void
+    after: (state: TState, event: TEvent, context: ProjectionContext) => void
   ): InheritExtended<TState, TEvent>;
 }
 
 export const inherit: InheritToken = Object.freeze({
   __inheritBrand: INHERIT_BRAND,
   extend<TState, TEvent>(
-    after: (state: Draft<TState>, event: TEvent, context: ProjectionContext) => void
+    after: (state: TState, event: TEvent, context: ProjectionContext) => void
   ): InheritExtended<TState, TEvent> {
     return Object.freeze({ __inheritBrand: INHERIT_BRAND, after });
   }
@@ -176,21 +175,9 @@ function isInheritExtended(value: unknown): value is InheritExtended {
 
 type InheritableHandlersForAggregate<TState, TAggregate> = {
   [K in AggregateEventKeys<TAggregate>]?:
-    | ProjectionHandler<
-        TState,
-        HandlerEvent<
-          NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
-          HandlerEventTypeByKey<TAggregate, K>
-        >
-      >
+    | ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>
     | InheritToken
-    | InheritExtended<
-        TState,
-        HandlerEvent<
-          NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
-          HandlerEventTypeByKey<TAggregate, K>
-        >
-      >;
+    | InheritExtended<TState, AggregateHandlerEvent<TAggregate, K>>;
 };
 
 // --- Stream / definition types ---
