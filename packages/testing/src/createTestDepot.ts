@@ -43,9 +43,7 @@ type ProjectionContext = {
 
 type ProjectionDefinition<TState = unknown> = RuntimeProjectionDefinition<TState>;
 
-type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any> & {
-  readonly aggregateType?: string;
-};
+type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any>;
 
 type SagaRegistrationLike = {
   readonly handlers?: ReadonlyArray<{

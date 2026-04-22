@@ -59,6 +59,9 @@
     "packages/projection": {
       "name": "@redemeine/projection",
       "version": "0.1.0",
+      "devDependencies": {
+        "@redemeine/aggregate": "workspace:*",
+      },
     },
     "packages/projection-router-core": {
       "name": "@redemeine/projection-router-core",

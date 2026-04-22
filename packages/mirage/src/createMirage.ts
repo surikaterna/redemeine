@@ -1,6 +1,6 @@
 import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError, Contract, ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
-import type { EntityPackage, AggregateEntityRegistry } from '@redemeine/aggregate';
-import { bindContext, isMirageContextBinding, MirageContextSymbol, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
+import type { EntityPackage, AggregateEntityRegistry, BuiltAggregate as BaseBuiltAggregate } from '@redemeine/aggregate';
+import { bindContext, isMirageContextBinding, MirageContextSymbol, singular, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
 type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
@@ -19,33 +19,17 @@ type InvocationContext = {
 };
 
 /**
- * Represents the instantiated, running state of the aggregate after the builder's .build() method is called.
- * It contains the initial state and the internal processing/application functions.
+ * Mirage-specific extension of the aggregate build output.
+ * Adds entity registry phantom type and plugin type narrowing.
  */
-export interface BuiltAggregate<S, M, E = any, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}, TPlugins extends PluginExtensions = {}> {
-    initialState: S;
-    process: (state: S, command: Command<any, string>) => Event[];
-    apply: (state: S, event: Event) => S;
-    applyToDraft?: (draft: S, event: Event) => void;
-    hooks?: AggregateHooks<S>;
-    commandCreators: {
-        [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-            ? (...args: Args extends any[] ? Args : never) => Command<P, string>
-            : [M[K]] extends [void] | [undefined] | [never]
-                ? () => Command<void, string>
-                : (payload: M[K]) => Command<M[K], string>;
-    };
-    eventCreators: E;
-    /** The raw, un-routed domain functions. STRICTLY FOR ISOLATED UNIT TESTING. Do not use these to bypass the Mirage dispatch loop in production as it will skip lifecycle hooks. */
-    pure: {
-        commandProcessors: Record<string, Function>;
-        eventProjectors: Record<string, Function>;
-    };
-    selectors: Sel;
-    metadata?: {
-        commands?: Record<string, { meta?: Record<string, unknown> }>;
-        events?: Record<string, { meta?: Record<string, unknown> }>;
-    };
+export interface BuiltAggregate<
+    S,
+    M,
+    E = any,
+    Registry extends AggregateEntityRegistry = {},
+    Sel extends Record<string, any> = {},
+    TPlugins extends PluginExtensions = {}
+> extends BaseBuiltAggregate<S, M, E, Sel> {
     plugins?: RedemeinePlugin<TPlugins>[];
     mounts?: Record<string, MountMetadata>;
     __registryType?: Registry;
@@ -627,8 +611,6 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     const mounts = builder.mounts || {};
     const selectors = (builder.selectors || {}) as Record<string, (state: ReadonlyDeep<BuiltAggregateState<BA>>, ...args: any[]) => any>;
 
-    const singularize = (value: string) => value.endsWith('s') ? value.slice(0, -1) : value;
-
     const toCommandName = (path: string[]) => path.reduce(
         (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)),
         ''
@@ -655,7 +637,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         }
 
         const scalarPk = typeof mount.pk === 'string' ? mount.pk : 'id';
-        const keyName = `${singularize(mountName)}Id`;
+        const keyName = `${singular(mountName)}Id`;
         return {
             idsPayload: {
                 id: rawPk,
@@ -685,7 +667,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     };
 
     const selectFromMap = (mountName: string, rawKey: string): InvocationContext => {
-        const keyName = `${singularize(mountName)}Key`;
+        const keyName = `${singular(mountName)}Key`;
         return {
             idsPayload: {
                 key: rawKey,

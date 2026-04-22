@@ -11,9 +11,10 @@ import {
   AggregateEventKeys,
   AggregateEventPayloadByKey
 } from '../src';
+import { createAggregate } from '@redemeine/aggregate';
 
 // ============================================================================
-// Test Aggregates
+// Test Aggregates — built with real createAggregate
 // ============================================================================
 
 interface InvoiceState {
@@ -33,36 +34,22 @@ interface InvoicePaidPayload {
   reference: string;
 }
 
-const initialInvoiceState: InvoiceState = {
+const invoiceAggregate = createAggregate<InvoiceState, 'invoice'>('invoice', {
   id: '',
   amount: 0,
   status: 'pending'
-};
-
-const invoiceAgg = {
-  aggregateType: 'invoice' as const,
-  pure: {
-    eventProjectors: {
-      created: (_state: unknown, event: { payload: InvoiceCreatedPayload }) => {
-        void event;
-      },
-      paid: (_state: unknown, event: { payload: InvoicePaidPayload }) => {
-        void event;
-      }
+})
+  .events({
+    created: (state, event: { payload: InvoiceCreatedPayload }) => {
+      state.id = event.payload.customerId;
+      state.amount = event.payload.amount;
+    },
+    paid: (state, event: { payload: InvoicePaidPayload }) => {
+      state.status = 'paid';
+      state.paidAt = event.payload.reference;
     }
-  },
-  metadata: {}
-};
-
-// Define the aggregate definition for use in projections
-const invoiceAggDef: AggregateDefinition<InvoiceState, { created: InvoiceCreatedPayload; paid: InvoicePaidPayload }> = {
-  aggregateType: 'invoice',
-  initialState: initialInvoiceState,
-  pure: {
-    eventProjectors: invoiceAgg.pure.eventProjectors
-  },
-  metadata: invoiceAgg.metadata
-};
+  })
+  .build();
 
 interface OrderState {
   id: string;
@@ -75,71 +62,26 @@ interface OrderShippedPayload {
   trackingNumber: string;
 }
 
-const initialOrderState: OrderState = {
+const orderAggregate = createAggregate<OrderState, 'order'>('order', {
   id: '',
   items: []
-};
-
-const orderAgg = {
-  aggregateType: 'order' as const,
-  pure: {
-    eventProjectors: {
-      itemAdded: (_state: unknown, event: { payload: { itemId: string } }) => {
-        void event;
-      },
-      shipped: (_state: unknown, event: { payload: OrderShippedPayload }) => {
-        void event;
-      }
+})
+  .events({
+    itemAdded: (state, event: { payload: { itemId: string } }) => {
+      state.items.push(event.payload.itemId);
+    },
+    shipped: (state, event: { payload: OrderShippedPayload }) => {
+      state.shippedAt = 'shipped';
     }
-  },
-  metadata: {}
-};
+  })
+  .build();
 
-const orderAggDef: AggregateDefinition<OrderState, { itemAdded: { itemId: string }; shipped: OrderShippedPayload }> = {
-  aggregateType: 'order',
-  initialState: initialOrderState,
-  pure: {
-    eventProjectors: orderAgg.pure.eventProjectors
-  },
-  metadata: orderAgg.metadata
-};
-
-const mirrorableInvoiceAgg = {
-  aggregateType: 'invoice' as const,
-  initialState: { id: '', amount: 0, status: 'pending' as const } as InvoiceState,
-  pure: {
-    eventProjectors: {
-      created: (state: any, event: { payload: InvoiceCreatedPayload }) => {
-        state.id = event.payload.customerId;
-        state.amount = event.payload.amount;
-      },
-      paid: (state: any, event: { payload: InvoicePaidPayload }) => {
-        state.status = 'paid';
-        state.paidAt = event.payload.reference;
-      }
-    }
-  },
-  applyToDraft: (draft: any, event: any) => {
-    const parts = event.type.split('.');
-    const key = parts.length >= 3 ? parts[1] : parts[0];
-    const projector = (mirrorableInvoiceAgg as any).pure.eventProjectors[key];
-    if (projector) projector(draft, event);
-  },
-  metadata: {}
-};
-
-// Compile-time assertion helpers for aggregate event-map extraction
-type InvoiceAggPayloadMap = AggregateEventPayloadMap<typeof invoiceAgg>;
-type InvoiceAggEventKeys = AggregateEventKeys<typeof invoiceAgg>;
-type InvoiceAggCreatedPayload = AggregateEventPayloadByKey<typeof invoiceAgg, 'created'>;
-
-type InvoiceDefPayloadMap = AggregateEventPayloadMap<typeof invoiceAggDef>;
-const _invoiceAggEventKeyCheck: InvoiceAggEventKeys = 'created';
-const _invoiceAggPayloadCheck: InvoiceAggCreatedPayload = { customerId: 'c1', amount: 42 };
-const _invoiceDefPayloadCheck: InvoiceDefPayloadMap['paid'] = { paymentMethod: 'card', reference: 'ref' };
-void _invoiceAggEventKeyCheck;
-void _invoiceAggPayloadCheck;
-void _invoiceDefPayloadCheck;
+// Compile-time payload extraction verification
+type InvoicePayloadMap = AggregateEventPayloadMap<typeof invoiceAggregate>;
+type InvoiceEventKeys = AggregateEventKeys<typeof invoiceAggregate>;
+type InvoiceCreatedExtracted = AggregateEventPayloadByKey<typeof invoiceAggregate, 'created'>;
+const _payloadCheck: InvoiceCreatedExtracted = { customerId: 'c1', amount: 42 };
+void _payloadCheck;
 
 // ============================================================================
 // Tests: Basic Builder API
@@ -152,7 +94,7 @@ describe('createProjection Builder API', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.id = event.payload.customerId;
           state.amount = event.payload.amount;
@@ -164,7 +106,7 @@ describe('createProjection Builder API', () => {
       .build();
 
     expect(projection.name).toBe('invoice-summary');
-    expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
+    expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
     expect(projection.joinStreams).toHaveLength(0);
     expect(typeof projection.initialState).toBe('function');
     expect(typeof projection.identity).toBe('function');
@@ -178,12 +120,12 @@ describe('createProjection Builder API', () => {
         order: { id: '', items: [] }
       })
     )
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.invoice.id = event.payload.customerId;
         }
       })
-      .join(orderAggDef, {
+      .join(orderAggregate, {
         shipped: (state, event) => {
           state.order.shippedAt = new Date().toISOString();
         }
@@ -191,9 +133,9 @@ describe('createProjection Builder API', () => {
       .build();
 
     expect(projection.name).toBe('composite-view');
-    expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
+    expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
     expect(projection.joinStreams).toHaveLength(1);
-    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggregate);
   });
 
   test('initialState(fn) overrides the initial state factory', () => {
@@ -202,7 +144,7 @@ describe('createProjection Builder API', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.amount = event.payload.amount;
         }
@@ -226,7 +168,7 @@ describe('createProjection Builder API', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.amount = event.payload.amount;
         }
@@ -252,7 +194,7 @@ describe('createProjection Builder API', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.amount = event.payload.amount;
         }
@@ -295,7 +237,7 @@ describe('createProjection Type Inference', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           // TypeScript should infer event.payload as InvoiceCreatedPayload
           // Access properties to verify inference
@@ -318,13 +260,13 @@ describe('createProjection Type Inference', () => {
     const projection = createProjection<{ order: OrderState }>('order-view', () => ({
       order: { id: '', items: [] }
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           // event.payload should be InvoiceCreatedPayload
           const _customerId: string = event.payload.customerId;
         }
       })
-      .join(orderAggDef, {
+      .join(orderAggregate, {
         shipped: (state, event) => {
           // event.payload should be OrderShippedPayload
           // Access properties to verify inference
@@ -349,7 +291,7 @@ describe('createProjection Type Inference', () => {
         order: { id: '', items: [] }
       })
     )
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           const _payload = event.payload;
           state.invoice.amount = event.payload.amount;
@@ -359,7 +301,7 @@ describe('createProjection Type Inference', () => {
           state.invoice.status = 'paid';
         }
       })
-      .join(orderAggDef, {
+      .join(orderAggregate, {
         shipped: (state, event) => {
           const _payload = event.payload;
           state.order.shippedAt = new Date().toISOString();
@@ -367,8 +309,8 @@ describe('createProjection Type Inference', () => {
       })
       .build();
 
-    expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
-    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
+    expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggregate);
   });
 });
 
@@ -382,14 +324,13 @@ describe('createProjection Builder Chaining', () => {
       id: string;
       status: string;
     }
-    const initial2: OrderState2 = { id: '', status: '' };
-    const agg2Def: AggregateDefinition<OrderState2, { updated: { status: string } }> = {
-      aggregateType: 'order2',
-      initialState: initial2,
-      pure: {
-        eventProjectors: {}
-      }
-    };
+    const agg2 = createAggregate<OrderState2, 'order2'>('order2', { id: '', status: '' })
+      .events({
+        updated: (state, event: { payload: { status: string } }) => {
+          state.status = event.payload.status;
+        }
+      })
+      .build();
 
     const projection = createProjection<{ a: InvoiceState; b: OrderState; c: OrderState2 }>(
       'multi-join',
@@ -399,13 +340,13 @@ describe('createProjection Builder Chaining', () => {
         c: { id: '', status: '' }
       })
     )
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
-      .join(orderAggDef, {
+      .join(orderAggregate, {
         shipped: (state, event) => {}
       })
-      .join(agg2Def, {
+      .join(agg2, {
         updated: (state, event) => {}
       })
       .build();
@@ -419,7 +360,7 @@ describe('createProjection Builder Chaining', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
       .initialState((id) => ({
@@ -447,7 +388,7 @@ describe('createProjection Builder Chaining', () => {
       amount: 999,
       status: 'paid'
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
       .build();
@@ -475,7 +416,7 @@ describe('createProjection ProjectionDefinition Output', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {},
         paid: (state, event) => {}
       })
@@ -495,13 +436,13 @@ describe('createProjection ProjectionDefinition Output', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {},
         paid: (state, event) => {}
       })
       .build();
 
-    expect(projection.fromStream.aggregate).toBe(invoiceAggDef);
+    expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
     expect(projection.fromStream.handlers).toHaveProperty('created');
     expect(projection.fromStream.handlers).toHaveProperty('paid');
   });
@@ -510,17 +451,17 @@ describe('createProjection ProjectionDefinition Output', () => {
     const projection = createProjection<{ order: OrderState }>('order-view', () => ({
       order: { id: '', items: [] }
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
-      .join(orderAggDef, {
+      .join(orderAggregate, {
         shipped: (state, event) => {},
         itemAdded: (state, event) => {}
       })
       .build();
 
     expect(projection.joinStreams).toHaveLength(1);
-    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggDef);
+    expect(projection.joinStreams?.[0].aggregate).toBe(orderAggregate);
     expect(projection.joinStreams?.[0].handlers).toHaveProperty('shipped');
     expect(projection.joinStreams?.[0].handlers).toHaveProperty('itemAdded');
   });
@@ -529,7 +470,7 @@ describe('createProjection ProjectionDefinition Output', () => {
     const projection = createProjection<{ order: OrderState }>('order-view', () => ({
       order: { id: '', items: [] }
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           // In a real implementation, this would use context.subscribeTo()
         }
@@ -550,7 +491,7 @@ describe('createProjection Immer Integration', () => {
     const projection = createProjection<{ count: number }>('counter', () => ({
       count: 0
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           // State should be a Draft and mutable
           state.count = 42;
@@ -587,7 +528,7 @@ describe('createProjection Immer Integration', () => {
       count: 0,
       name: ''
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.count = 10;
           state.name = 'initial';
@@ -616,7 +557,7 @@ describe('createProjection Edge Cases', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {})
+      .from(invoiceAggregate, {})
       .build();
 
     expect(Object.keys(projection.fromStream.handlers)).toHaveLength(0);
@@ -628,7 +569,7 @@ describe('createProjection Edge Cases', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
       .build();
@@ -643,7 +584,7 @@ describe('createProjection Edge Cases', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
       .build();
@@ -689,7 +630,7 @@ describe('createProjection Type Exports', () => {
       amount: 0,
       status: 'pending' as const
     }))
-      .from(invoiceAggDef, {
+      .from(invoiceAggregate, {
         created: (state, event) => {}
       })
       .build();
@@ -707,11 +648,11 @@ describe('createProjection .mirror() builder', () => {
 
   test('mirrors all aggregate event projectors', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg)
+      .mirror(invoiceAggregate)
       .build();
 
     expect(projection.name).toBe('invoice-mirror');
-    expect(projection.fromStream.aggregate).toBe(mirrorableInvoiceAgg);
+    expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
     expect(projection.fromStream.handlers).toHaveProperty('created');
     expect(projection.fromStream.handlers).toHaveProperty('paid');
     expect(Object.keys(projection.fromStream.handlers)).toHaveLength(2);
@@ -719,7 +660,7 @@ describe('createProjection .mirror() builder', () => {
 
   test('uses aggregate initialState when not provided', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg)
+      .mirror(invoiceAggregate)
       .build();
 
     const initial = projection.initialState('inv-1');
@@ -730,7 +671,7 @@ describe('createProjection .mirror() builder', () => {
 
   test('uses default identity resolver', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg)
+      .mirror(invoiceAggregate)
       .build();
 
     const event: ProjectionEvent = {
@@ -747,7 +688,7 @@ describe('createProjection .mirror() builder', () => {
 
   test('mirrored handlers delegate to applyToDraft', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg)
+      .mirror(invoiceAggregate)
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
@@ -771,7 +712,7 @@ describe('createProjection .mirror() builder', () => {
     let overrideCalled = false;
 
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg, {
+      .mirror(invoiceAggregate, {
         paid: (state: any, event: any) => {
           overrideCalled = true;
           state.status = 'paid';
@@ -798,7 +739,7 @@ describe('createProjection .mirror() builder', () => {
 
   test('non-overridden handlers still use applyToDraft', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg, {
+      .mirror(invoiceAggregate, {
         paid: (state: any) => { state.status = 'paid'; }
       })
       .build();
@@ -819,7 +760,7 @@ describe('createProjection .mirror() builder', () => {
 
   test('inherit.extend in mirror overrides', () => {
     const projection = createProjection('invoice-mirror')
-      .mirror(mirrorableInvoiceAgg, {
+      .mirror(invoiceAggregate, {
         paid: inherit.extend((state: any, event: any) => {
           state.paidAt = 'extended';
         })
@@ -851,7 +792,7 @@ describe('createProjection inherit token', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
-      .from(mirrorableInvoiceAgg, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.id = 'custom-' + event.payload.customerId;
         },
@@ -876,7 +817,7 @@ describe('createProjection inherit token', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
-      .from(mirrorableInvoiceAgg, {
+      .from(invoiceAggregate, {
         created: inherit,
         paid: inherit.extend((state, event) => {
           state.paidAt = event.timestamp;
@@ -902,7 +843,7 @@ describe('createProjection inherit token', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
-      .from(mirrorableInvoiceAgg, {
+      .from(invoiceAggregate, {
         created: (state, event) => {
           state.id = 'custom-' + event.payload.customerId;
         },
@@ -948,7 +889,7 @@ describe('createProjection inherit token', () => {
   test('createProjection without initialState throws if not using mirror', () => {
     expect(() => {
       createProjection('test')
-        .from(mirrorableInvoiceAgg, {
+        .from(invoiceAggregate, {
           created: inherit
         })
         .build();
@@ -959,7 +900,7 @@ describe('createProjection inherit token', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const
     }))
-      .from(mirrorableInvoiceAgg, {
+      .from(invoiceAggregate, {
         created: inherit,
         paid: inherit.extend((state, event) => {
           state.paidAt = event.payload.reference;

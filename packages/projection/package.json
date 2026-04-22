@@ -18,5 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
     "lint": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@redemeine/aggregate": "workspace:*"
   }
 }

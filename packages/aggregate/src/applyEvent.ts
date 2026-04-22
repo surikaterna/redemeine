@@ -1,6 +1,67 @@
-import { produce } from 'immer';
+import { produce, type Draft } from 'immer';
 import type { Event } from '@redemeine/kernel';
-import { parseTargetedEventPath, formatFlatEventType } from './naming';
+import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
+
+/**
+ * Resolves an event path segment to the matching entity container in the draft.
+ * Tries multiple naming conventions (snake_case, camelCase, with/without plural 's')
+ * because the event type path may use a different convention than the state property.
+ * 
+ * TODO: Pass entity mount metadata from the aggregate builder to eliminate guesswork.
+ */
+function resolveEntityContainer(
+    part: string,
+    draft: Record<string, any>
+): { container: any; kind: 'array' | 'map' } | undefined {
+    const camelPart = toCamelCase(part);
+    const candidates = Array.from(new Set([
+        part,
+        part + 's',
+        camelPart,
+        camelPart + 's'
+    ]));
+
+    for (const candidate of candidates) {
+        const value = draft[candidate];
+        if (Array.isArray(value)) return { container: value, kind: 'array' };
+        if (value && typeof value === 'object' && !Array.isArray(value)) return { container: value, kind: 'map' };
+    }
+
+    return undefined;
+}
+
+/**
+ * Resolves the entity identifier from the event payload for a given path segment.
+ * Tries multiple naming conventions for the ID/key fields.
+ *
+ * TODO: Pass entity mount metadata to use the known primary key field directly.
+ */
+function resolveEntityIdentifier(
+    part: string,
+    payload: Record<string, any>
+): { id?: unknown; mapKey?: unknown; compositePk?: Record<string, unknown> } {
+    const camelPart = toCamelCase(part);
+    const singularPart = singular(part);
+    const singularCamelPart = singular(camelPart);
+
+    const id = payload[part + 'Id'] ||
+        payload[singularPart + 'Id'] ||
+        payload[camelPart + 'Id'] ||
+        payload[singularCamelPart + 'Id'] ||
+        payload.id;
+
+    const mapKey = payload[part + 'Key'] ||
+        payload[singularPart + 'Key'] ||
+        payload[camelPart + 'Key'] ||
+        payload[singularCamelPart + 'Key'] ||
+        payload.key;
+
+    const compositePk = payload.__entityPk && typeof payload.__entityPk === 'object'
+        ? payload.__entityPk as Record<string, unknown>
+        : undefined;
+
+    return { id, mapKey, compositePk };
+}
 
 /**
  * Applies an event to a mutable draft state by routing to the correct projector.
@@ -9,7 +70,7 @@ import { parseTargetedEventPath, formatFlatEventType } from './naming';
  */
 export function applyEventToDraft<S>(
     aggregateName: string,
-    draft: any,
+    draft: Draft<S>,
     event: Event,
     allEvents: Record<string, Function>,
     allEventOverrides: Record<string, string>,
@@ -17,73 +78,29 @@ export function applyEventToDraft<S>(
     scopedProjectorByEventType: Record<string, Function> = {},
     scopedEventProjectors: Record<string, Function> = {}
 ): void {
-    const toCamelCase = (value: string) => value.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-    const singular = (value: string) => value.endsWith('s') ? value.slice(0, -1) : value;
-
     let targetDraft = draft;
     let eventName = event.type;
     
     const parsedPath = parseTargetedEventPath(event.type, aggregateName);
     if (parsedPath) {
         for (const part of parsedPath.parts) {
-            const arrayName = part;
-            const camelArrayName = toCamelCase(part);
-            const singularPart = singular(part);
-            const singularCamelPart = singular(camelArrayName);
-            const id = event.payload && (
-                event.payload[part + 'Id'] ||
-                event.payload[singularPart + 'Id'] ||
-                event.payload[camelArrayName + 'Id'] ||
-                event.payload[singularCamelPart + 'Id'] ||
-                event.payload.id
-            );
+            const resolved = resolveEntityContainer(part, targetDraft);
+            if (!resolved) continue;
 
-            const mapKey = event.payload && (
-                event.payload[part + 'Key'] ||
-                event.payload[singularPart + 'Key'] ||
-                event.payload[camelArrayName + 'Key'] ||
-                event.payload[singularCamelPart + 'Key'] ||
-                event.payload.key
-            );
+            const { id, mapKey, compositePk } = event.payload
+                ? resolveEntityIdentifier(part, event.payload)
+                : { id: undefined, mapKey: undefined, compositePk: undefined };
 
-            const compositePk = event.payload && event.payload.__entityPk && typeof event.payload.__entityPk === 'object'
-                ? event.payload.__entityPk
-                : undefined;
-
-            const arrayCandidates = Array.from(new Set([
-                arrayName,
-                arrayName + 's',
-                camelArrayName,
-                camelArrayName + 's'
-            ]));
-
-            for (const candidate of arrayCandidates) {
-                const container = targetDraft[candidate];
-
-                if (Array.isArray(container)) {
-                    const found = container.find((item: any) => {
-                        if (id !== undefined) {
-                            return String(item.id) === String(id);
-                        }
-                        if (compositePk) {
-                            return Object.keys(compositePk).every((k) => String(item?.[k]) === String(compositePk[k]));
-                        }
-                        return false;
-                    });
-
-                    if (found) {
-                        targetDraft = found;
-                        break;
-                    }
-                }
-
-                if (container && typeof container === 'object' && !Array.isArray(container) && mapKey !== undefined) {
-                    const found = container[mapKey];
-                    if (found) {
-                        targetDraft = found;
-                        break;
-                    }
-                }
+            if (resolved.kind === 'array') {
+                const found = (resolved.container as any[]).find((item: any) => {
+                    if (id !== undefined) return String(item.id) === String(id);
+                    if (compositePk) return Object.keys(compositePk).every(k => String(item?.[k]) === String(compositePk[k]));
+                    return false;
+                });
+                if (found) targetDraft = found;
+            } else if (resolved.kind === 'map' && mapKey !== undefined) {
+                const found = resolved.container[mapKey as string];
+                if (found) targetDraft = found;
             }
         }
         eventName = parsedPath.coreEventName;
