@@ -7,7 +7,7 @@ import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
 import { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import { bindContext } from './bindContext';
-import { applyEvent } from './applyEvent';
+import { applyEvent, applyEventToDraft } from './applyEvent';
 import { defaultNamingStrategy } from './naming';
 import type { Merge } from './types/Merge';
 import type { AllKeys } from './types/AllKeys';
@@ -346,6 +346,7 @@ commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugin
         initialState: S;
         process: (state: S, command: Command<unknown, string>) => Event[];
         apply: (state: S, event: Event) => S;
+        applyToDraft: (draft: S, event: Event) => void;
         commandCreators: {
             [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
                 ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
@@ -695,6 +696,9 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 initialState,
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides, commandHandlerByType),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors),
+                applyToDraft: (draft: S, event: Event): void => {
+                    applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors);
+                },
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy),
                 eventCreators: emit,
                 pure: {

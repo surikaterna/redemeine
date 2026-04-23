@@ -22,6 +22,7 @@ import {
   type SagaAggregate,
   type SagaAggregateState
 } from './SagaAggregate';
+import { toCamelCase } from '@redemeine/aggregate';
 
 interface SagaIntentMetadata {
   readonly sagaId: string;
@@ -118,8 +119,6 @@ const createTokenBindings = (
 
   return bindings;
 };
-
-const toCamelCase = (value: string): string => value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
 
 const resolveAggregateType = (event: SagaBridgeDomainEvent): string | undefined => {
   if (event.aggregateType) {
