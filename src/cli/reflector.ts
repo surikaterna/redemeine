@@ -1,21 +1,21 @@
-import zodToJsonSchema from 'zod-to-json-schema';
-import { Contract } from '@redemeine/kernel';
+import { z } from 'zod';
+import type { Contract } from '@redemeine/kernel';
 
 export function describeContract(contract: Contract, aggregateName: string = 'aggregate') {
     const commands: Record<string, any> = {};
     const events: Record<string, any> = {};
 
     for (const [type, schema] of contract.commands.entries()) {
-        commands[type] = zodToJsonSchema(schema as any, type).definitions?.[type] || {};
+        commands[type] = z.toJSONSchema(schema as z.ZodType);
     }
 
     for (const [type, schema] of contract.events.entries()) {
-        events[type] = zodToJsonSchema(schema as any, type).definitions?.[type] || {};
+        events[type] = z.toJSONSchema(schema as z.ZodType);
     }
 
     let state = {};
     if (contract.stateSchema) {
-        state = zodToJsonSchema(contract.stateSchema as any, 'state').definitions?.['state'] || {};
+        state = z.toJSONSchema(contract.stateSchema as z.ZodType);
     }
 
     return {
