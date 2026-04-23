@@ -1,0 +1,126 @@
+// @redemeine/sync - Edge Sync Runtime contracts
+
+export {
+  type NodeCapabilities,
+  type NodeRole,
+  type NodeIdentity,
+  resolveRole,
+  createNodeIdentity,
+  createOriginCapabilities,
+  createRelayCapabilities,
+  createLeafCapabilities,
+} from './capabilities';
+
+export {
+  type SyncLane,
+  SYNC_LANES,
+  type SelectorFilter,
+  type EventStreamSelector,
+  type ProjectionSelector,
+  type MasterDataSelector,
+  type ConfigurationSelector,
+  type LaneSelector,
+  selectorIdentityKey,
+  type SyncManifest,
+  type ManifestByLane,
+  groupSelectorsByLane,
+  type ManifestDelta,
+  computeManifestDelta,
+  type StreamAddedSignal,
+  type StreamRemovedSignal,
+  type ManifestLifecycleSignal,
+  deriveLifecycleSignals,
+  type RuleContext,
+  type IManifestRuleEngine,
+  type IManifestStore,
+  deriveChildManifest,
+} from './manifest';
+
+export type {
+  CommandMetadata,
+  QueuedCommand,
+  ICommandQueue,
+  Checkpoint,
+  ICheckpointStore,
+} from './store';
+
+export {
+  type SyncEvent,
+  type IReconciliationEventStoreAdapter,
+  type UpstreamSnapshot,
+  type ConflictRecord,
+  type IConflictArchive,
+  type MatchedOutcome,
+  type ConflictOutcome,
+  type AppliedOutcome,
+  type ErrorOutcome,
+  type ReconciliationOutcome,
+  type ReconciliationServiceOptions,
+  type EventMatcher,
+  type IReconciliationService,
+  defaultEventMatcher,
+  createReconciliationService,
+} from './reconciliation';
+
+export type {
+  DownstreamEvent,
+  EventStreamSnapshot,
+  EventStreamEvents,
+  EventStreamAdded,
+  EventStreamRemoved,
+  EventStreamEnvelope,
+  ProjectionSnapshot,
+  ProjectionDelta,
+  ProjectionRemoved,
+  ProjectionEnvelope,
+  ConfigSnapshot,
+  ConfigDelta,
+  ConfigEnvelope,
+  EventStreamFeedInput,
+  ProjectionFeedInput,
+  ConfigFeedInput,
+  DownstreamSyncService,
+  FeedEnvelopeListener,
+  FeedConsumerOptions,
+  EnvelopeProcessResult,
+  ConsumeResult,
+  EventStreamConsumer,
+} from './downstream';
+
+export { createEventStreamConsumer } from './downstream';
+
+export {
+  type UpstreamCommandMetadata,
+  type UpstreamCommandEnvelope,
+  type UpstreamBatchRequest,
+  type AcceptedCommandResult,
+  type RejectedCommandResult,
+  type DuplicateCommandResult,
+  type UpstreamCommandResult,
+  type UpstreamBatchResult,
+  type UpstreamSyncService,
+  type ConnectionState,
+  type ConnectionStateListener,
+  type Unsubscribe,
+  type IConnectionMonitor,
+  type DrainResult,
+  type DrainResultListener,
+  type QueueDrainOptions,
+  type QueueDrain,
+  createQueueDrain,
+} from './upstream';
+
+export {
+  type LaneLagMetrics,
+  type SyncHealthMetrics,
+  type ConnectionChangedAlert,
+  type QueueDepthThresholdAlert,
+  type SyncLagThresholdAlert,
+  type SyncAlert,
+  type IMetricSink,
+  type HealthSnapshotDependencies,
+  captureHealthSnapshot,
+  type SyncHealthThresholds,
+  defaultThresholds,
+  checkThresholds,
+} from './health';
