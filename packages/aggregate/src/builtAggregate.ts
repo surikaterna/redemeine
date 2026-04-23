@@ -1,4 +1,5 @@
-import type { Event, Command, AggregateHooks } from '@redemeine/kernel';
+import type { Event, Command, AggregateHooks, PluginExtensions, RedemeinePlugin } from '@redemeine/kernel';
+import type { AggregateEntityRegistry, MountedStructureMetadata } from './createAggregate';
 
 /**
  * The compiled output of createAggregate(...).build().
@@ -8,7 +9,9 @@ export interface BuiltAggregate<
     S = unknown,
     M extends Record<string, any> = Record<string, any>,
     E = any,
-    Sel extends Record<string, any> = Record<string, any>
+    Registry extends AggregateEntityRegistry = AggregateEntityRegistry,
+    Sel extends Record<string, any> = Record<string, any>,
+    TPlugins extends PluginExtensions = {}
 > {
     /** The aggregate type identifier (e.g., 'invoice', 'order') */
     aggregateType: string;
@@ -40,7 +43,7 @@ export interface BuiltAggregate<
     /** Lifecycle hooks for command/event interception */
     hooks?: AggregateHooks<S>;
     /** Entity/collection mount metadata */
-    mounts?: Record<string, any>;
+    mounts?: Record<string, MountedStructureMetadata>;
     /** Command and event metadata */
     metadata?: {
         commands?: Record<string, any>;
@@ -52,5 +55,7 @@ export interface BuiltAggregate<
         events: Record<string, string>;
     };
     /** Registered plugins */
-    plugins?: unknown[];
+    plugins?: RedemeinePlugin<TPlugins>[];
+    /** Phantom type for entity registry inference */
+    __registryType?: Registry;
 }

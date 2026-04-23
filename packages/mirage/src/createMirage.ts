@@ -1,5 +1,5 @@
 import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError, Contract, ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
-import type { EntityPackage, AggregateEntityRegistry, BuiltAggregate as BaseBuiltAggregate } from '@redemeine/aggregate';
+import type { EntityPackage, AggregateEntityRegistry, BuiltAggregate } from '@redemeine/aggregate';
 import { bindContext, isMirageContextBinding, MirageContextSymbol, singular, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
 type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
@@ -18,22 +18,7 @@ type InvocationContext = {
     entityPk?: Record<string, unknown>;
 };
 
-/**
- * Mirage-specific extension of the aggregate build output.
- * Adds entity registry phantom type and plugin type narrowing.
- */
-export interface BuiltAggregate<
-    S,
-    M,
-    E = any,
-    Registry extends AggregateEntityRegistry = {},
-    Sel extends Record<string, any> = {},
-    TPlugins extends PluginExtensions = {}
-> extends BaseBuiltAggregate<S, M, E, Sel> {
-    plugins?: RedemeinePlugin<TPlugins>[];
-    mounts?: Record<string, MountMetadata>;
-    __registryType?: Registry;
-}
+export type { BuiltAggregate } from '@redemeine/aggregate';
 
 /**
  * A mapped record of executable live commands bound directly to the aggregate instance.
