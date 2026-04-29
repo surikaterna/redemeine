@@ -23,6 +23,11 @@ export interface ExtractZodOptions {
     includeState?: boolean;
     /** How to handle Date types: 'string' (default) or 'date' */
     dateHandling?: 'string' | 'date';
+    /** Map of type alias names to Zod schema code strings.
+     * Used when the extractor cannot resolve cross-package types.
+     * Example: { Identifier: 'z.string()' }
+     */
+    typeOverrides?: Record<string, string>;
 }
 
 /**
@@ -51,7 +56,7 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     const stateType = extractStateType(checker, aggType, sourceFile);
 
     const converter = new TypeToZodConverter(
-        checker, program, options.dateHandling ?? 'string'
+        checker, program, options.dateHandling ?? 'string', options.typeOverrides
     );
 
     const output = generateOutput(
