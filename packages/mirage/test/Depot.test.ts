@@ -1,7 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate } from '@redemeine/aggregate';
 import { createDepot, EventStore } from '../src/Depot';
-import { createLegacyAggregateBridge } from '../src/createMirage';
+import { extractUncommittedEvents } from '../src/createMirage';
 import { Event, RedemeinePlugin } from '@redemeine/kernel';
 
 type S = { id: string; count: number };
@@ -35,11 +35,10 @@ describe('Depot', () => {
 
     const depot = createDepot(aggregate, store);
     const mirage = await depot.get('o9');
-    const bridge = createLegacyAggregateBridge(mirage);
 
     expect(requestedIds).toEqual(['o9']);
-    expect(bridge._state.id).toBe('o9');
-    expect(bridge._state.count).toBe(2);
+    expect(mirage.id).toBe('o9');
+    expect(mirage.count).toBe(2);
   });
 
   test('hydrates mirage from async iterable event replay', async () => {
@@ -53,10 +52,9 @@ describe('Depot', () => {
 
     const depot = createDepot(aggregate, store);
     const mirage = await depot.get('streamed');
-    const bridge = createLegacyAggregateBridge(mirage);
 
-    expect(bridge._state.id).toBe('streamed');
-    expect(bridge._state.count).toBe(4);
+    expect(mirage.id).toBe('streamed');
+    expect(mirage.count).toBe(4);
   });
 
   test('replays from beginning when no snapshot is provided', async () => {
@@ -184,10 +182,9 @@ describe('Depot', () => {
 
     const depot = createDepot(aggregate, store);
     const mirage = await depot.get('o1');
-    const bridge = createLegacyAggregateBridge(mirage);
 
     mirage.increment(3);
-    expect(bridge.getUncommittedEvents().length).toBe(1);
+    expect(extractUncommittedEvents(mirage).length).toBe(1);
 
     await depot.save(mirage);
 
@@ -195,7 +192,7 @@ describe('Depot', () => {
     expect(saveCalls[0].id).toBe('o1');
     expect(saveCalls[0].events.length).toBe(1);
     expect(saveCalls[0].expectedVersion).toBe(1);
-    expect(bridge.getUncommittedEvents()).toEqual([]);
+    expect(extractUncommittedEvents(mirage)).toEqual([]);
   });
 
   test('throws when saving non-mirage object', async () => {
@@ -504,7 +501,6 @@ describe('Depot', () => {
     });
 
     const mirage = await depot.get('o1');
-    const bridge = createLegacyAggregateBridge(mirage);
     await mirage.increment(2);
 
     await expect(depot.save(mirage)).rejects.toMatchObject({
@@ -514,6 +510,6 @@ describe('Depot', () => {
       aggregateId: 'o1'
     });
 
-    expect(bridge.getUncommittedEvents()).toEqual([]);
+    expect(extractUncommittedEvents(mirage)).toEqual([]);
   });
 });

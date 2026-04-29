@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate, createEntity } from '@redemeine/aggregate';
-import { createMirage, createLegacyAggregateBridge } from '../src/createMirage';
+import { createMirage, extractUncommittedEvents } from '../src/createMirage';
 import { Event, RedemeinePlugin } from '@redemeine/kernel';
 
 interface TestState {
@@ -41,10 +41,8 @@ describe('Mirage tests', () => {
     test('should initialize with initialState if no snapshot/events provided', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
-        const bridge = createLegacyAggregateBridge(live);
 
-        expect(bridge._state.value).toBe(0);
-        expect(bridge.id).toBe('agg-1');
+        expect(live.value).toBe(0);
     });
 
     test('should load existing state from snapshot', () => {
@@ -52,11 +50,9 @@ describe('Mirage tests', () => {
         const live = createMirage(builder, 'agg-2', {
             snapshot: { value: 10, title: 'Loaded', line: [] }
         });
-        
-        const bridge = createLegacyAggregateBridge(live);
 
-        expect(bridge._state.value).toBe(10);
-        expect(bridge._state.title).toBe('Loaded');
+        expect(live.value).toBe(10);
+        expect(live.title).toBe('Loaded');
     });
 
     test('should load existing state from events', async () => {
@@ -64,10 +60,9 @@ describe('Mirage tests', () => {
         const live = await createMirage(builder, 'agg-3', {
             events: [{ type: 'test.updated.event', payload: 42 }]
         });
-        const bridge = createLegacyAggregateBridge(live);
 
-        expect(bridge._state.value).toBe(42);
-        expect(bridge._state.title).toBe('New');
+        expect(live.value).toBe(42);
+        expect(live.title).toBe('New');
     });
 
     test('supports direct array replay hydration without async setup', async () => {
@@ -81,8 +76,7 @@ describe('Mirage tests', () => {
             events: replayEvents
         });
 
-        const bridge = createLegacyAggregateBridge(live);
-        expect(bridge._state.value).toBe(12);
+        expect(live.value).toBe(12);
     });
 
     test('should load existing state from snapshot and events', async () => {
@@ -91,39 +85,67 @@ describe('Mirage tests', () => {
             snapshot: { value: 10, title: 'Loaded', line: [] },
             events: [{ type: 'test.updated.event', payload: 42 }]
         });
-        const bridge = createLegacyAggregateBridge(live);
 
-        expect(bridge._state.value).toBe(42);
-        expect(bridge._state.title).toBe('Loaded');
+        expect(live.value).toBe(42);
+        expect(live.title).toBe('Loaded');
     });
 
     test('should execute flat commands, update state & uncommitted', () => {
         const builder = setupBuilder();
         const live = createMirage(builder, 'agg-1');
-        const bridge = createLegacyAggregateBridge(live);
 
         live.update(42);
 
-        expect(bridge._state.value).toBe(42);
+        expect(live.value).toBe(42);
 
-        const uncommitted = bridge.getUncommittedEvents();
+        const uncommitted = extractUncommittedEvents(live);
         expect(uncommitted.length).toBe(1);
         expect(uncommitted[0].type).toBe('test.updated.event');
         expect(uncommitted[0].payload).toBe(42);
     });
 
-    test('should execute targeted commands via deep proxy recursively', () => {
-        const builder = setupBuilder();
-        const live = createMirage(builder, 'agg-1');
+    test('should execute targeted commands via entity list', () => {
+        const lineEntity = createEntity<{ id: string; qty: number }, 'line'>('line')
+            .events({
+                updated: (line, event: Event<{ id: string; qty: number }>) => {
+                    line.qty = event.payload.qty;
+                }
+            })
+            .commands((emit) => ({
+                update: {
+                    pack: (lineId: string, qty: number) => ({ id: lineId, qty }),
+                    handler: (line, payload) => emit.updated(payload)
+                }
+            }))
+            .build();
 
-        (live as any).line('123').update({ qty: 99 });
+        interface LineTestState {
+            value: number;
+            line: { id: string; qty: number }[];
+        }
 
-        const bridge = createLegacyAggregateBridge(live);
-        const uncommitted = bridge.getUncommittedEvents();
+        const aggregate = createAggregate<LineTestState, 'test'>('test', {
+            value: 0,
+            line: [{ id: '123', qty: 1 }]
+        })
+            .entityList('line', lineEntity)
+            .events({
+                updated: (state: any, event: Event<number>) => {
+                    state.value = event.payload;
+                }
+            })
+            .commands((emit) => ({
+                update: (state: any, value: number) => emit.updated(value)
+            }))
+            .build();
 
+        const live = createMirage(aggregate, 'agg-1');
+        live.line('123').update(99);
+
+        const uncommitted = extractUncommittedEvents(live);
         expect(uncommitted.length).toBe(1);
         expect(uncommitted[0].type).toBe('test.line.updated.event');
-        expect(uncommitted[0].payload).toEqual({ qty: 99, lineId: '123', id: '123' });
+        expect(uncommitted[0].payload).toEqual({ id: '123', qty: 99 });
     });
 
     test('should allow reading readable states directly from live object natively', async () => {
@@ -142,7 +164,7 @@ describe('Mirage tests', () => {
         expect(live.value).toBe(888);
     });
 
-    test('exposes selectors as typed callable functions on mirage.selectors', () => {
+    test('exposes selectors as typed callable functions on the root mirage', () => {
         const aggregate = createAggregate<TestState, 'test'>('test', initialState)
             .selectors({
                 hasLine: (state, id: string) => state.line.some((x) => x.id === id),
@@ -154,12 +176,12 @@ describe('Mirage tests', () => {
 
         const live = createMirage(aggregate, 'agg-sel');
 
-        expect(live.selectors.hasLine('123')).toBe(true);
-        expect(live.selectors.lineQty('123')).toBe(1);
+        expect(live.hasLine('123')).toBe(true);
+        expect(live.lineQty('123')).toBe(1);
 
         if (false) {
-            const exists: boolean = live.selectors.hasLine('123');
-            const qty: number = live.selectors.lineQty('123');
+            const exists: boolean = live.hasLine('123');
+            const qty: number = live.lineQty('123');
             void exists;
             void qty;
         }
@@ -194,8 +216,7 @@ describe('Mirage tests', () => {
 
         expect(live.addresses[0].street).toBe('456 Side St');
 
-        const bridge = createLegacyAggregateBridge(live);
-        const uncommitted = bridge.getUncommittedEvents();
+        const uncommitted = extractUncommittedEvents(live);
         expect(uncommitted[0].payload).toEqual({ id: 'primary', street: '123 Main St' });
         expect(uncommitted[1].payload).toEqual({ id: 'primary', street: '456 Side St' });
     });
@@ -255,7 +276,7 @@ describe('Mirage tests', () => {
             .build();
 
         const live = createMirage(aggregate, 'p1');
-        (live as any).identifiers.VAT.verify();
+        live.identifiers.VAT.verify();
 
         expect(live.identifiers.VAT.verified).toBe(true);
     });

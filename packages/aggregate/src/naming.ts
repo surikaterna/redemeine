@@ -2,6 +2,14 @@ import type { EventType, NamingStrategy } from '@redemeine/kernel';
 
 export const toSnakeCase = (value: string) => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
+/** Converts snake_case to camelCase (e.g., 'order_lines' → 'orderLines') */
+export const toCamelCase = (value: string): string => 
+    value.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+
+/** Naive singularization — strips trailing 's'. Works for regular English plurals. */
+export const singular = (value: string): string => 
+    value.endsWith('s') ? value.slice(0, -1) : value;
+
 export const formatCommandType = (aggregateName: string, prop: string, path?: string) => {
     const commandName = toSnakeCase(prop);
     if (path) return `${aggregateName}.${path}.${commandName}.command`;
