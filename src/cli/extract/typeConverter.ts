@@ -14,7 +14,8 @@ export class TypeToZodConverter {
     constructor(
         private checker: ts.TypeChecker,
         private program: ts.Program,
-        private dateHandling: 'string' | 'date' = 'string'
+        private dateHandling: 'string' | 'date' = 'string',
+        private typeOverrides: Record<string, string> = {}
     ) {}
 
     convert(type: ts.Type, depth = 0): string {
@@ -31,10 +32,21 @@ export class TypeToZodConverter {
         const aliasSymbol = type.aliasSymbol;
         if (!aliasSymbol) return null;
 
+        const typeName = aliasSymbol.getName();
+
+        // Consumer-provided override takes priority
+        if (this.typeOverrides[typeName]) {
+            if (!this.knownSchemas.has(typeName)) {
+                const varName = typeName.charAt(0).toLowerCase() + typeName.slice(1) + 'Schema';
+                this.generatedShared.set(varName, this.typeOverrides[typeName]);
+                this.knownSchemas.set(typeName, varName);
+            }
+            return this.knownSchemas.get(typeName)!;
+        }
+
         const existing = this.resolveExistingSchema(type);
         if (existing) return existing;
 
-        const typeName = aliasSymbol.getName();
         const varName = typeName.charAt(0).toLowerCase() + typeName.slice(1) + 'Schema';
         const zodCode = this.convertStructural(type, depth);
         this.generatedShared.set(varName, zodCode);

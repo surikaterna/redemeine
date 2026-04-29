@@ -1,9 +1,12 @@
 import * as ts from 'typescript';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
  * Creates a TypeScript program from a tsconfig path.
  * Parses the config and resolves compiler options, file names, etc.
+ * Uses a custom host that falls back to source resolution for
+ * unbuilt workspace packages.
  */
 export function createProgramFromConfig(tsconfigPath: string): ts.Program {
     const absolutePath = resolve(tsconfigPath);
@@ -12,10 +15,11 @@ export function createProgramFromConfig(tsconfigPath: string): ts.Program {
         throw new Error(`Failed to read tsconfig: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n')}`);
     }
 
+    const basePath = dirname(absolutePath);
     const parsed = ts.parseJsonConfigFileContent(
         configFile.config,
         ts.sys,
-        dirname(absolutePath)
+        basePath
     );
 
     if (parsed.errors.length > 0) {
@@ -23,7 +27,116 @@ export function createProgramFromConfig(tsconfigPath: string): ts.Program {
         throw new Error(`tsconfig parse errors:\n${msgs.join('\n')}`);
     }
 
-    return ts.createProgram(parsed.fileNames, parsed.options);
+    const host = ts.createCompilerHost(parsed.options);
+
+    host.resolveModuleNames = (
+        moduleNames: string[],
+        containingFile: string,
+        _reusedNames: string[] | undefined,
+        redirectedReference: ts.ResolvedProjectReference | undefined,
+        compilerOptions: ts.CompilerOptions
+    ): (ts.ResolvedModule | undefined)[] => {
+        return moduleNames.map(moduleName => {
+            const result = ts.resolveModuleName(moduleName, containingFile, compilerOptions, host);
+            if (result.resolvedModule) return result.resolvedModule;
+
+            return resolveFromPackageSource(moduleName, basePath);
+        });
+    };
+
+    return ts.createProgram(parsed.fileNames, parsed.options, host);
+}
+
+/**
+ * Fallback resolution: when standard resolution fails, look for source
+ * entry points in the package directory. Common in monorepos where
+ * workspace packages have no built output.
+ */
+export function resolveFromPackageSource(
+    moduleName: string,
+    basePath: string
+): ts.ResolvedModule | undefined {
+    if (moduleName.startsWith('.') || moduleName.startsWith('/')) return undefined;
+
+    let searchDir = basePath;
+    while (true) {
+        const candidate = join(searchDir, 'node_modules', ...moduleName.split('/'));
+        if (existsSync(candidate)) {
+            const resolved = trySourceEntries(candidate);
+            if (resolved) return resolved;
+        }
+
+        const parent = dirname(searchDir);
+        if (parent === searchDir) break;
+        searchDir = parent;
+    }
+
+    return undefined;
+}
+
+/** Build candidate source paths from package tsconfig and conventions. */
+function trySourceEntries(packageDir: string): ts.ResolvedModule | undefined {
+    const entries: string[] = [];
+
+    // Read the package's tsconfig to get outDir → rootDir mapping
+    const tsconfigPath = join(packageDir, 'tsconfig.json');
+    let rootDir: string | undefined;
+    let outDir: string | undefined;
+
+    if (existsSync(tsconfigPath)) {
+        try {
+            const tscfg = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+            const opts = tscfg.config?.compilerOptions;
+            if (opts) {
+                rootDir = opts.rootDir?.replace(/^\.\//, '');
+                outDir = opts.outDir?.replace(/^\.\//, '');
+            }
+        } catch { /* ignore */ }
+    }
+
+    // Read package.json for declared entry points
+    const pkgJsonPath = join(packageDir, 'package.json');
+    if (existsSync(pkgJsonPath)) {
+        try {
+            const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
+            const declaredPaths = [pkg.types, pkg.typings, pkg.main].filter(Boolean) as string[];
+
+            for (const declared of declaredPaths) {
+                // If we know outDir/rootDir, map the declared path to source
+                if (outDir && rootDir && declared.startsWith(outDir + '/')) {
+                    const relative = declared.slice(outDir.length + 1);
+                    const sourcePath = relative.replace(/\.d\.ts$|\.js$/, '.ts');
+                    entries.push(join(packageDir, rootDir, sourcePath));
+                }
+                // Also try naive extension swap as last resort
+                entries.push(join(packageDir, declared.replace(/\.d\.ts$|\.js$/, '.ts')));
+            }
+        } catch { /* ignore parse errors */ }
+    }
+
+    // Convention fallbacks when tsconfig/package.json don't give us enough
+    if (rootDir) {
+        entries.push(join(packageDir, rootDir, 'index.ts'));
+        entries.push(join(packageDir, rootDir, 'index.d.ts'));
+    }
+    entries.push(
+        join(packageDir, 'src', 'index.ts'),
+        join(packageDir, 'src', 'index.d.ts'),
+        join(packageDir, 'index.ts'),
+        join(packageDir, 'index.d.ts'),
+    );
+
+    for (const entry of entries) {
+        if (existsSync(entry)) {
+            return {
+                resolvedFileName: entry,
+                isExternalLibraryImport: true,
+                extension: entry.endsWith('.d.ts') ? ts.Extension.Dts : ts.Extension.Ts,
+            };
+        }
+    }
+
+    return undefined;
 }
 
 /**
