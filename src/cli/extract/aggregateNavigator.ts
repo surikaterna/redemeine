@@ -74,23 +74,51 @@ export function resolveFromPackageSource(
     return undefined;
 }
 
-/** Build candidate source paths and return the first that exists. */
+/** Build candidate source paths from package tsconfig and conventions. */
 function trySourceEntries(packageDir: string): ts.ResolvedModule | undefined {
     const entries: string[] = [];
 
+    // Read the package's tsconfig to get outDir → rootDir mapping
+    const tsconfigPath = join(packageDir, 'tsconfig.json');
+    let rootDir: string | undefined;
+    let outDir: string | undefined;
+
+    if (existsSync(tsconfigPath)) {
+        try {
+            const tscfg = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+            const opts = tscfg.config?.compilerOptions;
+            if (opts) {
+                rootDir = opts.rootDir?.replace(/^\.\//, '');
+                outDir = opts.outDir?.replace(/^\.\//, '');
+            }
+        } catch { /* ignore */ }
+    }
+
+    // Read package.json for declared entry points
     const pkgJsonPath = join(packageDir, 'package.json');
     if (existsSync(pkgJsonPath)) {
         try {
             const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
-            if (pkg.types) {
-                entries.push(join(packageDir, pkg.types.replace(/\.d\.ts$|\.js$/, '.ts')));
-            }
-            if (pkg.main) {
-                entries.push(join(packageDir, pkg.main.replace(/\.js$/, '.ts')));
+            const declaredPaths = [pkg.types, pkg.typings, pkg.main].filter(Boolean) as string[];
+
+            for (const declared of declaredPaths) {
+                // If we know outDir/rootDir, map the declared path to source
+                if (outDir && rootDir && declared.startsWith(outDir + '/')) {
+                    const relative = declared.slice(outDir.length + 1);
+                    const sourcePath = relative.replace(/\.d\.ts$|\.js$/, '.ts');
+                    entries.push(join(packageDir, rootDir, sourcePath));
+                }
+                // Also try naive extension swap as last resort
+                entries.push(join(packageDir, declared.replace(/\.d\.ts$|\.js$/, '.ts')));
             }
         } catch { /* ignore parse errors */ }
     }
 
+    // Convention fallbacks when tsconfig/package.json don't give us enough
+    if (rootDir) {
+        entries.push(join(packageDir, rootDir, 'index.ts'));
+        entries.push(join(packageDir, rootDir, 'index.d.ts'));
+    }
     entries.push(
         join(packageDir, 'src', 'index.ts'),
         join(packageDir, 'src', 'index.d.ts'),
