@@ -1,26 +1,48 @@
 {
   "name": "@redemeine/saga-runtime",
   "version": "0.1.0",
-  "private": true,
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Saga execution runtime with aggregate coordination",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/saga-runtime"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/saga-runtime#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "saga",
+    "process-manager",
+    "workflow",
+    "orchestration"
+  ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "lint": "tsc --noEmit"
   },
+  "private": true,
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
     "@redemeine/saga": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
   }
 }

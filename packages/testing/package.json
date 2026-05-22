@@ -1,24 +1,40 @@
 {
   "name": "@redemeine/testing",
   "version": "0.1.0",
-  "private": true,
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Test utilities and harnesses for @redemeine event-sourced applications",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/testing"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/testing#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "testing",
+    "test-utilities",
+    "harness"
+  ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
-    "bench": "bun run ./bench/testing-suite.bench.ts",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@redemeine/mirage": "workspace:*",
@@ -29,6 +45,7 @@
     "immer": "^10.1.1"
   },
   "devDependencies": {
-    "@types/node": "^24.7.2"
+    "@types/node": "^24.7.2",
+    "typescript": "^5.8.3"
   }
 }

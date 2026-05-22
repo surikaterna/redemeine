@@ -1,25 +1,43 @@
 {
   "name": "@redemeine/projection",
   "version": "0.1.0",
-  "private": true,
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Projection builder for deriving read models from event streams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/projection"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/projection#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "projection",
+    "read-model",
+    "event-handler"
+  ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@redemeine/aggregate": "workspace:*"
+    "@redemeine/aggregate": "workspace:*",
+    "typescript": "^5.8.3"
   }
 }

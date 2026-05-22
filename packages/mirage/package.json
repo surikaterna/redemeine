@@ -1,26 +1,47 @@
 {
   "name": "@redemeine/mirage",
   "version": "0.1.0",
-  "private": true,
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "description": "In-memory aggregate repository for testing event-sourced systems",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/mirage"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/mirage#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "testing",
+    "mock",
+    "in-memory",
+    "repository"
+  ],
+  "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "require": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
     "@redemeine/kernel": "workspace:*"
   },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+  "devDependencies": {
+    "typescript": "^5.8.3"
   }
 }

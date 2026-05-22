@@ -1,9 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
     "outDir": "dist",
-    "moduleResolution": "node"
+    "rootDir": "src"
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../kernel"
+    }
+  ]
 }
