@@ -30,13 +30,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "tsc --noEmit"
   },
   "private": true,
   "devDependencies": {
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

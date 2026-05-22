@@ -30,7 +30,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "tsc --noEmit"
@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "immer": "^10.2.0",
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

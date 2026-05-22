@@ -1,4 +1,4 @@
-import { Command, CommandType, EnvelopeHeaders } from './types';
+import type { Command, CommandType, EnvelopeHeaders } from './types';
 import { createIdentity } from './identity';
 
 /**

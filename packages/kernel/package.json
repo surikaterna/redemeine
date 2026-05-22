@@ -1,7 +1,7 @@
 {
   "name": "@redemeine/kernel",
-  "version": "0.1.0",
-  "description": "Core primitives for event-sourced aggregates \u2014 events, commands, metadata, and type utilities",
+  "version": "0.2.0-pre.0",
+  "description": "Core primitives for event-sourced aggregates — events, commands, metadata, and type utilities",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,9 +32,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --pass-with-no-tests",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -42,6 +42,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/testing",
-  "version": "0.1.0",
+  "version": "0.2.0-pre.0",
   "description": "Test utilities and harnesses for @redemeine event-sourced applications",
   "license": "MIT",
   "repository": {
@@ -31,7 +31,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
     "lint": "tsc --noEmit"
@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

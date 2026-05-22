@@ -1,4 +1,4 @@
-import { Checkpoint } from './types';
+import type { Checkpoint } from './types';
 
 export interface ProjectionDocumentWrite<TState> {
   documentId: string;

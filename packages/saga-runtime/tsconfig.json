@@ -1,18 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": [
-    "src"
-  ],
-  "references": [
-    {
-      "path": "../aggregate"
-    },
-    {
-      "path": "../saga"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/aggregate": ["../aggregate/src/index.ts"],
+      "@redemeine/saga": ["../saga/src/index.ts"]
     }
-  ]
+  },
+  "include": ["src"]
 }

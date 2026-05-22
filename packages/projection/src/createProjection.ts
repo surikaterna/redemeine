@@ -1,4 +1,4 @@
-import { ProjectionEvent as BaseProjectionEvent } from './types';
+import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {

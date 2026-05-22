@@ -1,21 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": [
-    "src"
-  ],
-  "references": [
-    {
-      "path": "../projection-runtime-core"
-    },
-    {
-      "path": "../projection-router-core"
-    },
-    {
-      "path": "../projection"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"],
+      "@redemeine/projection-router-core": ["../projection-router-core/src/index.ts"],
+      "@redemeine/projection": ["../projection/src/index.ts"]
     }
-  ]
+  },
+  "include": ["src"]
 }

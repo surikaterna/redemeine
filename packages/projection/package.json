@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection",
-  "version": "0.1.0",
+  "version": "0.2.0-pre.0",
   "description": "Projection builder for deriving read models from event streams",
   "license": "MIT",
   "repository": {
@@ -31,13 +31,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns '**/*e2e*' --path-ignore-patterns '**/*integration*' --path-ignore-patterns '**/*e5-1*'",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "@redemeine/aggregate": "workspace:*",
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

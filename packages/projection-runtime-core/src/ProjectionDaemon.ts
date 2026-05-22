@@ -1,8 +1,8 @@
-import { produce, Draft } from 'immer';
-import { IProjectionStore } from './IProjectionStore';
-import { IEventSubscription } from './IEventSubscription';
-import { Checkpoint, EventBatch, ProjectionEvent, ProjectionWarning } from './types';
-import { ProjectionDefinition, ProjectionContext } from './createProjection';
+import { produce, type Draft } from 'immer';
+import type { IProjectionStore } from './IProjectionStore';
+import type { IEventSubscription } from './IEventSubscription';
+import type { Checkpoint, EventBatch, ProjectionEvent, ProjectionWarning } from './types';
+import type { ProjectionDefinition, ProjectionContext } from './createProjection';
 import { encodeProjectionDedupeKey } from './contracts';
 
 type RuntimeMode = 'catching_up' | 'ready_to_cutover' | 'live';

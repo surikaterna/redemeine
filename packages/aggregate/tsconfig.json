@@ -1,15 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": [
-    "src"
-  ],
-  "references": [
-    {
-      "path": "../kernel"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/kernel": ["../kernel/src/index.ts"]
     }
-  ]
+  },
+  "include": ["src"]
 }

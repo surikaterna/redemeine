@@ -1,5 +1,6 @@
-import { Mirage, createMirage, MirageOptions, BuiltAggregate, MirageCoreSymbol, HydrationEvents } from './createMirage';
-import { Event, EventInterceptorContext, PluginExtensions, RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
+import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
+import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
+import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;

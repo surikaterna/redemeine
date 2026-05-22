@@ -1,5 +1,6 @@
-import { createCommand, NamingStrategy } from '@redemeine/kernel';
-import { GenericCommandMap, createCommandPayload } from '../redemeineComponent';
+import { createCommand, type NamingStrategy } from '@redemeine/kernel';
+import type { GenericCommandMap } from '../redemeineComponent';
+import { createCommandPayload } from '../redemeineComponent';
 
 export function createCommandCreatorsProxy(
     aggregateName: string,

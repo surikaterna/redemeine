@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/aggregate",
-  "version": "0.1.0",
+  "version": "0.2.0-pre.0",
   "description": "Event-sourced aggregate builder with type-safe command handlers and state reducers",
   "license": "MIT",
   "repository": {
@@ -32,7 +32,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "tsc --noEmit"
@@ -41,6 +41,7 @@
     "@redemeine/kernel": "workspace:*"
   },
   "devDependencies": {
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

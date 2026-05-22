@@ -1,4 +1,4 @@
-import { Event, EventType, EnvelopeHeaders } from './types';
+import type { Event, EventType, EnvelopeHeaders } from './types';
 import { createIdentity } from './identity';
 
 /**

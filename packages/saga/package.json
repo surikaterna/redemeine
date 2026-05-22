@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/saga",
-  "version": "0.1.0",
+  "version": "0.1.1-pre.0",
   "description": "Process manager (saga) builder for long-running workflows",
   "license": "MIT",
   "repository": {
@@ -36,7 +36,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
     "lint": "tsc --noEmit"
@@ -47,6 +47,7 @@
     "immer": "^10.1.1"
   },
   "devDependencies": {
+    "tsup": "^8.4.0",
     "typescript": "^5.8.3"
   }
 }

@@ -1,5 +1,6 @@
-import { Event, Command, CommandResult, EventCommandLink, EnvelopeHeaders, PluginExtensions, PluginIntents, ReadonlyDeep, createReadonlyDeepProxy, createIdentity } from '@redemeine/kernel';
-import { GenericCommandMap, resolveCommandHandler } from './redemeineComponent';
+import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, type ReadonlyDeep, createReadonlyDeepProxy, createIdentity } from '@redemeine/kernel';
+import type { GenericCommandMap } from './redemeineComponent';
+import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
 
 type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
@@ -88,7 +89,7 @@ export function createCommandProcessor<S>(
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
-        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as CommandHandler<S>;
+        acc[commandType] = resolveCommandHandler<S>(allCommandsMap[key]!) as unknown as CommandHandler<S>;
         return acc;
     }, {} as Record<string, CommandHandler<S>>);
 

@@ -1,15 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": [
-    "src"
-  ],
-  "references": [
-    {
-      "path": "../projection-runtime-core"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"]
     }
-  ]
+  },
+  "include": ["src"]
 }

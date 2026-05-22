@@ -1,4 +1,4 @@
-import { Command, Event, AggregateHooks, CommandInterceptorContext, EventInterceptorContext, PluginExtensions, PluginIntents, RedemeinePlugin, RedemeinePluginHookError, Contract, ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import { type Command, type Event, type AggregateHooks, type CommandInterceptorContext, type EventInterceptorContext, type PluginExtensions, type PluginIntents, type RedemeinePlugin, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { EntityPackage, AggregateEntityRegistry, BuiltAggregate } from '@redemeine/aggregate';
 import { bindContext, isMirageContextBinding, MirageContextSymbol, singular, type MirageContextPolymorphicBinding, type MirageContextSingleBinding } from '@redemeine/aggregate';
 
@@ -8,14 +8,14 @@ type MountMetadata = {
     kind: MountKind;
     commandPrefix: string;
     statePath: string[];
-    pk?: string | readonly string[];
-    knownKeys?: readonly string[];
+    pk?: string | readonly string[] | undefined;
+    knownKeys?: readonly string[] | undefined;
 };
 
 type InvocationContext = {
     idsPayload: Record<string, unknown>;
     packPrefix: unknown[];
-    entityPk?: Record<string, unknown>;
+    entityPk?: Record<string, unknown> | undefined;
 };
 
 export type { BuiltAggregate } from '@redemeine/aggregate';
@@ -572,18 +572,8 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
-    setup: (MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: undefined }) | undefined
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string,
-    setup: (MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: HydrationEvents<Event> }) | undefined
+    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: HydrationEvents<Event> }
 ): Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string,
-    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: undefined }
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string,
@@ -601,7 +591,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         ''
     );
 
-    const getMountForRoot = (rootProp: string): MountMetadata | undefined => mounts[rootProp];
+    const getMountForRoot = (rootProp: string): MountMetadata | undefined => mounts[rootProp] as MountMetadata | undefined;
 
     const selectFromList = (mountName: string, mount: MountMetadata, rawPk: unknown): InvocationContext => {
         if (Array.isArray(mount.pk)) {
@@ -959,11 +949,11 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         };
 
         if (isMirageContextBinding(result)) {
-            const bound = result[MirageContextSymbol as any];
+            const bound: any = (result as any)[MirageContextSymbol];
 
             if (bound.kind === 'single') {
                 if (Array.isArray(bound.data)) {
-                    return makeReadonlyWrappedArray(bound.data.map((item) => wrapEntityWithRole(item, bound.role, context)));
+                    return makeReadonlyWrappedArray(bound.data.map((item: any) => wrapEntityWithRole(item, bound.role, context)));
                 }
                 return wrapEntityWithRole(bound.data, bound.role, context);
             }
@@ -972,7 +962,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 throw new Error('bindContext polymorphic binding expects an array of data items.');
             }
 
-            const wrapped = bound.data.map((item) => {
+            const wrapped = bound.data.map((item: any) => {
                 const discriminatorValue = getPathValue(item, bound.discriminatorKey);
                 const role = bound.roleMap?.[String(discriminatorValue)];
                 if (!role) {
@@ -1120,7 +1110,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         context: InvocationContext
     ): any => {
         const fn = function(pkValue: string | number | Record<string, unknown>) {
-            const selection = selectFromList(collectionPath[collectionPath.length - 1], mount, pkValue);
+            const selection = selectFromList(collectionPath[collectionPath.length - 1]!, mount, pkValue);
             return makeEntityMirageProxy(
                 collectionPath,
                 commandPrefixPath,
@@ -1151,7 +1141,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
                 if (!isNaN(Number(prop))) {
                     const entity = collection[Number(prop)];
-                    const selection = selectFromListEntity(collectionPath[collectionPath.length - 1], mount, entity);
+                    const selection = selectFromListEntity(collectionPath[collectionPath.length - 1]!, mount, entity);
                     if (!selection) {
                         return createReadonlyDeepProxy(entity);
                     }
@@ -1184,7 +1174,7 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         mapKey: string,
         context: InvocationContext
     ) => {
-        const selection = selectFromMap(mapPath[mapPath.length - 1], mapKey);
+        const selection = selectFromMap(mapPath[mapPath.length - 1]!, mapKey);
         const scopedContext: InvocationContext = {
             idsPayload: { ...context.idsPayload, ...selection.idsPayload },
             packPrefix: [...context.packPrefix, ...selection.packPrefix]
