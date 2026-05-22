@@ -5,7 +5,7 @@ function cloneCursor(cursor: ProjectionCursor): ProjectionCursor {
     projectionName: cursor.projectionName,
     checkpoint: {
       sequence: cursor.checkpoint.sequence,
-      timestamp: cursor.checkpoint.timestamp
+      ...(cursor.checkpoint.timestamp !== undefined ? { timestamp: cursor.checkpoint.timestamp } : {})
     }
   };
 }

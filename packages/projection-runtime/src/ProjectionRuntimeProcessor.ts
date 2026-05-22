@@ -234,23 +234,23 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   private resolvePersistenceCapabilities(): ProjectionPersistenceCapabilities<TState> {
     const persistence = this.options.persistence;
 
+    const patchContract =
+      persistence.patch ??
+      (typeof persistence.persistPatch === 'function'
+        ? { persistPatch: persistence.persistPatch.bind(persistence) }
+        : undefined);
+
+    const documentContract =
+      persistence.document ??
+      (typeof persistence.persistDocument === 'function'
+        ? { persistDocument: persistence.persistDocument.bind(persistence) }
+        : undefined);
+
     return {
-      preferredMode: persistence.preferredMode,
+      ...(persistence.preferredMode !== undefined ? { preferredMode: persistence.preferredMode } : {}),
       read: persistence,
-      patch:
-        persistence.patch ??
-        (typeof persistence.persistPatch === 'function'
-          ? {
-              persistPatch: persistence.persistPatch.bind(persistence)
-            }
-          : undefined),
-      document:
-        persistence.document ??
-        (typeof persistence.persistDocument === 'function'
-          ? {
-              persistDocument: persistence.persistDocument.bind(persistence)
-            }
-          : undefined)
+      ...(patchContract !== undefined ? { patch: patchContract } : {}),
+      ...(documentContract !== undefined ? { document: documentContract } : {})
     };
   }
 

@@ -99,9 +99,9 @@ export class SagaInboundRouter<
 
   private readonly inFlightByKey = new Map<string, Promise<unknown>>();
 
-  private readonly getSagaState?: (sagaId: string) => TState | undefined;
+  private readonly getSagaState: ((sagaId: string) => TState | undefined) | undefined;
 
-  private readonly setSagaState?: (sagaId: string, state: TState) => void;
+  private readonly setSagaState: ((sagaId: string, state: TState) => void) | undefined;
 
   private readonly createInitialSagaState: (sagaId: string) => TState;
 
@@ -109,7 +109,7 @@ export class SagaInboundRouter<
 
   private readonly resolveWaitingPolicy: (input: SagaInboundRouteInput<TCommand>) => SagaStepWaitingPolicy;
 
-  private readonly beforeProcess?: (input: SagaInboundRouteInput<TCommand>) => Promise<void> | void;
+  private readonly beforeProcess: ((input: SagaInboundRouteInput<TCommand>) => Promise<void> | void) | undefined;
 
   private inboundSequence = 0;
 

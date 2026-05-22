@@ -371,7 +371,7 @@ export function createRuntimeAuditLifecycleReadModel(): RuntimeAuditLifecycleRea
 
       return {
         items,
-        nextCursor: nextIndex < filtered.length ? encodeCursor(nextIndex) : undefined
+        ...(nextIndex < filtered.length ? { nextCursor: encodeCursor(nextIndex) } : {})
       };
     },
     querySagaLifecycleHistory(query) {
@@ -383,7 +383,7 @@ export function createRuntimeAuditLifecycleReadModel(): RuntimeAuditLifecycleRea
 
       return {
         items,
-        nextCursor: nextIndex < entries.length ? encodeCursor(nextIndex) : undefined
+        ...(nextIndex < entries.length ? { nextCursor: encodeCursor(nextIndex) } : {})
       };
     },
     queryIntentExecutionLifecycleHistory(query) {
@@ -414,7 +414,7 @@ export function createRuntimeAuditLifecycleReadModel(): RuntimeAuditLifecycleRea
 
       return {
         items,
-        nextCursor: nextIndex < filtered.length ? encodeCursor(nextIndex) : undefined
+        ...(nextIndex < filtered.length ? { nextCursor: encodeCursor(nextIndex) } : {})
       };
     }
   };

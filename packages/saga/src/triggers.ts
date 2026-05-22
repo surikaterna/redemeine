@@ -288,8 +288,8 @@ export function createSagaTriggerBuilder<TStartInput>(): SagaTriggerBuilderFacto
     parent: <TSource>(options: SagaParentTriggerOptions<TSource, TStartInput>) => createSagaTriggerDefinitionBuilder({
       family: 'parent',
       parent: {
-        allowList: options.allowList,
-        requiredCapability: options.requiredCapability
+        ...(options.allowList !== undefined ? { allowList: options.allowList } : {}),
+        ...(options.requiredCapability !== undefined ? { requiredCapability: options.requiredCapability } : {})
       },
       toStartInput: options.toStartInput,
       when: [] as const
@@ -297,7 +297,7 @@ export function createSagaTriggerBuilder<TStartInput>(): SagaTriggerBuilderFacto
     direct: <TSource>(options: SagaDirectTriggerOptions<TSource, TStartInput>) => createSagaTriggerDefinitionBuilder({
       family: 'direct',
       direct: {
-        channel: options.channel
+        ...(options.channel !== undefined ? { channel: options.channel } : {})
       },
       toStartInput: options.toStartInput,
       when: [] as const
@@ -305,7 +305,7 @@ export function createSagaTriggerBuilder<TStartInput>(): SagaTriggerBuilderFacto
     recovery: <TSource>(options: SagaRecoveryTriggerOptions<TSource, TStartInput>) => createSagaTriggerDefinitionBuilder({
       family: 'recovery',
       recovery: {
-        reason: options.reason
+        ...(options.reason !== undefined ? { reason: options.reason } : {})
       },
       toStartInput: options.toStartInput,
       when: [] as const

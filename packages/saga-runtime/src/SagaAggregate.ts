@@ -427,7 +427,7 @@ export function createSagaAggregate<TAggregateName extends string = 'saga'>(
           sagaType: payload.sagaType,
           lifecycleState: payload.lifecycleState ?? 'active',
           createdAt: toIso8601(payload.createdAt),
-          metadata: payload.metadata
+          ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {})
         });
       },
       observeSourceEvent: (state, payload: SagaObserveSourceEventCommandPayload) => {

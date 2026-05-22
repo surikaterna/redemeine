@@ -4,7 +4,8 @@
     "noEmit": true,
     "paths": {
       "@redemeine/aggregate": ["../aggregate/src/index.ts"],
-      "@redemeine/saga": ["../saga/src/index.ts"]
+      "@redemeine/saga": ["../saga/src/index.ts"],
+      "@redemeine/kernel": ["../kernel/src/index.ts"]
     }
   },
   "include": ["src"]

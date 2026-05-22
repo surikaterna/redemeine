@@ -25,7 +25,7 @@ const defaultNow = (): string => new Date().toISOString();
  */
 export class MongoProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   private readonly now: () => string;
-  private readonly patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
+  private readonly patchPlanTelemetry: ((event: MongoPatchPlanTelemetryEvent) => void) | undefined;
   private readonly patchPlanCacheMaxEntries: number;
   private readonly patchPlanCache = new Map<
     string,
@@ -69,8 +69,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return commitAtomicMany({
       execute: this.createTransactionExecutor(),
       request,
-      collection: this.options.collection,
-      dedupeCollection: this.options.dedupeCollection,
+      collection: this.options.collection as any,
+      dedupeCollection: this.options.dedupeCollection as any,
       now: this.now,
       buildDocumentWriteOperation: (write) =>
         buildDocumentWriteOperation({
@@ -78,7 +78,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
           now: this.now,
           patchPlanCache: this.patchPlanCache,
           patchPlanCacheMaxEntries: this.patchPlanCacheMaxEntries,
-          patchPlanTelemetry: this.patchPlanTelemetry
+          ...(this.patchPlanTelemetry !== undefined ? { patchPlanTelemetry: this.patchPlanTelemetry } : {})
         })
     });
   }

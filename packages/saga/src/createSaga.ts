@@ -864,7 +864,7 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   const commandIntents = {} as SagaCommandsFor<TAggregate>;
 
   for (const commandName of Object.keys(aggregateDef.commandCreators)) {
-    const createCommand = aggregateDef.commandCreators[commandName];
+    const createCommand = aggregateDef.commandCreators[commandName]!;
 
     (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
       const command = createCommand(...args);
@@ -1023,7 +1023,7 @@ function createSagaCorePluginManifest(
     const emittedCommands = {} as SagaCommandsFor<TAggregate>;
 
     for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
-      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName];
+      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName]!;
       (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
         const intent = createIntent(...args);
         emitIntent(intent);
@@ -1066,7 +1066,7 @@ function createSagaCorePluginManifest(
           };
           return intent;
         },
-        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent: SagaIntent) => emitAndReturnIntent(intent),
         description: 'Schedule delayed saga wake-up'
       },
       cancelSchedule: {
@@ -1082,7 +1082,7 @@ function createSagaCorePluginManifest(
           };
           return intent;
         },
-        [SAGA_ACTION_RUNTIME_EMITTER]: (intent) => emitAndReturnIntent(intent),
+        [SAGA_ACTION_RUNTIME_EMITTER]: (intent: SagaIntent) => emitAndReturnIntent(intent),
         description: 'Cancel delayed saga wake-up'
       }
     },
@@ -1236,7 +1236,7 @@ function createResponseHandlerTokenNamespace<
   const namespace: Record<string, string> = {};
 
   for (const handlerKey of Object.keys(responseHandlers)) {
-    const binding = responseHandlers[handlerKey];
+    const binding = responseHandlers[handlerKey]!;
     if (binding.phase === phase) {
       namespace[handlerKey] = handlerKey;
     }
@@ -1806,7 +1806,7 @@ export async function runSagaHandler<
   responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
   plugins: TPlugins = [] as unknown as TPlugins
 ): Promise<SagaReducerOutput<TState>> {
-  const draft = createDraft(state);
+  const draft = createDraft(state as any);
   const intentBuffer: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     metadata,
@@ -1815,7 +1815,7 @@ export async function runSagaHandler<
     plugins
   );
 
-  await handler(draft, event, ctx);
+  await handler(draft as Draft<TState>, event, ctx);
 
   return {
     state: finishDraft(draft) as TState,
@@ -1862,7 +1862,7 @@ export async function runSagaResponseHandler<
     };
   }
 
-  const draft = createDraft(state);
+  const draft = createDraft(state as any);
   const intents: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),
@@ -1875,7 +1875,7 @@ export async function runSagaResponseHandler<
     plugins
   );
 
-  await handler(draft, envelope as SagaResponseCallbackEnvelope<any, TPayload>, ctx);
+  await handler(draft as Draft<TState>, envelope as SagaResponseCallbackEnvelope<any, TPayload>, ctx);
 
   return {
     ok: true,
@@ -1926,7 +1926,7 @@ export async function runSagaErrorHandler<
     };
   }
 
-  const draft = createDraft(state);
+  const draft = createDraft(state as any);
   const intents: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),
@@ -1939,7 +1939,7 @@ export async function runSagaErrorHandler<
     plugins
   );
 
-  await handler(draft, envelope as SagaErrorCallbackEnvelope<any, TError>, ctx);
+  await handler(draft as Draft<TState>, envelope as SagaErrorCallbackEnvelope<any, TError>, ctx);
 
   return {
     ok: true,
@@ -2066,7 +2066,7 @@ function createSagaBuilder<
     ) {
       addHandlers(
         aggregate,
-        handlers as Record<
+        handlers as unknown as Record<
           string,
           SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
         >
@@ -2168,7 +2168,7 @@ function createSagaBuilder<
     ) {
       addHandlers(
         aggregate,
-        handlers as Record<
+        handlers as unknown as Record<
           string,
           SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
         >
@@ -2191,7 +2191,7 @@ function createSagaBuilder<
       const normalizedTrigger: SagaTriggerContract<unknown, unknown, string> = {
         kind: trigger.kind,
         toStartInput: trigger.toStartInput as (trigger: unknown) => unknown,
-        when: trigger.when as ((trigger: unknown) => boolean) | undefined,
+        ...(trigger.when !== undefined ? { when: trigger.when as (trigger: unknown) => boolean } : {}),
         hasWhen: typeof trigger.when === 'function'
       };
 
@@ -2286,7 +2286,7 @@ function createSagaBuilder<
     on(aggregate, handlers) {
       addHandlers(
         aggregate,
-        handlers as Record<
+        handlers as unknown as Record<
           string,
           SagaHandler<unknown, SagaAggregateDefinition, string, SagaPluginManifestList, SagaResponseHandlerTokenBindings>
         >
@@ -2343,10 +2343,7 @@ export function createSaga<
     sagaUrn: identity.sagaUrn,
     plugins: pluginRegistry,
     initialState: () => undefined,
-    start: undefined,
     startContracts: {
-      start: undefined,
-      correlation: undefined,
       triggers: []
     },
     responseHandlers: {},

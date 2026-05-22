@@ -176,13 +176,13 @@ export const buildDocumentWriteOperation = <TState>(
 
   const cacheHit = withPlanCache(patchPlanCache, patchPlanCacheMaxEntries, plan.cacheKey, {
     mode: plan.mode,
-    fallbackReason: plan.mode === 'fallback-full-document' ? plan.fallbackReason : undefined
+    ...(plan.mode === 'fallback-full-document' ? { fallbackReason: plan.fallbackReason } : {})
   });
 
   patchPlanTelemetry?.({
     documentId: write.documentId,
     mode: plan.mode,
-    fallbackReason: plan.mode === 'fallback-full-document' ? plan.fallbackReason : undefined,
+    ...(plan.mode === 'fallback-full-document' ? { fallbackReason: plan.fallbackReason } : {}),
     cacheKey: plan.cacheKey,
     cacheHit,
     patchLength: write.patch.length

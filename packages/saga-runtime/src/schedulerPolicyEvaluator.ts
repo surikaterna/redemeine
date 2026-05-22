@@ -200,7 +200,7 @@ export function evaluateSchedulerPolicy(
 
     const starvationThreshold = Math.max(2, eligible.length * 2);
     eligible.sort(compareTenantRuntimeState(starvationThreshold));
-    const winner = eligible[0];
+    const winner = eligible[0]!;
     const next = winner.queue.shift();
     if (!next) {
       continue;

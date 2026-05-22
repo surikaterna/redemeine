@@ -20,7 +20,8 @@ import {
 import {
   createSagaAggregate,
   type SagaAggregate,
-  type SagaAggregateState
+  type SagaAggregateState,
+  type SagaObserveSourceEventCommandPayload
 } from './SagaAggregate';
 import { toCamelCase } from '@redemeine/aggregate';
 
@@ -293,16 +294,16 @@ export function createSagaExecutionBridge<TState>(
         input.sagaId,
         sagaAggregate.commandCreators.observeSourceEvent({
           eventType: input.event.type,
-          aggregateType: resolveAggregateType(input.event),
-          aggregateId: input.event.aggregateId,
-          eventId: input.event.eventId,
-          sequence: input.event.sequence,
+          ...(resolveAggregateType(input.event) !== undefined ? { aggregateType: resolveAggregateType(input.event) } : {}),
+          ...(input.event.aggregateId !== undefined ? { aggregateId: input.event.aggregateId } : {}),
+          ...(input.event.eventId !== undefined ? { eventId: input.event.eventId } : {}),
+          ...(input.event.sequence !== undefined ? { sequence: input.event.sequence } : {}),
           correlationId: metadata.correlationId,
           causationId: metadata.causationId,
-          observedAt: input.event.occurredAt,
+          ...(input.event.occurredAt !== undefined ? { observedAt: input.event.occurredAt } : {}),
           payload: input.event.payload,
-          metadata: input.event.metadata
-        })
+          ...(input.event.metadata !== undefined ? { metadata: input.event.metadata } : {})
+        } as SagaObserveSourceEventCommandPayload)
       );
 
       const intents: SagaIntent[] = [];
@@ -327,7 +328,7 @@ export function createSagaExecutionBridge<TState>(
         const executionIdentityByIntentIndex = new Map<number, { executionId: string; intentId: string }>();
 
         for (let intentIndex = 0; intentIndex < output.intents.length; intentIndex += 1) {
-          const intent = output.intents[intentIndex];
+          const intent = output.intents[intentIndex]!;
           const lifecycleIntentId = nextIntentId(input.sagaId);
 
           if (isSideEffectIntent(intent)) {
@@ -337,6 +338,12 @@ export function createSagaExecutionBridge<TState>(
             });
           }
 
+          const intentMeta: Record<string, string> = { handler: match.key };
+          if (intent.type === 'plugin-one-way' || intent.type === 'plugin-request') {
+            intentMeta.pluginKey = intent.plugin_key;
+            intentMeta.actionName = intent.action_name;
+          }
+
           applyAggregateCommand(
             input.sagaId,
             sagaAggregate.commandCreators.recordIntentLifecycle({
@@ -344,12 +351,7 @@ export function createSagaExecutionBridge<TState>(
               intentType: intent.type,
               stage: 'created',
               recordedAt: new Date().toISOString(),
-              metadata: {
-                handler: match.key,
-                ...(intent.type === 'plugin-one-way' || intent.type === 'plugin-request'
-                  ? { pluginKey: intent.plugin_key, actionName: intent.action_name }
-                  : {})
-              }
+              metadata: intentMeta
             })
           );
         }
@@ -357,9 +359,9 @@ export function createSagaExecutionBridge<TState>(
         const adapterResult = await runReferenceAdapterFlowV1(adapters, {
           sagaId: input.sagaId,
           intents: output.intents,
-          schedulerPolicy: input.schedulerPolicy,
-          nowIso: input.nowIso,
-          resolveExecutionIdentity: ({ intentIndex }) => executionIdentityByIntentIndex.get(intentIndex)
+          ...(input.schedulerPolicy !== undefined ? { schedulerPolicy: input.schedulerPolicy } : {}),
+          ...(input.nowIso !== undefined ? { nowIso: input.nowIso } : {}),
+          resolveExecutionIdentity: ({ intentIndex }) => executionIdentityByIntentIndex.get(intentIndex)!
         });
         adapterResults.push(adapterResult);
       }

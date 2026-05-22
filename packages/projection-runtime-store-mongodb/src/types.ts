@@ -1,6 +1,6 @@
 import type { Checkpoint } from './contracts';
 import type {
-  AnyBulkWriteOperation,
+  Document,
   MongoClient,
   TransactionOptions,
   UpdateOptions,
@@ -30,15 +30,15 @@ export interface ProjectionDedupeRecord {
   updatedAt: string;
 }
 
-export interface MongoCollectionLike<TDocument> {
-  findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
+export interface MongoCollectionLike<TDocument = Document> {
+  findOne(filter: Record<string, unknown>, options?: FindOptions<Document>): Promise<TDocument | null>;
   updateOne(
     filter: Record<string, unknown>,
     update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
     options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown>;
   bulkWrite(
-    operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>,
+    operations: ReadonlyArray<Record<string, unknown>>,
     options?: Pick<BulkWriteOptions, 'ordered' | 'session'>
   ): Promise<unknown>;
   deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;

@@ -43,7 +43,7 @@ export const startPolicy = {
   restart(options?: SagaRestartOptions): SagaStartPolicyRestart {
     return {
       type: 'restart',
-      options
+      ...(options !== undefined ? { options } : {})
     };
   }
 } as const;

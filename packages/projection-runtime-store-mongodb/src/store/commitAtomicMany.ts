@@ -57,7 +57,7 @@ const validateDuplicateDocuments = <TState>(
 ): ProjectionStoreAtomicManyRejectedResult | null => {
   const seen = new Set<string>();
   for (let index = 0; index < request.writes.length; index += 1) {
-    for (const document of request.writes[index].documents) {
+    for (const document of request.writes[index]!.documents) {
       if (seen.has(document.documentId)) {
         const failure = createInvalidRequestFailure(
           `duplicate document write in atomic-all batch: documentId='${document.documentId}'`
@@ -136,7 +136,7 @@ const executeWrites = async <TState>(deps: CommitAtomicManyDependencies<TState>,
   await deps.execute(async (session) => {
     for (let index = 0; index < deps.request.writes.length; index += 1) {
       watermarks.failedAtIndex = index;
-      await applyWrite(deps, session, deps.request.writes[index], watermarks);
+      await applyWrite(deps, session, deps.request.writes[index]!, watermarks);
     }
   });
 };

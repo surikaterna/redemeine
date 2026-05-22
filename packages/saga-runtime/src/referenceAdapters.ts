@@ -308,7 +308,7 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
       if (misfireMode === 'skip_until_next') {
         scheduledForToExecute = [];
       } else if (misfireMode === 'latest_only') {
-        scheduledForToExecute = [dueOccurrences[dueOccurrences.length - 1]];
+        scheduledForToExecute = [dueOccurrences[dueOccurrences.length - 1]!];
       } else if (misfireMode === 'catch_up_bounded') {
         const bounded = toFinitePositiveInteger(
           misfirePolicy && misfirePolicy.mode === 'catch_up_bounded'
@@ -318,7 +318,7 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
         scheduledForToExecute = dueOccurrences.slice(0, bounded);
       }
     } else {
-      scheduledForToExecute = [dueOccurrences[0]];
+      scheduledForToExecute = [dueOccurrences[0]!];
     }
 
     const nextRunAt = typeof intervalMs === 'number'
@@ -332,9 +332,9 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
       dueCount: dueOccurrences.length,
       executedCount: scheduledForToExecute.length,
       skippedCount: dueOccurrences.length - scheduledForToExecute.length,
-      restartMode: trigger.policy?.restart?.mode,
-      restartReason: trigger.policy?.restart?.reason,
-      nextRunAt
+      ...(trigger.policy?.restart?.mode !== undefined ? { restartMode: trigger.policy.restart.mode } : {}),
+      ...(trigger.policy?.restart?.reason !== undefined ? { restartReason: trigger.policy.restart.reason } : {}),
+      ...(nextRunAt !== undefined ? { nextRunAt } : {})
     };
 
     const executions = scheduledForToExecute.map((scheduledFor, index, list) => {
@@ -465,7 +465,7 @@ export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 
     event(name, tags) {
       events.push({
         name,
-        tags,
+        ...(tags !== undefined ? { tags } : {}),
         at: new Date().toISOString()
       });
     },
@@ -533,7 +533,7 @@ export async function runReferenceAdapterFlowV1(
   }> = [];
 
   for (let index = 0; index < input.intents.length; index += 1) {
-    const intent = input.intents[index];
+    const intent = input.intents[index]!;
     adapters.telemetry.count('saga.intent.received');
 
     const schedule = asScheduleIntent(intent);
@@ -543,7 +543,7 @@ export async function runReferenceAdapterFlowV1(
         id: schedule.id,
         sagaId: input.sagaId,
         runAt,
-        policy: input.schedulerPolicy,
+        ...(input.schedulerPolicy !== undefined ? { policy: input.schedulerPolicy } : {}),
         metadata: { correlationId: schedule.metadata.correlationId }
       });
       adapters.telemetry.count('saga.intent.scheduled');
@@ -617,8 +617,8 @@ export async function runReferenceAdapterFlowV1(
       executionId: execution.executionId,
       intentId: execution.intentId,
       status: result.status,
-      responseRef: result.responseRef,
-      error: result.error
+      ...(result.responseRef !== undefined ? { responseRef: result.responseRef } : {}),
+      ...(result.error !== undefined ? { error: result.error } : {})
     };
   }));
 

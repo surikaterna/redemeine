@@ -57,8 +57,8 @@ function getContainer(root: unknown, tokens: string[]): { parent: any; key: stri
 
   let current: any = root;
   for (let i = 0; i < tokens.length - 1; i += 1) {
-    const token = tokens[i];
-    const nextToken = tokens[i + 1];
+    const token = tokens[i]!;
+    const nextToken = tokens[i + 1]!;
 
     if (Array.isArray(current)) {
       const index = Number(token);
@@ -288,7 +288,7 @@ export class InMemoryProjectionPersistenceAdapter
       projectionName: change.projectionName,
       documentId: change.documentId,
       checkpoint: change.metadata.lastCheckpoint,
-      previous: existing?._projection,
+      ...(existing?._projection !== undefined ? { previous: existing._projection } : {}),
       mode: 'patch',
       updatedAt: this.now()
     });
@@ -326,7 +326,7 @@ export class InMemoryProjectionPersistenceAdapter
       projectionName: params.projectionName,
       documentId: params.documentId,
       checkpoint: params.checkpoint,
-      previous: current?._projection,
+      ...(current?._projection !== undefined ? { previous: current._projection } : {}),
       mode: params.mode,
       updatedAt: this.now()
     });
@@ -369,9 +369,10 @@ export async function persistProjectedState(params: {
   operations?: readonly Rfc6902Operation[];
   preferredMode?: ProjectionPersistenceMode;
 }): Promise<{ mode: ProjectionPersistenceMode; document: ProjectedDocument }> {
+  const resolvedPreferredMode = params.preferredMode ?? params.persistence.preferredMode;
   const resolved: ResolvedProjectionPersistence = resolveProjectionPersistence({
     ...params.persistence,
-    preferredMode: params.preferredMode ?? params.persistence.preferredMode
+    ...(resolvedPreferredMode !== undefined ? { preferredMode: resolvedPreferredMode } : {})
   });
 
   const current = await resolved.read.loadDocument(params.projectionName, params.documentId);
@@ -379,7 +380,7 @@ export async function persistProjectedState(params: {
     projectionName: params.projectionName,
     documentId: params.documentId,
     checkpoint: params.checkpoint,
-    previous: current?._projection,
+    ...(current?._projection !== undefined ? { previous: current._projection } : {}),
     mode: resolved.mode
   });
 
@@ -393,7 +394,7 @@ export async function persistProjectedState(params: {
     await resolved.patch.persistPatch({
       projectionName: params.projectionName,
       documentId: params.documentId,
-      expectedVersion: current?._projection.version,
+      ...(current?._projection.version !== undefined ? { expectedVersion: current._projection.version } : {}),
       operations: [...(params.operations ?? topLevelPatchOperations(current ?? {}, params.nextState))],
       metadata
     });
@@ -416,7 +417,7 @@ export async function persistProjectedState(params: {
   await resolved.document.persistDocument({
     projectionName: params.projectionName,
     documentId: params.documentId,
-    expectedVersion: current?._projection.version,
+    ...(current?._projection.version !== undefined ? { expectedVersion: current._projection.version } : {}),
     document: nextDocument
   });
 
