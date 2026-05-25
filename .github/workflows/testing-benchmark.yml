@@ -28,5 +28,8 @@ jobs:
       - name: 📦 Install Dependencies
         run: bun install --frozen-lockfile
 
+      - name: 🔨 Build dependencies
+        run: bunx turbo run build --filter=@redemeine/testing...
+
       - name: 📈 Run testing benchmark baseline
         run: bun run --filter @redemeine/testing bench
