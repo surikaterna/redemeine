@@ -61,7 +61,7 @@ export class Contract {
     return this.events.get(type);
   }
 
-  validateCommand(type: string, data: unknown): any {
+  validateCommand<T = unknown>(type: string, data: unknown): T {
     const schema = this.commands.get(type);
     if (!schema) {
       throw new ContractError(`Command schema not found for type: ${type}`);
@@ -72,10 +72,10 @@ export class Contract {
         `Command validation failed for type ${type}: ${result.error.message}`
       );
     }
-    return result.data;
+    return result.data as T;
   }
 
-  validateEvent(type: string, data: unknown): any {
+  validateEvent<T = unknown>(type: string, data: unknown): T {
     const schema = this.events.get(type);
     if (!schema) {
       throw new ContractError(`Event schema not found for type: ${type}`);
@@ -86,21 +86,21 @@ export class Contract {
         `Event validation failed for type ${type}: ${result.error.message}`
       );
     }
-    return result.data;
+    return result.data as T;
   }
 
-  validateState(data: unknown): any {
-    if (!this.stateSchema) return data;
+  validateState<T = unknown>(data: unknown): T {
+    if (!this.stateSchema) return data as T;
     const result = this.stateSchema.safeParse(data);
     if (!result.success) {
       throw new StateIntegrityError(
         `State integration failed: ${result.error.message}`
       );
     }
-    return result.data;
+    return result.data as T;
   }
 
-  static fromZodExports(exportsObj: any): Contract {
+  static fromZodExports(exportsObj: Record<string, unknown>): Contract {
     const contract = new Contract();
     
     const normalizeName = (key: string) => {
@@ -109,7 +109,7 @@ export class Contract {
     };
 
     if (exportsObj.Commands) {
-      for (const [key, schema] of Object.entries(exportsObj.Commands)) {
+      for (const [key, schema] of Object.entries(exportsObj.Commands as Record<string, unknown>)) {
         if (schema && typeof (schema as any).safeParse === 'function') {
           contract.addCommand(normalizeName(key), schema as ZodType);
         }
@@ -117,7 +117,7 @@ export class Contract {
     }
 
     if (exportsObj.Events) {
-      for (const [key, schema] of Object.entries(exportsObj.Events)) {
+      for (const [key, schema] of Object.entries(exportsObj.Events as Record<string, unknown>)) {
         if (schema && typeof (schema as any).safeParse === 'function') {
           contract.addEvent(normalizeName(key), schema as ZodType);
         }
