@@ -224,6 +224,7 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
 
   private stripProjectionMetadata(document: ProjectedDocument<TState>): TState {
     const { _projection: _, ...state } = document;
+    // SAFETY: stripping _projection metadata leaves TState; Omit<> type doesn't narrow to TState
     return state as unknown as TState;
   }
 

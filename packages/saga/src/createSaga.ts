@@ -1255,7 +1255,7 @@ export function createSagaDispatchContext<
   metadata: SagaIntentMetadata,
   intents: SagaIntent[] = [],
   responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
-  plugins: TPlugins = [] as unknown as TPlugins
+  plugins: TPlugins = [] as unknown as TPlugins // SAFETY: empty array is valid default for plugin tuple
 ): SagaIntentContext<TPlugins, TResponseHandlerBindings> {
   const emit = (intent: SagaIntent) => {
     intents.push(intent);
@@ -1804,9 +1804,10 @@ export async function runSagaHandler<
   handler: SagaHandler<TState, TAggregate, TEventName, TPlugins, TResponseHandlerBindings>,
   metadata: SagaIntentMetadata,
   responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
-  plugins: TPlugins = [] as unknown as TPlugins
+  plugins: TPlugins = [] as unknown as TPlugins // SAFETY: empty array is valid default for plugin tuple
 ): Promise<SagaReducerOutput<TState>> {
-  const draft = createDraft(state as any);
+  // SAFETY: immer's createDraft requires Objectish but TState is always a plain object at runtime
+  const draft = createDraft(state as Record<string, unknown>);
   const intentBuffer: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     metadata,
@@ -1838,7 +1839,7 @@ export async function runSagaResponseHandler<
     state,
     envelope,
     intentMetadata,
-    plugins = [] as unknown as TPlugins
+    plugins = [] as unknown as TPlugins // SAFETY: empty array is valid default for plugin tuple
   } = input;
   const token = envelope.token;
   if (!hasOwnToken(definition.responseHandlers as Record<string, unknown>, token)) {
@@ -1862,7 +1863,8 @@ export async function runSagaResponseHandler<
     };
   }
 
-  const draft = createDraft(state as any);
+  // SAFETY: immer's createDraft requires Objectish but TState is always a plain object at runtime
+  const draft = createDraft(state as Record<string, unknown>);
   const intents: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),
@@ -1902,7 +1904,7 @@ export async function runSagaErrorHandler<
     state,
     envelope,
     intentMetadata,
-    plugins = [] as unknown as TPlugins
+    plugins = [] as unknown as TPlugins // SAFETY: empty array is valid default for plugin tuple
   } = input;
   const token = envelope.token;
   if (!hasOwnToken(definition.errorHandlers as Record<string, unknown>, token)) {
@@ -1926,7 +1928,8 @@ export async function runSagaErrorHandler<
     };
   }
 
-  const draft = createDraft(state as any);
+  // SAFETY: immer's createDraft requires Objectish but TState is always a plain object at runtime
+  const draft = createDraft(state as Record<string, unknown>);
   const intents: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
     resolveIntentMetadata(envelope.request, intentMetadata),

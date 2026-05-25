@@ -259,6 +259,11 @@ export type Mirage<TState, M extends Record<string, any> = any, Registry extends
  */
 export const MirageCoreSymbol = Symbol('MirageCore');
 
+/** Internal interface for accessing MirageCore via symbol key */
+export interface MirageCoreAccessor<S = unknown> {
+  [MirageCoreSymbol]: MirageCore<S>;
+}
+
 export type HydrationEvents<TEvent> = Iterable<TEvent> | AsyncIterable<TEvent>;
 
 /**
@@ -415,16 +420,18 @@ export class MirageCore<S> {
 
     private processAndApply(command: Command<any, string>): S {
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
+            // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
         }
 
         if (this.contract) {
             try {
                 this.contract.validateCommand(command.type, command.payload);
-            } catch (err: any) {
-                if (err.message.includes('schema not found')) {
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                if (message.includes('schema not found')) {
                     if (this.strict) throw err;
-                    console.warn(err.message);
+                    console.warn(message);
                 } else {
                     throw err;
                 }
@@ -434,17 +441,19 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, command);
 
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
+            // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
         }
 
         for (const ev of events) {
             if (this.contract) {
                 try {
                     this.contract.validateEvent(ev.type, ev.payload);
-                } catch (err: any) {
-                    if (err.message.includes('schema not found')) {
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    if (message.includes('schema not found')) {
                         if (this.strict) throw err;
-                        console.warn(err.message);
+                        console.warn(message);
                     } else {
                         throw err;
                     }
@@ -453,7 +462,8 @@ export class MirageCore<S> {
             this.state = this.builder.apply(this.state, ev);
             this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
+                // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
             }
         }
 
@@ -471,16 +481,18 @@ export class MirageCore<S> {
         await this.runBeforeCommandInterceptors(command);
 
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
+            // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
         }
 
         if (this.contract) {
             try {
                 this.contract.validateCommand(command.type, command.payload);
-            } catch (err: any) {
-                if (err.message.includes('schema not found')) {
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                if (message.includes('schema not found')) {
                     if (this.strict) throw err;
-                    console.warn(err.message);
+                    console.warn(message);
                 } else {
                     throw err;
                 }
@@ -490,17 +502,19 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, command);
 
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
+            // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
         }
 
         for (const ev of events) {
             if (this.contract) {
                 try {
                     this.contract.validateEvent(ev.type, ev.payload);
-                } catch (err: any) {
-                    if (err.message.includes('schema not found')) {
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    if (message.includes('schema not found')) {
                         if (this.strict) throw err;
-                        console.warn(err.message);
+                        console.warn(message);
                     } else {
                         throw err;
                     }
@@ -509,7 +523,8 @@ export class MirageCore<S> {
             this.state = this.builder.apply(this.state, ev);
             this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
+                // SAFETY: ReadonlyDeep proxy is structurally compatible with hook's expected ReadonlyDeep<State>
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as ReadonlyDeep<S>);
             }
         }
 
@@ -669,12 +684,13 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
     const invokeByPath = (commandPath: string[], args: unknown[], context: InvocationContext): DispatchResult<BuiltAggregateState<BA>> => {
         const commandName = toCommandName(commandPath);
-        const creator = (builder.commandCreators as any)[commandName];
+        const creator = (builder.commandCreators as Record<string, ((...args: unknown[]) => Command) | undefined>)[commandName];
         if (typeof creator !== 'function') {
             throw new Error('Command ' + commandName + ' not found on commandCreators.');
         }
 
-        const cmdDef = builder.pure?.commandProcessors?.[commandName] as any;
+        // SAFETY: commandProcessors is a heterogeneous map; runtime duck-typing is required
+        const cmdDef = builder.pure?.commandProcessors?.[commandName] as { pack?: (...args: unknown[]) => unknown } | ((...args: unknown[]) => unknown) | undefined;
         const isPacked = !!cmdDef && typeof cmdDef !== 'function' && typeof cmdDef.pack === 'function';
 
         let callArgs: unknown[];
@@ -793,8 +809,9 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     return target[Number(prop)];
                 }
 
-                const value = (target as any)[prop];
-                return typeof value === 'function' ? value.bind(target) : value;
+                // SAFETY: dynamic property access on array target in Proxy get trap
+                const value = (target as unknown as Record<string, unknown>)[prop];
+                return typeof value === 'function' ? (value as Function).bind(target) : value;
             },
             set() {
                 throw new Error('Cannot mutate selector collection directly');
@@ -919,7 +936,8 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     return createReadonlyDeepProxy(target[Number(prop)]);
                 }
 
-                const value = (target as any)[prop];
+                // SAFETY: dynamic property access in Proxy get trap on array-like target
+                const value = (target as unknown as Record<string, unknown>)[prop];
                 if (typeof value === 'function') {
                     return value.bind(target);
                 }
@@ -949,11 +967,13 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
         };
 
         if (isMirageContextBinding(result)) {
-            const bound: any = (result as any)[MirageContextSymbol];
+            // SAFETY: MirageContextSymbol is set by bindContext; accessing runtime binding data
+            const bound = (result as unknown as Record<symbol, { kind: string; data: unknown; role: unknown; discriminatorKey?: string; roleMap?: Record<string, unknown> } | undefined>)[MirageContextSymbol];
+            if (!bound) throw new Error('Missing MirageContextSymbol binding');
 
             if (bound.kind === 'single') {
                 if (Array.isArray(bound.data)) {
-                    return makeReadonlyWrappedArray(bound.data.map((item: any) => wrapEntityWithRole(item, bound.role, context)));
+                    return makeReadonlyWrappedArray(bound.data.map((item: unknown) => wrapEntityWithRole(item, bound.role, context)));
                 }
                 return wrapEntityWithRole(bound.data, bound.role, context);
             }
@@ -962,8 +982,8 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                 throw new Error('bindContext polymorphic binding expects an array of data items.');
             }
 
-            const wrapped = bound.data.map((item: any) => {
-                const discriminatorValue = getPathValue(item, bound.discriminatorKey);
+            const wrapped = bound.data.map((item: unknown) => {
+                const discriminatorValue = getPathValue(item, bound.discriminatorKey!); // SAFETY: polymorphic bindings always have discriminatorKey
                 const role = bound.roleMap?.[String(discriminatorValue)];
                 if (!role) {
                     throw new Error(`No role mapping found for discriminator value "${String(discriminatorValue)}".`);
@@ -1019,7 +1039,8 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 
                 const currentTarget = resolvePath(statePath);
                 if (currentTarget && typeof currentTarget === 'object' && prop in currentTarget) {
-                    const value = (currentTarget as any)[prop];
+                    // SAFETY: dynamic property access after `in` check in Proxy get trap
+                    const value = (currentTarget as Record<string, unknown>)[prop];
 
                     if (Array.isArray(value)) {
                         const mount = statePath.length === 0 ? getMountForRoot(prop) : undefined;
@@ -1156,8 +1177,9 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
                     );
                 }
 
-                if (typeof (collection as any)[prop] === 'function') {
-                    return (collection as any)[prop].bind(collection);
+                // SAFETY: dynamic property access on collection array in Proxy get trap
+                if (typeof (collection as Record<string, unknown>)[prop] === 'function') {
+                    return ((collection as Record<string, unknown>)[prop] as Function).bind(collection);
                 }
 
                 return makeDeepProxy([...collectionPath, prop], [...commandPrefixPath, prop], context);
@@ -1264,7 +1286,8 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
 export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
     mirage: Mirage<S, M, Registry, Sel>
 ): Event[] {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime (see Proxy get trap)
+    const core = (mirage as unknown as MirageCoreAccessor<S>)[MirageCoreSymbol];
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
     }
@@ -1277,7 +1300,8 @@ export function extractUncommittedEvents<S, M extends Record<string, any>, Regis
 export function clearUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
     mirage: Mirage<S, M, Registry, Sel>
 ): void {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime (see Proxy get trap)
+    const core = (mirage as unknown as MirageCoreAccessor<S>)[MirageCoreSymbol];
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
     }
@@ -1290,7 +1314,8 @@ export function clearUncommittedEvents<S, M extends Record<string, any>, Registr
 export function extractState<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
     mirage: Mirage<S, M, Registry, Sel>
 ): ReadonlyDeep<S> {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime (see Proxy get trap)
+    const core = (mirage as unknown as MirageCoreAccessor<S>)[MirageCoreSymbol];
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
     }
@@ -1305,7 +1330,8 @@ export function subscribe<S, M extends Record<string, any>, Registry extends Agg
     mirage: Mirage<S, M, Registry, Sel>,
     listener: (state: S) => void
 ): () => void {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime (see Proxy get trap)
+    const core = (mirage as unknown as MirageCoreAccessor<S>)[MirageCoreSymbol];
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
     }
@@ -1320,7 +1346,8 @@ export function dispatch<S, M extends Record<string, any>, Registry extends Aggr
     mirage: Mirage<S, M, Registry, Sel>,
     command: any
 ): any {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime (see Proxy get trap)
+    const core = (mirage as unknown as MirageCoreAccessor<S>)[MirageCoreSymbol];
     if (!core) {
         throw new Error('Target is not a valid Mirage Instance.');
     }

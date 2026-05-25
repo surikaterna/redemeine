@@ -28,7 +28,7 @@ export const formatTargetedEventType = (aggregateName: string, prop: string, pat
     const parts = prop.split(/(?=[A-Z])/);
     if (parts.length > 1) {
         const entities = parts.slice(0, parts.length - 1);
-        const action = parts[parts.length - 1]!;
+        const action = parts[parts.length - 1]!; // SAFETY: length > 1 guarantees element exists
         const actionName = action.charAt(0).toLowerCase() + action.slice(1);
         const autoPath = entities.map(e => e.toLowerCase()).join('.');
         return (aggregateName + '.' + autoPath + '.' + actionName + '.event') as EventType;
@@ -70,7 +70,7 @@ export const parseTargetedEventPath = (eventType: string, aggregateName: string)
         const parts = withoutSuffix.slice(prefix.length).split('.');
         
         if (parts.length > 1) {
-            const actionName = parts.pop()!;
+            const actionName = parts.pop()!; // SAFETY: length > 1 guarantees pop() returns a value
             return { 
                 parts, 
                 actionName, 

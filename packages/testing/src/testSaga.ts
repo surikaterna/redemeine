@@ -317,7 +317,9 @@ export function testSaga<
           aggregateId: event.aggregateId,
           sequence: event.sequence,
           metadata: event.metadata
+          // SAFETY: event shape is structurally compatible; generic variance prevents direct assignment
         } as any,
+        // SAFETY: handler type is erased at test boundary
         resolved.handler as any,
         resolveMetadata(event.metadata),
         tokenBindings as TResponseHandlerBindings,
@@ -352,7 +354,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: token type is erased at test boundary
           payload,
           request: request.request
         },
@@ -400,7 +402,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: token type is erased at test boundary
           error,
           request: request.request
         },

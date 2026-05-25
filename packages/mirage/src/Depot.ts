@@ -1,5 +1,5 @@
 import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
-import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
+import { createMirage, type BuiltAggregate, MirageCoreSymbol, type MirageCoreAccessor } from './createMirage';
 import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
 
 export interface EventStore {
@@ -143,7 +143,8 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {
-        const core = (mirage as any)[MirageCoreSymbol];
+        // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime
+        const core = (mirage as unknown as MirageCoreAccessor)[MirageCoreSymbol];
         if (!core) throw new Error('Not a valid Mirage Instance');
 
           const { events, intents } = core.getPendingResults();

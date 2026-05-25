@@ -92,11 +92,12 @@ export function applyEventToDraft<S>(
                 : { id: undefined, mapKey: undefined, compositePk: undefined };
 
             if (resolved.kind === 'array') {
-                const found = (resolved.container as any[]).find((item: any) => {
+                // SAFETY: container items are immer Draft entities with dynamic keys; cast needed for entity lookup
+                const found = (resolved.container as Array<Record<string, unknown>>).find((item) => {
                     if (id !== undefined) return String(item.id) === String(id);
                     if (compositePk) return Object.keys(compositePk).every(k => String(item?.[k]) === String(compositePk[k]));
                     return false;
-                });
+                }) as typeof targetDraft | undefined;
                 if (found) targetDraft = found;
             } else if (resolved.kind === 'map' && mapKey !== undefined) {
                 const found = resolved.container[mapKey as string];

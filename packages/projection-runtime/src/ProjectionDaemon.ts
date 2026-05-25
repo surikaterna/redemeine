@@ -1,4 +1,4 @@
-import { ProjectionRuntimeProcessor } from './ProjectionRuntimeProcessor';
+import { ProjectionRuntimeProcessor, type ProjectionRuntimeProcessorOptions } from './ProjectionRuntimeProcessor';
 import { InMemoryCursorStoreAdapter } from './cursor/InMemoryCursorStoreAdapter';
 import type { CommitFeedBatch, ProjectionCheckpoint, ProjectionCommit } from './contracts/commitFeed';
 import type { CommitFeedContract } from './contracts/commitFeed';
@@ -112,11 +112,12 @@ export class ProjectionDaemon<TState extends Record<string, unknown> = Record<st
     this.cursorStore = new InMemoryCursorStoreAdapter();
 
     this.processor = new ProjectionRuntimeProcessor<TState>({
-      projection: options.projection as any,
+      // SAFETY: projection and persistence types are structurally compatible; generic variance prevents direct assignment
+      projection: options.projection as ProjectionRuntimeProcessorOptions<TState>['projection'],
       commitFeed: new EventSubscriptionCommitFeedAdapter(options.subscription),
       cursorStore: this.cursorStore,
       linkStore: new ProjectionStoreLinkStoreAdapter(),
-      persistence: new ProjectionStorePersistenceAdapter(options.store) as any,
+      persistence: new ProjectionStorePersistenceAdapter(options.store) as ProjectionRuntimeProcessorOptions<TState>['persistence'],
       batchSize: options.batchSize ?? 100,
       persistenceMode: 'document'
     });

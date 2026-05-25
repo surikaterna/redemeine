@@ -43,7 +43,7 @@ export interface DemeineCompatibleAggregate<S extends object = object> {
 
 // Replicate demeine's string utilities
 const camelCase = (str: string): string =>
-    str.replace(/_([a-z])/g, (g) => g[1]!.toUpperCase());
+    str.replace(/_([a-z])/g, (g) => g[1]!.toUpperCase()); // SAFETY: regex guarantees capture group exists
 
 const capitalize = (str: string): string =>
     `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
@@ -141,7 +141,8 @@ export function createDemeineBridge<S extends object>(
                     event.id = createIdentity();
                 }
                 if (!event.aggregateId) {
-                    (event as any).aggregateId = id;
+                    // SAFETY: mutating event before it enters the stream - aggregateId is part of the wire format
+                    (event as { aggregateId?: string }).aggregateId = id;
                 }
                 if (event.type !== '$stream.deleted.event') {
                     state = builder.apply(state, event);
@@ -168,10 +169,12 @@ export function createDemeineBridge<S extends object>(
                     command.id = createIdentity();
                 }
                 if (!command.aggregateId) {
-                    (command as any).aggregateId = id;
+                    // SAFETY: mutating command before dispatch - aggregateId is part of the wire format
+                    (command as { aggregateId?: string }).aggregateId = id;
                 }
                 if (aggregateType) {
-                    (command as any).aggregateType = aggregateType;
+                    // SAFETY: mutating command before dispatch - aggregateType is part of the wire format
+                    (command as { aggregateType?: string }).aggregateType = aggregateType;
                 }
                 return agg._process(command);
             },
@@ -198,7 +201,7 @@ export function createDemeineBridge<S extends object>(
                     type: '$stream.delete.command',
                     aggregateId: id,
                     payload: {}
-                } as any);
+                } as Command & { aggregateId?: string });
             },
 
             processDelete(command: Command) {
@@ -207,7 +210,7 @@ export function createDemeineBridge<S extends object>(
                     aggregateId: id,
                     correlationId: command.id,
                     payload: { aggregateType }
-                } as any, true);
+                } as Event & { aggregateId?: string }, true);
             },
 
             applyDeleted() { /* no-op */ }
@@ -236,7 +239,7 @@ export function createDemeineBridge<S extends object>(
         // Uses commandCreators which respects pack functions for positional-arg support
         for (const [key] of Object.entries(builder.types.commands)) {
             agg[key] = function (...args: unknown[]) {
-                const command = (builder.commandCreators as any)[key](...args);
+                const command = (builder.commandCreators as Record<string, (...args: unknown[]) => Command>)[key]!(...args);
                 return agg._sink(command);
             };
         }

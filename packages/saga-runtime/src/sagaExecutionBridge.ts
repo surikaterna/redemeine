@@ -316,8 +316,9 @@ export function createSagaExecutionBridge<TState>(
       for (const match of matches) {
         const output = await runSagaHandler(
           state,
-          input.event as any,
-          match.handler as any,
+          input.event,
+          // SAFETY: handler signature is compatible at runtime; generic variance prevents direct assignment
+          match.handler as (...args: unknown[]) => unknown,
           metadata,
           tokenBindings,
           options.runtimePlugins ?? []

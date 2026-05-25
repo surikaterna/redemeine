@@ -69,8 +69,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return commitAtomicMany({
       execute: this.createTransactionExecutor(),
       request,
-      collection: this.options.collection as any,
-      dedupeCollection: this.options.dedupeCollection as any,
+      // SAFETY: MongoCollectionLike satisfies the structural { findOne, bulkWrite } contract
+      collection: this.options.collection as { findOne: (filter: { _id: string }, options?: { session: unknown }) => Promise<{ checkpoint?: Checkpoint } | null>; bulkWrite: (...args: unknown[]) => Promise<unknown> },
+      dedupeCollection: this.options.dedupeCollection as { bulkWrite: (...args: unknown[]) => Promise<unknown> },
       now: this.now,
       buildDocumentWriteOperation: (write) =>
         buildDocumentWriteOperation({

@@ -437,7 +437,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             _hooks = { ...parentState.hooks, ..._hooks };
             _plugins = [...parentState.plugins, ..._plugins];
             _mixins = [...parentState.mixins, ..._mixins];
-            const inheritedMounted = (parentState.mixins as any[])
+            // SAFETY: mixins are runtime objects with optional mountedEntities arrays
+            const inheritedMounted = (parentState.mixins as Array<{ mountedEntities?: MountedEntityPackage[] }>)
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
             if (inheritedMounted.length > 0) {
                 _entityPackages.push(...inheritedMounted as MountedEntityPackage[]);
@@ -496,7 +497,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
 
         mixins: (...mixins: AggregateMixinLike<any>[]) => {
             _mixins.push(...mixins);
-            const mountedFromMixins = (mixins as any[])
+            // SAFETY: mixins are runtime objects with optional mountedEntities arrays
+            const mountedFromMixins = (mixins as Array<{ mountedEntities?: MountedEntityPackage[] }>)
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
             if (mountedFromMixins.length > 0) {
                 _entityPackages.push(...mountedFromMixins as MountedEntityPackage[]);
@@ -594,6 +596,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 const collectionName = mountName + 's';
                 const entityPath = collectionName.replace(/s$/, '').replace(/([A-Z])/g, '_$1').toLowerCase();
                 const entityEvents = entity.projectors || entity.events || {};
+                // SAFETY: eventMetadata is an internal property not exposed in the public entity type
                 const entityEventMetadata = (entity as unknown as { eventMetadata?: Record<string, TMeta | undefined> }).eventMetadata || {};
                 const entityEventNameOverrides = entity.eventOverrides || {};
                 const mountEventNameOverrides = {
@@ -644,7 +647,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 // Flatten the commands with the entity name mapping into the global pool for processing
                 Object.keys(entityCommands).forEach(cmdProp => {
                     const mappedCmd = mountName + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
-                    allCommandsMap[mappedCmd] = entityCommands[cmdProp]!;
+                    allCommandsMap[mappedCmd] = entityCommands[cmdProp]!; // SAFETY: iterating own keys
                     const mountCommandOverride = (mountCommandNameOverrides as Record<string, string>)[cmdProp];
                     const entityCommandOverride = (entityCommandNameOverrides as Record<string, string>)[cmdProp];
                     if (mountCommandOverride) {
@@ -658,7 +661,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             Object.keys(allEvents).forEach((eventKey) => {
                 const resolvedEventType = allEventOverrides[eventKey] || _namingStrategy.event(aggregateName, eventKey);
                 if (!(resolvedEventType in projectorByEventType)) {
-                    projectorByEventType[resolvedEventType] = allEvents[eventKey]!;
+                    projectorByEventType[resolvedEventType] = allEvents[eventKey]!; // SAFETY: iterating own keys
                 }
             });
 
@@ -723,5 +726,6 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
         }
     });
 
+    // SAFETY: builder object satisfies AggregateBuilder at runtime; cast required for fluent generic API
     return builder as unknown as AggregateBuilder<S, Name, {}, {}, {}, {}, {}, TMeta, TPlugins>;
 }

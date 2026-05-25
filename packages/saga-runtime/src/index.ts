@@ -1,7 +1,9 @@
 declare const require: (id: string) => any;
 
+// SAFETY: require() used to break circular dependency between saga-runtime and saga packages
 const sagaPackage = require('@redemeine/saga');
 
+// SAFETY: as any required because require() returns untyped module - types are re-exported from @redemeine/saga
 export const createSagaDispatchContext = sagaPackage.createSagaDispatchContext as any;
 export const runSagaHandler = sagaPackage.runSagaHandler as any;
 export * from './createSagaAggregate';

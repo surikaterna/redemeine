@@ -100,32 +100,35 @@ export class Contract {
     return result.data;
   }
 
-  static fromZodExports(exportsObj: any): Contract {
+  static fromZodExports(exportsObj: Record<string, unknown>): Contract {
     const contract = new Contract();
-    
+
+    const hasZodShape = (value: unknown): value is ZodType =>
+      value != null && typeof (value as Record<string, unknown>).safeParse === 'function';
+
     const normalizeName = (key: string) => {
       const typeName = key.endsWith('Schema') ? key.slice(0, -6) : key;
       return typeName.charAt(0).toLowerCase() + typeName.slice(1);
     };
 
     if (exportsObj.Commands) {
-      for (const [key, schema] of Object.entries(exportsObj.Commands)) {
-        if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addCommand(normalizeName(key), schema as ZodType);
+      for (const [key, schema] of Object.entries(exportsObj.Commands as Record<string, unknown>)) {
+        if (hasZodShape(schema)) {
+          contract.addCommand(normalizeName(key), schema);
         }
       }
     }
 
     if (exportsObj.Events) {
-      for (const [key, schema] of Object.entries(exportsObj.Events)) {
-        if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addEvent(normalizeName(key), schema as ZodType);
+      for (const [key, schema] of Object.entries(exportsObj.Events as Record<string, unknown>)) {
+        if (hasZodShape(schema)) {
+          contract.addEvent(normalizeName(key), schema);
         }
       }
     }
 
-    if (exportsObj.State && typeof (exportsObj.State as any).safeParse === 'function') {
-      contract.setStateSchema(exportsObj.State as ZodType);
+    if (hasZodShape(exportsObj.State)) {
+      contract.setStateSchema(exportsObj.State);
     }
 
     return contract;

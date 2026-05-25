@@ -1,4 +1,4 @@
-import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate, type Mirage } from '@redemeine/mirage';
+import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate, type Mirage, type MirageCoreAccessor } from '@redemeine/mirage';
 import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
@@ -341,7 +341,8 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
 
     await Promise.resolve(mirageDispatch(mirage, command));
 
-    const core = (mirage as any)[MirageCoreSymbol] as {
+    // SAFETY: mirage proxy exposes MirageCoreSymbol at runtime
+    const core = (mirage as unknown as MirageCoreAccessor)[MirageCoreSymbol] as {
       getPendingResults(): { events: DomainEvent[] };
       clearPendingResults(): void;
     };

@@ -101,18 +101,18 @@ export function composeMountedComponentBehavior(
       if (mountEventNameOverrides[eventKey]) {
         mergedEventOverrides[mappedEventKey] = mountEventNameOverrides[eventKey];
       } else if ((nestedEventNameOverrides as Record<string, string>)[eventKey]) {
-        mergedEventOverrides[mappedEventKey] = (nestedEventNameOverrides as Record<string, string>)[eventKey]!;
+        mergedEventOverrides[mappedEventKey] = (nestedEventNameOverrides as Record<string, string>)[eventKey]!; // SAFETY: guarded by truthy check above
       }
     });
 
     Object.keys(nestedCommandNameOverrides as Record<string, string>).forEach((cmdKey) => {
       const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = (nestedCommandNameOverrides as Record<string, string>)[cmdKey]!;
+      mergedCommandOverrides[mappedCmdKey] = (nestedCommandNameOverrides as Record<string, string>)[cmdKey]!; // SAFETY: iterating own keys
     });
 
     Object.keys(mountCommandNameOverrides).forEach((cmdKey) => {
       const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = mountCommandNameOverrides[cmdKey]!;
+      mergedCommandOverrides[mappedCmdKey] = mountCommandNameOverrides[cmdKey]!; // SAFETY: iterating own keys
     });
   });
 
@@ -138,7 +138,7 @@ export function composeMountedComponentBehavior(
 
       const nestedCommands = nested.commandFactory(nestedEmit, resolvedContext);
       Object.keys(nestedCommands).forEach((cmdKey) => {
-        mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey]!;
+        mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey]!; // SAFETY: iterating own keys
       });
     });
 

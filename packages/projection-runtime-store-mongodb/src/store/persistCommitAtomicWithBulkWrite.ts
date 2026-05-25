@@ -10,6 +10,7 @@ export const persistCommitAtomicWithBulkWrite = async <TState>(
   options: Pick<MongoProjectionStoreOptions<TState>, 'collection' | 'linkCollection' | 'dedupeCollection'>,
   now: () => string
 ): Promise<void> => {
-  await persistCommitAtomicProjectionOps(write, session, options.collection as any, now);
-  await persistCommitAtomicLinkAndDedupeOps(write, session, options as any, now);
+  // SAFETY: MongoCollectionLike satisfies the { bulkWrite } structural contract expected by these functions
+  await persistCommitAtomicProjectionOps(write, session, options.collection as { bulkWrite: (...args: unknown[]) => Promise<unknown> }, now);
+  await persistCommitAtomicLinkAndDedupeOps(write, session, options as { linkCollection: { bulkWrite: (...args: unknown[]) => Promise<unknown> }; dedupeCollection: { bulkWrite: (...args: unknown[]) => Promise<unknown> } }, now);
 };

@@ -166,11 +166,11 @@ export const inherit: InheritToken = Object.freeze({
 
 function isInheritEntry(value: unknown): boolean {
   return typeof value === 'object' && value !== null &&
-    '__inheritBrand' in value && (value as any).__inheritBrand === INHERIT_BRAND;
+    '__inheritBrand' in value && (value as { __inheritBrand: unknown }).__inheritBrand === INHERIT_BRAND;
 }
 
 function isInheritExtended(value: unknown): value is InheritExtended {
-  return isInheritEntry(value) && 'after' in (value as any);
+  return isInheritEntry(value) && 'after' in (value as object);
 }
 
 type InheritableHandlersForAggregate<TState, TAggregate> = {
@@ -329,14 +329,17 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
     this._fromStream = {
       aggregate,
-      handlers: resolved as any
+      // SAFETY: resolved handlers are structurally compatible; generic variance prevents direct assignment
+      handlers: resolved as Record<string, ProjectionHandler<TState>>
     };
 
     if (!this._initialState) {
+      // SAFETY: initialState factory returns aggregate state which is the projection state after fromStream()
       this._initialState = ((_id: string) =>
-        structuredClone(aggregate.initialState)) as any;
+        structuredClone(aggregate.initialState)) as (id: string) => TState;
     }
 
+    // SAFETY: builder pattern generic narrowing - TState becomes AggregateStateOf<TAggregate>
     return this as unknown as ProjectionBuilder<AggregateStateOf<TAggregate>>;
   }
 
