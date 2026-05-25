@@ -1,45 +1,9 @@
 import type { EntityPackage } from './createEntity';
 import { resolveCommandFactoryContext, type GenericCommandFactory, type GenericCommandFactoryContext, type GenericCommandMap } from './redemeineComponent';
+import type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions } from './types/entityMount';
+import type { MapEntityCommands } from './types/aggregate';
 
-export type MapEntityCommands<Name extends string, CPayloads> = {
-  [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
-};
-
-export type EntityListOptions<PK extends string | readonly string[] = string | readonly string[]> = {
-  pk?: PK;
-};
-
-export type EntityMapOptions<K extends string = string> = {
-  knownKeys?: readonly K[];
-};
-
-export type EntityMountOverrides = {
-  eventNameOverrides?: Record<string, string>;
-  commandNameOverrides?: Record<string, string>;
-  /** @deprecated Use eventNameOverrides */
-  eventOverrides?: Record<string, string>;
-  /** @deprecated Use commandNameOverrides */
-  commandOverrides?: Record<string, string>;
-};
-
-export type MountedStructureKind = 'list' | 'map' | 'valueObjectList' | 'valueObjectMap';
-
-export type MountedStructureMetadata = {
-  kind: MountedStructureKind;
-  commandPrefix: string;
-  statePath: string[];
-  pk?: string | readonly string[] | undefined;
-  knownKeys?: readonly string[] | undefined;
-};
-
-export type MountedEntityPackage = {
-  name: string;
-  kind: MountedStructureKind;
-  component?: EntityPackage<unknown, string>;
-  mountOverrides?: EntityMountOverrides | undefined;
-  pk?: string | readonly string[] | undefined;
-  knownKeys?: readonly string[] | undefined;
-};
+export type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions, MapEntityCommands };
 
 type ComponentBehaviorSnapshot = {
   events: Record<string, Function>;
