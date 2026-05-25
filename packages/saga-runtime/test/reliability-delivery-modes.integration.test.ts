@@ -1,10 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  createInMemoryPersistencePluginV1,
-  createInMemorySchedulerPluginV1,
-  createInMemorySideEffectsPluginV1,
-  createInMemoryTelemetryPluginV1,
-  runReferenceAdapterFlowV1,
+  createInMemoryPersistencePlugin,
+  createInMemorySchedulerPlugin,
+  createInMemorySideEffectsPlugin,
+  createInMemoryTelemetryPlugin,
+  runReferenceAdapterFlow,
   type SagaPluginRequestIntent,
   type SagaRuntimeReferenceAdapters
 } from '../src/referenceAdapters';
@@ -62,10 +62,10 @@ const createReliabilityHarness = (mode: DeliveryMode, faultPlan: readonly FaultO
   const handledExecutionIds: string[] = [];
 
   const adapters: SagaRuntimeReferenceAdapters = {
-    persistence: createInMemoryPersistencePluginV1(),
-    scheduler: createInMemorySchedulerPluginV1(),
-    telemetry: createInMemoryTelemetryPluginV1(),
-    sideEffects: createInMemorySideEffectsPluginV1(() => {
+    persistence: createInMemoryPersistencePlugin(),
+    scheduler: createInMemorySchedulerPlugin(),
+    telemetry: createInMemoryTelemetryPlugin(),
+    sideEffects: createInMemorySideEffectsPlugin(() => {
       const outcome = plannedFaults.shift() ?? 'succeeded';
       if (outcome === 'failed') {
         return {
@@ -157,7 +157,7 @@ const createReliabilityHarness = (mode: DeliveryMode, faultPlan: readonly FaultO
 
     handledExecutionIds.push(identity.executionId);
 
-    const result = await runReferenceAdapterFlowV1(adapters, {
+    const result = await runReferenceAdapterFlow(adapters, {
       sagaId,
       intents: [intent],
       nowIso: '2026-01-01T00:00:00.000Z',

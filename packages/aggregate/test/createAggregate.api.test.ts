@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
-import { createMirage } from '@redemeine/mirage';
+import { createTestMirage } from './helpers';
 import { CommandResult, Event, RedemeinePlugin } from '@redemeine/kernel';
 
 type ParentState = { id: string; count: number; line: { id: string; qty: number }[] };
@@ -37,7 +37,7 @@ describe('createAggregate API coverage', () => {
       .hooks({ onBeforeCommand, onAfterCommand, onEventApplied })
       .build();
 
-    const mirage = createMirage(builder, 'o1');
+    const mirage = createTestMirage(builder, 'o1');
     mirage.increment(3);
 
     expect(beforeCalls).toBe(1);
@@ -212,7 +212,7 @@ describe('createAggregate API coverage', () => {
       .commands(() => ({}))
       .build();
 
-    const live = createMirage(aggregate, 'o1');
+    const live = createTestMirage(aggregate, 'o1');
     live.orderLines('ol1').changeQty(9);
 
     expect(live.orderLines[0].qty).toBe(9);

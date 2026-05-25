@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { createAggregate, createEntity } from '@redemeine/aggregate';
-import { createMirage } from '@redemeine/mirage';
+import { createTestMirage } from './helpers';
 import { Event, ReadonlyDeep } from '@redemeine/kernel';
 
 type ActivityKind = 'LEG' | 'STOP';
@@ -66,7 +66,7 @@ describe('polymorphic selector bindContext', () => {
       }))
       .build();
 
-    const mirage = createMirage(aggregate, 'shipment-1');
+    const mirage = createTestMirage(aggregate, 'shipment-1');
 
     await (mirage.getActivities()[0] as any).depart();
 

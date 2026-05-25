@@ -81,7 +81,7 @@ export interface SagaPluginRequestIntent<
   readonly metadata: SagaIntentMetadata;
 }
 
-export interface SagaPluginIntentV2<
+export interface SagaPluginIntent<
   TPluginKey extends string = string,
   TActionName extends string = string,
   TExecutionPayload = unknown
@@ -107,7 +107,7 @@ export type SagaIntent =
   | SagaRunActivityIntent
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
-  | SagaPluginIntentV2
+  | SagaPluginIntent
   | {
     readonly type: 'dispatch';
     readonly command: string;
@@ -115,7 +115,7 @@ export type SagaIntent =
     readonly metadata: SagaIntentMetadata;
   };
 
-export interface SagaRuntimePersistencePluginV1 {
+export interface SagaRuntimePersistencePlugin {
   readonly sagaProjection: SagaAggregateProjection;
   readonly intentExecutionProjection: IntentExecutionProjection;
   listIntentExecutionsBySagaId(sagaId: string): readonly IntentExecutionProjectionRecord[];
@@ -156,7 +156,7 @@ export interface SagaRuntimeSchedulerPolicyOutcomeRecord {
   readonly outcome: SagaRuntimeSchedulerPolicyOutcome;
 }
 
-export interface SagaRuntimeSchedulerPluginV1 {
+export interface SagaRuntimeSchedulerPlugin {
   schedule(trigger: SagaRuntimeScheduledTrigger): void;
   cancel(id: string): boolean;
   listScheduled(): readonly SagaRuntimeScheduledTrigger[];
@@ -167,7 +167,7 @@ export interface SagaRuntimeSchedulerPluginV1 {
 export type SagaRuntimeSideEffectIntent =
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
-  | SagaPluginIntentV2
+  | SagaPluginIntent
   | SagaRunActivityIntent;
 
 export interface SagaRuntimeSideEffectResult {
@@ -177,7 +177,7 @@ export interface SagaRuntimeSideEffectResult {
   readonly error?: string;
 }
 
-export interface SagaRuntimeSideEffectsPluginV1 {
+export interface SagaRuntimeSideEffectsPlugin {
   execute(intent: SagaRuntimeSideEffectIntent): Promise<SagaRuntimeSideEffectResult>;
   listHandled(): readonly SagaRuntimeSideEffectIntent[];
 }
@@ -193,17 +193,17 @@ export interface SagaRuntimeTelemetrySnapshot {
   readonly events: readonly SagaRuntimeTelemetryEvent[];
 }
 
-export interface SagaRuntimeTelemetryPluginV1 {
+export interface SagaRuntimeTelemetryPlugin {
   count(metric: string, delta?: number): void;
   event(name: string, tags?: Record<string, string>): void;
   snapshot(): SagaRuntimeTelemetrySnapshot;
 }
 
 export interface SagaRuntimeReferenceAdapters {
-  readonly persistence: SagaRuntimePersistencePluginV1;
-  readonly scheduler: SagaRuntimeSchedulerPluginV1;
-  readonly sideEffects: SagaRuntimeSideEffectsPluginV1;
-  readonly telemetry: SagaRuntimeTelemetryPluginV1;
+  readonly persistence: SagaRuntimePersistencePlugin;
+  readonly scheduler: SagaRuntimeSchedulerPlugin;
+  readonly sideEffects: SagaRuntimeSideEffectsPlugin;
+  readonly telemetry: SagaRuntimeTelemetryPlugin;
 }
 
 export interface SagaRuntimeReferenceFlowInput {
@@ -237,7 +237,7 @@ export interface SagaRuntimeResponseCorrelation {
   readonly error?: string;
 }
 
-export function createInMemoryPersistencePluginV1(): SagaRuntimePersistencePluginV1 {
+export function createInMemoryPersistencePlugin(): SagaRuntimePersistencePlugin {
   const sagaState = new Map<string, SagaAggregateState>();
   const executions = new Map<string, IntentExecutionProjectionRecord>();
 
@@ -268,7 +268,7 @@ export function createInMemoryPersistencePluginV1(): SagaRuntimePersistencePlugi
   };
 }
 
-export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 {
+export function createInMemorySchedulerPlugin(): SagaRuntimeSchedulerPlugin {
   const scheduled = new Map<string, SagaRuntimeScheduledTrigger>();
   const policyOutcomes: SagaRuntimeSchedulerPolicyOutcomeRecord[] = [];
 
@@ -437,9 +437,9 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
   };
 }
 
-export function createInMemorySideEffectsPluginV1(
+export function createInMemorySideEffectsPlugin(
   executeIntent?: (intent: SagaRuntimeSideEffectIntent) => SagaRuntimeSideEffectResult | Promise<SagaRuntimeSideEffectResult>
-): SagaRuntimeSideEffectsPluginV1 {
+): SagaRuntimeSideEffectsPlugin {
   const handled: SagaRuntimeSideEffectIntent[] = [];
 
   return {
@@ -487,7 +487,7 @@ export function createInMemorySideEffectsPluginV1(
   };
 }
 
-export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 {
+export function createInMemoryTelemetryPlugin(): SagaRuntimeTelemetryPlugin {
   const counters = new Map<string, number>();
   const events: SagaRuntimeTelemetryEvent[] = [];
 
@@ -511,12 +511,12 @@ export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 
   };
 }
 
-export function createReferenceAdaptersV1(): SagaRuntimeReferenceAdapters {
+export function createReferenceAdapters(): SagaRuntimeReferenceAdapters {
   return {
-    persistence: createInMemoryPersistencePluginV1(),
-    scheduler: createInMemorySchedulerPluginV1(),
-    sideEffects: createInMemorySideEffectsPluginV1(),
-    telemetry: createInMemoryTelemetryPluginV1()
+    persistence: createInMemoryPersistencePlugin(),
+    scheduler: createInMemorySchedulerPlugin(),
+    sideEffects: createInMemorySideEffectsPlugin(),
+    telemetry: createInMemoryTelemetryPlugin()
   };
 }
 
@@ -571,7 +571,7 @@ const createExecutionRecord = (
   updatedAt: nowIso
 });
 
-export async function runReferenceAdapterFlowV1(
+export async function runReferenceAdapterFlow(
   adapters: SagaRuntimeReferenceAdapters,
   input: SagaRuntimeReferenceFlowInput
 ): Promise<SagaRuntimeReferenceFlowResult> {

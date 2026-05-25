@@ -10,8 +10,8 @@ const runSagaHandler = sagaPackage.runSagaHandler as (
   plugins?: readonly unknown[]
 ) => Promise<{ state: unknown; intents: SagaIntent[] }>;
 import {
-  createReferenceAdaptersV1,
-  runReferenceAdapterFlowV1,
+  createReferenceAdapters,
+  runReferenceAdapterFlow,
   type SagaIntent as RuntimeSagaIntent,
   type SagaRuntimeReferenceAdapters,
   type SagaRuntimeReferenceFlowResult,
@@ -168,7 +168,7 @@ export function createSagaExecutionBridge<TState>(
   dispatch: (input: SagaExecutionBridgeDispatchInput) => Promise<SagaExecutionBridgeDispatchResult<TState>>;
 } {
   const sagaAggregate = options.sagaAggregate ?? createSagaAggregate({ aggregateName: 'saga' });
-  const adapters = options.adapters ?? createReferenceAdaptersV1();
+  const adapters = options.adapters ?? createReferenceAdapters();
   const tokenBindings = createTokenBindings(options.definition as SagaDefinitionLike<unknown>);
 
   const sagaStateById = new Map<string, TState>();
@@ -359,7 +359,7 @@ export function createSagaExecutionBridge<TState>(
           );
         }
 
-        const adapterResult = await runReferenceAdapterFlowV1(adapters, {
+        const adapterResult = await runReferenceAdapterFlow(adapters, {
           sagaId: input.sagaId,
           intents: output.intents,
           ...(input.schedulerPolicy !== undefined ? { schedulerPolicy: input.schedulerPolicy } : {}),

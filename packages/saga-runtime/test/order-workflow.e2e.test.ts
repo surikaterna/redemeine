@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  createReferenceAdaptersV1,
+  createReferenceAdapters,
   createRuntimeAuditLifecycleReadModel,
   createSagaExecutionBridge,
   type SagaIntent
@@ -25,7 +25,7 @@ const countSideEffects = (intentTypes: readonly string[]): number => intentTypes
   .length;
 
 const runScenario = async (scenario: OrderWorkflowScenario) => {
-  const adapters = createReferenceAdaptersV1();
+  const adapters = createReferenceAdapters();
   const bridge = createSagaExecutionBridge<OrderWorkflowState>({
     definition: createOrderWorkflowSaga(),
     adapters,

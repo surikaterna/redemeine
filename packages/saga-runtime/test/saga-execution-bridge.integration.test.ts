@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createSagaExecutionBridge,
-  createReferenceAdaptersV1,
+  createReferenceAdapters,
   type SagaAggregateState
 } from '../src';
 
@@ -86,7 +86,7 @@ const createBridgeSaga = () => createSaga({
 describe('saga execution bridge integration', () => {
   it('bridges SagaAggregate orchestration with SagaInstance handlers and plugin contracts', async () => {
     const definition = createBridgeSaga();
-    const adapters = createReferenceAdaptersV1();
+    const adapters = createReferenceAdapters();
     const bridge = createSagaExecutionBridge({
       definition,
       adapters,
@@ -173,7 +173,7 @@ describe('saga execution bridge integration', () => {
 
   it('keeps execution ids monotonic across repeated dispatches and traceable to aggregate lifecycle ids', async () => {
     const definition = createBridgeSaga();
-    const adapters = createReferenceAdaptersV1();
+    const adapters = createReferenceAdapters();
     const bridge = createSagaExecutionBridge({
       definition,
       adapters,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  createReferenceAdaptersV1,
-  createInMemoryPersistencePluginV1,
-  createInMemorySchedulerPluginV1,
-  createInMemorySideEffectsPluginV1,
-  createInMemoryTelemetryPluginV1,
-  runReferenceAdapterFlowV1,
+  createReferenceAdapters,
+  createInMemoryPersistencePlugin,
+  createInMemorySchedulerPlugin,
+  createInMemorySideEffectsPlugin,
+  createInMemoryTelemetryPlugin,
+  runReferenceAdapterFlow,
   type SagaIntent,
   type SagaRuntimeSideEffectResult
 } from '../src/referenceAdapters';
@@ -18,7 +18,7 @@ const metadata = {
 
 describe('reference adapters v1 integration', () => {
   it('provides in-memory persistence adapters with projection interfaces', () => {
-    const persistence = createInMemoryPersistencePluginV1();
+    const persistence = createInMemoryPersistencePlugin();
 
     persistence.sagaProjection.upsert({
       id: 'saga-777',
@@ -58,7 +58,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('schedules and drains due triggers with scheduler policy', () => {
-    const scheduler = createInMemorySchedulerPluginV1();
+    const scheduler = createInMemorySchedulerPlugin();
 
     scheduler.schedule({
       id: 'trigger-a',
@@ -96,7 +96,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('applies catch_up_all by replaying all due interval occurrences deterministically', () => {
-    const scheduler = createInMemorySchedulerPluginV1();
+    const scheduler = createInMemorySchedulerPlugin();
 
     scheduler.schedule({
       id: 'trigger-catch-all',
@@ -142,7 +142,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('applies catch_up_bounded by limiting replay to configured maximum', () => {
-    const scheduler = createInMemorySchedulerPluginV1();
+    const scheduler = createInMemorySchedulerPlugin();
 
     scheduler.schedule({
       id: 'trigger-catch-bounded',
@@ -178,7 +178,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('applies latest_only by executing only the latest due occurrence', () => {
-    const scheduler = createInMemorySchedulerPluginV1();
+    const scheduler = createInMemorySchedulerPlugin();
 
     scheduler.schedule({
       id: 'trigger-latest-only',
@@ -208,7 +208,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('applies skip_until_next by dropping due occurrences and advancing schedule', () => {
-    const scheduler = createInMemorySchedulerPluginV1();
+    const scheduler = createInMemorySchedulerPlugin();
 
     scheduler.schedule({
       id: 'trigger-skip-next',
@@ -239,7 +239,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('executes side effects and captures handled intents', async () => {
-    const sideEffects = createInMemorySideEffectsPluginV1();
+    const sideEffects = createInMemorySideEffectsPlugin();
 
     const pluginOneWay = await sideEffects.execute({
       type: 'plugin-one-way',
@@ -278,7 +278,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('records telemetry counters and events', () => {
-    const telemetry = createInMemoryTelemetryPluginV1();
+    const telemetry = createInMemoryTelemetryPlugin();
 
     telemetry.count('saga.intent.received');
     telemetry.count('saga.intent.received', 2);
@@ -290,7 +290,7 @@ describe('reference adapters v1 integration', () => {
   });
 
   it('runs reference flow end-to-end across persistence scheduler side-effects telemetry', async () => {
-    const adapters = createReferenceAdaptersV1();
+    const adapters = createReferenceAdapters();
     const intents: SagaIntent[] = [
       {
         type: 'schedule',
@@ -332,7 +332,7 @@ describe('reference adapters v1 integration', () => {
       }
     ];
 
-    const result = await runReferenceAdapterFlowV1(adapters, {
+    const result = await runReferenceAdapterFlow(adapters, {
       sagaId: 'saga-777',
       intents,
       nowIso: '2026-01-01T00:00:00.000Z',
@@ -363,19 +363,19 @@ describe('reference adapters v1 integration', () => {
   it('correlates concurrent outbound responses and failures by response reference', async () => {
     const resolvers = new Map<string, (value: SagaRuntimeSideEffectResult) => void>();
 
-    const sideEffects = createInMemorySideEffectsPluginV1((intent) => new Promise((resolve) => {
+    const sideEffects = createInMemorySideEffectsPlugin((intent) => new Promise((resolve) => {
       const key = `${intent.type}:${intent.metadata.correlationId}`;
       resolvers.set(key, resolve);
     }));
 
     const adapters = {
-      persistence: createInMemoryPersistencePluginV1(),
-      scheduler: createInMemorySchedulerPluginV1(),
+      persistence: createInMemoryPersistencePlugin(),
+      scheduler: createInMemorySchedulerPlugin(),
       sideEffects,
-      telemetry: createInMemoryTelemetryPluginV1()
+      telemetry: createInMemoryTelemetryPlugin()
     };
 
-    const flow = runReferenceAdapterFlowV1(adapters, {
+    const flow = runReferenceAdapterFlow(adapters, {
       sagaId: 'saga-fanout-1',
       nowIso: '2026-01-01T00:00:00.000Z',
       intents: [

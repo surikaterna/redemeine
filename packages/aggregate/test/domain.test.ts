@@ -1,6 +1,6 @@
 import { createAggregate, createMixin, createEntity } from '@redemeine/aggregate';
 import { Event, ReadonlyDeep } from '@redemeine/kernel';
-import { createMirage, extractUncommittedEvents } from '@redemeine/mirage';
+import { createTestMirage, extractUncommittedEvents } from './helpers';
 
 interface OrderLine {
   id: string;
@@ -105,7 +105,7 @@ describe('Domain Exmaple', () => {
 
     expect(events[0].type).toBe('order.order_lines.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
-    const order = await createMirage(orderAggregateDef, 'order-1', { events });
+    const order = await createTestMirage(orderAggregateDef, 'order-1', { events });
     await order.orderLines('l1').changeQty(10);
 
     const deepLines = order.findOrderLinesDeep((line) => line.id === 'l1');
@@ -117,7 +117,7 @@ describe('Domain Exmaple', () => {
 
 
 
-    const orderWithIdentifier = createMirage(orderAggregateDef, 'order-2', {
+    const orderWithIdentifier = createTestMirage(orderAggregateDef, 'order-2', {
       snapshot: {
         ...orderAggregateDef.initialState,
         identifiers: [{ domain: 'tax', authority: 'irs', identifier: 'A-1' }]
