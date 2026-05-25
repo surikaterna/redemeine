@@ -18,7 +18,7 @@ import {
 
 const isoAt = (secondsOffset: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, secondsOffset)).toISOString();
 
-const sideEffectIntentTypes = new Set<SagaIntent['type']>(['plugin-one-way', 'plugin-request', 'run-activity']);
+const sideEffectIntentTypes = new Set<SagaIntent['type']>(['plugin-intent', 'plugin-one-way', 'plugin-request', 'run-activity']);
 
 const countSideEffects = (intentTypes: readonly string[]): number => intentTypes
   .filter((intentType) => sideEffectIntentTypes.has(intentType as SagaIntent['type']))
@@ -51,7 +51,9 @@ const runScenario = async (scenario: OrderWorkflowScenario) => {
     expect(result.handled).toBe(true);
     expect(result.intents.map((intent) => intent.type)).toEqual(event.expectedIntentTypes);
     expect(result.adapterResults).toHaveLength(1);
-    expect(result.adapterResults[0]?.persistedExecutions).toHaveLength(countSideEffects(event.expectedIntentTypes));
+    expect(result.adapterResults[0]?.persistedExecutions).toHaveLength(
+      event.expectedSideEffectCount ?? countSideEffects(event.expectedIntentTypes)
+    );
 
     dispatchResults.push(result);
   }
@@ -79,7 +81,7 @@ describe('order workflow runtime v1 e2e', () => {
         0
       );
       const expectedTotalExecutions = scenario.events.reduce(
-        (sum, event) => sum + countSideEffects(event.expectedIntentTypes),
+        (sum, event) => sum + (event.expectedSideEffectCount ?? countSideEffects(event.expectedIntentTypes)),
         0
       );
 

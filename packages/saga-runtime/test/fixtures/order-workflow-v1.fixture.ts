@@ -27,6 +27,7 @@ export interface OrderWorkflowScenario {
     type: string;
     payload: Record<string, unknown>;
     expectedIntentTypes: string[];
+    expectedSideEffectCount?: number;
   }>;
 }
 
@@ -95,11 +96,6 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
       state.lastOrderId = event.payload.orderId;
     },
     authorized: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.runActivity('order.audit.prepare', () => ({
-        orderId: event.payload.orderId,
-        stage: 'authorized'
-      }));
-
       ctx.actions.shipping.dispatch({
         orderId: event.payload.orderId,
         carrier: 'dhl'
@@ -129,11 +125,6 @@ export const createOrderWorkflowSaga = () => createSaga<OrderWorkflowState>({
       state.lastOrderId = event.payload.orderId;
     },
     settled: (state: OrderWorkflowState, event: { payload: { orderId: string } }, ctx: any) => {
-      ctx.actions.core.runActivity('order.audit.finalize', () => ({
-        orderId: event.payload.orderId,
-        stage: 'settled'
-      }));
-
       state.progression.push('settled');
       state.lastOrderId = event.payload.orderId;
     },
@@ -155,12 +146,12 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-2', amount: 4900, sku: 'sku-2', quantity: 1 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-2' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       }
     ]
   },
@@ -172,22 +163,23 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-4', amount: 8900, sku: 'sku-4', quantity: 2 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       },
       {
         type: 'orders.packed.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['schedule', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent'],
+        expectedSideEffectCount: 1
       },
       {
         type: 'orders.dispatched.event',
         payload: { orderId: 'order-4' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       }
     ]
   },
@@ -199,37 +191,39 @@ export const orderWorkflowScenarios: readonly OrderWorkflowScenario[] = [
       {
         type: 'orders.placed.event',
         payload: { orderId: 'order-7', amount: 12900, sku: 'sku-7', quantity: 3 },
-        expectedIntentTypes: ['plugin-request', 'plugin-request']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent']
       },
       {
         type: 'orders.authorized.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['run-activity', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       },
       {
         type: 'orders.packed.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['schedule', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent'],
+        expectedSideEffectCount: 1
       },
       {
         type: 'orders.dispatched.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       },
       {
         type: 'orders.delivered.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['cancel-schedule', 'plugin-one-way']
+        expectedIntentTypes: ['plugin-intent', 'plugin-intent'],
+        expectedSideEffectCount: 1
       },
       {
         type: 'orders.settled.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['run-activity']
+        expectedIntentTypes: []
       },
       {
         type: 'orders.closed.event',
         payload: { orderId: 'order-7' },
-        expectedIntentTypes: ['plugin-one-way']
+        expectedIntentTypes: ['plugin-intent']
       }
     ]
   }

@@ -150,11 +150,14 @@ const resolveHandlerKeys = (eventType: string, aggregateType?: string): readonly
   return Array.from(keys);
 };
 
-const isSideEffectIntent = (intent: SagaIntent): boolean => (
-  intent.type === 'plugin-one-way'
-  || intent.type === 'plugin-request'
-  || intent.type === 'run-activity'
-);
+const isSideEffectIntent = (intent: SagaIntent): boolean => {
+  if (intent.type === 'plugin-intent') {
+    return !(intent.plugin_key === 'core' && (intent.action_name === 'schedule' || intent.action_name === 'cancelSchedule'));
+  }
+  return intent.type === 'plugin-one-way'
+    || intent.type === 'plugin-request'
+    || intent.type === 'run-activity';
+};
 
 export function createSagaExecutionBridge<TState>(
   options: CreateSagaExecutionBridgeOptions<TState>
@@ -339,7 +342,7 @@ export function createSagaExecutionBridge<TState>(
           }
 
           const intentMeta: Record<string, string> = { handler: match.key };
-          if (intent.type === 'plugin-one-way' || intent.type === 'plugin-request') {
+          if (intent.type === 'plugin-intent' || intent.type === 'plugin-one-way' || intent.type === 'plugin-request') {
             intentMeta.pluginKey = intent.plugin_key;
             intentMeta.actionName = intent.action_name;
           }

@@ -1,4 +1,4 @@
-import { IProjectionStore, Checkpoint } from '@redemeine/projection-runtime-core';
+import type { IProjectionStore, Checkpoint } from '@redemeine/projection-runtime-core';
 import type { ProjectionAtomicWrite } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionStoreWriteFailure,
@@ -99,7 +99,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
     let current: any = root;
     for (let index = 0; index < tokens.length - 1; index += 1) {
-      const token = tokens[index];
+      const token = tokens[index]!;
       const nextToken = tokens[index + 1];
 
       if (Array.isArray(current)) {
@@ -451,7 +451,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
     const seenDocumentIds = new Set<string>();
     for (let index = 0; index < request.writes.length; index += 1) {
-      const write = request.writes[index];
+      const write = request.writes[index]!;
       for (const document of write.documents) {
         if (seenDocumentIds.has(document.documentId)) {
           const failure = InMemoryProjectionStore.createInvalidRequestFailure(
@@ -502,7 +502,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     };
 
     for (let index = 0; index < request.writes.length; index += 1) {
-      const write = request.writes[index];
+      const write = request.writes[index]!;
       let laneWatermark: Checkpoint | null = null;
 
       try {

@@ -113,7 +113,7 @@ describe('saga execution bridge integration', () => {
     expect(result.handled).toBe(true);
     expect(result.matchedHandlers).toEqual(['started']);
     expect(result.sagaState).toEqual({ attempts: 1, lastOrderId: 'order-1' });
-    expect(result.intents.map((intent) => intent.type)).toEqual(['plugin-request', 'plugin-one-way']);
+    expect(result.intents.map((intent) => intent.type)).toEqual(['plugin-intent', 'plugin-intent']);
 
     expect(result.adapterResults).toHaveLength(1);
     expect(result.adapterResults[0]).toMatchObject({
@@ -123,7 +123,7 @@ describe('saga execution bridge integration', () => {
 
     expect(adapters.sideEffects.listHandled()).toHaveLength(2);
     expect(adapters.sideEffects.listHandled()[0]).toMatchObject({
-      type: 'plugin-request',
+      type: 'plugin-intent',
       plugin_key: 'payments',
       action_name: 'authorize',
       routing_metadata: {
@@ -132,7 +132,7 @@ describe('saga execution bridge integration', () => {
       }
     });
     expect(adapters.sideEffects.listHandled()[1]).toMatchObject({
-      type: 'plugin-one-way',
+      type: 'plugin-intent',
       plugin_key: 'telemetry',
       action_name: 'record'
     });
@@ -142,8 +142,8 @@ describe('saga execution bridge integration', () => {
     expect(aggregateState.totals.observedEvents).toBe(1);
     expect(aggregateState.totals.intents).toBe(2);
     expect(aggregateState.recent.intents.map((entry) => entry.intentType).sort()).toEqual([
-      'plugin-one-way',
-      'plugin-request'
+      'plugin-intent',
+      'plugin-intent'
     ]);
   });
 

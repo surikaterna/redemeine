@@ -1,4 +1,4 @@
-import { IProjectionLinkStore } from '@redemeine/projection-runtime-core';
+import type { IProjectionLinkStore } from '@redemeine/projection-runtime-core';
 
 export class InMemoryProjectionLinkStore implements IProjectionLinkStore {
   private links = new Map<string, string>();
