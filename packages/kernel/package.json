@@ -37,12 +37,12 @@
     "test": "bun test --pass-with-no-tests",
     "lint": "tsc --noEmit"
   },
-  "dependencies": {
-    "immer": "^10.1.1",
-    "zod": "^4.3.6"
+  "peerDependencies": {
+    "zod": ">=3.0.0"
   },
   "devDependencies": {
     "tsup": "^8.4.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "zod": "^4.3.6"
   }
 }
