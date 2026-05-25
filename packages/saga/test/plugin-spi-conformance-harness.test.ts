@@ -44,10 +44,10 @@ describe('plugin SPI conformance harness', () => {
     expect(intents).toHaveLength(4);
 
     expect(intents[0]).toMatchObject({
-      type: 'plugin-request',
+      type: 'plugin-intent',
       plugin_key: 'persistence',
       action_name: 'saveState',
-      action_kind: 'request_response',
+      interaction: 'request_response',
       execution_payload: {
         workflowId: 'workflow-a',
         checkpoint: 'cp-a',
@@ -66,7 +66,7 @@ describe('plugin SPI conformance harness', () => {
     });
 
     expect(intents[1]).toMatchObject({
-      type: 'plugin-one-way',
+      type: 'plugin-intent',
       plugin_key: 'scheduler',
       action_name: 'enqueue',
       execution_payload: {
@@ -78,7 +78,7 @@ describe('plugin SPI conformance harness', () => {
     });
 
     expect(intents[2]).toMatchObject({
-      type: 'plugin-one-way',
+      type: 'plugin-intent',
       plugin_key: 'effects',
       action_name: 'emit',
       execution_payload: {
@@ -93,7 +93,7 @@ describe('plugin SPI conformance harness', () => {
     });
 
     expect(intents[3]).toMatchObject({
-      type: 'plugin-one-way',
+      type: 'plugin-intent',
       plugin_key: 'telemetry',
       action_name: 'record',
       execution_payload: {
@@ -136,20 +136,19 @@ describe('plugin SPI conformance harness', () => {
       lastResult: '[object Object]'
     });
 
-    expect(response.output.intents).toEqual([
-      {
-        type: 'plugin-one-way',
-        plugin_key: 'scheduler',
-        action_name: 'enqueue',
-        action_kind: 'void',
-        execution_payload: {
-          id: 'next-step',
-          delayMs: 500,
-          tenantId: tenant.metadata.sagaId
-        },
-        metadata: tenant.metadata
-      }
-    ]);
+    expect(response.output.intents).toHaveLength(1);
+    expect(response.output.intents[0]).toMatchObject({
+      type: 'plugin-intent',
+      plugin_key: 'scheduler',
+      action_name: 'enqueue',
+      interaction: 'fire_and_forget',
+      execution_payload: {
+        id: 'next-step',
+        delayMs: 500,
+        tenantId: tenant.metadata.sagaId
+      },
+      metadata: tenant.metadata
+    });
   });
 
   it('validates error-handler tenant context propagation semantics', async () => {
@@ -183,20 +182,19 @@ describe('plugin SPI conformance harness', () => {
       lastError: '[object Object]'
     });
 
-    expect(failure.output.intents).toEqual([
-      {
-        type: 'plugin-one-way',
-        plugin_key: 'telemetry',
-        action_name: 'record',
-        action_kind: 'void',
-        execution_payload: {
-          name: 'persistence_failure',
-          value: 1,
-          tenantId: tenant.metadata.sagaId
-        },
-        metadata: tenant.metadata
-      }
-    ]);
+    expect(failure.output.intents).toHaveLength(1);
+    expect(failure.output.intents[0]).toMatchObject({
+      type: 'plugin-intent',
+      plugin_key: 'telemetry',
+      action_name: 'record',
+      interaction: 'fire_and_forget',
+      execution_payload: {
+        name: 'persistence_failure',
+        value: 1,
+        tenantId: tenant.metadata.sagaId
+      },
+      metadata: tenant.metadata
+    });
   });
 
   it('validates executable handler failure semantics for undefined tokens', async () => {

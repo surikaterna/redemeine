@@ -1,9 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "moduleResolution": "node",
-    "rootDir": "src",
-    "outDir": "dist"
+    "noEmit": true,
+    "verbatimModuleSyntax": false,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src"]
 }

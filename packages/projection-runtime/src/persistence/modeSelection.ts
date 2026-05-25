@@ -74,7 +74,7 @@ export function resolveProjectionPersistence<
   return {
     mode,
     read,
-    patch,
-    document
+    ...(patch !== undefined ? { patch } : {}),
+    ...(document !== undefined ? { document } : {})
   };
 }

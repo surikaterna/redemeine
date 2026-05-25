@@ -1,4 +1,4 @@
-import { createEvent, NamingStrategy } from '@redemeine/kernel';
+import { createEvent, type NamingStrategy } from '@redemeine/kernel';
 
 export function createEmitProxy(
     aggregateName: string,

@@ -1,4 +1,4 @@
-import { ReadonlyDeep } from './types/ReadonlyDeep';
+import type { ReadonlyDeep } from './types/ReadonlyDeep';
 
 const proxyCache = new WeakMap<object, object>();
 

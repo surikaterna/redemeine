@@ -10,6 +10,6 @@ export const persistCommitAtomicWithBulkWrite = async <TState>(
   options: Pick<MongoProjectionStoreOptions<TState>, 'collection' | 'linkCollection' | 'dedupeCollection'>,
   now: () => string
 ): Promise<void> => {
-  await persistCommitAtomicProjectionOps(write, session, options.collection, now);
-  await persistCommitAtomicLinkAndDedupeOps(write, session, options, now);
+  await persistCommitAtomicProjectionOps(write, session, options.collection as any, now);
+  await persistCommitAtomicLinkAndDedupeOps(write, session, options as any, now);
 };

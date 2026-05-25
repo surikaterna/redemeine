@@ -1,9 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "moduleResolution": "node"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/kernel": ["../kernel/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src"]
 }

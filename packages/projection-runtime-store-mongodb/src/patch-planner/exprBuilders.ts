@@ -71,7 +71,7 @@ export const setUnsafeAtTokensExpr = (targetExpr: unknown, tokens: readonly stri
   }
 
   const [head, ...tail] = tokens;
-  const existingChildExpr = getFieldExpr(targetExpr, head);
+  const existingChildExpr = getFieldExpr(targetExpr, head!);
   const nextChild = setUnsafeAtTokensExpr(existingChildExpr, tail, valueExpr);
 
   return {
@@ -98,7 +98,7 @@ export const unsetUnsafeAtTokensExpr = (targetExpr: unknown, tokens: readonly st
   }
 
   const [head, ...tail] = tokens;
-  const existingChildExpr = getFieldExpr(targetExpr, head);
+  const existingChildExpr = getFieldExpr(targetExpr, head!);
   const nextChild = unsetUnsafeAtTokensExpr(existingChildExpr, tail);
 
   return {

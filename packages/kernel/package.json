@@ -1,26 +1,48 @@
 {
   "name": "@redemeine/kernel",
-  "version": "0.1.0",
-  "private": true,
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "version": "0.2.0-pre.0",
+  "description": "Core primitives for event-sourced aggregates — events, commands, metadata, and type utilities",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/kernel"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/kernel#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "ddd",
+    "domain-driven-design",
+    "events",
+    "commands"
+  ],
+  "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "require": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "immer": "^10.1.1",
     "zod": "^4.3.6"
   },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test --pass-with-no-tests",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
   }
 }

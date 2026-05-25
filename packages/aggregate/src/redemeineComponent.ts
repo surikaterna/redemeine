@@ -1,4 +1,4 @@
-import { CommandContext, CommandIntents, CommandResult, Event, PluginExtensions, SelectorsMap, ReadonlyDeep } from '@redemeine/kernel';
+import { type CommandContext, type CommandIntents, type CommandResult, type Event, type PluginExtensions, type SelectorsMap, type ReadonlyDeep } from '@redemeine/kernel';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
 import type { Merge } from './types/Merge';
 import type { AllKeys } from './types/AllKeys';
@@ -225,7 +225,8 @@ export function createComponentBehaviorState<S>() {
   };
 }
 
-type FluentUpdaterMap = Record<string, (...args: unknown[]) => void>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type FluentUpdaterMap = Record<string, (...args: any[]) => void>;
 
 export function bindFluentMethods<TBuilder extends Record<string, unknown>, TUpdaters extends FluentUpdaterMap>(
   builder: TBuilder,
@@ -236,7 +237,7 @@ export function bindFluentMethods<TBuilder extends Record<string, unknown>, TUpd
   Object.keys(updaters).forEach((key) => {
     const methodName = key as keyof TUpdaters;
     mutableBuilder[methodName as string] = (...args: unknown[]) => {
-      updaters[methodName](...args);
+      updaters[methodName]!(...args);
       return builder;
     };
   });

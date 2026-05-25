@@ -3,19 +3,16 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "build/**", ".docusaurus/**"]
+      "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["^typecheck"],
-      "outputs": []
-    },
-    "test": {
-      "dependsOn": ["^test"],
-      "outputs": []
+      "dependsOn": ["^build"]
     },
     "lint": {
-      "dependsOn": ["^lint"],
-      "outputs": []
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["build"]
     }
   }
 }

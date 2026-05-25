@@ -1,25 +1,44 @@
 {
   "name": "@redemeine/projection",
-  "version": "0.1.0",
-  "private": true,
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "version": "0.2.0-pre.0",
+  "description": "Projection builder for deriving read models from event streams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/projection"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/projection#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "projection",
+    "read-model",
+    "event-handler"
+  ],
+  "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --path-ignore-patterns '**/*e2e*' --path-ignore-patterns '**/*integration*' --path-ignore-patterns '**/*e5-1*'",
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@redemeine/aggregate": "workspace:*"
+    "@redemeine/aggregate": "workspace:*",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
   }
 }

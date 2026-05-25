@@ -1,9 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "moduleResolution": "node"
+    "noEmit": true,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@redemeine/aggregate": ["../aggregate/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src"]
 }

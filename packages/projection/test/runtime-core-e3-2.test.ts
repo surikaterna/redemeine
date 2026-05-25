@@ -2,6 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import {
   createProjection,
   ProjectionDaemon,
+  encodeProjectionDedupeKey,
   type Checkpoint,
   type EventBatch,
   type IEventSubscription,
@@ -10,6 +11,10 @@ import {
   type ProjectionEvent,
   type ProjectionWarning
 } from '../../projection-runtime-core/src';
+
+function dedupeKey(projectionName: string, aggregateType: string, aggregateId: string, sequence: number): string {
+  return encodeProjectionDedupeKey({ projectionName, aggregateType, aggregateId, sequence });
+}
 
 type ProjectionState = {
   fromEvents: number;
@@ -444,7 +449,7 @@ describe('runtime-core E4.3 atomic+dedupe consistency', () => {
     await expect(daemon.processBatch()).rejects.toThrow('injected pre-commit failure');
     expect(store.getDocument('invoice-1')).toBeNull();
     expect(store.getCursor('__cursor__atomic-dedupe-consistency')).toBeNull();
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toBeNull();
+    expect(await store.getDedupeCheckpoint(dedupeKey('atomic-dedupe-consistency', 'invoice', 'invoice-1', 1))).toBeNull();
 
     const retryStats = await daemon.processBatch();
     expect(retryStats.eventsProcessed).toBe(1);
@@ -453,7 +458,7 @@ describe('runtime-core E4.3 atomic+dedupe consistency', () => {
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('atomic-dedupe-consistency', 'invoice', 'invoice-1', 1))).toEqual({
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
@@ -469,7 +474,7 @@ describe('runtime-core E4.3 atomic+dedupe consistency', () => {
     const restartStats = await restartedDaemon.processBatch();
     expect(restartStats.eventsProcessed).toBe(0);
     expect(store.getDocument('invoice-1')).toEqual({ applied: 1 });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('atomic-dedupe-consistency', 'invoice', 'invoice-1', 1))).toEqual({
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
@@ -542,10 +547,10 @@ describe('runtime-core E5.3 cutover dedupe overlap validation', () => {
     });
 
     expect(store.getDocument('invoice-1')).toEqual({ applied: 4, seen: [1, 2, 3, 4] });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({ sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:2')).toEqual({ sequence: 2, timestamp: '2026-04-09T00:00:02.000Z' });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:3')).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-overlap', 'invoice', 'invoice-1', 1))).toEqual({ sequence: 1, timestamp: '2026-04-09T00:00:01.000Z' });
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-overlap', 'invoice', 'invoice-1', 2))).toEqual({ sequence: 2, timestamp: '2026-04-09T00:00:02.000Z' });
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-overlap', 'invoice', 'invoice-1', 3))).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-overlap', 'invoice', 'invoice-1', 4))).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
   });
 
   test('restart during cutover keeps single-apply semantics and reports overlap diagnostics', async () => {
@@ -599,7 +604,7 @@ describe('runtime-core E5.3 cutover dedupe overlap validation', () => {
     await expect(failingCutoverDaemon.processBatch()).rejects.toThrow('injected pre-commit failure');
     expect(store.getDocument('invoice-1')).toEqual({ applied: 3, seen: [1, 2, 3] });
     expect(store.getCursor('__cursor__cutover-restart')).toEqual({ sequence: 3, timestamp: '2026-04-09T00:00:03.000Z' });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toBeNull();
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-restart', 'invoice', 'invoice-1', 4))).toBeNull();
 
     const restartedCutoverDaemon = new ProjectionDaemon<{ applied: number; seen: number[] }>({
       projection,
@@ -626,7 +631,7 @@ describe('runtime-core E5.3 cutover dedupe overlap validation', () => {
 
     expect(store.getDocument('invoice-1')).toEqual({ applied: 4, seen: [1, 2, 3, 4] });
     expect(store.getCursor('__cursor__cutover-restart')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:4')).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-restart', 'invoice', 'invoice-1', 4))).toEqual({ sequence: 4, timestamp: '2026-04-09T00:00:04.000Z' });
   });
 });
 
@@ -756,11 +761,11 @@ describe('runtime-core E6.2 failure-mode and restart validation', () => {
       sequence: 2,
       timestamp: '2026-04-09T00:00:02.000Z'
     });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-transition-recovery', 'invoice', 'invoice-1', 1))).toEqual({
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:2')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('cutover-transition-recovery', 'invoice', 'invoice-1', 2))).toEqual({
       sequence: 2,
       timestamp: '2026-04-09T00:00:02.000Z'
     });
@@ -824,11 +829,11 @@ describe('runtime-core E5.2 automatic catch-up to live cutover', () => {
     const fourth = await daemon.processBatch();
     expect(fourth.eventsProcessed).toBe(1);
     expect(store.getDocument('invoice-1')).toEqual({ applied: 2 });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('auto-cutover-state-machine', 'invoice', 'invoice-1', 1))).toEqual({
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:2')).toEqual({
+    expect(await store.getDedupeCheckpoint(dedupeKey('auto-cutover-state-machine', 'invoice', 'invoice-1', 2))).toEqual({
       sequence: 2,
       timestamp: '2026-04-09T00:00:02.000Z'
     });

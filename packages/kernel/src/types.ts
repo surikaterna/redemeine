@@ -1,4 +1,4 @@
-import { ReadonlyDeep } from './utils/types/ReadonlyDeep';
+import type { ReadonlyDeep } from './utils/types/ReadonlyDeep';
 
 // types.ts
 
@@ -202,10 +202,10 @@ export class RedemeinePluginHookError extends Error {
  * This supports command-to-event traceability, including one-command-many-events flows.
  */
 export interface EventCommandLink<P = any, T extends CommandType | string = CommandType> {
-  id?: string;
+  id?: string | undefined;
   type: T;
   summary?: P;
-  storeRef?: string;
+  storeRef?: string | undefined;
 }
 
 /**
@@ -236,7 +236,7 @@ export const EntityArray = {
   upsert<T extends BaseEntity>(array: T[], item: T): void {
     const index = array.findIndex(e => e.id === item.id);
     if (index >= 0) {
-      Object.assign(array[index], item);
+      Object.assign(array[index]!, item);
     } else {
       array.push(item);
     }
@@ -251,7 +251,7 @@ export const EntityArray = {
   update<T extends BaseEntity>(array: T[], id: string | number, patch: Partial<T>): void {
     const index = array.findIndex(e => e.id === id);
     if (index >= 0) {
-      Object.assign(array[index], patch);
+      Object.assign(array[index]!, patch);
     }
   },
 

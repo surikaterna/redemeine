@@ -81,12 +81,33 @@ export interface SagaPluginRequestIntent<
   readonly metadata: SagaIntentMetadata;
 }
 
+export interface SagaPluginIntentV2<
+  TPluginKey extends string = string,
+  TActionName extends string = string,
+  TExecutionPayload = unknown
+> {
+  readonly type: 'plugin-intent';
+  readonly plugin_key: TPluginKey;
+  readonly action_name: TActionName;
+  readonly interaction: 'fire_and_forget' | 'request_response';
+  readonly execution_payload: TExecutionPayload;
+  readonly routing_metadata?: {
+    readonly response_handler_key: string;
+    readonly error_handler_key: string;
+    readonly handler_data: unknown;
+    readonly retry_handler_key?: string;
+  };
+  readonly metadata: SagaIntentMetadata;
+  readonly [key: string]: unknown;
+}
+
 export type SagaIntent =
   | SagaScheduleIntent
   | SagaCancelScheduleIntent
   | SagaRunActivityIntent
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginIntentV2
   | {
     readonly type: 'dispatch';
     readonly command: string;
@@ -146,6 +167,7 @@ export interface SagaRuntimeSchedulerPluginV1 {
 export type SagaRuntimeSideEffectIntent =
   | SagaPluginOneWayIntent
   | SagaPluginRequestIntent
+  | SagaPluginIntentV2
   | SagaRunActivityIntent;
 
 export interface SagaRuntimeSideEffectResult {
@@ -308,7 +330,7 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
       if (misfireMode === 'skip_until_next') {
         scheduledForToExecute = [];
       } else if (misfireMode === 'latest_only') {
-        scheduledForToExecute = [dueOccurrences[dueOccurrences.length - 1]];
+        scheduledForToExecute = [dueOccurrences[dueOccurrences.length - 1]!];
       } else if (misfireMode === 'catch_up_bounded') {
         const bounded = toFinitePositiveInteger(
           misfirePolicy && misfirePolicy.mode === 'catch_up_bounded'
@@ -318,7 +340,7 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
         scheduledForToExecute = dueOccurrences.slice(0, bounded);
       }
     } else {
-      scheduledForToExecute = [dueOccurrences[0]];
+      scheduledForToExecute = [dueOccurrences[0]!];
     }
 
     const nextRunAt = typeof intervalMs === 'number'
@@ -332,9 +354,9 @@ export function createInMemorySchedulerPluginV1(): SagaRuntimeSchedulerPluginV1 
       dueCount: dueOccurrences.length,
       executedCount: scheduledForToExecute.length,
       skippedCount: dueOccurrences.length - scheduledForToExecute.length,
-      restartMode: trigger.policy?.restart?.mode,
-      restartReason: trigger.policy?.restart?.reason,
-      nextRunAt
+      ...(trigger.policy?.restart?.mode !== undefined ? { restartMode: trigger.policy.restart.mode } : {}),
+      ...(trigger.policy?.restart?.reason !== undefined ? { restartReason: trigger.policy.restart.reason } : {}),
+      ...(nextRunAt !== undefined ? { nextRunAt } : {})
     };
 
     const executions = scheduledForToExecute.map((scheduledFor, index, list) => {
@@ -428,6 +450,17 @@ export function createInMemorySideEffectsPluginV1(
         return await executeIntent(intent);
       }
 
+      if (intent.type === 'plugin-intent' && intent.interaction === 'request_response') {
+        return {
+          status: 'succeeded',
+          responseRef: {
+            responseKey: `${intent.plugin_key}.${intent.action_name}`,
+            responseId: `${intent.metadata.correlationId}:${intent.action_name}`,
+            receivedAt: new Date().toISOString()
+          }
+        };
+      }
+
       if (intent.type === 'plugin-request') {
         return {
           status: 'succeeded',
@@ -465,7 +498,7 @@ export function createInMemoryTelemetryPluginV1(): SagaRuntimeTelemetryPluginV1 
     event(name, tags) {
       events.push({
         name,
-        tags,
+        ...(tags !== undefined ? { tags } : {}),
         at: new Date().toISOString()
       });
     },
@@ -487,10 +520,31 @@ export function createReferenceAdaptersV1(): SagaRuntimeReferenceAdapters {
   };
 }
 
-const asScheduleIntent = (intent: SagaIntent): SagaScheduleIntent | null => intent.type === 'schedule' ? intent : null;
-const asCancelIntent = (intent: SagaIntent): SagaCancelScheduleIntent | null => intent.type === 'cancel-schedule' ? intent : null;
+const asScheduleIntent = (intent: SagaIntent): SagaScheduleIntent | null => {
+  if (intent.type === 'schedule') return intent;
+  if (intent.type === 'plugin-intent' && intent.plugin_key === 'core' && intent.action_name === 'schedule') {
+    const payload = intent.execution_payload as { id: string; delay: number };
+    return { type: 'schedule', id: payload.id, delay: payload.delay, metadata: intent.metadata };
+  }
+  return null;
+};
+
+const asCancelIntent = (intent: SagaIntent): SagaCancelScheduleIntent | null => {
+  if (intent.type === 'cancel-schedule') return intent;
+  if (intent.type === 'plugin-intent' && intent.plugin_key === 'core' && intent.action_name === 'cancelSchedule') {
+    const payload = intent.execution_payload as { id: string };
+    return { type: 'cancel-schedule', id: payload.id, metadata: intent.metadata };
+  }
+  return null;
+};
 
 const asSideEffectIntent = (intent: SagaIntent): SagaRuntimeSideEffectIntent | null => {
+  if (intent.type === 'plugin-intent') {
+    if (intent.plugin_key === 'core' && (intent.action_name === 'schedule' || intent.action_name === 'cancelSchedule')) {
+      return null;
+    }
+    return intent;
+  }
   if (intent.type === 'plugin-one-way' || intent.type === 'plugin-request' || intent.type === 'run-activity') {
     return intent;
   }
@@ -533,7 +587,7 @@ export async function runReferenceAdapterFlowV1(
   }> = [];
 
   for (let index = 0; index < input.intents.length; index += 1) {
-    const intent = input.intents[index];
+    const intent = input.intents[index]!;
     adapters.telemetry.count('saga.intent.received');
 
     const schedule = asScheduleIntent(intent);
@@ -543,7 +597,7 @@ export async function runReferenceAdapterFlowV1(
         id: schedule.id,
         sagaId: input.sagaId,
         runAt,
-        policy: input.schedulerPolicy,
+        ...(input.schedulerPolicy !== undefined ? { policy: input.schedulerPolicy } : {}),
         metadata: { correlationId: schedule.metadata.correlationId }
       });
       adapters.telemetry.count('saga.intent.scheduled');
@@ -617,8 +671,8 @@ export async function runReferenceAdapterFlowV1(
       executionId: execution.executionId,
       intentId: execution.intentId,
       status: result.status,
-      responseRef: result.responseRef,
-      error: result.error
+      ...(result.responseRef !== undefined ? { responseRef: result.responseRef } : {}),
+      ...(result.error !== undefined ? { error: result.error } : {})
     };
   }));
 

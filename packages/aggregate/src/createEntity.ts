@@ -1,22 +1,23 @@
-import { Event, EventType, CommandType, SelectorsMap, CommandContext, CommandIntents } from '@redemeine/kernel';
-import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { type Event, type EventType, type CommandType, type SelectorsMap, type CommandContext, type CommandIntents } from '@redemeine/kernel';
+import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap } from './redemeineComponent';
+import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
-import {
+import type {
   MapEntityCommands,
   EntityListOptions,
   EntityMapOptions,
   EntityMountOverrides,
   MountedStructureMetadata as EntityMountedStructureMetadata,
   MountedEntityPackage,
-  composeMountedComponentBehavior
 } from './componentMounts';
+import { composeMountedComponentBehavior } from './componentMounts';
 
 // 1. The final "Baked" object that goes into the Aggregate
 /**
  * A compiled Entity ready to be injected into an AggregateBuilder via `.entities()`.
  * Maintains its own namespace and isolated lifecycle logic.
  */
-export interface EntityPackage<S, Name extends string, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>>
+export interface EntityPackage<S, Name extends string, E extends Record<string, any> = Record<string, any>, EOverrides extends object = {}, CPayloads extends Record<string, any> = Record<string, any>, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
   name: Name;
   events: E;
@@ -32,7 +33,7 @@ export interface EntityPackage<S, Name extends string, E = any, EOverrides exten
 }
 
 // 2. The Chaining Interfaces to guide the IDE
-export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> {
+export interface EntityBuilder<S, Name extends string, E extends Record<string, any> = {}, EOverrides extends object = {}, CPayloads extends Record<string, any> = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> {
   /**
    * Register state-altering event handlers for this Entity.
    * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
@@ -123,10 +124,10 @@ export interface EntityBuilder<S, Name extends string, E = {}, EOverrides extend
 }
 
 export type EntityEventsStage<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, {}, {}, {}, {}, SelectorsMap<S>, TMeta>;
-export type EntityEventOverridesStage<S, Name extends string, E, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, {}, {}, {}, SelectorsMap<S>, TMeta>;
-export type EntitySelectorsStage<S, Name extends string, E, EOverrides extends object, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, SelectorsMap<S>, TMeta>;
-export type EntityCommandsStage<S, Name extends string, E, EOverrides extends object, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, Selectors, TMeta>;
-export type EntityCommandOverridesStage<S, Name extends string, E, EOverrides extends object, CPayloads, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, CPayloads, {}, Selectors, TMeta>;
+export type EntityEventOverridesStage<S, Name extends string, E extends Record<string, any>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, {}, {}, {}, SelectorsMap<S>, TMeta>;
+export type EntitySelectorsStage<S, Name extends string, E extends Record<string, any>, EOverrides extends object, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, SelectorsMap<S>, TMeta>;
+export type EntityCommandsStage<S, Name extends string, E extends Record<string, any>, EOverrides extends object, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, {}, {}, Selectors, TMeta>;
+export type EntityCommandOverridesStage<S, Name extends string, E extends Record<string, any>, EOverrides extends object, CPayloads extends Record<string, any>, Selectors extends SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>> = EntityBuilder<S, Name, E, EOverrides, CPayloads, {}, Selectors, TMeta>;
 
 // 3. The Implementation
 /**

@@ -1,0 +1,23 @@
+{
+  "mode": "pre",
+  "tag": "pre",
+  "initialVersions": {
+    "@redemeine/aggregate": "0.1.0",
+    "@redemeine/kernel": "0.1.0",
+    "@redemeine/mirage": "0.1.0",
+    "@redemeine/projection": "0.1.0",
+    "@redemeine/projection-router-core": "0.1.0",
+    "@redemeine/projection-runtime": "0.1.0",
+    "@redemeine/projection-runtime-core": "0.1.0",
+    "@redemeine/projection-runtime-store-inmemory": "0.1.0",
+    "@redemeine/projection-runtime-store-mongodb": "0.1.0",
+    "@redemeine/projection-worker-core": "0.1.0",
+    "@redemeine/projection-worker-lite": "0.1.0",
+    "@redemeine/saga": "0.1.0",
+    "@redemeine/saga-runtime": "0.1.0",
+    "@redemeine/testing": "0.1.0"
+  },
+  "changesets": [
+    "initial-release"
+  ]
+}

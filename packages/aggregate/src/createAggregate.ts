@@ -1,13 +1,15 @@
-import { Event, Command, EventType, CommandType, NamingStrategy, SelectorsMap, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep } from '@redemeine/kernel';
-import { MixinPackage } from './createMixin';
-import { EntityPackage } from './createEntity';
+import { type Event, type Command, type EventType, type CommandType, type NamingStrategy, type SelectorsMap, type AggregateHooks, type PluginContext, type PluginExtensions, type CommandContext, type CommandIntents, type MergePluginExtensions, type RedemeinePlugin, type ReadonlyDeep } from '@redemeine/kernel';
+import type { MixinPackage } from './createMixin';
+import type { EntityPackage } from './createEntity';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
-import { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import type { RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap } from './redemeineComponent';
+import { resolveCommandHandler, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import { bindContext } from './bindContext';
 import { applyEvent, applyEventToDraft } from './applyEvent';
+import type { Draft } from 'immer';
 import { defaultNamingStrategy } from './naming';
 import type { Merge } from './types/Merge';
 import type { AllKeys } from './types/AllKeys';
@@ -89,17 +91,17 @@ export type MountedStructureMetadata = {
     kind: MountedStructureKind;
     commandPrefix: string;
     statePath: string[];
-    pk?: string | readonly string[];
-    knownKeys?: readonly string[];
+    pk?: string | readonly string[] | undefined;
+    knownKeys?: readonly string[] | undefined;
 };
 
 type MountedEntityPackage = {
     name: string;
     kind: MountedStructureKind;
-    component?: EntityPackage<unknown, string>;
-    mountOverrides?: EntityMountOverrides;
-    pk?: string | readonly string[];
-    knownKeys?: readonly string[];
+    component?: EntityPackage<unknown, string> | undefined;
+    mountOverrides?: EntityMountOverrides | undefined;
+    pk?: string | readonly string[] | undefined;
+    knownKeys?: readonly string[] | undefined;
 };
 
 type EntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
@@ -642,7 +644,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 // Flatten the commands with the entity name mapping into the global pool for processing
                 Object.keys(entityCommands).forEach(cmdProp => {
                     const mappedCmd = mountName + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
-                    allCommandsMap[mappedCmd] = entityCommands[cmdProp];
+                    allCommandsMap[mappedCmd] = entityCommands[cmdProp]!;
                     const mountCommandOverride = (mountCommandNameOverrides as Record<string, string>)[cmdProp];
                     const entityCommandOverride = (entityCommandNameOverrides as Record<string, string>)[cmdProp];
                     if (mountCommandOverride) {
@@ -656,7 +658,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             Object.keys(allEvents).forEach((eventKey) => {
                 const resolvedEventType = allEventOverrides[eventKey] || _namingStrategy.event(aggregateName, eventKey);
                 if (!(resolvedEventType in projectorByEventType)) {
-                    projectorByEventType[resolvedEventType] = allEvents[eventKey];
+                    projectorByEventType[resolvedEventType] = allEvents[eventKey]!;
                 }
             });
 
@@ -677,7 +679,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
 
             const commandHandlerByType = Object.keys(allCommandsMap).reduce((acc, key) => {
                 const resolvedCommandType = allCommandOverrides[key] || _namingStrategy.command(aggregateName, key);
-                acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]) as unknown as (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[];
+                acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!) as unknown as (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[];
                 return acc;
             }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[]>);
 
@@ -697,7 +699,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 process: createCommandProcessor<S>(aggregateName, allCommandsMap, allCommandOverrides, commandHandlerByType),
                 apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors),
                 applyToDraft: (draft: S, event: Event): void => {
-                    applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors);
+                    applyEventToDraft(aggregateName, draft as Draft<S>, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors);
                 },
                 commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap, allCommandOverrides, _namingStrategy),
                 eventCreators: emit,

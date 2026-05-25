@@ -43,7 +43,7 @@ export interface DemeineCompatibleAggregate<S extends object = object> {
 
 // Replicate demeine's string utilities
 const camelCase = (str: string): string =>
-    str.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+    str.replace(/_([a-z])/g, (g) => g[1]!.toUpperCase());
 
 const capitalize = (str: string): string =>
     `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
@@ -56,7 +56,7 @@ function extractCommandKey(type: string): string {
     const parts = type.split('.');
     const filteredParts: string[] = [];
     for (let i = 1; i < parts.length - 1; i++) {
-        filteredParts.push(parts[i]);
+        filteredParts.push(parts[i]!);
     }
     filteredParts.unshift(filteredParts.pop()!);
     return camelCase(filteredParts.join('_'));
@@ -70,7 +70,7 @@ function extractEventKey(type: string): string {
     const parts = type.split('.');
     const filteredParts: string[] = [];
     for (let i = 1; i < parts.length - 1; i++) {
-        filteredParts.push(parts[i]);
+        filteredParts.push(parts[i]!);
     }
     return camelCase(filteredParts.join('_'));
 }
@@ -82,7 +82,7 @@ function deriveAggregateType(builder: BridgeableAggregate<any>): string {
     };
     const firstType = Object.values(allTypes)[0];
     if (!firstType) return 'unknown';
-    return firstType.split('.')[0];
+    return firstType.split('.')[0]!;
 }
 
 export function createDemeineBridge<S extends object>(
@@ -127,7 +127,7 @@ export function createDemeineBridge<S extends object>(
                     state = structuredClone(snapshot);
                 }
                 for (let i = 0; i < events.length; i++) {
-                    agg._apply(events[i], false);
+                    agg._apply(events[i]!, false);
                     // Yield every 100 events to match demeine behavior
                     if (i % 100 === 0) {
                         await new Promise<void>(r => setTimeout(r, 0));

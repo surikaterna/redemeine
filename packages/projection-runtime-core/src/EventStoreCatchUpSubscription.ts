@@ -1,5 +1,5 @@
-import { IEventSubscription } from './IEventSubscription';
-import { Checkpoint, EventBatch, ProjectionEvent } from './types';
+import type { IEventSubscription } from './IEventSubscription';
+import type { Checkpoint, EventBatch, ProjectionEvent } from './types';
 
 /**
  * Minimal EventStore reader contract for catch-up polling.
@@ -34,7 +34,7 @@ export class EventStoreCatchUpSubscription implements IEventSubscription {
       return { events: [], nextCursor: cursor };
     }
 
-    const last = events[events.length - 1];
+    const last = events[events.length - 1]!;
     return {
       events,
       nextCursor: {

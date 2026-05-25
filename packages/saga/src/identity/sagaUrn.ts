@@ -42,8 +42,8 @@ export function parseSagaUrn(urn: string): SagaStructuredIdentity {
   }
 
   return normalizeSagaIdentity({
-    namespace: match[1],
-    name: match[2],
+    namespace: match[1]!,
+    name: match[2]!,
     version: Number(match[3])
   });
 }

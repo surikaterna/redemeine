@@ -1,16 +1,17 @@
-import { Event, EventType, CommandType, SelectorsMap, CommandContext, CommandIntents } from '@redemeine/kernel';
-import { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
+import { type Event, type EventType, type CommandType, type SelectorsMap, type CommandContext, type CommandIntents } from '@redemeine/kernel';
+import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap } from './redemeineComponent';
+import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
-import {
+import type {
   MapEntityCommands,
   EntityListOptions,
   EntityMapOptions,
   EntityMountOverrides,
   MountedStructureMetadata,
   MountedEntityPackage,
-  composeMountedComponentBehavior
 } from './componentMounts';
+import { composeMountedComponentBehavior } from './componentMounts';
 
 type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
   kind: 'list';
@@ -37,7 +38,7 @@ type MixinEntityRegistryValueObjectMapEntry = {
  * A compiled reusable piece of domain logic (Commands, Events, Selectors)
  * ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
  */
-export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPayloads = any, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>>
+export interface MixinPackage<S, E extends Record<string, any> = Record<string, any>, EOverrides extends object = {}, CPayloads extends Record<string, any> = Record<string, any>, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
   events: E;
   projectors: E;
@@ -52,7 +53,7 @@ export interface MixinPackage<S, E = any, EOverrides extends object = {}, CPaylo
   __registryType?: Registry;
 }
 
-export interface MixinBuilder<S, E = {}, EOverrides extends object = {}, CPayloads = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>> {
+export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides extends object = {}, CPayloads extends Record<string, any> = {}, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>> {
   /**
    * Register event handlers for this Mixin that apply state mutations.
    */

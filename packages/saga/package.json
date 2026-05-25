@@ -1,32 +1,53 @@
 {
   "name": "@redemeine/saga",
-  "version": "0.1.0",
-  "private": true,
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "version": "0.1.1-pre.0",
+  "description": "Process manager (saga) builder for long-running workflows",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/saga"
+  },
+  "homepage": "https://github.com/surikaterna/redemeine/tree/main/packages/saga#readme",
+  "bugs": {
+    "url": "https://github.com/surikaterna/redemeine/issues"
+  },
+  "keywords": [
+    "redemeine",
+    "cqrs",
+    "event-sourcing",
+    "saga",
+    "process-manager",
+    "workflow",
+    "orchestration"
+  ],
+  "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "require": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./aggregateBridge": {
-      "types": "./src/aggregateBridge.ts",
-      "import": "./src/aggregateBridge.ts",
-      "require": "./src/aggregateBridge.ts",
-      "default": "./src/aggregateBridge.ts"
+      "types": "./dist/aggregateBridge.d.ts",
+      "import": "./dist/aggregateBridge.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
-    "lint": "bunx tsc -p tsconfig.json --noEmit"
+    "lint": "tsc --noEmit"
   },
+  "private": true,
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
     "immer": "^10.1.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
   }
 }

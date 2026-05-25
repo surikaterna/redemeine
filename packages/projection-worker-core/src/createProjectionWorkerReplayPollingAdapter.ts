@@ -109,7 +109,7 @@ export function createProjectionWorkerReplayPollingAdapter(
         polledCount: batch.events.length,
         pushedCount: commits.length,
         dedupedCount,
-        nack
+        ...(nack ? { nack } : {})
       };
     }
   };

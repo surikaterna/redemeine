@@ -1,4 +1,4 @@
-import { Checkpoint, EventBatch } from './types';
+import type { Checkpoint, EventBatch } from './types';
 
 /**
  * Interface for subscribing to and polling events from an event store

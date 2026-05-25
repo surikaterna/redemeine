@@ -39,7 +39,7 @@ function resolveEntityContainer(
 function resolveEntityIdentifier(
     part: string,
     payload: Record<string, any>
-): { id?: unknown; mapKey?: unknown; compositePk?: Record<string, unknown> } {
+): { id?: unknown; mapKey?: unknown; compositePk?: Record<string, unknown> | undefined } {
     const camelPart = toCamelCase(part);
     const singularPart = singular(part);
     const singularCamelPart = singular(camelPart);
@@ -84,7 +84,7 @@ export function applyEventToDraft<S>(
     const parsedPath = parseTargetedEventPath(event.type, aggregateName);
     if (parsedPath) {
         for (const part of parsedPath.parts) {
-            const resolved = resolveEntityContainer(part, targetDraft);
+            const resolved = resolveEntityContainer(part, targetDraft as Record<string, any>);
             if (!resolved) continue;
 
             const { id, mapKey, compositePk } = event.payload

@@ -1,4 +1,4 @@
-import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate } from '@redemeine/mirage';
+import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate, type Mirage } from '@redemeine/mirage';
 import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
@@ -184,8 +184,8 @@ function createEventQueueSubscription(): EventQueueSubscription {
       const events = queue.filter((event) => event.sequence > cursor.sequence).slice(0, batchSize);
       const nextCursor = events.length > 0
         ? {
-            sequence: events[events.length - 1].sequence,
-            timestamp: events[events.length - 1].timestamp
+            sequence: events[events.length - 1]!.sequence,
+            timestamp: events[events.length - 1]!.timestamp
           }
         : cursor;
 
@@ -209,7 +209,7 @@ function buildCommandRouting(aggregates: readonly AggregateDefinitionLike[]): Ma
 }
 
 function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: number): ProjectionEvent {
-  const aggregateType = event.type.includes('.') ? event.type.split('.')[0] : 'unknown';
+  const aggregateType = event.type.includes('.') ? event.type.split('.')[0]! : 'unknown';
 
   return {
     aggregateType,
@@ -218,7 +218,7 @@ function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: nu
     payload: (event.payload ?? {}) as Record<string, unknown>,
     sequence,
     timestamp: new Date().toISOString(),
-    metadata: event.metadata
+    ...(event.metadata !== undefined ? { metadata: event.metadata } : {})
   };
 }
 
@@ -262,7 +262,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     await projectionInitialization;
   };
 
-  const mirages = new Map<string, ReturnType<typeof createMirage>>();
+  const mirages = new Map<string, Mirage<any, any, any, any>>();
   const queue: Array<{ command: CommandEnvelope; deferred: Deferred<void> }> = [];
   let isProcessing = false;
   let activeDrain: Promise<void> | null = null;
@@ -325,7 +325,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
       return existing;
     }
 
-    const mirage = createMirage(aggregate, aggregateId);
+    const mirage = createMirage(aggregate, aggregateId) as Mirage<any, any, any, any>;
     mirages.set(key, mirage);
     return mirage;
   };

@@ -1,10 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "Node16",
-    "moduleResolution": "node16",
-    "rootDir": "src",
-    "outDir": "dist"
+    "noEmit": true,
+    "paths": {
+      "@redemeine/mirage": ["../mirage/src/index.ts"],
+      "@redemeine/projection": ["../projection/src/index.ts"],
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"],
+      "@redemeine/projection-runtime-store-inmemory": ["../projection-runtime-store-inmemory/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src"]
 }

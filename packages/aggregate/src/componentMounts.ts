@@ -28,17 +28,17 @@ export type MountedStructureMetadata = {
   kind: MountedStructureKind;
   commandPrefix: string;
   statePath: string[];
-  pk?: string | readonly string[];
-  knownKeys?: readonly string[];
+  pk?: string | readonly string[] | undefined;
+  knownKeys?: readonly string[] | undefined;
 };
 
 export type MountedEntityPackage = {
   name: string;
   kind: MountedStructureKind;
   component?: EntityPackage<unknown, string>;
-  mountOverrides?: EntityMountOverrides;
-  pk?: string | readonly string[];
-  knownKeys?: readonly string[];
+  mountOverrides?: EntityMountOverrides | undefined;
+  pk?: string | readonly string[] | undefined;
+  knownKeys?: readonly string[] | undefined;
 };
 
 type ComponentBehaviorSnapshot = {
@@ -101,18 +101,18 @@ export function composeMountedComponentBehavior(
       if (mountEventNameOverrides[eventKey]) {
         mergedEventOverrides[mappedEventKey] = mountEventNameOverrides[eventKey];
       } else if ((nestedEventNameOverrides as Record<string, string>)[eventKey]) {
-        mergedEventOverrides[mappedEventKey] = (nestedEventNameOverrides as Record<string, string>)[eventKey];
+        mergedEventOverrides[mappedEventKey] = (nestedEventNameOverrides as Record<string, string>)[eventKey]!;
       }
     });
 
     Object.keys(nestedCommandNameOverrides as Record<string, string>).forEach((cmdKey) => {
       const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = (nestedCommandNameOverrides as Record<string, string>)[cmdKey];
+      mergedCommandOverrides[mappedCmdKey] = (nestedCommandNameOverrides as Record<string, string>)[cmdKey]!;
     });
 
     Object.keys(mountCommandNameOverrides).forEach((cmdKey) => {
       const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = mountCommandNameOverrides[cmdKey];
+      mergedCommandOverrides[mappedCmdKey] = mountCommandNameOverrides[cmdKey]!;
     });
   });
 
@@ -138,7 +138,7 @@ export function composeMountedComponentBehavior(
 
       const nestedCommands = nested.commandFactory(nestedEmit, resolvedContext);
       Object.keys(nestedCommands).forEach((cmdKey) => {
-        mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey];
+        mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey]!;
       });
     });
 
