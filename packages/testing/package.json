@@ -34,7 +34,8 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./test",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "bench": "bun run bench/testing-suite.bench.ts"
   },
   "dependencies": {
     "@redemeine/mirage": "workspace:*",
