@@ -1,4 +1,14 @@
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
+import {
+  inherit,
+  isInheritEntry,
+  isInheritExtended,
+  defaultIdentity
+} from './inherit';
+import type { InheritToken, InheritExtended } from './inherit';
+
+export { inherit } from './inherit';
+export type { InheritToken, InheritExtended } from './inherit';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
@@ -139,40 +149,6 @@ type ProjectionHandlersForAggregate<TState, TAggregate> = {
   [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>;
 };
 
-// --- inherit token ---
-
-const INHERIT_BRAND = Symbol('inherit');
-
-export interface InheritExtended<TState = any, TEvent = any> {
-  readonly __inheritBrand: typeof INHERIT_BRAND;
-  readonly after: (state: TState, event: TEvent, context: ProjectionContext) => void;
-}
-
-export interface InheritToken {
-  readonly __inheritBrand: typeof INHERIT_BRAND;
-  extend<TState, TEvent>(
-    after: (state: TState, event: TEvent, context: ProjectionContext) => void
-  ): InheritExtended<TState, TEvent>;
-}
-
-export const inherit: InheritToken = Object.freeze({
-  __inheritBrand: INHERIT_BRAND,
-  extend<TState, TEvent>(
-    after: (state: TState, event: TEvent, context: ProjectionContext) => void
-  ): InheritExtended<TState, TEvent> {
-    return Object.freeze({ __inheritBrand: INHERIT_BRAND, after });
-  }
-}) as InheritToken;
-
-function isInheritEntry(value: unknown): boolean {
-  return typeof value === 'object' && value !== null &&
-    '__inheritBrand' in value && (value as any).__inheritBrand === INHERIT_BRAND;
-}
-
-function isInheritExtended(value: unknown): value is InheritExtended {
-  return isInheritEntry(value) && 'after' in (value as any);
-}
-
 type InheritableHandlersForAggregate<TState, TAggregate> = {
   [K in AggregateEventKeys<TAggregate>]?:
     | ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>
@@ -200,10 +176,6 @@ export interface ProjectionDefinition<TState = unknown> {
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
   hooks?: ProjectionHooks<TState>;
-}
-
-function defaultIdentity(event: BaseProjectionEvent): string {
-  return event.aggregateId;
 }
 
 // --- Builder interface ---
