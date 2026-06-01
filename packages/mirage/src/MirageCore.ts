@@ -1,9 +1,9 @@
-import { type Command, type Event, type CommandInterceptorContext, type PluginIntents, type RedemeinePlugin, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import { type Command, type Event, type CommandInterceptorContext, type RedemeinePlugin, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { BuiltAggregate } from '@redemeine/aggregate';
 import type { DispatchResult } from './mirage.types';
 
 export const wrapPluginHookFailure = (
-    plugin: RedemeinePlugin<any>,
+    plugin: RedemeinePlugin,
     hook: 'onBeforeCommand' | 'onHydrateEvent' | 'onBeforeAppend' | 'onAfterCommit',
     aggregateId: string,
     cause: unknown
@@ -17,13 +17,13 @@ export const wrapPluginHookFailure = (
     });
 };
 
-export const assertPluginHasKey = (plugin: RedemeinePlugin<any>): void => {
+export const assertPluginHasKey = (plugin: RedemeinePlugin): void => {
     if (!plugin.key || typeof plugin.key !== 'string') {
         throw new Error('Invalid plugin configuration: plugin.key is required and must be a non-empty string.');
     }
 };
 
-export const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean => {
+export const hasHydrateEventPlugins = (plugins: RedemeinePlugin[]): boolean => {
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
 
@@ -52,32 +52,33 @@ export class MirageCore<S> {
     };
     public version: number = 0;
     private listeners: ((state: S) => void)[] = [];
-    private plugins: RedemeinePlugin<any>[];
+    private plugins: RedemeinePlugin[];
     private hasBeforeCommandPlugins: boolean;
 
     public get uncommitted(): Event[] {
         return this.pendingResults.events;
     }
 
-    private getResultIntents(events: Event[]): PluginIntents<any> {
+    private getResultIntents(events: Event[]): Record<string, unknown> {
         const intents = (events as Event[] & { __intents?: Record<string, unknown> }).__intents;
-        return intents && typeof intents === 'object' ? intents : {} as PluginIntents<any>;
+        return intents && typeof intents === 'object' ? intents : {};
     }
 
     constructor(
+        // SAFETY: BuiltAggregate generic params are erased at runtime; only S matters here
         public builder: BuiltAggregate<S, any, any, any>,
         public id: string,
         public state: S,
         public contract?: Contract,
         public strict: boolean = false,
-        plugins: RedemeinePlugin<any>[] = []
+        plugins: RedemeinePlugin[] = []
     ) {
         this.plugins = plugins;
         this.plugins.forEach(assertPluginHasKey);
         this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
     }
 
-    private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
+    private async runBeforeCommandInterceptors(command: Command): Promise<void> {
         const commandMetaRegistry = this.builder.metadata?.commands || {};
         const ctx: CommandInterceptorContext<{}, unknown> = {
             pluginKey: '',
@@ -99,7 +100,7 @@ export class MirageCore<S> {
         }
     }
 
-    private executeCommand(command: Command<any, string>): S {
+    private executeCommand(command: Command): S {
         if (this.builder.hooks?.onBeforeCommand) {
             this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state));
         }
@@ -120,16 +121,16 @@ export class MirageCore<S> {
         return this.state;
     }
 
-    private processAndApply(command: Command<any, string>): S {
+    private processAndApply(command: Command): S {
         return this.executeCommand(command);
     }
 
-    private async dispatchWithPlugins(command: Command<any, string>): Promise<S> {
+    private async dispatchWithPlugins(command: Command): Promise<S> {
         await this.runBeforeCommandInterceptors(command);
         return this.executeCommand(command);
     }
 
-    private validateCommand(command: Command<any, string>): void {
+    private validateCommand(command: Command): void {
         try {
             this.contract!.validateCommand(command.type, command.payload);
         } catch (err: unknown) {
@@ -184,8 +185,8 @@ export class MirageCore<S> {
         this.listeners.forEach(l => l(this.state));
     }
 
-    public dispatch(cmd: any): DispatchResult<S> {
-        const command = cmd as Command<any, string>;
+    public dispatch(cmd: Command): DispatchResult<S> {
+        const command = cmd;
 
         if (this.hasBeforeCommandPlugins) {
             return this.dispatchWithPlugins(command);

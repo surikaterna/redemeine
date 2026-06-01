@@ -38,6 +38,7 @@ export interface DemeineCompatibleAggregate<S extends object = object> {
     processDelete(command: Command): DemeineCompatibleAggregate<S>;
     applyDeleted(): void;
 
+    // SAFETY: dynamic method assignment for demeine compat requires index signature with `any`
     [key: string]: any;
 }
 
@@ -75,7 +76,7 @@ function extractEventKey(type: string): string {
     return camelCase(filteredParts.join('_'));
 }
 
-function deriveAggregateType(builder: BridgeableAggregate<any>): string {
+function deriveAggregateType<S extends object>(builder: BridgeableAggregate<S>): string {
     const allTypes = {
         ...builder.types.commands,
         ...builder.types.events

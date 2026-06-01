@@ -36,6 +36,7 @@ export type MirageCommandMap<S, M> = IsBroadRecord<M> extends true
                 : (payload: M[K]) => DispatchResult<S>;
     };
 
+// SAFETY: conditional type inference requires `any` in extends positions to correctly extract generic params
 export type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
 export type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
 export type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R, any> ? R : {};

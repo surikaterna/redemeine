@@ -3,9 +3,11 @@ import type { EntityPackage, AggregateEntityRegistry } from '@redemeine/aggregat
 import type { MirageContextPolymorphicBinding, MirageContextSingleBinding } from '@redemeine/aggregate';
 import type { DispatchResult, MirageCommandMap } from './core';
 
+// SAFETY: conditional type inference requires `any` in extends positions to correctly extract generic params
 type EntityStateOf<T> = T extends EntityPackage<infer ES, any, any, any, any, any, any> ? ES : never;
 type EntityCommandsOf<T> = T extends EntityPackage<any, any, any, any, infer C, any, any> ? C : never;
 
+// SAFETY: tuple manipulation utilities require `any` for extends constraints on variadic positions
 type DropFirstN<Args extends any[], N extends number, Count extends any[] = []> =
     Count['length'] extends N
         ? Args

@@ -14,11 +14,12 @@ const yieldToEventLoop = async (): Promise<void> => {
 };
 
 export const hydrateStateFromEvents = async <S>(
+    // SAFETY: BuiltAggregate generic params erased at runtime; only S matters
     builder: BuiltAggregate<S, any, any, any>,
     aggregateId: string,
     baseState: S,
     events: HydrationEvents<Event>,
-    plugins: RedemeinePlugin<any>[]
+    plugins: RedemeinePlugin[]
 ): Promise<S> => {
     let state = baseState;
     let replayedEvents = 0;

@@ -35,10 +35,10 @@ const makeMapItemProxy = (
             if (prop === 'then') return undefined;
 
             const mapObject = ctx.resolvePath(mapPath);
-            const entity = mapObject && typeof mapObject === 'object' ? mapObject[mapKey] : undefined;
+            const entity = mapObject && typeof mapObject === 'object' ? (mapObject as Record<string, unknown>)[mapKey] : undefined;
 
-            if (entity && typeof entity === 'object' && prop in entity) {
-                return createReadonlyDeepProxy(entity[prop]);
+            if (entity && typeof entity === 'object' && prop in (entity as object)) {
+                return createReadonlyDeepProxy((entity as Record<string, unknown>)[prop]);
             }
 
             return ctx.makeDeepProxy([...mapPath, mapKey, prop], [...commandPrefixPath, prop], scopedContext);
@@ -63,7 +63,7 @@ export const makeMapProxy = (
         get(target, prop) {
             if (prop === 'then') return undefined;
 
-            const mapObject = ctx.resolvePath(mapPath) || {};
+            const mapObject = (ctx.resolvePath(mapPath) || {}) as Record<string, unknown>;
 
             if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {

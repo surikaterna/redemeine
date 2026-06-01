@@ -1,6 +1,7 @@
 import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
 import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
 import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
+import type { AggregateEntityRegistry } from '@redemeine/aggregate';
 import type { BuiltAggregateCommands, BuiltAggregateState, BuiltAggregateRegistry, BuiltAggregatePlugins } from './mirage.types';
 import { assertPluginHasKey, wrapPluginHookFailure } from './MirageCore';
 
@@ -29,7 +30,7 @@ export type DepotGetOptions<TState> = {
  * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
  * Handles event sourced hydration and persistence of new uncommitted events.
  */
-export interface Depot<TState extends {}, M extends Record<string, any> = any, Registry extends Record<string, any> = {}> {
+export interface Depot<TState extends {}, M extends Record<string, unknown> = Record<string, unknown>, Registry extends AggregateEntityRegistry = AggregateEntityRegistry> {
   get(id: string, options?: DepotGetOptions<TState>): Promise<Mirage<TState, M, Registry>>;
   save(mirage: Mirage<TState, M, Registry>): Promise<void>;
 }
@@ -37,12 +38,13 @@ export interface Depot<TState extends {}, M extends Record<string, any> = any, R
 /**
  * Creates a standard Depot linking an EventStore to a BuiltAggregate.
  */
+// SAFETY: BuiltAggregate generic params are erased at runtime; only state type matters
 export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
   builder: BA,
   store: EventStore,
   options?: MirageOptions<BuiltAggregatePlugins<BA>>
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
-  const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
+  const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin[];
 
   plugins.forEach(assertPluginHasKey);
 
@@ -90,12 +92,13 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
     for (const plugin of plugins) {
       if (typeof plugin.onAfterCommit === 'function') {
         try {
+          // SAFETY: intents type is `never` when plugin extensions default to {}; cast needed for runtime dispatch
           await plugin.onAfterCommit({
             pluginKey: plugin.key,
             aggregateId: id,
             events,
             intents
-          });
+          } as any);
         } catch (error) {
           throw wrapPluginHookFailure(plugin, 'onAfterCommit', id, error);
         }
@@ -122,6 +125,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           return createMirage(builder, id, { ...options, events });
       },
       save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {
+        // SAFETY: accessing internal symbol on opaque Proxy-wrapped Mirage
         const core = (mirage as any)[MirageCoreSymbol];
         if (!core) throw new Error('Not a valid Mirage Instance');
 
