@@ -3,10 +3,15 @@ import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
 import type {
-  IEventSubscription,
-  IProjectionStore,
-  IProjectionLinkStore
+  IProjectionStore
 } from '@redemeine/projection-runtime-core';
+import {
+  loadProjectionRuntimeModule,
+  createEventQueueSubscription,
+  type ProjectionRuntimeModule,
+  type EventQueueSubscription,
+  type ProjectionRuntime
+} from './projectionRuntime';
 
 type CommandEnvelope = {
   readonly type: string;
@@ -18,11 +23,6 @@ type DomainEvent = {
   readonly type: string;
   readonly payload: unknown;
   readonly metadata?: Record<string, unknown>;
-};
-
-type Checkpoint = {
-  sequence: number;
-  timestamp?: string;
 };
 
 type ProjectionEvent = {
@@ -57,71 +57,6 @@ type Deferred<T> = {
   resolve(value: T): void;
   reject(error: unknown): void;
 };
-
-type EventQueueSubscription = IEventSubscription & {
-  push(events: readonly ProjectionEvent[]): void;
-  hasPendingEventsAfter(cursor: Checkpoint): boolean;
-};
-
-type ProjectionDaemonLike<TState> = {
-  processBatch(): Promise<{ eventsProcessed: number }>;
-};
-
-type ProjectionRuntimeCoreModule = {
-  ProjectionDaemon: new <TState extends Record<string, unknown>>(options: {
-    projection: ProjectionDefinition<TState>;
-    subscription: IEventSubscription;
-    store: IProjectionStore<TState>;
-    batchSize: number;
-    linkStore: IProjectionLinkStore;
-  }) => ProjectionDaemonLike<TState>;
-};
-
-type ProjectionRuntimeStoreInMemoryModule = {
-  InMemoryProjectionStore: new <TState>() => IProjectionStore<TState>;
-  InMemoryProjectionLinkStore: new () => IProjectionLinkStore;
-};
-
-type ProjectionRuntimeModule = {
-  core: ProjectionRuntimeCoreModule;
-  inmemory: ProjectionRuntimeStoreInMemoryModule;
-};
-
-type ProjectionRuntime = {
-  readonly projection: ProjectionDefinition<any>;
-  readonly store: IProjectionStore<any>;
-  readonly subscription: EventQueueSubscription;
-  readonly daemon: ProjectionDaemonLike<any>;
-};
-
-let projectionRuntimeModulePromise: Promise<ProjectionRuntimeModule> | null = null;
-async function dynamicImport(specifier: string): Promise<unknown> {
-  return import(/* @vite-ignore */ specifier);
-}
-
-async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
-  if (!projectionRuntimeModulePromise) {
-    projectionRuntimeModulePromise = (async () => {
-      try {
-        const core = await dynamicImport('@redemeine/projection-runtime-core') as ProjectionRuntimeCoreModule;
-        const inmemory = await dynamicImport('@redemeine/projection-runtime-store-inmemory') as ProjectionRuntimeStoreInMemoryModule;
-        return { core, inmemory };
-      } catch (packageImportError) {
-        try {
-          const core = await dynamicImport('../../projection-runtime-core/src/index') as ProjectionRuntimeCoreModule;
-          const inmemory = await dynamicImport('../../projection-runtime-store-inmemory/src/index') as ProjectionRuntimeStoreInMemoryModule;
-          return { core, inmemory };
-        } catch (sourceImportError) {
-          throw new Error(
-            `createTestDepot: unable to load projection runtime v3 core/store-inmemory modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
-          );
-        }
-      }
-    })();
-  }
-
-  return projectionRuntimeModulePromise;
-}
 
 export interface CreateTestDepotOptions {
   readonly aggregates: readonly AggregateDefinitionLike[];
@@ -167,36 +102,6 @@ function resolveAggregateId(command: CommandEnvelope): string {
   }
 
   return 'test-aggregate';
-}
-
-function createEventQueueSubscription(): EventQueueSubscription {
-  let queue: ProjectionEvent[] = [];
-
-  return {
-    push(events) {
-      queue.push(...events);
-      queue = queue
-        .slice()
-        .sort((left, right) => left.sequence - right.sequence || left.timestamp.localeCompare(right.timestamp));
-    },
-    hasPendingEventsAfter(cursor) {
-      return queue.some((event) => event.sequence > cursor.sequence);
-    },
-    async poll(cursor, batchSize) {
-      const events = queue.filter((event) => event.sequence > cursor.sequence).slice(0, batchSize);
-      const nextCursor = events.length > 0
-        ? {
-            sequence: events[events.length - 1]!.sequence,
-            timestamp: events[events.length - 1]!.timestamp
-          }
-        : cursor;
-
-      return {
-        events,
-        nextCursor
-      };
-    }
-  };
 }
 
 function buildCommandRouting(aggregates: readonly AggregateDefinitionLike[]): Map<string, AggregateDefinitionLike> {
