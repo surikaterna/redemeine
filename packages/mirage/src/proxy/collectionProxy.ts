@@ -2,6 +2,7 @@ import { singular } from '@redemeine/aggregate';
 import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
+import { findEntityInCollection } from './entityCache';
 
 export const selectFromList = (mountName: string, mount: MountMetadata, rawPk: unknown): InvocationContext => {
     if (Array.isArray(mount.pk)) {
@@ -92,13 +93,7 @@ export const makeEntityMirageProxy = (
 
             const collection = ctx.resolvePath(collectionPath);
             const entity = Array.isArray(collection)
-                ? collection.find((candidate: any) => {
-                    if (selection.entityPk) {
-                        return Object.keys(selection.entityPk).every((k) => String(candidate?.[k]) === String(selection.entityPk?.[k]));
-                    }
-                    const id = (selection.idsPayload as Record<string, unknown>).id;
-                    return candidate?.id === id || candidate?.id === Number(id);
-                })
+                ? findEntityInCollection(collection, selection, ctx.core.version)
                 : undefined;
 
             if (entity && prop in entity) {

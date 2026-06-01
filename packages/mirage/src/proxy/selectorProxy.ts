@@ -4,6 +4,7 @@ import type { ReadonlyDeep } from '@redemeine/kernel';
 import type { InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findListMountForEntity, selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
+import { findEntityInCollection } from './entityCache';
 
 const roleCommandNamesCache = new WeakMap<object, string[]>();
 
@@ -45,13 +46,7 @@ export const resolveEntityFromSelection = (collectionPath: string[], selection: 
         return undefined;
     }
 
-    return collection.find((candidate: any) => {
-        if (selection.entityPk) {
-            return Object.keys(selection.entityPk).every((k) => String(candidate?.[k]) === String(selection.entityPk?.[k]));
-        }
-        const id = (selection.idsPayload as Record<string, unknown>).id;
-        return candidate?.id === id || candidate?.id === Number(id);
-    });
+    return findEntityInCollection(collection, selection, ctx.core.version);
 };
 
 export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
