@@ -36,9 +36,9 @@ export interface NamingStrategy {
 }
 
 export interface AggregateHooks<State> {
-  onBeforeCommand?: (command: CommandType | Command<any, any>, state: ReadonlyDeep<State>) => void;
-  onAfterCommand?: (command: CommandType | Command<any, any>, events: Event<any, any>[], state: ReadonlyDeep<State>) => void;
-  onEventApplied?: (event: Event<any, any>, state: ReadonlyDeep<State>) => void;
+  onBeforeCommand?: (command: CommandType | Command<unknown, string>, state: ReadonlyDeep<State>) => void;
+  onAfterCommand?: (command: CommandType | Command<unknown, string>, events: Event<unknown, string>[], state: ReadonlyDeep<State>) => void;
+  onEventApplied?: (event: Event<unknown, string>, state: ReadonlyDeep<State>) => void;
 }
 
 export interface PluginExtensions {
@@ -86,7 +86,7 @@ export interface EventInterceptorContext<
 
 export interface AfterCommitContext<
   TPlugins extends PluginExtensions = {},
-  TEvent extends Event<any, any> = Event<any, any>
+  TEvent extends Event<unknown, string> = Event<unknown, string>
 > {
   pluginKey: string;
   aggregateId: string;
@@ -115,14 +115,14 @@ export type UnionToIntersection<U> = (
   ? I
   : never;
 
-export type MergePluginExtensions<TPlugins extends readonly RedemeinePlugin<any>[]> =
+export type MergePluginExtensions<TPlugins extends readonly RedemeinePlugin<PluginExtensions>[]> =
   UnionToIntersection<ExtractPluginExtensions<TPlugins[number]>>;
 
 /**
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.
  */
-export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: any[]) => any>;
+export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: unknown[]) => unknown>;
 
 export type CommandContext<TIntents extends Record<string, unknown>> = {
   [K in keyof TIntents]: (payload: TIntents[K]) => { command: K; payload: TIntents[K] };
@@ -140,24 +140,24 @@ export type CommandIntents<TCommands> = {
  * A foundational building block representing a domain event. 
  * Records an intent that has successfully altered the aggregate state.
  */
-export interface Event<P = any, T extends EventType | string = EventType> {
+export interface Event<P = unknown, T extends EventType | string = EventType> {
   id?: string;
   type: T;
   payload: P;
   headers?: EnvelopeHeaders;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 /**
  * A foundational building block representing a domain command.
  * Requests a state change and houses the necessary payload for processing validation.
  */
-export interface Command<P = any, T extends CommandType | string = CommandType> {
+export interface Command<P = unknown, T extends CommandType | string = CommandType> {
   id?: string;
   type: T;
   payload: P;
   headers?: EnvelopeHeaders;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 export type CommandResult<TEvent, TPlugins extends PluginExtensions = {}> =
@@ -201,7 +201,7 @@ export class RedemeinePluginHookError extends Error {
  * Describes the originating command attached to emitted event metadata.
  * This supports command-to-event traceability, including one-command-many-events flows.
  */
-export interface EventCommandLink<P = any, T extends CommandType | string = CommandType> {
+export interface EventCommandLink<P = unknown, T extends CommandType | string = CommandType> {
   id?: string | undefined;
   type: T;
   summary?: P;

@@ -4,7 +4,7 @@ import { createIdentity } from './identity';
 /**
  * Foundational type defining a structural preparation callback before a command factory commits the payload.
  */
-export type PrepareCommand<P> = (...args: any[]) => { payload: P; headers?: EnvelopeHeaders };
+export type PrepareCommand<P> = (...args: unknown[]) => { payload: P; headers?: EnvelopeHeaders };
 
 /**
  * Foundational type representing a compiled factory that hydrates and dispatches typed commands.
@@ -15,17 +15,17 @@ export type CommandFactory<P = void, T extends CommandType | string = CommandTyp
 /**
  * Foundational type for a compiled factory extending prepare-command behaviors.
  */
-export type PreparedCommandFactory<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType> =
+export type PreparedCommandFactory<PC extends PrepareCommand<unknown>, T extends CommandType | string = CommandType> =
     ((...args: Parameters<PC>) => Command<ReturnType<PC>['payload'], T>) & { type: T, toString: () => T };
 
 export function createCommand<P = void, T extends CommandType | string = CommandType>(type: T): CommandFactory<P, T>;
-export function createCommand<PC extends PrepareCommand<any>, T extends CommandType | string = CommandType>(
+export function createCommand<PC extends PrepareCommand<unknown>, T extends CommandType | string = CommandType>(
     type: T,
     prepareCommand: PC
 ): PreparedCommandFactory<PC, T>;
 
-export function createCommand(type: string, prepareCommand?: Function): any {   
-    function commandFactory(...args: any[]) {
+export function createCommand(type: string, prepareCommand?: Function) {   
+    function commandFactory(...args: unknown[]) {
         const id = createIdentity();
         if (prepareCommand) {
             const prepared = prepareCommand(...args);
