@@ -90,7 +90,7 @@ export function applyEventToDraft<S>(
             if (!resolved) continue;
 
             const { id, mapKey, compositePk } = event.payload
-                ? resolveEntityIdentifier(part, event.payload)
+                ? resolveEntityIdentifier(part, event.payload as Record<string, unknown>)
                 : { id: undefined, mapKey: undefined, compositePk: undefined };
 
             if (resolved.kind === 'array') {
