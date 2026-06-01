@@ -28,6 +28,20 @@ export const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean
 };
 
 /**
+ * Handles "schema not found" errors from contract validation.
+ * In strict mode, rethrows; otherwise logs a warning and swallows the error.
+ */
+const handleSchemaValidationError = (err: unknown, strict: boolean): void => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('schema not found')) {
+        if (strict) throw err;
+        console.warn(message);
+    } else {
+        throw err;
+    }
+};
+
+/**
  * The internal core controller of a Mirage instance.
  * Tracks the uncommitted events, current version, and executes the core command routing.
  */
@@ -87,7 +101,7 @@ export class MirageCore<S> {
 
     private executeCommand(command: Command<any, string>): S {
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state));
         }
 
         if (this.contract) {
@@ -97,7 +111,7 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, command);
 
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state));
         }
 
         this.applyEvents(events);
@@ -118,13 +132,8 @@ export class MirageCore<S> {
     private validateCommand(command: Command<any, string>): void {
         try {
             this.contract!.validateCommand(command.type, command.payload);
-        } catch (err: any) {
-            if (err.message.includes('schema not found')) {
-                if (this.strict) throw err;
-                console.warn(err.message);
-            } else {
-                throw err;
-            }
+        } catch (err: unknown) {
+            handleSchemaValidationError(err, this.strict);
         }
     }
 
@@ -133,19 +142,14 @@ export class MirageCore<S> {
             if (this.contract) {
                 try {
                     this.contract.validateEvent(ev.type, ev.payload);
-                } catch (err: any) {
-                    if (err.message.includes('schema not found')) {
-                        if (this.strict) throw err;
-                        console.warn(err.message);
-                    } else {
-                        throw err;
-                    }
+                } catch (err: unknown) {
+                    handleSchemaValidationError(err, this.strict);
                 }
             }
             this.state = this.builder.apply(this.state, ev);
             this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state));
             }
         }
 

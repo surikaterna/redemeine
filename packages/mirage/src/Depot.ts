@@ -1,6 +1,8 @@
 import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
 import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
 import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
+import type { BuiltAggregateCommands, BuiltAggregateState, BuiltAggregateRegistry, BuiltAggregatePlugins } from './mirage.types';
+import { assertPluginHasKey, wrapPluginHookFailure } from './MirageCore';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
@@ -21,10 +23,7 @@ export type DepotGetOptions<TState> = {
   snapshot?: DepotSnapshot<TState>;
 };
 
-type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
-type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
-type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R> ? R : {};
-type BuiltAggregatePlugins<T> = T extends BuiltAggregate<any, any, any, any, any, infer P> ? P : {};
+
 
 /**
  * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
@@ -45,27 +44,7 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
 ): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
   const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
 
-  const assertPluginHasKey = (plugin: RedemeinePlugin<any>): void => {
-    if (!plugin.key || typeof plugin.key !== 'string') {
-      throw new Error('Invalid plugin configuration: plugin.key is required and must be a non-empty string.');
-    }
-  };
-
   plugins.forEach(assertPluginHasKey);
-
-  const wrapPluginHookFailure = (
-    plugin: RedemeinePlugin<any>,
-    hook: 'onBeforeAppend' | 'onAfterCommit',
-    aggregateId: string,
-    cause: unknown
-  ): RedemeinePluginHookError => {
-    return new RedemeinePluginHookError({
-      pluginKey: plugin.key,
-      hook,
-      aggregateId,
-      cause
-    });
-  };
 
   const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
     if (plugins.length === 0) return events;
