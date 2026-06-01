@@ -64,6 +64,11 @@ async function dynamicImport(specifier: string): Promise<unknown> {
   return import(/* @vite-ignore */ specifier);
 }
 
+/**
+ * Loads projection runtime modules without module-level caching.
+ * Each depot gets its own import attempt via the caller's closure,
+ * preventing a failed import from poisoning subsequent depot creations.
+ */
 export async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   try {
     const core = await dynamicImport('@redemeine/projection-runtime-core') as ProjectionRuntimeCoreModule;
