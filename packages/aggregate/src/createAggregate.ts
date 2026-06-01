@@ -1,4 +1,4 @@
-import type { NamingStrategy, AggregateHooks, PluginExtensions, RedemeinePlugin } from '@redemeine/kernel';
+import type { NamingStrategy, AggregateHooks, PluginExtensions, RedemeinePlugin, Contract } from '@redemeine/kernel';
 import type { EntityPackage } from './createEntity';
 import type { RedemeineEventDefinition, GenericCommandFactory } from './redemeineComponent';
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
@@ -35,6 +35,8 @@ export type { AggregateBuilder } from './types/aggregate';
  *     }
  *   }))
  */
+export type UnmatchedEventHandler = (eventType: string, aggregateName: string) => void;
+
 export function createAggregate<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}>(
     aggregateName: Name,
     initialState: S
@@ -48,6 +50,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
     let _hooks: AggregateHooks<S> = {};
     // SAFETY: `any` required — RedemeinePlugin generic param must satisfy PluginExtensions constraint
     let _plugins: RedemeinePlugin<any>[] = [];
+    let _unmatchedEventHandler: UnmatchedEventHandler | undefined;
+    let _contract: Contract | undefined;
 
     const builder = bindFluentMethods({}, {
         selectors: (selectorsOrFactory: AggregateSelectorsMap<S> | ((utils: AggregateSelectorUtils) => AggregateSelectorsMap<S>)) => {
@@ -154,6 +158,16 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             return builder;
         },
 
+        onUnmatchedEvent: (handler: UnmatchedEventHandler) => {
+            _unmatchedEventHandler = handler;
+            return builder;
+        },
+
+        contract: (contract: Contract) => {
+            _contract = contract;
+            return builder;
+        },
+
         get _state() {
             const snapshot = component.getSnapshot();
             return {
@@ -180,7 +194,9 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 entityPackages: _entityPackages,
                 namingStrategy: _namingStrategy,
                 hooks: _hooks,
-                plugins: _plugins
+                plugins: _plugins,
+                ...(_unmatchedEventHandler ? { unmatchedEventHandler: _unmatchedEventHandler } : {}),
+                ...(_contract ? { contract: _contract } : {})
             });
         }
     });

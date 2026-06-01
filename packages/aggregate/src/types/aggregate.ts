@@ -1,4 +1,4 @@
-import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep } from '@redemeine/kernel';
+import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep, Contract } from '@redemeine/kernel';
 import type { EntityPackage } from '../createEntity';
 import type { GenericCommandFactory, AnyFunction } from '../redemeineComponent';
 import type { Merge } from './Merge';
@@ -170,6 +170,10 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins>;
 
     hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins>;
+
+    onUnmatchedEvent: (handler: (eventType: string, aggregateName: string) => void) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins>;
+
+    contract: (contract: Contract) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins>;
 
     build: () => {
         aggregateType: Name;

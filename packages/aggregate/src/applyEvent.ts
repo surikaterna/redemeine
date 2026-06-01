@@ -1,6 +1,7 @@
 import { produce, type Draft } from 'immer';
 import type { Event } from '@redemeine/kernel';
 import type { AnyFunction } from './redemeineComponent';
+import type { UnmatchedEventHandler } from './createAggregate';
 import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
 
 /**
@@ -77,7 +78,8 @@ export function applyEventToDraft<S>(
     allEventOverrides: Record<string, string>,
     projectorByEventType: Record<string, AnyFunction> = {},
     scopedProjectorByEventType: Record<string, AnyFunction> = {},
-    scopedEventProjectors: Record<string, AnyFunction> = {}
+    scopedEventProjectors: Record<string, AnyFunction> = {},
+    unmatchedEventHandler?: UnmatchedEventHandler
 ): void {
     // SAFETY: `any` required — targetDraft narrows to sub-entities during path traversal, losing the Draft<S> type
     let targetDraft: any = draft;
@@ -136,8 +138,12 @@ export function applyEventToDraft<S>(
         if (projector) {
             projector(targetDraft, event);
         }
-    } else if (process.env.NODE_ENV !== 'production') {
-        console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
+    } else {
+        if (unmatchedEventHandler) {
+            unmatchedEventHandler(event.type, aggregateName);
+        } else {
+            console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
+        }
     }
 }
 
@@ -149,9 +155,10 @@ export function applyEvent<S>(
     allEventOverrides: Record<string, string>,
     projectorByEventType: Record<string, AnyFunction> = {},
     scopedProjectorByEventType: Record<string, AnyFunction> = {},
-    scopedEventProjectors: Record<string, AnyFunction> = {}
+    scopedEventProjectors: Record<string, AnyFunction> = {},
+    unmatchedEventHandler?: UnmatchedEventHandler
 ): S {
     return produce(state, (draft: Draft<S>) => {
-        applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors);
+        applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler);
     }) as S;
 }

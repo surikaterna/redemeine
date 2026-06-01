@@ -1,7 +1,8 @@
-import type { Event, NamingStrategy, AggregateHooks, RedemeinePlugin } from '@redemeine/kernel';
+import type { Event, NamingStrategy, AggregateHooks, RedemeinePlugin, Contract } from '@redemeine/kernel';
 import type { MountedEntityPackage, MountedStructureMetadata } from './types/entityMount';
 import type { AggregateMixinLike, AggregateSelectorsMap } from './types/aggregate';
 import type { GenericCommandFactory } from './redemeineComponent';
+import type { UnmatchedEventHandler } from './createAggregate';
 import { resolveCommandHandler } from './redemeineComponent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
@@ -29,6 +30,8 @@ export type BuildAggregateInput<S, TMeta> = {
     namingStrategy: NamingStrategy;
     hooks: AggregateHooks<S>;
     plugins: RedemeinePlugin<any>[];
+    unmatchedEventHandler?: UnmatchedEventHandler;
+    contract?: Contract;
 };
 
 /**
@@ -36,7 +39,7 @@ export type BuildAggregateInput<S, TMeta> = {
  * and assembles the final aggregate object.
  */
 export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: BuildAggregateInput<S, TMeta>) {
-    const { aggregateName, initialState, snapshot, commandsFactory, mixins, entityPackages, namingStrategy, hooks, plugins } = input;
+    const { aggregateName, initialState, snapshot, commandsFactory, mixins, entityPackages, namingStrategy, hooks, plugins, unmatchedEventHandler, contract } = input;
 
     // 1. Resolve events from mixins
     const resolved = resolveEvents<S, TMeta>(snapshot, mixins, aggregateName, namingStrategy);
@@ -94,10 +97,10 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     return {
         aggregateType: aggregateName,
         initialState,
-        process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType),
-        apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors),
+        process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType, contract),
+        apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler),
         applyToDraft: (draft: S, event: Event): void => {
-            applyEventToDraft(aggregateName, draft as Draft<S>, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors);
+            applyEventToDraft(aggregateName, draft as Draft<S>, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler);
         },
         commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
         eventCreators: emit,
