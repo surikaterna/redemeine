@@ -1,3 +1,5 @@
+import { areEqual } from './sagaHelpers';
+
 type CommandEnvelope = {
   readonly type: string;
   readonly payload: unknown;
@@ -31,10 +33,6 @@ type ComparableEvent = {
   readonly headers?: unknown;
   readonly metadata?: unknown;
 };
-
-function areEqual(actual: unknown, expected: unknown): boolean {
-  return JSON.stringify(actual) === JSON.stringify(expected);
-}
 
 function eventForComparison(event: EventEnvelope): ComparableEvent {
   const comparableMetadata =
