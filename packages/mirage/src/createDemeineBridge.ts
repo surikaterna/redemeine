@@ -141,6 +141,7 @@ export function createDemeineBridge<S extends object>(
                     event.id = createIdentity();
                 }
                 if (!event.aggregateId) {
+                    // SAFETY: demeine compat requires mutable aggregateId on Event
                     (event as any).aggregateId = id;
                 }
                 if (event.type !== '$stream.deleted.event') {
@@ -168,9 +169,11 @@ export function createDemeineBridge<S extends object>(
                     command.id = createIdentity();
                 }
                 if (!command.aggregateId) {
+                    // SAFETY: demeine compat requires mutable aggregateId on Command
                     (command as any).aggregateId = id;
                 }
                 if (aggregateType) {
+                    // SAFETY: demeine compat requires aggregateType not in Command type
                     (command as any).aggregateType = aggregateType;
                 }
                 return agg._process(command);
@@ -194,20 +197,22 @@ export function createDemeineBridge<S extends object>(
             },
 
             async delete() {
+                // SAFETY: synthetic delete command requires aggregateId not in Command base type
                 return agg._sink({
                     type: '$stream.delete.command',
                     aggregateId: id,
                     payload: {}
-                } as any);
+                } as Command & { aggregateId: string });
             },
 
             processDelete(command: Command) {
+                // SAFETY: synthetic deleted event requires fields not in Event base type
                 return agg._apply({
                     type: '$stream.deleted.event',
                     aggregateId: id,
                     correlationId: command.id,
                     payload: { aggregateType }
-                } as any, true);
+                } as Event & { aggregateId: string }, true);
             },
 
             applyDeleted() { /* no-op */ }
@@ -236,7 +241,7 @@ export function createDemeineBridge<S extends object>(
         // Uses commandCreators which respects pack functions for positional-arg support
         for (const [key] of Object.entries(builder.types.commands)) {
             agg[key] = function (...args: unknown[]) {
-                const command = (builder.commandCreators as any)[key](...args);
+                const command = builder.commandCreators[key]!(...args);
                 return agg._sink(command);
             };
         }

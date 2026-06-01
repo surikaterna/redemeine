@@ -101,7 +101,7 @@ export class MirageCore<S> {
 
     private executeCommand(command: Command<any, string>): S {
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state));
         }
 
         if (this.contract) {
@@ -111,7 +111,7 @@ export class MirageCore<S> {
         const events = this.builder.process(this.state, command);
 
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
+            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state));
         }
 
         this.applyEvents(events);
@@ -149,7 +149,7 @@ export class MirageCore<S> {
             this.state = this.builder.apply(this.state, ev);
             this.pendingResults.events.push(ev);
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state) as any);
+                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state));
             }
         }
 
