@@ -1,4 +1,4 @@
-import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, type ReadonlyDeep, createReadonlyDeepProxy, createIdentity } from '@redemeine/kernel';
+import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, type ReadonlyDeep, createReadonlyDeepProxy, createIdentity, type Contract, ContractError } from '@redemeine/kernel';
 import type { GenericCommandMap } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
@@ -85,7 +85,8 @@ export function createCommandProcessor<S>(
     aggregateName: string,
     allCommandsMap: GenericCommandMap,
     allCommandOverrides: Record<string, string>,
-    commandHandlerByType?: Record<string, CommandHandler<S>>
+    commandHandlerByType?: Record<string, CommandHandler<S>>,
+    contract?: Contract
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
@@ -99,6 +100,18 @@ export function createCommandProcessor<S>(
         const payload = commandWithId.payload;
         const handler = handlerByType[commandType];
         if (!handler) throw new Error('Unknown command: ' + commandType);
+
+        if (contract) {
+            const schema = contract.getCommand(commandType);
+            if (schema) {
+                const result = schema.safeParse(payload);
+                if (!result.success) {
+                    throw new ContractError(
+                        `Command "${commandType}" payload failed validation: ${result.error.message}`
+                    );
+                }
+            }
+        }
         
         const readonlyState = createReadonlyDeepProxy(state);
         const result = handler(readonlyState as ReadonlyDeep<S>, payload);
