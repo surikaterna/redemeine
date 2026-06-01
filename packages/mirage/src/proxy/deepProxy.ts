@@ -6,6 +6,7 @@ import type { ProxyContext } from './proxyContext';
 import { makeCollectionProxy, makeEntityMirageProxy } from './collectionProxy';
 import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
+import { isValidPropAccess } from './proxyGuards';
 
 export const createProxyContext = (
     core: MirageCore<any>,
@@ -109,8 +110,12 @@ const makeDeepProxyImpl = (
                 if (prop === MirageCoreSymbol) return ctx.core;
             }
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 return Reflect.get(target, prop);
+            }
+
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') {
+                return undefined;
             }
 
             if (prop === 'then') return undefined;

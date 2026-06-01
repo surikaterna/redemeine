@@ -1,11 +1,3 @@
-/**
- * Re-exports all mirage types from their split locations.
- * This file is kept for backward compatibility — consumers can import from here or from types/.
- */
-export {
-    MirageCoreSymbol,
-} from './types/core';
-
 export type {
     MountKind,
     MountMetadata,
@@ -20,10 +12,12 @@ export type {
     BuiltAggregatePlugins,
     MirageOptions,
     HydrationEvents,
-} from './types/core';
+} from './core';
+
+export { MirageCoreSymbol } from './core';
 
 export type {
     EntityScopedMirage,
     SelectorCollectionMirage,
     Mirage,
-} from './types/proxy';
+} from './proxy';

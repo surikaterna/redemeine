@@ -5,6 +5,7 @@ import type { InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findListMountForEntity, selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
 import { findEntityInCollection } from './entityCache';
+import { isValidPropAccess } from './proxyGuards';
 
 const roleCommandNamesCache = new WeakMap<object, string[]>();
 
@@ -52,7 +53,7 @@ export const resolveEntityFromSelection = (collectionPath: string[], selection: 
 export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
     return new Proxy(items, {
         get(target, prop) {
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return target[Symbol.iterator].bind(target);
                 }
@@ -90,6 +91,7 @@ const makeRoleScopedEntityProxy = (
                 return Reflect.get(target, prop);
             }
 
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
             if (prop === 'then') return undefined;
 
             const entity = resolveEntityFromSelection(collectionPath, selection, ctx);
@@ -181,7 +183,7 @@ const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext
                 return (index: number) => getEntityMirageAt(index);
             }
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return target[Symbol.iterator].bind(target);
                 }

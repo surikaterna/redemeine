@@ -3,6 +3,7 @@ import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findEntityInCollection } from './entityCache';
+import { isValidPropAccess } from './proxyGuards';
 
 export const selectFromList = (mountName: string, mount: MountMetadata, rawPk: unknown): InvocationContext => {
     if (Array.isArray(mount.pk)) {
@@ -89,6 +90,7 @@ export const makeEntityMirageProxy = (
     return new Proxy({}, {
         get(target, prop) {
             if (typeof prop !== 'string') return Reflect.get(target, prop);
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
             if (prop === 'then') return undefined;
 
             const collection = ctx.resolvePath(collectionPath);
@@ -139,6 +141,8 @@ export const makeCollectionProxy = (
                 if (prop === Symbol.iterator) return collection[Symbol.iterator].bind(collection);
                 return Reflect.get(target, prop);
             }
+
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
 
             if (['set', 'push', 'pop', 'splice'].includes(prop)) {
                 return () => { throw new Error('Cannot mutate collection directly'); };

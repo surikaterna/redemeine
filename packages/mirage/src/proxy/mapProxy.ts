@@ -2,6 +2,7 @@ import { singular } from '@redemeine/aggregate';
 import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
+import { isValidPropAccess } from './proxyGuards';
 
 export const selectFromMap = (mountName: string, rawKey: string): InvocationContext => {
     const keyName = `${singular(mountName)}Key`;
@@ -30,7 +31,7 @@ const makeMapItemProxy = (
 
     return new Proxy({}, {
         get(target, prop) {
-            if (typeof prop !== 'string') return Reflect.get(target, prop);
+            if (!isValidPropAccess(prop)) return Reflect.get(target, prop);
             if (prop === 'then') return undefined;
 
             const mapObject = ctx.resolvePath(mapPath);
@@ -64,7 +65,7 @@ export const makeMapProxy = (
 
             const mapObject = ctx.resolvePath(mapPath) || {};
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return Object.values(mapObject)[Symbol.iterator].bind(Object.values(mapObject));
                 }
