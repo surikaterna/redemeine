@@ -1,7 +1,11 @@
 import { RedemineError } from '@redemeine/kernel';
 
 /**
- * Thrown when hydration/replay of an entity from events fails.
+ * Thrown when replaying events to hydrate a Mirage instance fails.
+ *
+ * Indicates a corrupt event stream or incompatible aggregate schema change.
+ *
+ * @since 0.1.0
  */
 export class MirageHydrationError extends RedemineError {
   constructor(

@@ -80,6 +80,25 @@ export interface TestSagaFixture<
   getIntents(): readonly SagaIntent[];
 }
 
+/**
+ * Creates a test fixture for unit testing saga definitions in isolation.
+ *
+ * The fixture provides a fluent API to set state, receive events, invoke
+ * response/error handlers, and assert on resulting state and intents.
+ *
+ * @example
+ * ```typescript
+ * const fixture = testSaga(PaymentSaga);
+ * await fixture
+ *   .receiveEvent({ type: 'order.placed.event', payload: { orderId: '1' } })
+ *   .expectIntents([{ type: 'processPayment', payload: { orderId: '1' } }]);
+ * ```
+ *
+ * @param definition - The compiled saga definition to test
+ * @param options - Optional plugin configuration
+ * @returns A fluent test fixture for saga assertions
+ * @since 0.1.0
+ */
 export function testSaga<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],

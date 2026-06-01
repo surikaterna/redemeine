@@ -21,7 +21,29 @@ import { MirageCoreSymbol } from './mirage.types';
 export { HYDRATION_REPLAY_YIELD_THRESHOLD } from './hydration';
 export * from './mirage.types';
 
-// SAFETY: BuiltAggregate generic params are erased at runtime; type inference requires `any` in constraint position
+/**
+ * Creates a Mirage — a live, proxy-wrapped instance of an aggregate.
+ *
+ * The Mirage exposes the aggregate's commands as callable methods and its state
+ * as a deeply-readonly view. Commands are dispatched through the proxy and produce
+ * domain events that mutate internal state.
+ *
+ * When `events` are provided in setup options, hydration is async and the factory
+ * returns a Promise.
+ *
+ * @example
+ * ```typescript
+ * const order = createMirage(OrderAggregate, 'order-123');
+ * order.placeOrder({ customerId: 'cust-1' });
+ * // State is updated, events are buffered
+ * ```
+ *
+ * @param builder - The compiled aggregate definition from `.build()`
+ * @param id - Unique identifier for this aggregate instance
+ * @param setup - Optional hydration events, snapshot, and plugin config
+ * @returns A Mirage instance (or Promise if hydrating from events)
+ * @since 0.1.0
+ */
 export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
     builder: BA,
     id: string
@@ -122,7 +144,22 @@ export function subscribe<S, M extends Record<string, unknown>, Registry extends
 }
 
 /**
- * Dispatches a raw command to a Mirage instance.
+ * Dispatches a raw command envelope to a Mirage instance.
+ *
+ * Use this when you have a pre-built command object rather than calling
+ * the proxy's typed command methods directly.
+ *
+ * @example
+ * ```typescript
+ * import { dispatch } from '@redemeine/mirage';
+ * const result = dispatch(orderMirage, { id: '...', type: 'order.place.command', payload: { item: 'x' } });
+ * ```
+ *
+ * @param mirage - The target Mirage instance
+ * @param command - A fully-formed command envelope
+ * @returns The dispatch result containing new state and emitted events
+ * @throws {Error} If the target is not a valid Mirage instance
+ * @since 0.1.0
  */
 export function dispatch<S, M extends Record<string, unknown>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, unknown> = {}>(
     mirage: Mirage<S, M, Registry, Sel>,

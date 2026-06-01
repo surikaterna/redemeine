@@ -17,6 +17,27 @@ export interface InheritToken {
   ): InheritExtended<TState, TEvent>;
 }
 
+/**
+ * Token that tells a projection to reuse the aggregate's own event projector
+ * for a given event type. Use in `.from()` or `.mirror()` handlers to delegate
+ * state mutation to the source aggregate's logic.
+ *
+ * Call `inherit.extend(afterFn)` to run additional logic after the inherited mutation.
+ *
+ * @example
+ * ```typescript
+ * const OrderView = createProjection('orderView', () => ({}))
+ *   .mirror(OrderAggregate, {
+ *     itemAdded: inherit,
+ *     orderPlaced: inherit.extend((state, event) => {
+ *       state.lastPlacedAt = event.payload.timestamp;
+ *     })
+ *   })
+ *   .build();
+ * ```
+ *
+ * @since 0.1.0
+ */
 export const inherit: InheritToken = Object.freeze({
   __inheritBrand: INHERIT_BRAND,
   extend<TState, TEvent>(

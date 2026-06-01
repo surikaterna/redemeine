@@ -1,5 +1,9 @@
 /**
- * Thrown when a projection build fails due to missing configuration.
+ * Thrown when a projection cannot be built due to missing required configuration.
+ *
+ * Typically indicates a missing `.from()` stream or `.initialState()` definition.
+ *
+ * @since 0.1.0
  */
 export class ProjectionBuildError extends Error {
   public readonly projectionName: string;

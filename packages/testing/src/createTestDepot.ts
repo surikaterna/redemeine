@@ -129,6 +129,29 @@ function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: nu
   };
 }
 
+/**
+ * Creates an in-memory test depot for integration testing aggregates,
+ * sagas, and projections together.
+ *
+ * The depot wires command routing, event dispatch, and projection updates
+ * into a single cohesive test harness. Commands are dispatched sequentially
+ * and projections are updated synchronously after each command.
+ *
+ * @example
+ * ```typescript
+ * const depot = createTestDepot({
+ *   aggregates: [OrderAggregate],
+ *   projections: [OrderSummaryProjection]
+ * });
+ *
+ * await depot.dispatch({ type: 'order.place.command', payload: { item: 'x' } });
+ * const state = await depot.projections.get(OrderSummaryProjection, 'order-1');
+ * ```
+ *
+ * @param options - Aggregates, sagas, and projections to wire together
+ * @returns A test depot with dispatch and projection query capabilities
+ * @since 0.1.0
+ */
 export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   const commandRoute = buildCommandRouting(options.aggregates);
 

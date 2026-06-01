@@ -1,7 +1,12 @@
 import { RedemineError } from '@redemeine/kernel';
 
 /**
- * Thrown when command processing fails due to an unknown command type or handler error.
+ * Thrown when a command cannot be processed by the aggregate.
+ *
+ * Indicates either an unknown command type or a handler-level failure
+ * during command processing.
+ *
+ * @since 0.2.0
  */
 export class CommandProcessingError extends RedemineError {
   constructor(
@@ -15,7 +20,12 @@ export class CommandProcessingError extends RedemineError {
 }
 
 /**
- * Thrown when an event has no matching handler in the aggregate.
+ * Thrown when an event type has no registered handler in the aggregate.
+ *
+ * Configure `.onUnmatchedEvent()` on the aggregate builder to handle
+ * this scenario gracefully instead of throwing.
+ *
+ * @since 0.2.0
  */
 export class UnmatchedEventError extends RedemineError {
   constructor(
