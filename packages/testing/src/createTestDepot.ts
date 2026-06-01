@@ -234,7 +234,8 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     const aggregateId = resolveAggregateId(command);
     const mirage = getOrCreateMirage(aggregate, aggregateId);
 
-    await Promise.resolve(mirageDispatch(mirage, command));
+    // SAFETY: CommandEnvelope is structurally compatible with Command at runtime; template literal type mismatch is compile-time only
+    await Promise.resolve(mirageDispatch(mirage, command as any));
 
     const core = (mirage as any)[MirageCoreSymbol] as {
       getPendingResults(): { events: DomainEvent[] };
