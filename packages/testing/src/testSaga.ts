@@ -148,8 +148,8 @@ export function testSaga<
           aggregateId: event.aggregateId,
           sequence: event.sequence,
           metadata: event.metadata
-        } as any,
-        resolved.handler as any,
+        } as any, // SAFETY: saga runtime accepts loosely-typed event envelope at boundary
+        resolved.handler as any, // SAFETY: saga types from ambient declarations (no DTS available)
         resolveMetadata(event.metadata),
         tokenBindings as TResponseHandlerBindings,
         runtimePlugins
@@ -183,7 +183,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: saga types from ambient declarations (no DTS available)
           payload,
           request: request.request
         },
@@ -231,7 +231,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: saga types from ambient declarations (no DTS available)
           error,
           request: request.request
         },

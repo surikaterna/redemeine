@@ -368,30 +368,10 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 /**
  * Creates a projection builder for deriving read-model state from domain events.
  *
- * Projections subscribe to aggregate event streams and incrementally build
- * query-optimized state. Use `.from()` to define the primary stream, `.join()`
- * for secondary streams, or `.mirror()` to inherit aggregate projectors directly.
- *
- * @example
- * ```typescript
- * const OrderSummary = createProjection('orderSummary', (id) => ({
- *   orderId: id,
- *   total: 0,
- *   itemCount: 0
- * }))
- *   .from(OrderAggregate, {
- *     itemAdded: (state, event) => { state.itemCount++; },
- *     orderPlaced: (state, event) => { state.total = event.payload.total; }
- *   })
- *   .build();
- * ```
- *
  * @param name - Unique projection identifier
  * @param initialState - Factory that produces default state for a given document ID
  * @returns A fluent builder for composing projection behavior
- * @since 0.1.0
  */
-
 export function createProjection<TState>(
   name: string,
   initialState: (id: string) => TState

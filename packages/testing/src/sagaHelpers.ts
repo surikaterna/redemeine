@@ -74,11 +74,11 @@ export function resolveMetadata(metadata?: Partial<SagaIntentMetadata>): SagaInt
 }
 
 export function resolveHandlerForEvent(
-  definition: SagaDefinition<any, any, any>,
+  definition: SagaDefinition<any, any, any>, // SAFETY: saga types from ambient declarations (no DTS available)
   event: SagaEventEnvelope
 ): {
   readonly aggregate: SagaAggregateDefinition;
-  readonly handler: (...args: any[]) => unknown;
+  readonly handler: (...args: any[]) => unknown; // SAFETY: command payload intentionally untyped for test flexibility
 } | null {
   for (const registration of definition.handlers) {
     if (event.aggregateType !== undefined && registration.aggregateType !== event.aggregateType) {

@@ -43,7 +43,7 @@ type ProjectionContext = {
 
 type ProjectionDefinition<TState = unknown> = RuntimeProjectionDefinition<TState>;
 
-type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any>;
+type AggregateDefinitionLike = BuiltAggregate<any, any, any, any, any>; // SAFETY: test harness accepts any aggregate shape
 
 type SagaRegistrationLike = {
   readonly handlers?: ReadonlyArray<{
@@ -61,7 +61,7 @@ type Deferred<T> = {
 export interface CreateTestDepotOptions {
   readonly aggregates: readonly AggregateDefinitionLike[];
   readonly sagas?: readonly SagaRegistrationLike[];
-  readonly projections?: readonly ProjectionDefinition<any>[];
+  readonly projections?: readonly ProjectionDefinition<any>[]; // SAFETY: test harness accepts any projection state shape
 }
 
 export interface TestDepot {
@@ -156,7 +156,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   const commandRoute = buildCommandRouting(options.aggregates);
 
 
-  const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>();
+  const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>(); // SAFETY: test harness accepts any projection state shape
   let projectionRuntimes: ProjectionRuntime[] = [];
   let projectionInitialization: Promise<void> | null = null;
 
@@ -169,7 +169,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
 
         const projectionRuntime = await loadProjectionRuntimeModule();
         projectionRuntimes = (options.projections ?? []).map((projection) => {
-          const store = new projectionRuntime.inmemory.InMemoryProjectionStore<any>();
+          const store = new projectionRuntime.inmemory.InMemoryProjectionStore<any>(); // SAFETY: test harness accepts any projection state shape
           const linkStore = new projectionRuntime.inmemory.InMemoryProjectionLinkStore();
           const subscription = createEventQueueSubscription();
           const daemon = new projectionRuntime.core.ProjectionDaemon({
@@ -189,7 +189,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     await projectionInitialization;
   };
 
-  const mirages = new Map<string, Mirage<any, any, any, any>>();
+  const mirages = new Map<string, Mirage<any, any, any, any>>(); // SAFETY: test harness accepts any aggregate shape
   const queue: Array<{ command: CommandEnvelope; deferred: Deferred<void> }> = [];
   let isProcessing = false;
   let activeDrain: Promise<void> | null = null;
@@ -243,7 +243,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
       return existing;
     }
 
-    const mirage = createMirage(aggregate, aggregateId) as Mirage<any, any, any, any>;
+    const mirage = createMirage(aggregate, aggregateId) as Mirage<any, any, any, any>; // SAFETY: test harness accepts any aggregate shape
     mirages.set(key, mirage);
     return mirage;
   };
@@ -258,9 +258,9 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     const mirage = getOrCreateMirage(aggregate, aggregateId);
 
     // SAFETY: CommandEnvelope is structurally compatible with Command at runtime; template literal type mismatch is compile-time only
-    await Promise.resolve(mirageDispatch(mirage, command as any));
+    await Promise.resolve(mirageDispatch(mirage, command as any)); // SAFETY: see above
 
-    const core = (mirage as any)[MirageCoreSymbol] as {
+    const core = (mirage as any)[MirageCoreSymbol] as { // SAFETY: accessing internal symbol for test inspection
       getPendingResults(): { events: DomainEvent[] };
       clearPendingResults(): void;
     };

@@ -5,19 +5,19 @@
  * @see https://github.com/surikaterna/redemeine/issues/57
  */
 declare module '@redemeine/saga' {
-  export const runSagaHandler: any;
-  export const runSagaErrorHandler: any;
-  export const runSagaResponseHandler: any;
-  export type SagaAggregateDefinition<A = any, B = any, C = any> = any;
-  export type SagaCommandCreators = any;
-  export type SagaErrorTokenKey<T = any> = string;
-  export type SagaExecutableHandlerFailureReason = any;
-  export type SagaIntent<T = any> = any;
-  export type SagaIntentMetadata = any;
-  export type SagaPluginManifestList = any;
-  export type SagaReducerOutput<T = any> = any;
-  export type SagaResponseHandlerTokenBindings = any;
-  export type SagaResponseHandlerTokenBinding<T = any> = any;
-  export type SagaResponseTokenKey<T = any> = string;
-  export type SagaDefinition<A = any, B = any, C = any, D = any, E = any> = any;
+  export const runSagaHandler: any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export const runSagaErrorHandler: any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export const runSagaResponseHandler: any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaAggregateDefinition<A = any, B = any, C = any> = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaCommandCreators = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaErrorTokenKey<T = any> = string; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaExecutableHandlerFailureReason = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaIntent<T = any> = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaIntentMetadata = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaPluginManifestList = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaReducerOutput<T = any> = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaResponseHandlerTokenBindings = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaResponseHandlerTokenBinding<T = any> = any; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaResponseTokenKey<T = any> = string; // SAFETY: saga types from ambient declarations (no DTS available)
+  export type SagaDefinition<A = any, B = any, C = any, D = any, E = any> = any; // SAFETY: saga types from ambient declarations (no DTS available)
 }

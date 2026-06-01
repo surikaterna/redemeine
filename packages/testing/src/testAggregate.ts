@@ -16,7 +16,7 @@ type EventEnvelope = {
   readonly metadata?: unknown;
 };
 
-type AggregateCommandCreators = Record<string, (...args: any[]) => CommandEnvelope>;
+type AggregateCommandCreators = Record<string, (...args: any[]) => CommandEnvelope>; // SAFETY: command payload intentionally untyped for test flexibility
 
 type AggregateDefinition<TState, TCommandCreators extends AggregateCommandCreators> = {
   readonly initialState: TState;
@@ -82,7 +82,7 @@ export interface TestAggregateFixture<TState, TCommandCreators extends Aggregate
   ): TestAggregateFixture<TState, TCommandCreators>;
   expectEvents(expected: readonly EventEnvelope[]): TestAggregateFixture<TState, TCommandCreators>;
   expectError<TError extends Error>(
-    errorClass: abstract new (...args: any[]) => TError,
+    errorClass: abstract new (...args: any[]) => TError, // SAFETY: command payload intentionally untyped for test flexibility
     message?: string
   ): TestAggregateFixture<TState, TCommandCreators>;
   expectState(expected: TState | StateMatcher<TState>): TestAggregateFixture<TState, TCommandCreators>;
