@@ -35,8 +35,43 @@ export type { AggregateBuilder } from './types/aggregate';
  *     }
  *   }))
  */
+/**
+ * Handler invoked when an event has no matching projector in the aggregate.
+ *
+ * Use with `.onUnmatchedEvent()` to log, ignore, or throw on unknown events
+ * during hydration.
+ *
+ * @since 0.2.0
+ */
 export type UnmatchedEventHandler = (eventType: string, aggregateName: string) => void;
 
+/**
+ * Creates a new aggregate builder with the fluent API pattern.
+ *
+ * An aggregate encapsulates domain state, commands, events, entities, and
+ * validation. Chain builder methods to compose behavior, then call `.build()`
+ * to produce the final compiled aggregate.
+ *
+ * @example
+ * ```typescript
+ * const Order = createAggregate('order', { items: [], status: 'draft' })
+ *   .entities({ lineItems: LineItemEntity })
+ *   .commands((emit) => ({
+ *     place: (state, payload: { customerId: string }) => {
+ *       return emit.orderPlaced(payload);
+ *     }
+ *   }))
+ *   .events({
+ *     orderPlaced: (state, { payload }) => { state.status = 'placed'; }
+ *   })
+ *   .build();
+ * ```
+ *
+ * @param aggregateName - Unique name identifying this aggregate type
+ * @param initialState - The default state for new aggregate instances
+ * @returns A fluent builder for composing aggregate behavior
+ * @since 0.1.0
+ */
 export function createAggregate<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}>(
     aggregateName: Name,
     initialState: S
@@ -67,14 +102,15 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
     });
 
     Object.assign(builder, {
+        // SAFETY: `any` in AggregateBuilder Registry position — parent registry type is erased at inheritance
         extends: (parentBuilder: AggregateBuilder<S, string, unknown, unknown, unknown, unknown, any, TMeta, TPlugins>) => {
             const parentState = parentBuilder._state;
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
             _plugins = [...parentState.plugins, ..._plugins];
             _mixins = [...parentState.mixins, ..._mixins];
-            // SAFETY: `any[]` — mixins array has heterogeneous state types
-            const inheritedMounted = (parentState.mixins as any[])
+            // SAFETY: `unknown[]` — mixins array has heterogeneous state types from parent
+            const inheritedMounted = (parentState.mixins as unknown as Array<{ mountedEntities?: unknown[] }>)
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
             if (inheritedMounted.length > 0) {
                 _entityPackages.push(...inheritedMounted as MountedEntityPackage[]);
@@ -134,7 +170,8 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
         // SAFETY: `any` required — mixins have heterogeneous state types
         mixins: (...mixins: AggregateMixinLike<any>[]) => {
             _mixins.push(...mixins);
-            const mountedFromMixins = (mixins as any[])
+            // SAFETY: `any[]` — mixins array has heterogeneous state types
+            const mountedFromMixins = (mixins as unknown as Array<{ mountedEntities?: unknown[] }>)
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
             if (mountedFromMixins.length > 0) {
                 _entityPackages.push(...mountedFromMixins as MountedEntityPackage[]);

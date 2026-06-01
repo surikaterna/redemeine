@@ -110,7 +110,8 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
 
 function mergeMixinCommands<S>(
     mixins: AggregateMixinLike<S>[],
-    emit: any,
+    // SAFETY: `unknown` — emit proxy is dynamically typed via Proxy handler, commandFactory accepts unknown
+    emit: unknown,
     allSelectors: AggregateSelectorsMap<S>
 ): Record<string, unknown> {
     const result: Record<string, unknown> = {};
@@ -147,15 +148,18 @@ function buildEventMetadata<TMeta>(
  * Avoids iterating allCommandsMap three times with the same key resolution logic.
  */
 function resolveCommandMaps<S, TMeta>(
+    // SAFETY: `any` required — allCommandsMap entries have heterogeneous shapes (shorthand fns, packed objects, meta-wrapped)
     allCommandsMap: Record<string, any>,
     allCommandOverrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy
 ): {
+    // SAFETY: `any` required — command handlers have varying signatures resolved at runtime
     commandHandlerByType: Record<string, any>;
     commandTypesByKey: Record<string, string>;
     metadataByCommandType: Record<string, { meta?: TMeta }>;
 } {
+    // SAFETY: `any` — mirrors commandHandlerByType constraint above
     const commandHandlerByType: Record<string, any> = {};
     const commandTypesByKey: Record<string, string> = {};
     const metadataByCommandType: Record<string, { meta?: TMeta }> = {};
@@ -164,6 +168,7 @@ function resolveCommandMaps<S, TMeta>(
         const resolvedCommandType = allCommandOverrides[key] || namingStrategy.command(aggregateName, key);
         commandHandlerByType[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!);
         commandTypesByKey[key] = resolvedCommandType;
+        // SAFETY: `as any` — command entries may or may not have meta; shape is not statically known
         const meta = (allCommandsMap[key] as any)?.meta as TMeta | undefined;
         metadataByCommandType[resolvedCommandType] = meta !== undefined ? { meta } : {};
     }
@@ -172,6 +177,7 @@ function resolveCommandMaps<S, TMeta>(
 }
 
 function buildTypeMap(
+    // SAFETY: `any` required — map entries may be functions or objects with varying shapes
     map: Record<string, any>,
     overrides: Record<string, string>,
     aggregateName: string,
