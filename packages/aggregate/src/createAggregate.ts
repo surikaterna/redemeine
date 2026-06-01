@@ -42,9 +42,11 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
 
     const component = createComponentBehaviorState<S>();
     let _entityPackages: MountedEntityPackage[] = [];
+    // SAFETY: `any` required — AggregateMixinLike's state param is covariant and mixins may have different state shapes
     let _mixins: AggregateMixinLike<any>[] = [];
     let _namingStrategy: NamingStrategy = defaultNamingStrategy;
     let _hooks: AggregateHooks<S> = {};
+    // SAFETY: `any` required — RedemeinePlugin generic param must satisfy PluginExtensions constraint
     let _plugins: RedemeinePlugin<any>[] = [];
 
     const builder = bindFluentMethods({}, {
@@ -67,6 +69,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             _hooks = { ...parentState.hooks, ..._hooks };
             _plugins = [...parentState.plugins, ..._plugins];
             _mixins = [...parentState.mixins, ..._mixins];
+            // SAFETY: `any[]` — mixins array has heterogeneous state types
             const inheritedMounted = (parentState.mixins as any[])
                 .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
             if (inheritedMounted.length > 0) {
@@ -124,6 +127,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             return builder;
         },
 
+        // SAFETY: `any` required — mixins have heterogeneous state types
         mixins: (...mixins: AggregateMixinLike<any>[]) => {
             _mixins.push(...mixins);
             const mountedFromMixins = (mixins as any[])
@@ -134,6 +138,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             return builder;
         },
 
+        // SAFETY: `any` required — PluginExtensions constraint
         plugins: (...plugins: RedemeinePlugin<any>[]) => {
             _plugins.push(...plugins);
             return builder;

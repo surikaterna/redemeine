@@ -1,6 +1,6 @@
 import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, MergePluginExtensions, RedemeinePlugin, ReadonlyDeep } from '@redemeine/kernel';
 import type { EntityPackage } from '../createEntity';
-import type { GenericCommandFactory } from '../redemeineComponent';
+import type { GenericCommandFactory, AnyFunction } from '../redemeineComponent';
 import type { Merge } from './Merge';
 import type { AllKeys } from './AllKeys';
 import type { EventEmitterFactory, MapCommandsToPayloads } from './aggregateTyping';
@@ -23,8 +23,8 @@ import type { bindContext } from '../bindContext';
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
 export type AggregateSelector<S> =
-    | ((state: ReadonlyDeep<S>, ...args: any[]) => any)
-    | ((state: ReadonlyDeep<S>, utils: AggregateSelectorUtils, ...args: any[]) => any);
+    | ((state: ReadonlyDeep<S>, ...args: unknown[]) => unknown)
+    | ((state: ReadonlyDeep<S>, utils: AggregateSelectorUtils, ...args: unknown[]) => unknown);
 
 export type AggregateSelectorsMap<S> = Record<string, AggregateSelector<S>>;
 
@@ -34,11 +34,12 @@ export type UnionToIntersection<U> = (
     ? I
     : never;
 
+// SAFETY: `any` in AggregateMixinLike defaults required for variance — mixins must be assignable from any state shape
 export type AggregateMixinLike<S = any, Commands = {}, Registry extends AggregateEntityRegistry = {}> = {
     readonly __stateType?: S;
     commands?: Commands;
-    events?: Record<string, Function>;
-    projectors?: Record<string, Function>;
+    events?: Record<string, AnyFunction>;
+    projectors?: Record<string, AnyFunction>;
     eventMetadata?: Record<string, Record<string, unknown> | undefined>;
     eventOverrides?: Record<string, string>;
     commandOverrides?: Record<string, string>;
@@ -49,11 +50,13 @@ export type AggregateMixinLike<S = any, Commands = {}, Registry extends Aggregat
     __registryType?: Registry;
 };
 
+// SAFETY: `any[]` in MergeMixins required for tuple/array type distribution
 export type ExtractMixinCommands<T> = T extends { commands?: infer CPayloads } ? CPayloads : {};
 export type MergeMixins<T extends any[]> = Merge<ExtractMixinCommands<T[number]> & {}>;
 export type ExtractMixinRegistry<T> = T extends { __registryType?: infer Registry } ? Registry : {};
 export type MergeMixinRegistries<T extends any[]> = Merge<ExtractMixinRegistry<T[number]> & {}>;
 export type ExtractMixinState<T> = T extends { __stateType?: infer MS } ? MS : never;
+// SAFETY: `any` required for contravariant mixin compatibility checks
 export type CompatibleMixins<S, T extends AggregateMixinLike<any, any, any>[]> = {
     [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
 };
@@ -62,16 +65,19 @@ export type MapEntityCommands<Name extends string, CPayloads> = {
     [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
 };
 
+// SAFETY: `any` in EntityPackage type params required for structural pattern matching via infer
 export type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName, any, any, infer CPayloads, any>
     ? MapEntityCommands<EName, CPayloads>
     : {};
 
 export type MergeEntities<T extends any[]> = Merge<ExtractEntityCommands<T[number]> & {}>;
 export type AggregateCommandKeys<T> = AllKeys<T & {}>;
+// SAFETY: `any` required for conditional type inference on event projector shapes
 export type AggregateEventProjectorsMap<TEvents> = TEvents extends Record<string, (...args: any[]) => any>
     ? TEvents
-    : Record<string, (...args: any[]) => any>;
+    : Record<string, (...args: unknown[]) => unknown>;
 
+// SAFETY: `any` in EntityPackage positions below required for existential type extraction via `infer`
 export type RegistryFromNamedEntities<EN extends Record<string, any>> = {
     [K in keyof EN as EN[K] extends EntityPackage<any, any, any, any, any, any> ? K : never]: EntityRegistryListEntry<Extract<EN[K], EntityPackage<any, any, any, any, any, any>>, 'id'>;
 };
@@ -87,6 +93,8 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
 /**
  * The core builder interface for composing Aggregates in Redemeine.
  * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
+ * SAFETY: `any` in EntityPackage/AggregateMixinLike constraint positions throughout this interface
+ * is required for TypeScript to perform `infer` extraction on generic type parameters.
  */
 export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> {
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry>(
@@ -178,7 +186,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         };
         eventCreators: EventEmitterFactory<Name, E, EOverrides>;
         pure: {
-            commandProcessors: Record<string, Function>;
+            commandProcessors: Record<string, AnyFunction>;
             eventProjectors: AggregateEventProjectorsMap<E>;
         };
         selectors: Sel;
@@ -197,13 +205,13 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     };
 
     _state: {
-        events: Record<string, Function>;
+        events: Record<string, AnyFunction>;
         eventMetadata: Record<string, Record<string, unknown> | undefined>;
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
         commandsFactory: GenericCommandFactory;
         mixins: AggregateMixinLike<S>[];
-        selectors: Record<string, Function>;
+        selectors: Record<string, AnyFunction>;
         hooks: AggregateHooks<S>;
         plugins: RedemeinePlugin<TPlugins>[];
     };

@@ -6,6 +6,7 @@ export function createEmitProxy(
     namingStrategy: NamingStrategy,
     path?: string
 ) {
+    // SAFETY: `any` required — Proxy target must be typed as `any` per JS Proxy handler spec
     return new Proxy({} as any, {
         get: (_, prop: string) => {
             const scopedKey = path ? `${path}:${prop}` : prop;

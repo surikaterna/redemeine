@@ -1,5 +1,5 @@
 import { type Event, type EventType, type CommandType, type SelectorsMap, type CommandContext, type CommandIntents } from '@redemeine/kernel';
-import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap } from './redemeineComponent';
+import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, AnyFunction } from './redemeineComponent';
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
@@ -111,7 +111,7 @@ export function createMixin<S, TMeta extends Record<string, unknown> = Record<st
   const builder = bindFluentMethods({}, {
     events: (events: Record<string, RedemeineEventDefinition<S, TMeta>>) => component.addEvents(events as Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>),
     overrideEventNames: (overrides: Record<string, string>) => component.addEventOverrides(overrides),
-    selectors: (selectors: Record<string, Function>) => component.addSelectors(selectors),
+    selectors: (selectors: Record<string, AnyFunction>) => component.addSelectors(selectors),
     commands: (factory: GenericCommandFactory) => component.addCommandsFactory(factory),
     overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
   });

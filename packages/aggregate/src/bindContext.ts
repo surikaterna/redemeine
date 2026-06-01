@@ -2,6 +2,7 @@ import type { EntityPackage } from './createEntity';
 
 export const MirageContextSymbol = Symbol.for('MirageContext');
 
+// SAFETY: `any` required for structural compatibility with arbitrary EntityPackage generic params
 export type MirageRoleLike = EntityPackage<any, any, any, any, any, any, any>;
 
 type DotPathKeys<T> = T extends Record<string, unknown>
@@ -21,6 +22,7 @@ export type MirageContextSingleBinding<TData, TRole extends MirageRoleLike> = {
   };
 };
 
+// SAFETY: `any` in data positions required for covariant readonly array inference
 export type MirageContextPolymorphicBinding<
   TData extends readonly any[],
   TKey extends string,
@@ -34,6 +36,7 @@ export type MirageContextPolymorphicBinding<
   };
 };
 
+// SAFETY: `any` required for union discriminant — existential type erasure at binding site
 export type MirageContextBinding =
   | MirageContextSingleBinding<any, MirageRoleLike>
   | MirageContextPolymorphicBinding<readonly any[], string, Record<string, MirageRoleLike>>;
@@ -43,6 +46,7 @@ export function bindContext<TData, const TRole extends MirageRoleLike>(
   roleEntity: TRole
 ): MirageContextSingleBinding<TData, TRole>;
 
+// SAFETY: `any` in const type param required for readonly tuple inference from arbitrary call sites
 export function bindContext<
   const TData extends readonly any[],
   const TKey extends DotPathKeys<TData[number]>,
