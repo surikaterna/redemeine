@@ -227,9 +227,6 @@ function toProjectionEvent(event: DomainEvent, aggregateId: string, sequence: nu
 export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
   const commandRoute = buildCommandRouting(options.aggregates);
 
-  // v1 hook only: sagas are registered for routing bookkeeping.
-  // Full external worker response simulation is intentionally deferred.
-  const sagaRegistrations = [...(options.sagas ?? [])];
 
   const projectionStoreByDefinition = new Map<ProjectionDefinition<any>, IProjectionStore<any>>();
   let projectionRuntimes: ProjectionRuntime[] = [];
