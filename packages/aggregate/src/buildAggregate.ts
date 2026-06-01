@@ -1,7 +1,7 @@
 import type { Event, NamingStrategy, AggregateHooks, RedemeinePlugin } from '@redemeine/kernel';
 import type { MountedEntityPackage, MountedStructureMetadata } from './types/entityMount';
 import type { AggregateMixinLike, AggregateSelectorsMap } from './types/aggregate';
-import type { GenericCommandFactory, GenericCommandMap, AnyFunction, RedemeineCommandDefinition } from './redemeineComponent';
+import type { GenericCommandFactory } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
@@ -17,18 +17,17 @@ export type BuildAggregateInput<S, TMeta> = {
     aggregateName: string;
     initialState: S;
     snapshot: {
-        events: Record<string, AnyFunction>;
+        events: Record<string, Function>;
         eventMetadata: Record<string, Record<string, unknown> | undefined>;
         eventOverrides: Record<string, string>;
         commandOverrides: Record<string, string>;
-        selectors: Record<string, AnyFunction>;
+        selectors: Record<string, Function>;
     };
     commandsFactory: GenericCommandFactory;
     mixins: AggregateMixinLike<S>[];
     entityPackages: MountedEntityPackage[];
     namingStrategy: NamingStrategy;
     hooks: AggregateHooks<S>;
-    // SAFETY: `any` required — RedemeinePlugin is generic over PluginExtensions which has a constraint
     plugins: RedemeinePlugin<any>[];
 };
 
@@ -73,7 +72,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     // 4. Mount entities (mutates allEvents, allEventOverrides, allCommandsMap, etc.)
     const mounts = mountEntities<S, TMeta>(
         entityPackages, allEvents, allEventMetadata, allEventOverrides, allCommandOverrides,
-        allSelectors, allCommandsMap as GenericCommandMap, projectorByEventType, scopedProjectorByEventType,
+        allSelectors, allCommandsMap as any, projectorByEventType, scopedProjectorByEventType,
         scopedEventProjectors, aggregateName, namingStrategy
     );
 
@@ -82,29 +81,28 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
 
     // 6. Build metadata
     const metadataByEventType = buildEventMetadata(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy);
-    const metadataByCommandType = buildCommandMetadata(allCommandsMap as GenericCommandMap, allCommandOverrides, aggregateName, namingStrategy);
 
-    // 7. Build command handlers and type maps
-    const commandHandlerByType = buildCommandHandlers<S>(allCommandsMap as GenericCommandMap, allCommandOverrides, aggregateName, namingStrategy);
-    const commandTypesByKey = buildTypeMap(allCommandsMap as Record<string, unknown>, allCommandOverrides, aggregateName, namingStrategy, 'command');
+    // 7. Build command handlers, metadata, and type maps in a single pass
+    const { commandHandlerByType, commandTypesByKey, metadataByCommandType } =
+        resolveCommandMaps<S, TMeta>(allCommandsMap as any, allCommandOverrides, aggregateName, namingStrategy);
     const eventTypesByKey = buildTypeMap(allEvents, allEventOverrides, aggregateName, namingStrategy, 'event');
 
     // Convert Map to plain object for applyEvent compatibility
-    const projectorByEventTypeObj: Record<string, AnyFunction> = {};
+    const projectorByEventTypeObj: Record<string, Function> = {};
     projectorByEventType.forEach((fn, key) => { projectorByEventTypeObj[key] = fn; });
 
     return {
         aggregateType: aggregateName,
         initialState,
-        process: createCommandProcessor<S>(aggregateName, allCommandsMap as GenericCommandMap, allCommandOverrides, commandHandlerByType),
+        process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType),
         apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors),
         applyToDraft: (draft: S, event: Event): void => {
             applyEventToDraft(aggregateName, draft as Draft<S>, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors);
         },
-        commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as GenericCommandMap, allCommandOverrides, namingStrategy),
+        commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
         eventCreators: emit,
         pure: {
-            commandProcessors: allCommandsMap as unknown as Record<string, AnyFunction>,
+            commandProcessors: allCommandsMap as unknown as Record<string, Function>,
             eventProjectors: allEvents
         },
         selectors: allSelectors,
@@ -117,7 +115,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
 }
 
 function buildEventMetadata<TMeta>(
-    allEvents: Record<string, AnyFunction>,
+    allEvents: Record<string, Function>,
     allEventMetadata: Record<string, TMeta | undefined>,
     allEventOverrides: Record<string, string>,
     aggregateName: string,
@@ -132,37 +130,37 @@ function buildEventMetadata<TMeta>(
     }, {} as Record<string, { meta?: TMeta }>);
 }
 
-function buildCommandMetadata<TMeta>(
-    allCommandsMap: GenericCommandMap,
+/**
+ * Single-pass resolution of command handlers, metadata, and type map.
+ * Avoids iterating allCommandsMap three times with the same key resolution logic.
+ */
+function resolveCommandMaps<S, TMeta>(
+    allCommandsMap: Record<string, any>,
     allCommandOverrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy
-): Record<string, { meta?: TMeta }> {
-    return Object.keys(allCommandsMap).reduce((acc, key) => {
-        const resolvedCommandType = allCommandOverrides[key] || namingStrategy.command(aggregateName, key);
-        const def = allCommandsMap[key];
-        const meta = (def && typeof def === 'object' && 'meta' in def ? (def as Record<string, unknown>).meta : undefined) as TMeta | undefined;
-        acc[resolvedCommandType] = meta !== undefined ? { meta } : {};
-        return acc;
-    }, {} as Record<string, { meta?: TMeta }>);
-}
+): {
+    commandHandlerByType: Record<string, any>;
+    commandTypesByKey: Record<string, string>;
+    metadataByCommandType: Record<string, { meta?: TMeta }>;
+} {
+    const commandHandlerByType: Record<string, any> = {};
+    const commandTypesByKey: Record<string, string> = {};
+    const metadataByCommandType: Record<string, { meta?: TMeta }> = {};
 
-function buildCommandHandlers<S>(
-    allCommandsMap: GenericCommandMap,
-    allCommandOverrides: Record<string, string>,
-    aggregateName: string,
-    namingStrategy: NamingStrategy
-): Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[]> {
-    return Object.keys(allCommandsMap).reduce((acc, key) => {
+    for (const key of Object.keys(allCommandsMap)) {
         const resolvedCommandType = allCommandOverrides[key] || namingStrategy.command(aggregateName, key);
-        // SAFETY: cast needed — resolveCommandHandler returns a narrower type than the union this map holds
-        acc[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!) as any;
-        return acc;
-    }, {} as Record<string, (state: ReadonlyDeep<S>, payload: unknown) => Event | { events: Event[]; intents?: Record<string, unknown> } | Event[]>);
+        commandHandlerByType[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!);
+        commandTypesByKey[key] = resolvedCommandType;
+        const meta = (allCommandsMap[key] as any)?.meta as TMeta | undefined;
+        metadataByCommandType[resolvedCommandType] = meta !== undefined ? { meta } : {};
+    }
+
+    return { commandHandlerByType, commandTypesByKey, metadataByCommandType };
 }
 
 function buildTypeMap(
-    map: Record<string, unknown>,
+    map: Record<string, any>,
     overrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy,

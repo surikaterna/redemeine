@@ -11,7 +11,7 @@ import type {
   MountedStructureMetadata,
   MountedEntityPackage,
 } from './componentMounts';
-import { composeMountedComponentBehavior } from './componentMounts';
+import { composeMountedComponentBehavior, createMountMethods } from './componentMounts';
 
 type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
   kind: 'list';
@@ -116,27 +116,9 @@ export function createMixin<S, TMeta extends Record<string, unknown> = Record<st
     overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
   });
 
+  createMountMethods(builder, mountedEntities);
+
   Object.assign(builder, {
-    entityList: <const PK extends string | readonly string[]>(entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityListOptions<PK>, mountOverrides?: EntityMountOverrides) => {
-      mountedEntities.push({ name: entityName, kind: 'list', component: entityComponent, mountOverrides, pk: options?.pk || 'id' });
-      return builder;
-    },
-
-    entityMap: (entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityMapOptions, mountOverrides?: EntityMountOverrides) => {
-      mountedEntities.push({ name: entityName, kind: 'map', component: entityComponent, mountOverrides, knownKeys: options?.knownKeys });
-      return builder;
-    },
-
-    valueObjectList: (entityName: string) => {
-      mountedEntities.push({ name: entityName, kind: 'valueObjectList' });
-      return builder;
-    },
-
-    valueObjectMap: (entityName: string) => {
-      mountedEntities.push({ name: entityName, kind: 'valueObjectMap' });
-      return builder;
-    },
-
     build: () => {
       const snapshot = component.getSnapshot();
       const {

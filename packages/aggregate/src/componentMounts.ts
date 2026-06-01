@@ -12,6 +12,32 @@ type ComponentBehaviorSnapshot = {
   commandOverrides: Record<string, string>;
 };
 
+/**
+ * Creates the fluent mount methods (entityList, entityMap, valueObjectList, valueObjectMap)
+ * shared between createEntity and createMixin builders.
+ */
+export function createMountMethods<B extends object>(builder: B, mountedEntities: MountedEntityPackage[]): B {
+  Object.assign(builder, {
+    entityList: <const PK extends string | readonly string[]>(entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityListOptions<PK>, mountOverrides?: EntityMountOverrides) => {
+      mountedEntities.push({ name: entityName, kind: 'list', component: entityComponent, mountOverrides, pk: options?.pk || 'id' });
+      return builder;
+    },
+    entityMap: (entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityMapOptions, mountOverrides?: EntityMountOverrides) => {
+      mountedEntities.push({ name: entityName, kind: 'map', component: entityComponent, mountOverrides, knownKeys: options?.knownKeys });
+      return builder;
+    },
+    valueObjectList: (entityName: string) => {
+      mountedEntities.push({ name: entityName, kind: 'valueObjectList' });
+      return builder;
+    },
+    valueObjectMap: (entityName: string) => {
+      mountedEntities.push({ name: entityName, kind: 'valueObjectMap' });
+      return builder;
+    },
+  });
+  return builder;
+}
+
 export function composeMountedComponentBehavior(
   mountedEntities: MountedEntityPackage[],
   snapshot: ComponentBehaviorSnapshot,
