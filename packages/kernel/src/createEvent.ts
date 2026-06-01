@@ -5,16 +5,16 @@ import { createIdentity } from './identity';
  * Foundational type representing a compiled factory that hydrates and constructs explicit domain events.
  */
 export type EventFactory<P = void, T extends EventType | string = EventType> =  
-    ((...args: any[]) => Event<P, T>) & { type: T, toString: () => T };
+    ((...args: unknown[]) => Event<P, T>) & { type: T, toString: () => T };
 
 /**
  * The foundational building block function allocating explicit events, enforcing internal Redemeine routing protocols natively.
  */
 export const createEvent = <P = void, T extends EventType | string = EventType>(
   type: T,
-  preparePayload?: (...args: any[]) => { payload: P; headers?: EnvelopeHeaders }
+  preparePayload?: (...args: unknown[]) => { payload: P; headers?: EnvelopeHeaders }
 ): EventFactory<P, T> => {
-  function eventFactory(...args: any[]) {
+  function eventFactory(...args: unknown[]) {
     const id = createIdentity();
     if (typeof preparePayload === 'function') {
       const prepared = preparePayload(...args);
