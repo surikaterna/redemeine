@@ -1,3 +1,4 @@
+// SAFETY: All import paths in this file are hardcoded package references (not user-controlled).
 import type {
   IEventSubscription,
   IProjectionStore,

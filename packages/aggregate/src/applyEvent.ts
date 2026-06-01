@@ -4,6 +4,8 @@ import type { AnyFunction } from './redemeineComponent';
 import type { UnmatchedEventHandler } from './createAggregate';
 import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
 
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Resolves an event path segment to the matching entity container in the draft.
  * Tries multiple naming conventions (snake_case, camelCase, with/without plural 's')
@@ -81,6 +83,10 @@ export function applyEventToDraft<S>(
     scopedEventProjectors: Record<string, AnyFunction> = {},
     unmatchedEventHandler?: UnmatchedEventHandler
 ): void {
+    if (UNSAFE_KEYS.has(event.type)) {
+        throw new Error(`Unsafe event type: "${event.type}"`);
+    }
+
     // SAFETY: `any` required — targetDraft narrows to sub-entities during path traversal, losing the Draft<S> type
     let targetDraft: any = draft;
     let eventName = event.type;
