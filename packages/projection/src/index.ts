@@ -1,3 +1,8 @@
+/**
+ * @redemeine/projection — Standalone event projection builder.
+ * Zero runtime dependencies. Works independently of other @redemeine packages.
+ * @packageDocumentation
+ */
 export * from './errors';
 export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
 export {

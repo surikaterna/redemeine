@@ -189,7 +189,6 @@
         "@redemeine/projection": "workspace:*",
         "@redemeine/projection-runtime-core": "workspace:*",
         "@redemeine/projection-runtime-store-inmemory": "workspace:*",
-        "@redemeine/saga": "workspace:*",
         "immer": "^10.1.1",
       },
       "devDependencies": {
@@ -197,6 +196,12 @@
         "tsup": "^8.4.0",
         "typescript": "^5.8.3",
       },
+      "peerDependencies": {
+        "@redemeine/saga": "workspace:*",
+      },
+      "optionalPeers": [
+        "@redemeine/saga",
+      ],
     },
   },
   "packages": {
