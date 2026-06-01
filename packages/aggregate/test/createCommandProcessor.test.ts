@@ -134,6 +134,6 @@ describe('createCommandProcessor', () => {
         const processor = createCommandProcessor('myAggregate', {}, {});
         expect(() => {
             processor({}, { type: 'myAggregate.unknown.command', payload: null });
-        }).toThrow('Unknown command: myAggregate.unknown.command');
+        }).toThrow('Command "myAggregate.unknown.command" processing failed: Unknown command');
     });
 });

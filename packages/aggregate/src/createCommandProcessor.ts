@@ -1,4 +1,5 @@
 import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, type ReadonlyDeep, createReadonlyDeepProxy, createIdentity, type Contract, ContractError } from '@redemeine/kernel';
+import { CommandProcessingError } from './errors';
 import type { GenericCommandMap } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
@@ -99,7 +100,7 @@ export function createCommandProcessor<S>(
         const commandType = commandWithId.type;
         const payload = commandWithId.payload;
         const handler = handlerByType[commandType];
-        if (!handler) throw new Error('Unknown command: ' + commandType);
+        if (!handler) throw new CommandProcessingError(commandType, 'Unknown command');
 
         if (contract) {
             const schema = contract.getCommand(commandType);
