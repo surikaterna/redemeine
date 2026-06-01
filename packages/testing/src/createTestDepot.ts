@@ -95,7 +95,9 @@ type ProjectionRuntime = {
 };
 
 let projectionRuntimeModulePromise: Promise<ProjectionRuntimeModule> | null = null;
-const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+async function dynamicImport(specifier: string): Promise<unknown> {
+  return import(/* @vite-ignore */ specifier);
+}
 
 async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   if (!projectionRuntimeModulePromise) {
@@ -299,15 +301,6 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     }
   };
 
-  const routeEventsToSagas = (_events: readonly DomainEvent[]): void => {
-    // Hook-only routing pass for v1: this confirms registration and match lookup paths
-    // without simulating external worker responses.
-    for (const saga of sagaRegistrations) {
-      const handlers = saga.handlers ?? [];
-      void handlers;
-    }
-  };
-
   const resolveAggregateForCommand = (command: CommandEnvelope): AggregateDefinitionLike | undefined => {
     const direct = commandRoute.get(command.type);
     if (direct) {
@@ -349,7 +342,7 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
     const pending = core.getPendingResults();
     core.clearPendingResults();
 
-    routeEventsToSagas(pending.events);
+    // TODO: Saga event routing will be implemented when @redemeine/saga ships stable types
     await processProjectionRuntimes(pending.events, aggregateId);
   };
 

@@ -1,5 +1,9 @@
-// Ambient declaration for @redemeine/saga (not yet strict-TS-clean)
-// TODO: Remove once saga package passes strict typecheck and produces DTS
+/**
+ * Temporary ambient type shim for @redemeine/saga.
+ * All types are `any` because saga doesn't ship proper DTS yet.
+ * TODO: Remove this file when @redemeine/saga exports proper types.
+ * @see https://github.com/surikaterna/redemeine/issues/57
+ */
 declare module '@redemeine/saga' {
   export const runSagaHandler: any;
   export const runSagaErrorHandler: any;
