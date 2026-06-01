@@ -29,22 +29,25 @@ export class StateIntegrityError extends Error {
  * Responsible for verifying all Events, Commands, and State schemas dynamically against the definitions.
  */
 export class Contract {
-  public commands: Map<string, ZodType>;
-  public events: Map<string, ZodType>;
+  private readonly _commands: Map<string, ZodType> = new Map();
+  private readonly _events: Map<string, ZodType> = new Map();
   public stateSchema?: ZodType;
 
-  constructor() {
-    this.commands = new Map();
-    this.events = new Map();
+  get commands(): ReadonlyMap<string, ZodType> {
+    return this._commands;
+  }
+
+  get events(): ReadonlyMap<string, ZodType> {
+    return this._events;
   }
 
   addCommand(type: string, schema: ZodType): this {
-    this.commands.set(type, schema);
+    this._commands.set(type, schema);
     return this;
   }
 
   addEvent(type: string, schema: ZodType): this {
-    this.events.set(type, schema);
+    this._events.set(type, schema);
     return this;
   }
 
@@ -54,36 +57,30 @@ export class Contract {
   }
 
   getCommand(type: string): ZodType | undefined {
-    return this.commands.get(type);
+    return this._commands.get(type);
   }
 
   getEvent(type: string): ZodType | undefined {
-    return this.events.get(type);
+    return this._events.get(type);
   }
 
   validateCommand<T = unknown>(type: string, data: unknown): T {
-    const schema = this.commands.get(type);
-    if (!schema) {
-      throw new ContractError(`Command schema not found for type: ${type}`);
-    }
-    const result = schema.safeParse(data);
-    if (!result.success) {
-      throw new ContractError(
-        `Command validation failed for type ${type}: ${result.error.message}`
-      );
-    }
-    return result.data as T;
+    return this.validate<T>(this._commands, 'Command', type, data);
   }
 
   validateEvent<T = unknown>(type: string, data: unknown): T {
-    const schema = this.events.get(type);
+    return this.validate<T>(this._events, 'Event', type, data);
+  }
+
+  private validate<T>(schemas: Map<string, ZodType>, kind: string, type: string, data: unknown): T {
+    const schema = schemas.get(type);
     if (!schema) {
-      throw new ContractError(`Event schema not found for type: ${type}`);
+      throw new ContractError(`${kind} schema not found for type: ${type}`);
     }
     const result = schema.safeParse(data);
     if (!result.success) {
       throw new ContractError(
-        `Event validation failed for type ${type}: ${result.error.message}`
+        `${kind} validation failed for type ${type}: ${result.error.message}`
       );
     }
     return result.data as T;
@@ -100,6 +97,10 @@ export class Contract {
     return result.data as T;
   }
 
+  private static isZodLike(value: unknown): value is ZodType {
+    return value != null && typeof (value as ZodType).safeParse === 'function';
+  }
+
   static fromZodExports(exportsObj: Record<string, unknown>): Contract {
     const contract = new Contract();
     
@@ -110,22 +111,22 @@ export class Contract {
 
     if (exportsObj.Commands) {
       for (const [key, schema] of Object.entries(exportsObj.Commands as Record<string, unknown>)) {
-        if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addCommand(normalizeName(key), schema as ZodType);
+        if (Contract.isZodLike(schema)) {
+          contract.addCommand(normalizeName(key), schema);
         }
       }
     }
 
     if (exportsObj.Events) {
       for (const [key, schema] of Object.entries(exportsObj.Events as Record<string, unknown>)) {
-        if (schema && typeof (schema as any).safeParse === 'function') {
-          contract.addEvent(normalizeName(key), schema as ZodType);
+        if (Contract.isZodLike(schema)) {
+          contract.addEvent(normalizeName(key), schema);
         }
       }
     }
 
-    if (exportsObj.State && typeof (exportsObj.State as any).safeParse === 'function') {
-      contract.setStateSchema(exportsObj.State as ZodType);
+    if (Contract.isZodLike(exportsObj.State)) {
+      contract.setStateSchema(exportsObj.State);
     }
 
     return contract;
