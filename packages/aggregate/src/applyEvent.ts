@@ -133,6 +133,8 @@ export function applyEventToDraft<S>(
         if (projector) {
             projector(targetDraft, event);
         }
+    } else if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
     }
 }
 
