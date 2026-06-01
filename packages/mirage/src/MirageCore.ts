@@ -85,7 +85,7 @@ export class MirageCore<S> {
         }
     }
 
-    private processAndApply(command: Command<any, string>): S {
+    private executeCommand(command: Command<any, string>): S {
         if (this.builder.hooks?.onBeforeCommand) {
             this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
         }
@@ -106,27 +106,13 @@ export class MirageCore<S> {
         return this.state;
     }
 
+    private processAndApply(command: Command<any, string>): S {
+        return this.executeCommand(command);
+    }
+
     private async dispatchWithPlugins(command: Command<any, string>): Promise<S> {
         await this.runBeforeCommandInterceptors(command);
-
-        if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state) as any);
-        }
-
-        if (this.contract) {
-            this.validateCommand(command);
-        }
-
-        const events = this.builder.process(this.state, command);
-
-        if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state) as any);
-        }
-
-        this.applyEvents(events);
-        this.version++;
-        this.notify();
-        return this.state;
+        return this.executeCommand(command);
     }
 
     private validateCommand(command: Command<any, string>): void {
