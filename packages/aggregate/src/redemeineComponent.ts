@@ -6,6 +6,7 @@ import type { ReplaceFirstArg } from './types/ReplaceFirstArg';
 import type { PackedCommandWithMeta, ShorthandCommandWithMeta } from './types/aggregateTyping';
 
 export type GenericSelectors = Record<string, unknown>;
+// SAFETY: `any` required — GenericCommandMap must accept commands with any state type (contravariant)
 export type GenericCommandMap = Record<string, RedemeineCommandDefinition<any, Record<string, unknown>, {}>>;
 export type GenericCommandFactoryContext<TCommands extends Record<string, unknown> = Record<string, unknown>> = {
   selectors: GenericSelectors;
@@ -27,6 +28,7 @@ export function resolveCommandFactoryContext(
   };
 }
 
+// SAFETY: `any` in Event type params required — projectors accept events with heterogeneous payloads
 export type RedemeineEventProjector<S> = (state: S, event: Event<any, any>) => void;
 export type RedemeineEventDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
   | RedemeineEventProjector<S>
@@ -36,6 +38,7 @@ export type RedemeineEventDefinition<S, TMeta extends Record<string, unknown> = 
     };
 
 export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDefinition<any, any>>> = {
+  // SAFETY: `any` in conditional extends clauses required for inference of arbitrary function shapes
   [K in keyof T]: T[K] extends (...args: any[]) => any
     ? T[K]
     : T[K] extends { projector: infer P }
@@ -46,21 +49,23 @@ export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDef
 export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[], TPlugins extends PluginExtensions = {}> = (
   state: ReadonlyDeep<S>,
   ...args: Args
-) => Event<any, any> | CommandResult<Event<any, any>, TPlugins>;
+) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
 
 export type RedemeineCommandDefinition<
   S,
   TMeta extends Record<string, unknown> = Record<string, unknown>,
   TPlugins extends PluginExtensions = {}
 > =
+  // SAFETY: `any[]` in these positions required for contravariant argument matching in command definitions
   | RedemeineShorthandCommand<S, any[], TPlugins>
   | ShorthandCommandWithMeta<S, any[], TMeta, TPlugins>
-  | PackedCommandWithMeta<S, any[], any, TMeta, TPlugins>;
+  | PackedCommandWithMeta<S, any[], unknown, TMeta, TPlugins>;
 
 export type RedemeineCommandMap<S, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> = Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>>;
 
 export interface RedemeineComponent<
   S,
+  // SAFETY: `any` in generic defaults required for structural subtyping of component unions
   Commands extends Record<string, any> = {},
   Events extends Record<string, any> = {},
   Projectors extends Record<string, any> = {},
@@ -81,6 +86,7 @@ export interface RedemeineComponent<
   readonly commandOverrides: CommandOverrides;
 }
 
+// SAFETY: `any` in component type positions required for covariant union extraction
 export type ComponentCommandUnion<T extends readonly RedemeineComponent<any, any, any, any, any>[]> =
   T[number] extends RedemeineComponent<any, infer C, any, any, any> ? C : {};
 
@@ -119,7 +125,7 @@ export function composeCommandFactories(
 
 export function resolveCommandHandler<S>(
   commandDef: RedemeineCommandDefinition<S>
-): (state: ReadonlyDeep<S>, payload: unknown) => Event<any, any> | CommandResult<Event<any, any>, {}> {
+): (state: ReadonlyDeep<S>, payload: unknown) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}> {
   const handler = typeof commandDef === 'function'
     ? commandDef
     : commandDef.handler;
@@ -127,7 +133,7 @@ export function resolveCommandHandler<S>(
   return handler as (
     state: ReadonlyDeep<S>,
     payload: unknown
-  ) => Event<any, any> | CommandResult<Event<any, any>, {}>;
+  ) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}>;
 }
 
 export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: unknown[]): unknown {
@@ -137,8 +143,13 @@ export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S
   return args[0];
 }
 
+// SAFETY: Using `Function` for event/selector storage because projectors have heterogeneous signatures
+// that are incompatible with a single typed function signature due to contravariance.
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+export type AnyFunction = Function;
+
 export interface ComponentBehaviorSnapshot<S> {
-  events: Record<string, Function>;
+  events: Record<string, AnyFunction>;
   eventMetadata: Record<string, Record<string, unknown> | undefined>;
   eventOverrides: Record<string, string>;
   selectors: SelectorsMap<S>;
@@ -146,16 +157,16 @@ export interface ComponentBehaviorSnapshot<S> {
 }
 
 export interface InheritableComponentBehavior {
-  events: Record<string, Function>;
+  events: Record<string, AnyFunction>;
   eventMetadata: Record<string, Record<string, unknown> | undefined>;
   eventOverrides: Record<string, string>;
-  selectors: Record<string, Function>;
+  selectors: Record<string, AnyFunction>;
   commandOverrides: Record<string, string>;
   commandsFactory: GenericCommandFactory;
 }
 
 export function createComponentBehaviorState<S>() {
-  let events: Record<string, Function> = {};
+  let events: Record<string, AnyFunction> = {};
   let eventMetadata: Record<string, Record<string, unknown> | undefined> = {};
   let eventOverrides: Record<string, string> = {};
   let selectors: SelectorsMap<S> = {};
@@ -164,7 +175,7 @@ export function createComponentBehaviorState<S>() {
 
   return {
     addEvents(next: Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>) {
-      const normalizedEvents: Record<string, Function> = {};
+      const normalizedEvents: Record<string, AnyFunction> = {};
       const normalizedMeta: Record<string, Record<string, unknown> | undefined> = {};
 
       Object.keys(next).forEach((key) => {
@@ -188,7 +199,7 @@ export function createComponentBehaviorState<S>() {
       eventOverrides = { ...eventOverrides, ...next };
     },
 
-    addSelectors(next: Record<string, Function>) {
+    addSelectors(next: Record<string, AnyFunction>) {
       selectors = { ...selectors, ...next } as SelectorsMap<S>;
     },
 
@@ -225,7 +236,7 @@ export function createComponentBehaviorState<S>() {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// SAFETY: `any` required for variadic argument forwarding in fluent builder pattern
 type FluentUpdaterMap = Record<string, (...args: any[]) => void>;
 
 export function bindFluentMethods<TBuilder extends Record<string, unknown>, TUpdaters extends FluentUpdaterMap>(

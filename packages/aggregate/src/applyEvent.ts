@@ -1,5 +1,6 @@
 import { produce, type Draft } from 'immer';
 import type { Event } from '@redemeine/kernel';
+import type { AnyFunction } from './redemeineComponent';
 import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
 
 /**
@@ -11,8 +12,8 @@ import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } fr
  */
 function resolveEntityContainer(
     part: string,
-    draft: Record<string, any>
-): { container: any; kind: 'array' | 'map' } | undefined {
+    draft: Record<string, unknown>
+): { container: unknown; kind: 'array' | 'map' } | undefined {
     const camelPart = toCamelCase(part);
     const candidates = Array.from(new Set([
         part,
@@ -38,7 +39,7 @@ function resolveEntityContainer(
  */
 function resolveEntityIdentifier(
     part: string,
-    payload: Record<string, any>
+    payload: Record<string, unknown>
 ): { id?: unknown; mapKey?: unknown; compositePk?: Record<string, unknown> | undefined } {
     const camelPart = toCamelCase(part);
     const singularPart = singular(part);
@@ -72,19 +73,20 @@ export function applyEventToDraft<S>(
     aggregateName: string,
     draft: Draft<S>,
     event: Event,
-    allEvents: Record<string, Function>,
+    allEvents: Record<string, AnyFunction>,
     allEventOverrides: Record<string, string>,
-    projectorByEventType: Record<string, Function> = {},
-    scopedProjectorByEventType: Record<string, Function> = {},
-    scopedEventProjectors: Record<string, Function> = {}
+    projectorByEventType: Record<string, AnyFunction> = {},
+    scopedProjectorByEventType: Record<string, AnyFunction> = {},
+    scopedEventProjectors: Record<string, AnyFunction> = {}
 ): void {
-    let targetDraft = draft;
+    // SAFETY: `any` required — targetDraft narrows to sub-entities during path traversal, losing the Draft<S> type
+    let targetDraft: any = draft;
     let eventName = event.type;
     
     const parsedPath = parseTargetedEventPath(event.type, aggregateName);
     if (parsedPath) {
         for (const part of parsedPath.parts) {
-            const resolved = resolveEntityContainer(part, targetDraft as Record<string, any>);
+            const resolved = resolveEntityContainer(part, targetDraft as Record<string, unknown>);
             if (!resolved) continue;
 
             const { id, mapKey, compositePk } = event.payload
@@ -92,14 +94,15 @@ export function applyEventToDraft<S>(
                 : { id: undefined, mapKey: undefined, compositePk: undefined };
 
             if (resolved.kind === 'array') {
-                const found = (resolved.container as any[]).find((item: any) => {
-                    if (id !== undefined) return String(item.id) === String(id);
-                    if (compositePk) return Object.keys(compositePk).every(k => String(item?.[k]) === String(compositePk[k]));
+                const arr = resolved.container as Record<string, unknown>[];
+                const found = arr.find((item) => {
+                    if (id !== undefined) return String((item as Record<string, unknown>).id) === String(id);
+                    if (compositePk) return Object.keys(compositePk).every(k => String((item as Record<string, unknown>)?.[k]) === String(compositePk[k]));
                     return false;
                 });
                 if (found) targetDraft = found;
             } else if (resolved.kind === 'map' && mapKey !== undefined) {
-                const found = resolved.container[mapKey as string];
+                const found = (resolved.container as Record<string, unknown>)[mapKey as string];
                 if (found) targetDraft = found;
             }
         }
@@ -142,13 +145,13 @@ export function applyEvent<S>(
     aggregateName: string,
     state: S,
     event: Event,
-    allEvents: Record<string, Function>,
+    allEvents: Record<string, AnyFunction>,
     allEventOverrides: Record<string, string>,
-    projectorByEventType: Record<string, Function> = {},
-    scopedProjectorByEventType: Record<string, Function> = {},
-    scopedEventProjectors: Record<string, Function> = {}
+    projectorByEventType: Record<string, AnyFunction> = {},
+    scopedProjectorByEventType: Record<string, AnyFunction> = {},
+    scopedEventProjectors: Record<string, AnyFunction> = {}
 ): S {
-    return produce(state, (draft: any) => {
+    return produce(state, (draft: Draft<S>) => {
         applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors);
     }) as S;
 }
