@@ -1,5 +1,6 @@
 ---
+"@redemeine/aggregate": patch
 "@redemeine/saga": patch
 ---
 
-Prepare @redemeine/saga for prerelease publishing by generating declaration files and publishing package metadata.
+Prepare @redemeine/aggregate and @redemeine/saga for prerelease publishing by using npm-compatible prerelease dependency metadata and generating saga declaration files.
