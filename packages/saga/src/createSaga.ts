@@ -8,7 +8,7 @@ export {
   runSagaErrorHandler,
   runSagaHandler,
   runSagaResponseHandler
-} from './handlerExecution';
+} from './execution/handlerExecution';
 export type {
   SagaErrorTokenKey,
   SagaResponseHandlerPhase,
@@ -21,7 +21,7 @@ export type {
   TErrorToken,
   TRetryToken,
   TResponseToken
-} from './responseTokens';
+} from './definition/responseTokens';
 import type {
   SagaBindingsFromErrorHandlers,
   SagaBindingsFromResponseHandlers,
@@ -37,7 +37,7 @@ import type {
   TErrorToken,
   TRetryToken,
   TResponseToken
-} from './responseTokens';
+} from './definition/responseTokens';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
