@@ -40,6 +40,14 @@ runtime integration specifically requires those lower-level contracts.
 - Consume the generated `.d.ts` declarations from the published package instead
   of importing internal source files.
 
+## Handler failure semantics
+
+`runSagaHandler`, `runSagaResponseHandler`, and `runSagaErrorHandler` propagate
+errors thrown by matched handlers. Response and error execution helpers return an
+`{ ok: false, reason, token }` result only for token resolution failures such as
+unknown or unregistered handler tokens; they do not wrap thrown handler errors in
+a structured failure envelope.
+
 ## Minimal example
 
 ```ts

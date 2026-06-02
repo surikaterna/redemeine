@@ -2,6 +2,9 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createSagaExecutionBridge,
   createReferenceAdaptersV1,
+  runReferenceAdapterFlowV1,
+  type SagaDefinitionLike,
+  type SagaRuntimeSideEffectIntent,
   type SagaAggregateState
 } from '../src';
 
@@ -169,6 +172,68 @@ describe('saga execution bridge integration', () => {
     expect(result.adapterResults).toEqual([]);
     expect(result.sagaState).toBeUndefined();
     expect(result.aggregateState.id).toBeNull();
+  });
+
+  it('propagates thrown saga handler errors from bridge dispatch without returning a result envelope', async () => {
+    const thrown = new Error('bridge handler failed');
+    const definition: SagaDefinitionLike<{ attempts: number }> = {
+      sagaType: 'runtime.failure.bridge.v1',
+      initialState: () => ({ attempts: 0 }),
+      responseHandlers: {},
+      errorHandlers: {},
+      retryHandlers: {},
+      handlers: [{
+        aggregateType: 'orders',
+        handlers: {
+          started: () => {
+            throw thrown;
+          }
+        }
+      }]
+    };
+    const bridge = createSagaExecutionBridge({ definition });
+
+    await expect(bridge.dispatch({
+      sagaId: 'saga-bridge-handler-failure',
+      event: {
+        type: 'orders.started.event',
+        payload: { orderId: 'order-failure' },
+        aggregateType: 'orders'
+      }
+    })).rejects.toBe(thrown);
+  });
+
+  it('propagates thrown reference adapter flow errors after side-effect execution is attempted', async () => {
+    const thrown = new Error('side effect adapter failed');
+    const baseAdapters = createReferenceAdaptersV1();
+    const handled: SagaRuntimeSideEffectIntent[] = [];
+    const adapters = {
+      ...baseAdapters,
+      sideEffects: {
+        async execute(intent: SagaRuntimeSideEffectIntent) {
+          handled.push(intent);
+          throw thrown;
+        },
+        listHandled: () => handled
+      }
+    };
+
+    await expect(runReferenceAdapterFlowV1(adapters, {
+      sagaId: 'saga-adapter-flow-failure',
+      intents: [{
+        type: 'plugin-intent',
+        plugin_key: 'telemetry',
+        action_name: 'record',
+        interaction: 'fire_and_forget',
+        execution_payload: { name: 'failure.test' },
+        metadata: {
+          sagaId: 'saga-adapter-flow-failure',
+          correlationId: 'corr-adapter-flow-failure',
+          causationId: 'cause-adapter-flow-failure'
+        }
+      }]
+    })).rejects.toBe(thrown);
+    expect(handled).toHaveLength(1);
   });
 
   it('keeps execution ids monotonic across repeated dispatches and traceable to aggregate lifecycle ids', async () => {
