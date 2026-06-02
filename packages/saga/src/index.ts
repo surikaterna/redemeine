@@ -1,6 +1,7 @@
 export {
   createSaga,
   createSagaCommandsFor,
+  createSagaDispatchContext,
   defineCustomAction,
   defineOneWay,
   defineRequestResponse,
@@ -186,4 +187,3 @@ export {
   type RetryableErrorClassificationOptions,
   type RetrySchedulingNow
 } from './RetryPolicy';
-
