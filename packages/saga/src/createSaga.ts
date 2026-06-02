@@ -1,9 +1,43 @@
-import { createDraft, finishDraft, type Draft } from 'immer';
+import type { Draft } from 'immer';
 import {
   normalizeSagaIdentity,
   type SagaIdentityInput
 } from './identity';
 import type { SagaRetryPolicy } from './RetryPolicy';
+export {
+  runSagaErrorHandler,
+  runSagaHandler,
+  runSagaResponseHandler
+} from './handlerExecution';
+export type {
+  SagaErrorTokenKey,
+  SagaResponseHandlerPhase,
+  SagaResponseHandlerTokenAccess,
+  SagaResponseHandlerTokenBinding,
+  SagaResponseHandlerTokenBindings,
+  SagaResponseHandlerTokenNamespace,
+  SagaResponseTokenKey,
+  SagaRetryTokenKey,
+  TErrorToken,
+  TRetryToken,
+  TResponseToken
+} from './responseTokens';
+import type {
+  SagaBindingsFromErrorHandlers,
+  SagaBindingsFromResponseHandlers,
+  SagaBindingsFromRetryHandlers,
+  SagaErrorTokenKey,
+  SagaResponseHandlerPhase,
+  SagaResponseHandlerTokenAccess,
+  SagaResponseHandlerTokenBinding,
+  SagaResponseHandlerTokenBindings,
+  SagaResponseHandlerTokenNamespace,
+  SagaResponseTokenKey,
+  SagaRetryTokenKey,
+  TErrorToken,
+  TRetryToken,
+  TResponseToken
+} from './responseTokens';
 
 /** Factory used to initialize saga state for a new saga definition. */
 export type SagaInitialStateFactory<TState> = () => TState;
@@ -11,7 +45,11 @@ export type SagaInitialStateFactory<TState> = () => TState;
 /** Correlation resolver for routing domain events into saga instances. */
 export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
+// SAFETY: This public plugin/action function constraint keeps concrete plugin
+// build functions assignable under strict function variance;
+// replacing it with `unknown[]` would reject narrower user parameters.
 type AnyFunction = (...args: any[]) => unknown;
+type UnknownArgsFunction<TResult = unknown> = (...args: unknown[]) => TResult;
 const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
 const SAGA_ACTION_RUNTIME_EMITTER = '__saga_action_runtime_emitter';
 
@@ -144,96 +182,34 @@ export type SagaPluginFireAndForgetActionNames<TPlugin extends SagaPluginManifes
 export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManifest> =
   SagaPluginActionNamesByInteraction<TPlugin, 'request_response'>;
 
-export type SagaResponseHandlerPhase = 'response' | 'error' | 'retry';
-
-declare const sagaResponseHandlerTokenBrand: unique symbol;
-
-type SagaPhaseToken<TToken extends string, TPhase extends SagaResponseHandlerPhase> = TToken & {
-  readonly [sagaResponseHandlerTokenBrand]: TPhase;
-};
-
-export type TResponseToken<TToken extends string = string> = SagaPhaseToken<TToken, 'response'>;
-
-export type TErrorToken<TToken extends string = string> = SagaPhaseToken<TToken, 'error'>;
-
-export type TRetryToken<TToken extends string = string> = SagaPhaseToken<TToken, 'retry'>;
-
-export interface SagaResponseHandlerTokenBinding<
-  TPhase extends SagaResponseHandlerPhase = SagaResponseHandlerPhase
-> {
-  readonly phase: TPhase;
-}
-
-export type SagaResponseHandlerTokenBindings = Record<string, SagaResponseHandlerTokenBinding>;
-
-export type SagaResponseTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
-  SagaResponseHandlerKeysByPhase<TBindings, 'response'>;
-
-export type SagaErrorTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
-  SagaResponseHandlerKeysByPhase<TBindings, 'error'>;
-
-export type SagaRetryTokenKey<TBindings extends SagaResponseHandlerTokenBindings> =
-  SagaResponseHandlerKeysByPhase<TBindings, 'retry'>;
-
-type SagaResponseHandlerTokenForPhase<
-  TToken extends string,
-  TPhase extends SagaResponseHandlerPhase
-> = TPhase extends 'response'
-  ? TResponseToken<TToken>
-  : TPhase extends 'error'
-    ? TErrorToken<TToken>
-    : TRetryToken<TToken>;
-
-type SagaResponseHandlerKeysByPhase<
-  TBindings extends SagaResponseHandlerTokenBindings,
-  TPhase extends SagaResponseHandlerPhase
-> = {
-  [THandlerKey in keyof TBindings & string]: TBindings[THandlerKey]['phase'] extends TPhase
-    ? THandlerKey
-    : never;
-}[keyof TBindings & string];
-
-export type SagaResponseHandlerTokenNamespace<
-  TBindings extends SagaResponseHandlerTokenBindings,
-  TPhase extends SagaResponseHandlerPhase
-> = {
-  readonly [THandlerKey in SagaResponseHandlerKeysByPhase<TBindings, TPhase>]: SagaResponseHandlerTokenForPhase<
-    THandlerKey,
-    TPhase
-  >;
-};
-
-export type SagaResponseHandlerTokenAccess<TBindings extends SagaResponseHandlerTokenBindings> = {
-  readonly onResponse: SagaResponseHandlerTokenNamespace<TBindings, 'response'>;
-  readonly onError: SagaResponseHandlerTokenNamespace<TBindings, 'error'>;
-  readonly onRetry: SagaResponseHandlerTokenNamespace<TBindings, 'retry'>;
-};
-
-type SagaBindingsFromResponseHandlers<THandlers extends Record<string, unknown>> = {
-  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'response'>;
-};
-
-type SagaBindingsFromErrorHandlers<THandlers extends Record<string, unknown>> = {
-  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'error'>;
-};
-
-type SagaBindingsFromRetryHandlers<THandlers extends Record<string, unknown>> = {
-  [TKey in keyof THandlers & string]: SagaResponseHandlerTokenBinding<'retry'>;
-};
-
 type SagaAnyResponseHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableResponseHandler<TState, TPlugins, any, any>
+  SagaExecutableResponseHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'response'>>,
+    TResponseToken<string>
+  >
 >;
 
 type SagaAnyErrorHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableErrorHandler<TState, TPlugins, any, any>
+  SagaExecutableErrorHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'error'>>,
+    TErrorToken<string>
+  >
 >;
 
 type SagaAnyRetryHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableRetryHandler<TState, TPlugins, any, any>
+  SagaExecutableRetryHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'retry'>>,
+    TRetryToken<string>
+  >
 >;
 
 export interface SagaOneWayActionDefinition<TBuild extends AnyFunction = AnyFunction> {
@@ -736,6 +712,8 @@ export interface SagaAggregateCommandEnvelope {
 }
 
 /** Command creators shape emitted by `createAggregate(...).build()`. */
+// SAFETY: Public aggregate command creators are variadic. Narrowing the rest
+// parameters would reject existing command creator maps under strict variance.
 export type SagaCommandCreators = Record<string, (...args: any[]) => SagaAggregateCommandEnvelope>;
 
 /** Aggregate definition shape consumed by saga `.on(...)` and `ctx.commandsFor(...)`. */
@@ -760,7 +738,7 @@ type AggregateTypeOf<TAggregate extends SagaAggregateDefinition> =
     : string;
 
 type ProjectorPayload<TProjector> =
-  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+  TProjector extends (state: never, event: infer TEvent, ...args: never[]) => unknown
     ? TEvent extends { payload: infer TPayload }
       ? TPayload
       : unknown
@@ -866,7 +844,7 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   for (const commandName of Object.keys(aggregateDef.commandCreators)) {
     const createCommand = aggregateDef.commandCreators[commandName]!;
 
-    (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
+    (commandIntents as Record<string, UnknownArgsFunction>)[commandName] = (...args: unknown[]) => {
       const command = createCommand(...args);
       const intent = createSagaDispatchIntentFromEnvelope(
         commandName as keyof CommandCreatorsOf<TAggregate> & string,
@@ -1022,9 +1000,9 @@ function createSagaCorePluginManifest(
   ): SagaCommandsFor<TAggregate> => {
     const emittedCommands = {} as SagaCommandsFor<TAggregate>;
 
-    for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
-      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName]!;
-      (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
+    for (const commandName of Object.keys(commandIntents)) {
+      const createIntent = (commandIntents as Record<string, UnknownArgsFunction<SagaIntent>>)[commandName]!;
+      (emittedCommands as Record<string, UnknownArgsFunction<SagaIntent>>)[commandName] = (...args: unknown[]) => {
         const intent = createIntent(...args);
         emitIntent(intent);
         return intent;
@@ -1094,18 +1072,18 @@ function createPluginActionsContext(
   plugins: SagaPluginManifestList,
   metadata: SagaIntentMetadata,
   emitIntent: (intent: SagaIntent) => void
-): Record<string, Record<string, (...args: any[]) => unknown>> {
-  const actionsContext: Record<string, Record<string, (...args: any[]) => unknown>> = Object.create(null);
+): Record<string, Record<string, UnknownArgsFunction>> {
+  const actionsContext: Record<string, Record<string, UnknownArgsFunction>> = Object.create(null);
 
   for (const plugin of composePluginManifestsWithPrecedence(plugins)) {
-    const pluginActions: Record<string, (...args: any[]) => unknown> =
+    const pluginActions: Record<string, UnknownArgsFunction> =
       actionsContext[plugin.plugin_key] ?? Object.create(null);
 
     for (const actionName of Object.keys(plugin.actions)) {
       const actionDescriptor = plugin.actions[actionName] as SagaPluginActionDescriptorWithHelperMetadata;
 
       if (actionDescriptor.interaction === 'request_response') {
-        pluginActions[actionName] = (...args: any[]) => {
+        pluginActions[actionName] = (...args: unknown[]) => {
           const executionPayload = actionDescriptor.build(...args);
           let terminalIntent: SagaPluginRequestIntentHandle | undefined;
 
@@ -1162,7 +1140,7 @@ function createPluginActionsContext(
         continue;
       }
 
-      pluginActions[actionName] = (...args: any[]) => {
+      pluginActions[actionName] = (...args: unknown[]) => {
         const executionPayload = actionDescriptor.build(...args);
         const runtimeEmitter = actionDescriptor[SAGA_ACTION_RUNTIME_EMITTER];
 
@@ -1335,7 +1313,7 @@ export type SagaHandlers<
   >;
 };
 
-/** Handler used by trigger-based saga starts before any aggregate events. */
+/** Handler used by trigger-based saga starts before aggregate events are available. */
 export type SagaStartHandler<
   TStartInput,
   TState,
@@ -1737,218 +1715,6 @@ function createSagaPluginRegistry<TPlugins extends SagaPluginManifestList>(
     action_names: Object.keys(plugin.actions),
     ...(plugin.version === undefined ? {} : { version: plugin.version })
   })) as SagaPluginRegistryFromManifests<TPlugins>;
-}
-
-function resolveIntentMetadata(
-  request: SagaExternalHandlerRequestContext,
-  override?: Partial<SagaIntentMetadata>
-): SagaIntentMetadata {
-  return {
-    sagaId: override?.sagaId ?? request.sagaId ?? 'unknown-saga-id',
-    correlationId: override?.correlationId ?? request.correlationId ?? 'unknown-correlation-id',
-    causationId: override?.causationId ?? request.causationId ?? 'unknown-causation-id'
-  };
-}
-
-function createTokenBindingsFromHandlerMaps<
-  TResponseHandlers extends Record<string, unknown>,
-  TErrorHandlers extends Record<string, unknown>,
-  TRetryHandlers extends Record<string, unknown>
->(
-  responseHandlers: TResponseHandlers,
-  errorHandlers: TErrorHandlers,
-  retryHandlers: TRetryHandlers
-): SagaBindingsFromResponseHandlers<TResponseHandlers>
-  & SagaBindingsFromErrorHandlers<TErrorHandlers>
-  & SagaBindingsFromRetryHandlers<TRetryHandlers> {
-  const bindings: Record<string, SagaResponseHandlerTokenBinding> = {};
-
-  for (const token of Object.keys(responseHandlers)) {
-    bindings[token] = { phase: 'response' };
-  }
-
-  for (const token of Object.keys(errorHandlers)) {
-    bindings[token] = { phase: 'error' };
-  }
-
-  for (const token of Object.keys(retryHandlers)) {
-    bindings[token] = { phase: 'retry' };
-  }
-
-  return bindings as SagaBindingsFromResponseHandlers<TResponseHandlers>
-    & SagaBindingsFromErrorHandlers<TErrorHandlers>
-    & SagaBindingsFromRetryHandlers<TRetryHandlers>;
-}
-
-function hasOwnToken(handlers: Record<string, unknown> | undefined, token: string): boolean {
-  if (handlers === undefined) {
-    return false;
-  }
-
-  return Object.prototype.hasOwnProperty.call(handlers, token);
-}
-
-/**
- * Executes a single saga handler with mutation-first semantics and produces
- * deterministic reducer output.
- */
-export async function runSagaHandler<
-  TState,
-  TAggregate extends SagaAggregateDefinition,
-  TEventName extends SagaAggregateEventName<TAggregate>,
-  TPlugins extends SagaPluginManifestList = readonly [],
-  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
->(
-  state: TState,
-  event: SagaAggregateEventByName<TAggregate, TEventName>,
-  handler: SagaHandler<TState, TAggregate, TEventName, TPlugins, TResponseHandlerBindings>,
-  metadata: SagaIntentMetadata,
-  responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
-  plugins: TPlugins = [] as unknown as TPlugins
-): Promise<SagaReducerOutput<TState>> {
-  const draft = createDraft(state as any);
-  const intentBuffer: SagaIntent[] = [];
-  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
-    metadata,
-    intentBuffer,
-    responseHandlers,
-    plugins
-  );
-
-  await handler(draft as Draft<TState>, event, ctx);
-
-  return {
-    state: finishDraft(draft) as TState,
-    intents: intentBuffer
-  };
-}
-
-export async function runSagaResponseHandler<
-  TState,
-  TPlugins extends SagaPluginManifestList = readonly [],
-  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>> =
-    TResponseToken<SagaResponseTokenKey<TResponseHandlerBindings>>,
-  TPayload = unknown
->(
-  input: RunSagaResponseHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TPayload>
-): Promise<SagaExecutableHandlerResult<TState, TToken>> {
-  const {
-    definition,
-    state,
-    envelope,
-    intentMetadata,
-    plugins = [] as unknown as TPlugins
-  } = input;
-  const token = envelope.token;
-  if (!hasOwnToken(definition.responseHandlers as Record<string, unknown>, token)) {
-    return {
-      ok: false,
-      reason: 'token_not_defined',
-      token
-    };
-  }
-
-  const handler = (definition.responseHandlers as Record<
-    string,
-    SagaExecutableResponseHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
-  >)[token];
-
-  if (handler === undefined) {
-    return {
-      ok: false,
-      reason: 'handler_not_registered',
-      token
-    };
-  }
-
-  const draft = createDraft(state as any);
-  const intents: SagaIntent[] = [];
-  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
-    resolveIntentMetadata(envelope.request, intentMetadata),
-    intents,
-    createTokenBindingsFromHandlerMaps(
-      definition.responseHandlers,
-      definition.errorHandlers,
-      definition.retryHandlers
-    ) as TResponseHandlerBindings,
-    plugins
-  );
-
-  await handler(draft as Draft<TState>, envelope as SagaResponseCallbackEnvelope<any, TPayload>, ctx);
-
-  return {
-    ok: true,
-    output: {
-      state: finishDraft(draft) as TState,
-      intents
-    },
-    token
-  };
-}
-
-export async function runSagaErrorHandler<
-  TState,
-  TPlugins extends SagaPluginManifestList = readonly [],
-  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
-  TToken extends TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>> =
-    TErrorToken<SagaErrorTokenKey<TResponseHandlerBindings>>,
-  TError = unknown
->(
-  input: RunSagaErrorHandlerInput<TState, TPlugins, TResponseHandlerBindings, TToken, TError>
-): Promise<SagaExecutableHandlerResult<TState, TToken>> {
-  const {
-    definition,
-    state,
-    envelope,
-    intentMetadata,
-    plugins = [] as unknown as TPlugins
-  } = input;
-  const token = envelope.token;
-  if (!hasOwnToken(definition.errorHandlers as Record<string, unknown>, token)) {
-    return {
-      ok: false,
-      reason: 'token_not_defined',
-      token
-    };
-  }
-
-  const handler = (definition.errorHandlers as Record<
-    string,
-    SagaExecutableErrorHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
-  >)[token];
-
-  if (handler === undefined) {
-    return {
-      ok: false,
-      reason: 'handler_not_registered',
-      token
-    };
-  }
-
-  const draft = createDraft(state as any);
-  const intents: SagaIntent[] = [];
-  const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
-    resolveIntentMetadata(envelope.request, intentMetadata),
-    intents,
-    createTokenBindingsFromHandlerMaps(
-      definition.responseHandlers,
-      definition.errorHandlers,
-      definition.retryHandlers
-    ) as TResponseHandlerBindings,
-    plugins
-  );
-
-  await handler(draft as Draft<TState>, envelope as SagaErrorCallbackEnvelope<any, TError>, ctx);
-
-  return {
-    ok: true,
-    output: {
-      state: finishDraft(draft) as TState,
-      intents
-    },
-    token
-  };
 }
 
 function createSagaBuilder<

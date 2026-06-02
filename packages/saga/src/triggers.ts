@@ -26,12 +26,12 @@ type TriggerWhenListOf<TDefinition> =
     : readonly [];
 
 type TriggerSourceOf<TDefinition> =
-  TDefinition extends { readonly toStartInput: SagaTriggerToStartInput<infer TSource, any> }
+  TDefinition extends { readonly toStartInput: SagaTriggerToStartInput<infer TSource, unknown> }
     ? TSource
     : never;
 
 type TriggerStartInputOf<TDefinition> =
-  TDefinition extends { readonly toStartInput: SagaTriggerToStartInput<any, infer TStartInput> }
+  TDefinition extends { readonly toStartInput: SagaTriggerToStartInput<never, infer TStartInput> }
     ? TStartInput
     : never;
 

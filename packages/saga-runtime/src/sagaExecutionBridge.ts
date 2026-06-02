@@ -1,18 +1,12 @@
-declare const require: (id: string) => any;
-
-const sagaPackage = require('@redemeine/saga');
-const runSagaHandler = sagaPackage.runSagaHandler as (
-  state: unknown,
-  event: unknown,
-  handler: (...args: unknown[]) => unknown,
-  metadata: SagaIntentMetadata,
-  responseHandlers?: SagaResponseHandlerTokenBindings,
-  plugins?: readonly unknown[]
-) => Promise<{ state: unknown; intents: SagaIntent[] }>;
+import {
+  runSagaHandler as runImportedSagaHandler,
+  type SagaIntent,
+  type SagaIntentMetadata,
+  type SagaResponseHandlerTokenBindings as ImportedSagaResponseHandlerTokenBindings
+} from '@redemeine/saga';
 import {
   createReferenceAdaptersV1,
   runReferenceAdapterFlowV1,
-  type SagaIntent as RuntimeSagaIntent,
   type SagaRuntimeReferenceAdapters,
   type SagaRuntimeReferenceFlowResult,
   type SagaSchedulerTriggerPolicyContract
@@ -25,15 +19,23 @@ import {
 } from './SagaAggregate';
 import { toCamelCase } from '@redemeine/aggregate';
 
-interface SagaIntentMetadata {
-  readonly sagaId: string;
-  readonly correlationId: string;
-  readonly causationId: string;
-}
-
-type SagaIntent = RuntimeSagaIntent;
-
 export type SagaResponseHandlerTokenBindings = Record<string, { phase: 'response' | 'error' | 'retry' }>;
+
+const runSagaBridgeHandler = (
+  state: unknown,
+  event: unknown,
+  handler: unknown,
+  metadata: SagaIntentMetadata,
+  responseHandlers?: ImportedSagaResponseHandlerTokenBindings,
+  plugins?: readonly unknown[]
+): Promise<{ state: unknown; intents: SagaIntent[] }> => runImportedSagaHandler(
+  state,
+  event as never,
+  handler as never,
+  metadata,
+  responseHandlers,
+  plugins as never
+) as Promise<{ state: unknown; intents: SagaIntent[] }>;
 
 export interface SagaDefinitionLike<TState> {
   readonly sagaType: string;
@@ -314,10 +316,10 @@ export function createSagaExecutionBridge<TState>(
       let state = getSagaState(input.sagaId) ?? options.definition.initialState();
 
       for (const match of matches) {
-        const output = await runSagaHandler(
+        const output = await runSagaBridgeHandler(
           state,
-          input.event as any,
-          match.handler as any,
+          input.event,
+          match.handler,
           metadata,
           tokenBindings,
           options.runtimePlugins ?? []
