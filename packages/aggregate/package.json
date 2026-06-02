@@ -38,7 +38,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@redemeine/kernel": "workspace:*"
+    "@redemeine/kernel": "0.2.0-pre.0"
   },
   "devDependencies": {
     "tsup": "^8.4.0",
