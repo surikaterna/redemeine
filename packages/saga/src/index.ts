@@ -1,3 +1,15 @@
+/**
+ * Public entry point for `@redemeine/saga`.
+ *
+ * The exports below are grouped by their intended public API role. Some types
+ * remain exported for aggregate-bridge and persisted-contract compatibility;
+ * prefer the builder DSL and generated `.d.ts` types for new application code.
+ *
+ * @packageDocumentation
+ */
+
+// Builder DSL, plugin helper contracts, runtime execution helpers, and
+// compatibility types used by saga definitions and aggregate event handlers.
 export {
   createSaga,
   createSagaCommandsFor,
@@ -98,6 +110,8 @@ export {
   type SagaTriggerContract,
   type SagaTriggerDefinition
 } from './createSaga';
+
+// Start-policy DSL for controlling duplicate starts and restart semantics.
 export {
   startPolicy,
   type SagaRestartMode,
@@ -107,6 +121,8 @@ export {
   type SagaStartPolicyJoinExisting,
   type SagaStartPolicyRestart
 } from './startPolicy';
+
+// Trigger contracts shared between trigger builders and runtimes/schedulers.
 export {
   type SagaSchedulerTriggerPolicyContract,
   type SagaTriggerMisfirePolicy,
@@ -117,6 +133,8 @@ export {
   type SagaTriggerRestartPolicy,
   type SagaTriggerStartContract
 } from './triggerContracts';
+
+// Trigger builder DSL and schedule/event trigger definition contracts.
 export {
   createSagaTriggerBuilder,
   type SagaCronScheduleInvocation,
@@ -149,7 +167,11 @@ export {
   type SagaTriggerPredicate,
   type SagaTriggerToStartInput
 } from './triggers';
+
+// Aggregate bridge compatibility for existing aggregate-style integrations.
 export { createAggregate } from './aggregateBridge';
+
+// Saga identity utilities for canonical keys, URNs, and normalized metadata.
 export {
   buildSagaType,
   normalizeSagaIdentity,
@@ -175,7 +197,7 @@ export {
   type CanonicalSagaIdentityParts
 } from './identity/index';
 
-// Retry policy exports.
+// Retry policy validation, classification, and scheduling helpers.
 export {
   validateRetryPolicy,
   computeNextAttemptAt,
