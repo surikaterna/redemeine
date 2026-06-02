@@ -22,6 +22,7 @@
     "orchestration"
   ],
   "type": "module",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -41,9 +42,11 @@
     "test": "bun test ./test",
     "lint": "tsc --noEmit"
   },
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@redemeine/aggregate": "workspace:*",
+    "@redemeine/aggregate": "0.2.0-pre.0",
     "immer": "^10.1.1"
   },
   "devDependencies": {
