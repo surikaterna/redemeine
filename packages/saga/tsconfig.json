@@ -5,7 +5,8 @@
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false,
     "paths": {
-      "@redemeine/aggregate": ["../aggregate/src/index.ts"]
+      "@redemeine/aggregate": ["../aggregate/src/index.ts"],
+      "@redemeine/kernel": ["../kernel/src/index.ts"]
     }
   },
   "include": ["src"]
