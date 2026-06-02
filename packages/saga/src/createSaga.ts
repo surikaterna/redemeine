@@ -45,7 +45,11 @@ export type SagaInitialStateFactory<TState> = () => TState;
 /** Correlation resolver for routing domain events into saga instances. */
 export type SagaCorrelationFactory = (...args: unknown[]) => unknown;
 
+// SAFETY: This public plugin/action function constraint keeps concrete plugin
+// build functions assignable under strict function variance;
+// replacing it with `unknown[]` would reject narrower user parameters.
 type AnyFunction = (...args: any[]) => unknown;
+type UnknownArgsFunction<TResult = unknown> = (...args: unknown[]) => TResult;
 const SAGA_HELPER_EMISSION_MODE = '__saga_helper_emission_mode';
 const SAGA_ACTION_RUNTIME_EMITTER = '__saga_action_runtime_emitter';
 
@@ -180,17 +184,32 @@ export type SagaPluginRequestResponseActionNames<TPlugin extends SagaPluginManif
 
 type SagaAnyResponseHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableResponseHandler<TState, TPlugins, any, any>
+  SagaExecutableResponseHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'response'>>,
+    TResponseToken<string>
+  >
 >;
 
 type SagaAnyErrorHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableErrorHandler<TState, TPlugins, any, any>
+  SagaExecutableErrorHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'error'>>,
+    TErrorToken<string>
+  >
 >;
 
 type SagaAnyRetryHandlerMap<TState, TPlugins extends SagaPluginManifestList> = Record<
   string,
-  SagaExecutableRetryHandler<TState, TPlugins, any, any>
+  SagaExecutableRetryHandler<
+    TState,
+    TPlugins,
+    Record<string, SagaResponseHandlerTokenBinding<'retry'>>,
+    TRetryToken<string>
+  >
 >;
 
 export interface SagaOneWayActionDefinition<TBuild extends AnyFunction = AnyFunction> {
@@ -693,6 +712,8 @@ export interface SagaAggregateCommandEnvelope {
 }
 
 /** Command creators shape emitted by `createAggregate(...).build()`. */
+// SAFETY: Public aggregate command creators are variadic. Narrowing the rest
+// parameters would reject existing command creator maps under strict variance.
 export type SagaCommandCreators = Record<string, (...args: any[]) => SagaAggregateCommandEnvelope>;
 
 /** Aggregate definition shape consumed by saga `.on(...)` and `ctx.commandsFor(...)`. */
@@ -717,7 +738,7 @@ type AggregateTypeOf<TAggregate extends SagaAggregateDefinition> =
     : string;
 
 type ProjectorPayload<TProjector> =
-  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
+  TProjector extends (state: never, event: infer TEvent, ...args: never[]) => unknown
     ? TEvent extends { payload: infer TPayload }
       ? TPayload
       : unknown
@@ -823,7 +844,7 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
   for (const commandName of Object.keys(aggregateDef.commandCreators)) {
     const createCommand = aggregateDef.commandCreators[commandName]!;
 
-    (commandIntents as Record<string, (...args: any[]) => unknown>)[commandName] = (...args: any[]) => {
+    (commandIntents as Record<string, UnknownArgsFunction>)[commandName] = (...args: unknown[]) => {
       const command = createCommand(...args);
       const intent = createSagaDispatchIntentFromEnvelope(
         commandName as keyof CommandCreatorsOf<TAggregate> & string,
@@ -979,9 +1000,9 @@ function createSagaCorePluginManifest(
   ): SagaCommandsFor<TAggregate> => {
     const emittedCommands = {} as SagaCommandsFor<TAggregate>;
 
-    for (const commandName of Object.keys(commandIntents as Record<string, unknown>)) {
-      const createIntent = (commandIntents as Record<string, (...args: any[]) => SagaIntent>)[commandName]!;
-      (emittedCommands as Record<string, (...args: any[]) => SagaIntent>)[commandName] = (...args: any[]) => {
+    for (const commandName of Object.keys(commandIntents)) {
+      const createIntent = (commandIntents as Record<string, UnknownArgsFunction<SagaIntent>>)[commandName]!;
+      (emittedCommands as Record<string, UnknownArgsFunction<SagaIntent>>)[commandName] = (...args: unknown[]) => {
         const intent = createIntent(...args);
         emitIntent(intent);
         return intent;
@@ -1051,18 +1072,18 @@ function createPluginActionsContext(
   plugins: SagaPluginManifestList,
   metadata: SagaIntentMetadata,
   emitIntent: (intent: SagaIntent) => void
-): Record<string, Record<string, (...args: any[]) => unknown>> {
-  const actionsContext: Record<string, Record<string, (...args: any[]) => unknown>> = Object.create(null);
+): Record<string, Record<string, UnknownArgsFunction>> {
+  const actionsContext: Record<string, Record<string, UnknownArgsFunction>> = Object.create(null);
 
   for (const plugin of composePluginManifestsWithPrecedence(plugins)) {
-    const pluginActions: Record<string, (...args: any[]) => unknown> =
+    const pluginActions: Record<string, UnknownArgsFunction> =
       actionsContext[plugin.plugin_key] ?? Object.create(null);
 
     for (const actionName of Object.keys(plugin.actions)) {
       const actionDescriptor = plugin.actions[actionName] as SagaPluginActionDescriptorWithHelperMetadata;
 
       if (actionDescriptor.interaction === 'request_response') {
-        pluginActions[actionName] = (...args: any[]) => {
+        pluginActions[actionName] = (...args: unknown[]) => {
           const executionPayload = actionDescriptor.build(...args);
           let terminalIntent: SagaPluginRequestIntentHandle | undefined;
 
@@ -1119,7 +1140,7 @@ function createPluginActionsContext(
         continue;
       }
 
-      pluginActions[actionName] = (...args: any[]) => {
+      pluginActions[actionName] = (...args: unknown[]) => {
         const executionPayload = actionDescriptor.build(...args);
         const runtimeEmitter = actionDescriptor[SAGA_ACTION_RUNTIME_EMITTER];
 
@@ -1292,7 +1313,7 @@ export type SagaHandlers<
   >;
 };
 
-/** Handler used by trigger-based saga starts before any aggregate events. */
+/** Handler used by trigger-based saga starts before aggregate events are available. */
 export type SagaStartHandler<
   TStartInput,
   TState,

@@ -8,11 +8,11 @@ import type {
   SagaAggregateEventName,
   SagaErrorCallbackEnvelope,
   SagaErrorTokenKey,
-  SagaExecutableErrorHandler,
   SagaExecutableHandlerResult,
-  SagaExecutableResponseHandler,
   SagaHandler,
+  SagaHandlerResult,
   SagaIntent,
+  SagaIntentContext,
   SagaIntentMetadata,
   SagaPluginManifestList,
   SagaReducerOutput,
@@ -97,6 +97,9 @@ function createCallbackExecutionContext<
   intentMetadata: Partial<SagaIntentMetadata> | undefined,
   plugins: TPlugins
 ) {
+  // SAFETY: Immer's `createDraft` type is object-bounded, while saga state is
+  // intentionally generic for public API compatibility. Runtime behavior is
+  // unchanged: callers must still provide draftable saga state.
   const draft = createDraft(state as any);
   const intents: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
@@ -146,6 +149,8 @@ export async function runSagaHandler<
   responseHandlers: TResponseHandlerBindings = {} as TResponseHandlerBindings,
   plugins: TPlugins = [] as unknown as TPlugins
 ): Promise<SagaReducerOutput<TState>> {
+  // SAFETY: See `createCallbackExecutionContext`; preserving the unbounded
+  // public `TState` avoids a breaking API constraint.
   const draft = createDraft(state as any);
   const intentBuffer: SagaIntent[] = [];
   const ctx = createSagaDispatchContext<TPlugins, TResponseHandlerBindings>(
@@ -187,7 +192,11 @@ export async function runSagaResponseHandler<
 
   const handler = (definition.responseHandlers as Record<
     string,
-    SagaExecutableResponseHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
+    ((
+      state: Draft<TState>,
+      response: SagaResponseCallbackEnvelope<TToken, TPayload>,
+      ctx: SagaIntentContext<TPlugins, TResponseHandlerBindings>
+    ) => SagaHandlerResult) | undefined
   >)[token];
 
   if (handler === undefined) {
@@ -202,7 +211,7 @@ export async function runSagaResponseHandler<
     plugins
   );
 
-  await handler(draft as Draft<TState>, envelope as SagaResponseCallbackEnvelope<any, TPayload>, ctx);
+  await handler(draft as Draft<TState>, envelope, ctx);
 
   return createSuccessResult(draft, intents, token);
 }
@@ -231,7 +240,11 @@ export async function runSagaErrorHandler<
 
   const handler = (definition.errorHandlers as Record<
     string,
-    SagaExecutableErrorHandler<TState, TPlugins, TResponseHandlerBindings, any> | undefined
+    ((
+      state: Draft<TState>,
+      error: SagaErrorCallbackEnvelope<TToken, TError>,
+      ctx: SagaIntentContext<TPlugins, TResponseHandlerBindings>
+    ) => SagaHandlerResult) | undefined
   >)[token];
 
   if (handler === undefined) {
@@ -246,7 +259,7 @@ export async function runSagaErrorHandler<
     plugins
   );
 
-  await handler(draft as Draft<TState>, envelope as SagaErrorCallbackEnvelope<any, TError>, ctx);
+  await handler(draft as Draft<TState>, envelope, ctx);
 
   return createSuccessResult(draft, intents, token);
 }
