@@ -2,6 +2,7 @@ import { singular } from '@redemeine/aggregate';
 import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
+import { isValidPropAccess } from './proxyGuards';
 
 export const selectFromMap = (mountName: string, rawKey: string): InvocationContext => {
     const keyName = `${singular(mountName)}Key`;
@@ -30,14 +31,14 @@ const makeMapItemProxy = (
 
     return new Proxy({}, {
         get(target, prop) {
-            if (typeof prop !== 'string') return Reflect.get(target, prop);
+            if (!isValidPropAccess(prop)) return Reflect.get(target, prop);
             if (prop === 'then') return undefined;
 
             const mapObject = ctx.resolvePath(mapPath);
-            const entity = mapObject && typeof mapObject === 'object' ? mapObject[mapKey] : undefined;
+            const entity = mapObject && typeof mapObject === 'object' ? (mapObject as Record<string, unknown>)[mapKey] : undefined;
 
-            if (entity && typeof entity === 'object' && prop in entity) {
-                return createReadonlyDeepProxy(entity[prop]);
+            if (entity && typeof entity === 'object' && prop in (entity as object)) {
+                return createReadonlyDeepProxy((entity as Record<string, unknown>)[prop]);
             }
 
             return ctx.makeDeepProxy([...mapPath, mapKey, prop], [...commandPrefixPath, prop], scopedContext);
@@ -62,9 +63,9 @@ export const makeMapProxy = (
         get(target, prop) {
             if (prop === 'then') return undefined;
 
-            const mapObject = ctx.resolvePath(mapPath) || {};
+            const mapObject = (ctx.resolvePath(mapPath) || {}) as Record<string, unknown>;
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return Object.values(mapObject)[Symbol.iterator].bind(Object.values(mapObject));
                 }

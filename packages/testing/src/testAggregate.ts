@@ -16,7 +16,7 @@ type EventEnvelope = {
   readonly metadata?: unknown;
 };
 
-type AggregateCommandCreators = Record<string, (...args: any[]) => CommandEnvelope>;
+type AggregateCommandCreators = Record<string, (...args: any[]) => CommandEnvelope>; // SAFETY: command payload intentionally untyped for test flexibility
 
 type AggregateDefinition<TState, TCommandCreators extends AggregateCommandCreators> = {
   readonly initialState: TState;
@@ -82,7 +82,7 @@ export interface TestAggregateFixture<TState, TCommandCreators extends Aggregate
   ): TestAggregateFixture<TState, TCommandCreators>;
   expectEvents(expected: readonly EventEnvelope[]): TestAggregateFixture<TState, TCommandCreators>;
   expectError<TError extends Error>(
-    errorClass: abstract new (...args: any[]) => TError,
+    errorClass: abstract new (...args: any[]) => TError, // SAFETY: command payload intentionally untyped for test flexibility
     message?: string
   ): TestAggregateFixture<TState, TCommandCreators>;
   expectState(expected: TState | StateMatcher<TState>): TestAggregateFixture<TState, TCommandCreators>;
@@ -92,6 +92,25 @@ export interface TestAggregateFixture<TState, TCommandCreators extends Aggregate
   getError(): unknown;
 }
 
+/**
+ * Creates a test fixture for unit testing aggregate behavior in given/when/then style.
+ *
+ * The fixture hydrates state from prior events, executes a command, and provides
+ * assertions on emitted events, resulting state, and thrown errors.
+ *
+ * @example
+ * ```typescript
+ * testAggregate(OrderAggregate)
+ *   .given([orderCreated({ id: '1' })])
+ *   .when('placeOrder', { customerId: 'cust-1' })
+ *   .expectEvents([orderPlaced({ customerId: 'cust-1' })])
+ *   .expectState((s) => s.status === 'placed');
+ * ```
+ *
+ * @param aggregate - The compiled aggregate definition to test
+ * @returns A fluent given/when/then test fixture
+ * @since 0.1.0
+ */
 export function testAggregate<TState, TCommandCreators extends AggregateCommandCreators>(
   aggregate: AggregateDefinition<TState, TCommandCreators>
 ): TestAggregateFixture<TState, TCommandCreators> {

@@ -3,6 +3,7 @@ import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findEntityInCollection } from './entityCache';
+import { isValidPropAccess } from './proxyGuards';
 
 export const selectFromList = (mountName: string, mount: MountMetadata, rawPk: unknown): InvocationContext => {
     if (Array.isArray(mount.pk)) {
@@ -35,7 +36,7 @@ export const selectFromList = (mountName: string, mount: MountMetadata, rawPk: u
     };
 };
 
-export const selectFromListEntity = (mountName: string, mount: MountMetadata, entity: any): InvocationContext | undefined => {
+export const selectFromListEntity = (mountName: string, mount: MountMetadata, entity: Record<string, unknown>): InvocationContext | undefined => {
     if (!entity || typeof entity !== 'object') {
         return undefined;
     }
@@ -56,7 +57,7 @@ export const isListMount = (mount: MountMetadata | undefined): mount is MountMet
     return !!mount && mount.kind === 'list';
 };
 
-export const findListMountForEntity = (entity: any, mounts: Record<string, MountMetadata>): [string, MountMetadata & { kind: 'list' }] | undefined => {
+export const findListMountForEntity = (entity: unknown, mounts: Record<string, MountMetadata>): [string, MountMetadata & { kind: 'list' }] | undefined => {
     if (!entity || typeof entity !== 'object') {
         return undefined;
     }
@@ -85,10 +86,11 @@ export const makeEntityMirageProxy = (
     commandPrefixPath: string[],
     selection: InvocationContext,
     ctx: ProxyContext
-): any => {
+): unknown => {
     return new Proxy({}, {
         get(target, prop) {
             if (typeof prop !== 'string') return Reflect.get(target, prop);
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
             if (prop === 'then') return undefined;
 
             const collection = ctx.resolvePath(collectionPath);
@@ -114,7 +116,7 @@ export const makeCollectionProxy = (
     mount: MountMetadata,
     context: InvocationContext,
     ctx: ProxyContext
-): any => {
+): unknown => {
     const fn = function(pkValue: string | number | Record<string, unknown>) {
         const selection = selectFromList(collectionPath[collectionPath.length - 1]!, mount, pkValue);
         return makeEntityMirageProxy(
@@ -133,12 +135,14 @@ export const makeCollectionProxy = (
         get(target, prop) {
             if (prop === 'then') return undefined;
             
-            const collection = ctx.resolvePath(collectionPath) || [];
+            const collection = (ctx.resolvePath(collectionPath) || []) as Record<string, unknown>[];
 
             if (typeof prop !== 'string') {
                 if (prop === Symbol.iterator) return collection[Symbol.iterator].bind(collection);
                 return Reflect.get(target, prop);
             }
+
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
 
             if (['set', 'push', 'pop', 'splice'].includes(prop)) {
                 return () => { throw new Error('Cannot mutate collection directly'); };
@@ -148,6 +152,9 @@ export const makeCollectionProxy = (
 
             if (!isNaN(Number(prop))) {
                 const entity = collection[Number(prop)];
+                if (!entity) {
+                    return undefined;
+                }
                 const selection = selectFromListEntity(collectionPath[collectionPath.length - 1]!, mount, entity);
                 if (!selection) {
                     return createReadonlyDeepProxy(entity);
@@ -164,6 +171,7 @@ export const makeCollectionProxy = (
                 );
             }
 
+            // SAFETY: accessing array methods dynamically on resolved collection
             if (typeof (collection as any)[prop] === 'function') {
                 return (collection as any)[prop].bind(collection);
             }

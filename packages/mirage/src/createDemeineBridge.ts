@@ -1,5 +1,6 @@
 import type { Event, Command } from '@redemeine/kernel';
 import { createIdentity } from '@redemeine/kernel';
+import { deriveAggregateType, buildCommandMethodMap, buildEventMethodMap } from './bridgeAdapter';
 
 /**
  * Minimal interface describing what the bridge needs from a built aggregate.
@@ -38,51 +39,8 @@ export interface DemeineCompatibleAggregate<S extends object = object> {
     processDelete(command: Command): DemeineCompatibleAggregate<S>;
     applyDeleted(): void;
 
+    // SAFETY: dynamic method assignment for demeine compat requires index signature with `any`
     [key: string]: any;
-}
-
-// Replicate demeine's string utilities
-const camelCase = (str: string): string =>
-    str.replace(/_([a-z])/g, (g) => g[1]!.toUpperCase());
-
-const capitalize = (str: string): string =>
-    `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
-
-/**
- * Derives the processXxx method name from a command type string,
- * replicating demeine's DefaultCommandHandler._extractKey algorithm.
- */
-function extractCommandKey(type: string): string {
-    const parts = type.split('.');
-    const filteredParts: string[] = [];
-    for (let i = 1; i < parts.length - 1; i++) {
-        filteredParts.push(parts[i]!);
-    }
-    filteredParts.unshift(filteredParts.pop()!);
-    return camelCase(filteredParts.join('_'));
-}
-
-/**
- * Derives the applyXxx method name from an event type string,
- * replicating demeine's DefaultEventHandler._extractKey algorithm.
- */
-function extractEventKey(type: string): string {
-    const parts = type.split('.');
-    const filteredParts: string[] = [];
-    for (let i = 1; i < parts.length - 1; i++) {
-        filteredParts.push(parts[i]!);
-    }
-    return camelCase(filteredParts.join('_'));
-}
-
-function deriveAggregateType(builder: BridgeableAggregate<any>): string {
-    const allTypes = {
-        ...builder.types.commands,
-        ...builder.types.events
-    };
-    const firstType = Object.values(allTypes)[0];
-    if (!firstType) return 'unknown';
-    return firstType.split('.')[0]!;
 }
 
 export function createDemeineBridge<S extends object>(
@@ -90,20 +48,8 @@ export function createDemeineBridge<S extends object>(
 ): (id: string) => DemeineCompatibleAggregate<S> {
     const aggregateType = deriveAggregateType(builder);
 
-    // Pre-compute command method name → command type mapping
-    const commandMethodMap = new Map<string, string>();
-    for (const [, typeStr] of Object.entries(builder.types.commands)) {
-        const methodName = `process${capitalize(extractCommandKey(typeStr))}`;
-        commandMethodMap.set(methodName, typeStr);
-    }
-
-    // Pre-compute event method name → event type mapping
-    const eventMethodMap = new Map<string, string>();
-    for (const [, typeStr] of Object.entries(builder.types.events)) {
-        const methodName = `apply${capitalize(extractEventKey(typeStr))}`;
-        eventMethodMap.set(methodName, typeStr);
-    }
-
+    const commandMethodMap = buildCommandMethodMap(builder.types.commands);
+    const eventMethodMap = buildEventMethodMap(builder.types.events);
 
     return function factory(id: string): DemeineCompatibleAggregate<S> {
         let state: S = structuredClone(builder.initialState);
@@ -238,7 +184,6 @@ export function createDemeineBridge<S extends object>(
         }
 
         // Generate convenience command shortcuts: aggregate.commandName(...args)
-        // Uses commandCreators which respects pack functions for positional-arg support
         for (const [key] of Object.entries(builder.types.commands)) {
             agg[key] = function (...args: unknown[]) {
                 const command = builder.commandCreators[key]!(...args);

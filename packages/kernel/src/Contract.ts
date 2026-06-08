@@ -1,8 +1,11 @@
 import type { ZodType } from 'zod';
 
 /**
- * Thrown when an invalid payload boundary is breached (e.g. Zod validation failure).
- * Specifically halts invalid Commands or Events entering/leaving the Aggregate root.
+ * Thrown when a command or event payload fails Zod schema validation.
+ *
+ * Indicates that data attempted to cross an aggregate boundary in an invalid shape.
+ *
+ * @since 0.1.0
  */
 export class ContractError extends Error {
   constructor(message: string) {
@@ -13,8 +16,11 @@ export class ContractError extends Error {
 }
 
 /**
- * Thrown when an applied event attempts to mutate current state into an invalid structure.
- * Validates integrity logic post-event application.
+ * Thrown when an applied event produces state that violates the state schema.
+ *
+ * Validates structural integrity after event application, catching invariant violations.
+ *
+ * @since 0.1.0
  */
 export class StateIntegrityError extends Error {
   constructor(message: string) {
@@ -25,8 +31,23 @@ export class StateIntegrityError extends Error {
 }
 
 /**
- * foundational binding layer for Zod integration.
- * Responsible for verifying all Events, Commands, and State schemas dynamically against the definitions.
+ * Schema validation binding layer for domain commands, events, and state.
+ *
+ * Registers Zod schemas for each command/event type and validates payloads
+ * at aggregate boundaries, preventing invalid data from entering or leaving
+ * the domain model.
+ *
+ * @example
+ * ```typescript
+ * const contract = new Contract()
+ *   .addCommand('placeOrder', PlaceOrderSchema)
+ *   .addEvent('orderPlaced', OrderPlacedSchema)
+ *   .setStateSchema(OrderStateSchema);
+ *
+ * contract.validateCommand('placeOrder', payload);
+ * ```
+ *
+ * @since 0.1.0
  */
 export class Contract {
   private readonly _commands: Map<string, ZodType> = new Map();

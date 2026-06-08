@@ -1,4 +1,5 @@
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
+import { ProjectionBuildError } from './errors';
 import {
   inherit,
   isInheritEntry,
@@ -235,11 +236,15 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     aggregate: ProjectionAggregateSource,
     handlers: Record<string, unknown>
   ): Record<string, ProjectionHandler<TState>> {
+    const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
     const resolved: Record<string, ProjectionHandler<TState>> = {};
     const mirrorable = aggregate as unknown as MirrorableAggregateSource;
 
     for (const [key, value] of Object.entries(handlers)) {
       if (!value) continue;
+      if (UNSAFE_KEYS.has(key)) {
+        throw new Error(`Unsafe event handler key: "${key}"`);
+      }
 
       if (isInheritExtended(value)) {
         if (!mirrorable.applyToDraft) {
@@ -338,22 +343,19 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   }
 
   build(): ProjectionDefinition<TState> {
-    if (!this._fromStream) {
-      throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
-    }
+    const missing: string[] = [];
+    if (!this._fromStream) missing.push('from() stream');
+    if (!this._initialState) missing.push('initialState');
 
-    if (!this._initialState) {
-      throw new Error(
-        `Projection '${this._name}' requires an initial state. ` +
-        `Use .mirror() or createProjection(name, fn) to provide one.`
-      );
+    if (missing.length > 0) {
+      throw new ProjectionBuildError(this._name, missing);
     }
 
     return {
       name: this._name,
-      fromStream: this._fromStream,
+      fromStream: this._fromStream!,
       joinStreams: this._joinStreams,
-      initialState: this._initialState,
+      initialState: this._initialState!,
       identity: this._identity,
       subscriptions: [],
       hooks: this._hooks
@@ -363,6 +365,13 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
 // --- Factory function ---
 
+/**
+ * Creates a projection builder for deriving read-model state from domain events.
+ *
+ * @param name - Unique projection identifier
+ * @param initialState - Factory that produces default state for a given document ID
+ * @returns A fluent builder for composing projection behavior
+ */
 export function createProjection<TState>(
   name: string,
   initialState: (id: string) => TState

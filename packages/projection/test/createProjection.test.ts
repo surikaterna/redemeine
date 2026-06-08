@@ -221,7 +221,7 @@ describe('createProjection Builder API', () => {
         amount: 0,
         status: 'pending' as const
       })).build();
-    }).toThrow(/must have at least one .from\(\) stream/);
+    }).toThrow(/build failed: missing from\(\) stream/);
   });
 });
 
@@ -893,7 +893,7 @@ describe('createProjection inherit token', () => {
           created: inherit
         })
         .build();
-    }).toThrow(/initial state/);
+    }).toThrow(/missing initialState/);
   });
 
   test('inherit.extend callback receives correct event', () => {

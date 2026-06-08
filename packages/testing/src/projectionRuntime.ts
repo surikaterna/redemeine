@@ -1,3 +1,4 @@
+// SAFETY: All import paths in this file are hardcoded package references (not user-controlled).
 import type {
   IEventSubscription,
   IProjectionStore,
@@ -54,10 +55,10 @@ export type EventQueueSubscription = IEventSubscription & {
 };
 
 export type ProjectionRuntime = {
-  readonly projection: ProjectionDefinition<any>;
-  readonly store: IProjectionStore<any>;
+  readonly projection: ProjectionDefinition<any>; // SAFETY: test harness accepts any projection state shape
+  readonly store: IProjectionStore<any>; // SAFETY: test harness accepts any projection state shape
   readonly subscription: EventQueueSubscription;
-  readonly daemon: ProjectionDaemonLike<any>;
+  readonly daemon: ProjectionDaemonLike<any>; // SAFETY: test harness accepts any projection state shape
 };
 
 async function dynamicImport(specifier: string): Promise<unknown> {

@@ -80,6 +80,25 @@ export interface TestSagaFixture<
   getIntents(): readonly SagaIntent[];
 }
 
+/**
+ * Creates a test fixture for unit testing saga definitions in isolation.
+ *
+ * The fixture provides a fluent API to set state, receive events, invoke
+ * response/error handlers, and assert on resulting state and intents.
+ *
+ * @example
+ * ```typescript
+ * const fixture = testSaga(PaymentSaga);
+ * await fixture
+ *   .receiveEvent({ type: 'order.placed.event', payload: { orderId: '1' } })
+ *   .expectIntents([{ type: 'processPayment', payload: { orderId: '1' } }]);
+ * ```
+ *
+ * @param definition - The compiled saga definition to test
+ * @param options - Optional plugin configuration
+ * @returns A fluent test fixture for saga assertions
+ * @since 0.1.0
+ */
 export function testSaga<
   TState,
   TPlugins extends SagaPluginManifestList = readonly [],
@@ -129,8 +148,8 @@ export function testSaga<
           aggregateId: event.aggregateId,
           sequence: event.sequence,
           metadata: event.metadata
-        } as any,
-        resolved.handler as any,
+        } as any, // SAFETY: saga runtime accepts loosely-typed event envelope at boundary
+        resolved.handler as any, // SAFETY: saga types from ambient declarations (no DTS available)
         resolveMetadata(event.metadata),
         tokenBindings as TResponseHandlerBindings,
         runtimePlugins
@@ -164,7 +183,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: saga types from ambient declarations (no DTS available)
           payload,
           request: request.request
         },
@@ -212,7 +231,7 @@ export function testSaga<
         definition,
         state,
         envelope: {
-          token: token as any,
+          token: token as any, // SAFETY: saga types from ambient declarations (no DTS available)
           error,
           request: request.request
         },

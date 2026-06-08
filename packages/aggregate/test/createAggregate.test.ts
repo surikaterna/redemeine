@@ -111,7 +111,7 @@ it('should throw an error when processing an unknown command', () => {
 
     expect(() => {
       aggregate.process(initialState, { type: 'ghost.command', payload: {} });
-    }).toThrow('Unknown command: ghost.command');
+    }).toThrow('Command "ghost.command" processing failed: Unknown command');
   });
 
   it('should maintain immutability using Immer', () => {

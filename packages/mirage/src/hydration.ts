@@ -2,6 +2,7 @@ import type { Event, EventInterceptorContext, RedemeinePlugin } from '@redemeine
 import type { BuiltAggregate } from '@redemeine/aggregate';
 import type { HydrationEvents } from './mirage.types';
 import { assertPluginHasKey, hasHydrateEventPlugins, wrapPluginHookFailure } from './MirageCore';
+import { MirageHydrationError } from './errors';
 
 /**
  * Maximum number of replayed hydration events before yielding back to the Node.js event loop.
@@ -13,11 +14,12 @@ const yieldToEventLoop = async (): Promise<void> => {
 };
 
 export const hydrateStateFromEvents = async <S>(
+    // SAFETY: BuiltAggregate generic params erased at runtime; only S matters
     builder: BuiltAggregate<S, any, any, any>,
     aggregateId: string,
     baseState: S,
     events: HydrationEvents<Event>,
-    plugins: RedemeinePlugin<any>[]
+    plugins: RedemeinePlugin[]
 ): Promise<S> => {
     let state = baseState;
     let replayedEvents = 0;
@@ -52,7 +54,15 @@ export const hydrateStateFromEvents = async <S>(
             event.payload = ctx.payload;
         }
 
-        state = builder.apply(state, event);
+        try {
+            state = builder.apply(state, event);
+        } catch (error) {
+            throw new MirageHydrationError(
+                aggregateId,
+                `Failed to apply event "${event.type}": ${error instanceof Error ? error.message : String(error)}`,
+                { cause: error }
+            );
+        }
         replayedEvents++;
 
         if (replayedEvents % HYDRATION_REPLAY_YIELD_THRESHOLD === 0) {

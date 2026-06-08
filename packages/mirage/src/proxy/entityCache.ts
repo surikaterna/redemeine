@@ -16,7 +16,7 @@ function invalidateIfStale(version: number): void {
     }
 }
 
-function getIdIndex(collection: any[], version: number): Map<string, number> {
+function getIdIndex(collection: Record<string, unknown>[], version: number): Map<string, number> {
     invalidateIfStale(version);
     let index = idIndex.get(collection);
     if (index) return index;
@@ -36,7 +36,7 @@ function buildCompositeKey(pk: Record<string, unknown>): string {
     return Object.keys(pk).sort().map((k) => `${k}:${pk[k]}`).join('|');
 }
 
-function getCompositeIndex(collection: any[], pkKeys: string[], version: number): Map<string, number> {
+function getCompositeIndex(collection: Record<string, unknown>[], pkKeys: string[], version: number): Map<string, number> {
     invalidateIfStale(version);
     let index = compositeIndex.get(collection);
     if (index) return index;
@@ -57,10 +57,10 @@ function getCompositeIndex(collection: any[], pkKeys: string[], version: number)
  * Find an entity in a collection using cached index lookup (O(1) amortized).
  */
 export const findEntityInCollection = (
-    collection: any[],
+    collection: Record<string, unknown>[],
     selection: InvocationContext,
     version: number
-): any | undefined => {
+): Record<string, unknown> | undefined => {
     if (selection.entityPk) {
         const keys = Object.keys(selection.entityPk);
         const index = getCompositeIndex(collection, keys, version);

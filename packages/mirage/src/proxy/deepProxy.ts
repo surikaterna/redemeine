@@ -1,4 +1,5 @@
 import { createReadonlyDeepProxy } from '@redemeine/kernel';
+import type { BuiltAggregate } from '@redemeine/aggregate';
 import type { MountMetadata, InvocationContext, DispatchResult } from '../mirage.types';
 import { MirageCoreSymbol } from '../mirage.types';
 import type { MirageCore } from '../MirageCore';
@@ -6,12 +7,15 @@ import type { ProxyContext } from './proxyContext';
 import { makeCollectionProxy, makeEntityMirageProxy } from './collectionProxy';
 import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
+import { isValidPropAccess } from './proxyGuards';
 
 export const createProxyContext = (
-    core: MirageCore<any>,
+    core: MirageCore<any>, // SAFETY: state type erased; proxy accesses state dynamically
     mounts: Record<string, MountMetadata>,
+    // SAFETY: selectors have heterogeneous signatures
     selectors: Record<string, (...args: any[]) => any>,
-    builder: any
+    // SAFETY: BuiltAggregate generic params erased; used for runtime property access
+    builder: BuiltAggregate<any, any, any, any>
 ): ProxyContext => {
     const ctx: ProxyContext = {
         core,
@@ -30,10 +34,10 @@ export const createProxyContext = (
     };
 
     function resolvePath(path: string[]) {
-        let current: any = core.state;
+        let current: unknown = core.state;
         for (const p of path) {
             if (current && typeof current === 'object') {
-                current = current[p];
+                current = (current as Record<string, unknown>)[p];
             } else {
                 return undefined;
             }
@@ -60,15 +64,17 @@ const invokeByPathImpl = (
     args: unknown[],
     context: InvocationContext,
     ctx: ProxyContext
-): DispatchResult<any> => {
+): DispatchResult<unknown> => {
     const commandName = ctx.toCommandName(commandPath);
-    const creator = (ctx.builder.commandCreators as any)[commandName];
+    // SAFETY: commandCreators is a dynamic record; key access requires any cast
+    const creator = (ctx.builder as any).commandCreators?.[commandName];
     if (typeof creator !== 'function') {
         throw new Error('Command ' + commandName + ' not found on commandCreators.');
     }
 
-    const cmdDef = ctx.builder.pure?.commandProcessors?.[commandName] as any;
-    const isPacked = !!cmdDef && typeof cmdDef !== 'function' && typeof cmdDef.pack === 'function';
+    // SAFETY: commandProcessors is a dynamic record with heterogeneous shapes
+    const cmdDef = (ctx.builder as any).pure?.commandProcessors?.[commandName] as { pack?: Function } | Function | undefined;
+    const isPacked = !!cmdDef && typeof cmdDef !== 'function' && typeof (cmdDef as { pack?: Function }).pack === 'function';
 
     let callArgs: unknown[];
     if (isPacked) {
@@ -102,15 +108,19 @@ const makeDeepProxyImpl = (
     commandPath: string[],
     context: InvocationContext,
     ctx: ProxyContext
-): any => {
+): unknown => {
     return new Proxy(function() {}, {
         get(target, prop) {
             if (commandPath.length === 0) {
                 if (prop === MirageCoreSymbol) return ctx.core;
             }
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 return Reflect.get(target, prop);
+            }
+
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') {
+                return undefined;
             }
 
             if (prop === 'then') return undefined;
@@ -125,7 +135,7 @@ const makeDeepProxyImpl = (
 
             const currentTarget = ctx.resolvePath(statePath);
             if (currentTarget && typeof currentTarget === 'object' && prop in currentTarget) {
-                const value = (currentTarget as any)[prop];
+                const value = (currentTarget as Record<string, unknown>)[prop];
 
                 if (Array.isArray(value)) {
                     const mount = statePath.length === 0 ? ctx.getMountForRoot(prop) : undefined;

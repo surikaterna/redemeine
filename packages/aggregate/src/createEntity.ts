@@ -16,6 +16,9 @@ import { composeMountedComponentBehavior, createMountMethods } from './component
 /**
  * A compiled Entity ready to be injected into an AggregateBuilder via `.entities()`.
  * Maintains its own namespace and isolated lifecycle logic.
+ *
+ * SAFETY: `Record<string, any>` in generic defaults throughout EntityPackage/EntityBuilder is required
+ * for structural subtyping — these positions are covariant and `unknown` breaks downstream inference.
  */
 export interface EntityPackage<S, Name extends string, E extends Record<string, any> = Record<string, any>, EOverrides extends object = {}, CPayloads extends Record<string, any> = Record<string, any>, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
@@ -76,6 +79,7 @@ export interface EntityBuilder<S, Name extends string, E extends Record<string, 
 
   /**
    * Register a list-backed nested entity collection.
+   * SAFETY: `EntityPackage<any, ...>` constraint required for conditional type inference of SubCPayloads
    */
   entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
     name: EN,
@@ -131,8 +135,27 @@ export type EntityCommandOverridesStage<S, Name extends string, E extends Record
 
 // 3. The Implementation
 /**
- * Bootstraps a new cohesive domain Entity. 
- * An entity encapsulates state, scoped selectors, events, and commands, to be injected into an AggregateBuilder.
+ * Creates a new entity builder for composing a cohesive domain entity.
+ *
+ * Entities encapsulate their own events, commands, and selectors, and are
+ * mounted into an aggregate via `.entities()` or `.entityList()`. Each entity
+ * has its own namespace for auto-generated event/command type names.
+ *
+ * @example
+ * ```typescript
+ * const LineItem = createEntity<LineItemState, 'lineItem'>('lineItem')
+ *   .events({
+ *     added: (state, { payload }) => { state.quantity = payload.qty; }
+ *   })
+ *   .commands((emit) => ({
+ *     add: (state, payload: { qty: number }) => emit.added(payload)
+ *   }))
+ *   .build();
+ * ```
+ *
+ * @param name - Unique name identifying this entity within its aggregate
+ * @returns A fluent builder for composing entity behavior
+ * @since 0.1.0
  */
 export function createEntity<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>>(name: Name): EntityEventsStage<S, Name, TMeta> {
   const component = createComponentBehaviorState<S>();

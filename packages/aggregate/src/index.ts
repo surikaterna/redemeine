@@ -1,3 +1,4 @@
+export * from './errors';
 export * from './createAggregate';
 export { createContractFromAggregate } from './createContractFromAggregate';
 export * from './createEntity';

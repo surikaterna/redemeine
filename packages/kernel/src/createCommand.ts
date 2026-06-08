@@ -2,21 +2,47 @@ import type { Command, CommandType, EnvelopeHeaders } from './types';
 import { createIdentity } from './identity';
 
 /**
- * Foundational type defining a structural preparation callback before a command factory commits the payload.
+ * Callback that transforms factory arguments into a command payload shape.
+ *
+ * @since 0.1.0
  */
 export type PrepareCommand<P> = (...args: unknown[]) => { payload: P; headers?: EnvelopeHeaders };
 
 /**
- * Foundational type representing a compiled factory that hydrates and dispatches typed commands.
+ * A compiled command factory with introspectable `.type` property.
+ *
+ * @since 0.1.0
  */
 export type CommandFactory<P = void, T extends CommandType | string = CommandType> =
     ((payload: P) => Command<P, T>) & { type: T, toString: () => T };
 
 /**
- * Foundational type for a compiled factory extending prepare-command behaviors.
+ * A command factory that uses a prepare function to transform arguments.
+ *
+ * @since 0.1.0
  */
 export type PreparedCommandFactory<PC extends PrepareCommand<unknown>, T extends CommandType | string = CommandType> =
     ((...args: Parameters<PC>) => Command<ReturnType<PC>['payload'], T>) & { type: T, toString: () => T };
+
+/**
+ * Creates a typed command factory for producing domain commands.
+ *
+ * The returned factory generates commands with unique IDs and the specified type.
+ * Optionally accepts a `prepareCommand` function to transform arguments into
+ * the command payload.
+ *
+ * @example
+ * ```typescript
+ * const placeOrder = createCommand<{ item: string }>('order.place.command');
+ * const cmd = placeOrder({ item: 'widget' });
+ * // => { id: '...', type: 'order.place.command', payload: { item: 'widget' } }
+ * ```
+ *
+ * @param type - The canonical command type identifier
+ * @param prepareCommand - Optional transform to build payload from factory arguments
+ * @returns A command factory function with a `.type` property for introspection
+ * @since 0.1.0
+ */
 
 export function createCommand<P = void, T extends CommandType | string = CommandType>(type: T): CommandFactory<P, T>;
 export function createCommand<PC extends PrepareCommand<unknown>, T extends CommandType | string = CommandType>(

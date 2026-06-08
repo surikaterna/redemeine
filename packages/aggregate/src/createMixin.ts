@@ -13,6 +13,7 @@ import type {
 } from './componentMounts';
 import { composeMountedComponentBehavior, createMountMethods } from './componentMounts';
 
+// SAFETY: `EntityPackage<any, ...>` constraints throughout this file required for conditional type inference on entity type params
 type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
   kind: 'list';
   entity: T;
@@ -37,6 +38,8 @@ type MixinEntityRegistryValueObjectMapEntry = {
 /**
  * A compiled reusable piece of domain logic (Commands, Events, Selectors)
  * ready to be embedded horizontally into an AggregateBuilder via `.mixins()`.
+ *
+ * SAFETY: `Record<string, any>` in generic defaults required for structural subtyping compatibility.
  */
 export interface MixinPackage<S, E extends Record<string, any> = Record<string, any>, EOverrides extends object = {}, CPayloads extends Record<string, any> = Record<string, any>, COverrides extends object = {}, Selectors extends SelectorsMap<S> = SelectorsMap<S>, Registry extends Record<string, any> = {}, TMeta extends Record<string, unknown> = Record<string, unknown>>
   extends RedemeineComponent<S, CPayloads, E, E, Selectors, EOverrides, COverrides> {
@@ -104,6 +107,29 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
   build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry, TMeta>;
 }
 
+/**
+ * Creates a reusable mixin builder for cross-cutting domain behavior.
+ *
+ * Mixins encapsulate commands, events, and selectors that can be shared
+ * across multiple aggregates via `.mixins()`. They compose horizontally
+ * without inheritance.
+ *
+ * @example
+ * ```typescript
+ * const Timestamped = createMixin<{ updatedAt: string }>()
+ *   .events({
+ *     timestampUpdated: (state, { payload }) => { state.updatedAt = payload.at; }
+ *   })
+ *   .build();
+ *
+ * const Order = createAggregate('order', initialState)
+ *   .mixins(Timestamped)
+ *   .build();
+ * ```
+ *
+ * @returns A fluent builder for composing mixin behavior
+ * @since 0.1.0
+ */
 export function createMixin<S, TMeta extends Record<string, unknown> = Record<string, unknown>>(): MixinBuilder<S, {}, {}, {}, {}, SelectorsMap<S>, {}, TMeta> {
   const component = createComponentBehaviorState<S>();
   const mountedEntities: MountedEntityPackage[] = [];

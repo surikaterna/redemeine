@@ -46,15 +46,12 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     const { allEvents, allEventMetadata, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors } = resolved;
 
     // 2. Merge selectors and command overrides from mixins
-    const allSelectors = mixins.reduce(
-        (acc, m) => ({ ...acc, ...(m.selectors || {}) }),
-        snapshot.selectors
-    ) as AggregateSelectorsMap<S>;
-
-    const allCommandOverrides = mixins.reduce(
-        (acc, m) => ({ ...acc, ...(m.commandOverrides || {}) }),
-        snapshot.commandOverrides
-    );
+    const allSelectors = { ...snapshot.selectors } as AggregateSelectorsMap<S>;
+    const allCommandOverrides = { ...snapshot.commandOverrides };
+    for (const m of mixins) {
+        if (m.selectors) Object.assign(allSelectors, m.selectors);
+        if (m.commandOverrides) Object.assign(allCommandOverrides, m.commandOverrides);
+    }
 
     // 3. Build commands
     const emit = createEmitProxy(aggregateName, allEventOverrides, namingStrategy);
@@ -63,13 +60,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
             selectors: allSelectors,
             commands: createCommandContextProxy<Record<string, unknown>>()
         }),
-        ...mixins.reduce((acc, m) => ({
-            ...acc,
-            ...(m.commandFactory ? m.commandFactory(emit, {
-                selectors: allSelectors,
-                commands: createCommandContextProxy<Record<string, unknown>>()
-            }) : {})
-        }), {} as Record<string, unknown>)
+        ...mergeMixinCommands(mixins, emit, allSelectors)
     } as Record<string, unknown>;
 
     // 4. Mount entities (mutates allEvents, allEventOverrides, allCommandsMap, etc.)
@@ -117,6 +108,24 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     };
 }
 
+function mergeMixinCommands<S>(
+    mixins: AggregateMixinLike<S>[],
+    // SAFETY: `unknown` — emit proxy is dynamically typed via Proxy handler, commandFactory accepts unknown
+    emit: unknown,
+    allSelectors: AggregateSelectorsMap<S>
+): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const m of mixins) {
+        if (m.commandFactory) {
+            Object.assign(result, m.commandFactory(emit, {
+                selectors: allSelectors,
+                commands: createCommandContextProxy<Record<string, unknown>>()
+            }));
+        }
+    }
+    return result;
+}
+
 function buildEventMetadata<TMeta>(
     allEvents: Record<string, Function>,
     allEventMetadata: Record<string, TMeta | undefined>,
@@ -125,12 +134,13 @@ function buildEventMetadata<TMeta>(
     namingStrategy: NamingStrategy
 ): Record<string, { meta?: TMeta }> {
     const keys = Array.from(new Set([...Object.keys(allEvents), ...Object.keys(allEventMetadata)]));
-    return keys.reduce((acc, eventKey) => {
+    const result: Record<string, { meta?: TMeta }> = {};
+    for (const eventKey of keys) {
         const resolvedEventType = allEventOverrides[eventKey] || namingStrategy.event(aggregateName, eventKey);
         const meta = allEventMetadata[eventKey];
-        acc[resolvedEventType] = meta !== undefined ? { meta } : {};
-        return acc;
-    }, {} as Record<string, { meta?: TMeta }>);
+        result[resolvedEventType] = meta !== undefined ? { meta } : {};
+    }
+    return result;
 }
 
 /**
@@ -138,15 +148,18 @@ function buildEventMetadata<TMeta>(
  * Avoids iterating allCommandsMap three times with the same key resolution logic.
  */
 function resolveCommandMaps<S, TMeta>(
+    // SAFETY: `any` required — allCommandsMap entries have heterogeneous shapes (shorthand fns, packed objects, meta-wrapped)
     allCommandsMap: Record<string, any>,
     allCommandOverrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy
 ): {
+    // SAFETY: `any` required — command handlers have varying signatures resolved at runtime
     commandHandlerByType: Record<string, any>;
     commandTypesByKey: Record<string, string>;
     metadataByCommandType: Record<string, { meta?: TMeta }>;
 } {
+    // SAFETY: `any` — mirrors commandHandlerByType constraint above
     const commandHandlerByType: Record<string, any> = {};
     const commandTypesByKey: Record<string, string> = {};
     const metadataByCommandType: Record<string, { meta?: TMeta }> = {};
@@ -155,6 +168,7 @@ function resolveCommandMaps<S, TMeta>(
         const resolvedCommandType = allCommandOverrides[key] || namingStrategy.command(aggregateName, key);
         commandHandlerByType[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!);
         commandTypesByKey[key] = resolvedCommandType;
+        // SAFETY: `as any` — command entries may or may not have meta; shape is not statically known
         const meta = (allCommandsMap[key] as any)?.meta as TMeta | undefined;
         metadataByCommandType[resolvedCommandType] = meta !== undefined ? { meta } : {};
     }
@@ -163,14 +177,16 @@ function resolveCommandMaps<S, TMeta>(
 }
 
 function buildTypeMap(
+    // SAFETY: `any` required — map entries may be functions or objects with varying shapes
     map: Record<string, any>,
     overrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy,
     kind: 'command' | 'event'
 ): Record<string, string> {
-    return Object.keys(map).reduce((acc, key) => {
-        acc[key] = overrides[key] || namingStrategy[kind](aggregateName, key);
-        return acc;
-    }, {} as Record<string, string>);
+    const result: Record<string, string> = {};
+    for (const key of Object.keys(map)) {
+        result[key] = overrides[key] || namingStrategy[kind](aggregateName, key);
+    }
+    return result;
 }

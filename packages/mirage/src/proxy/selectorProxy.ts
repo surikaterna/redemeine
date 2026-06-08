@@ -5,6 +5,7 @@ import type { InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findListMountForEntity, selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
 import { findEntityInCollection } from './entityCache';
+import { isValidPropAccess } from './proxyGuards';
 
 const roleCommandNamesCache = new WeakMap<object, string[]>();
 
@@ -52,7 +53,7 @@ export const resolveEntityFromSelection = (collectionPath: string[], selection: 
 export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
     return new Proxy(items, {
         get(target, prop) {
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return target[Symbol.iterator].bind(target);
                 }
@@ -63,7 +64,8 @@ export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
                 return target[Number(prop)];
             }
 
-            const value = (target as any)[prop];
+            // SAFETY: accessing array methods dynamically by string prop name
+            const value = (target as unknown as Record<string, unknown>)[prop];
             return typeof value === 'function' ? value.bind(target) : value;
         },
         set() {
@@ -76,6 +78,7 @@ export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
 };
 
 const makeRoleScopedEntityProxy = (
+    // SAFETY: baseProxy is an opaque Proxy object accessed dynamically by property name
     baseProxy: any,
     collectionPath: string[],
     selection: InvocationContext,
@@ -90,6 +93,7 @@ const makeRoleScopedEntityProxy = (
                 return Reflect.get(target, prop);
             }
 
+            if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') return undefined;
             if (prop === 'then') return undefined;
 
             const entity = resolveEntityFromSelection(collectionPath, selection, ctx);
@@ -112,7 +116,7 @@ const makeRoleScopedEntityProxy = (
     });
 };
 
-const wrapEntityWithRole = (entity: any, role: unknown, context: InvocationContext, ctx: ProxyContext) => {
+const wrapEntityWithRole = (entity: Record<string, unknown>, role: unknown, context: InvocationContext, ctx: ProxyContext) => {
     const resolved = findListMountForEntity(entity, ctx.mounts);
     if (!resolved) {
         throw new Error('bindContext could not resolve a mounted list entity for selector item.');
@@ -141,7 +145,7 @@ const wrapEntityWithRole = (entity: any, role: unknown, context: InvocationConte
     return makeRoleScopedEntityProxy(baseEntityMirage, [...mount.statePath], scopedSelection, commandNames, ctx);
 };
 
-const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext, ctx: ProxyContext): any => {
+const makeSelectedCollectionProxy = (entities: Record<string, unknown>[], context: InvocationContext, ctx: ProxyContext): unknown => {
     const getEntityMirageAt = (index: number) => {
         const entity = entities[index];
         if (!entity || typeof entity !== 'object') {
@@ -181,7 +185,7 @@ const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext
                 return (index: number) => getEntityMirageAt(index);
             }
 
-            if (typeof prop !== 'string') {
+            if (!isValidPropAccess(prop)) {
                 if (prop === Symbol.iterator) {
                     return target[Symbol.iterator].bind(target);
                 }
@@ -192,7 +196,8 @@ const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext
                 return createReadonlyDeepProxy(target[Number(prop)]);
             }
 
-            const value = (target as any)[prop];
+            // SAFETY: accessing array methods dynamically by string prop name
+            const value = (target as unknown as Record<string, unknown>)[prop];
             if (typeof value === 'function') {
                 return value.bind(target);
             }
@@ -222,11 +227,12 @@ export const wrapSelectorResult = (result: unknown, context: InvocationContext, 
     };
 
     if (isMirageContextBinding(result)) {
+        // SAFETY: MirageContextSymbol accessor returns opaque binding object with runtime-determined shape
         const bound: any = (result as any)[MirageContextSymbol];
 
         if (bound.kind === 'single') {
             if (Array.isArray(bound.data)) {
-                return makeReadonlyWrappedArray(bound.data.map((item: any) => wrapEntityWithRole(item, bound.role, context, ctx)));
+                return makeReadonlyWrappedArray(bound.data.map((item: Record<string, unknown>) => wrapEntityWithRole(item, bound.role, context, ctx)));
             }
             return wrapEntityWithRole(bound.data, bound.role, context, ctx);
         }
@@ -235,7 +241,7 @@ export const wrapSelectorResult = (result: unknown, context: InvocationContext, 
             throw new Error('bindContext polymorphic binding expects an array of data items.');
         }
 
-        const wrapped = bound.data.map((item: any) => {
+        const wrapped = bound.data.map((item: Record<string, unknown>) => {
             const discriminatorValue = getPathValue(item, bound.discriminatorKey);
             const role = bound.roleMap?.[String(discriminatorValue)];
             if (!role) {
