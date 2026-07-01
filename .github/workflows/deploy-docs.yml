@@ -28,13 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v6
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'pnpm'
-
-      - name: 📦 Setup pnpm
-        uses: pnpm/action-setup@v6
           
       - name: Install Root dependencies
         # TypeDoc needs these to resolve imports like 'zod' and 'immer'
