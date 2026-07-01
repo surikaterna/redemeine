@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test --pass-with-no-tests",
+    "test": "pnpm exec jest --config ../../jest.config.js --runTestsByPath ./test --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "peerDependencies": {

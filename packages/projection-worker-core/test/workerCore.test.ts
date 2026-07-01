@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from '@jest/globals';
 import {
   createProjectionWorkerCore,
   type ProjectionWorkerCommit,
@@ -164,7 +164,7 @@ describe('projection-worker-core', () => {
     expect(startIndexDoc2).toBeGreaterThanOrEqual(0);
     expect(endIndexDoc1).toBeGreaterThanOrEqual(0);
     expect(endIndexDoc2).toBeGreaterThanOrEqual(0);
-    expect(startIndexDoc2 < endIndexDoc1 || startIndexDoc1 < endIndexDoc2).toBeTrue();
+    expect(startIndexDoc2 < endIndexDoc1 || startIndexDoc1 < endIndexDoc2).toBe(true);
   });
 
   test('micro-batching mode single invokes batch processor one commit at a time', async () => {

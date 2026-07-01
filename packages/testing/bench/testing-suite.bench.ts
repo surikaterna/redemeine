@@ -17,7 +17,7 @@ const benchMetadata = {
   mode: 'informational-baseline',
   targetAssertions: 1000,
   timestamp: new Date().toISOString(),
-  bunVersion: process.versions.bun ?? 'unknown',
+  jsRuntimeVersion: process.version,
   runtime: process.version,
   platform: process.platform,
   arch: process.arch,

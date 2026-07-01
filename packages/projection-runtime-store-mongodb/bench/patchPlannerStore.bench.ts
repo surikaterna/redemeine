@@ -24,6 +24,17 @@ type BenchResult = {
   telemetry: ReturnType<typeof createPatchPlanTelemetryReport>;
 };
 
+const resolvePnpmVersion = (): string | null => {
+  const userAgent = process.env['npm_config_user_agent'];
+
+  if (typeof userAgent !== 'string') {
+    return null;
+  }
+
+  const pnpmMatch = /pnpm\/([^\s]+)/u.exec(userAgent);
+  return pnpmMatch?.[1] ?? null;
+};
+
 const runCase = async (benchCase: BenchCase): Promise<BenchResult> => {
   const collection = createProjectionDocumentCollection<Record<string, unknown>>();
   const telemetryEvents: MongoPatchPlanTelemetryEvent[] = [];
@@ -153,7 +164,7 @@ const run = async (): Promise<void> => {
       {
         generatedAt: new Date().toISOString(),
         runtime: {
-          bunVersion: process.versions.bun ?? 'unknown',
+          pnpmVersion: resolvePnpmVersion(),
           nodeVersion: process.version,
           platform: process.platform,
           arch: process.arch

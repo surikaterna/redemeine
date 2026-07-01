@@ -42,7 +42,7 @@ Setup workflow:
 - `bd worktree create worktrees/<descriptive-name> --branch feature/<descriptive-name>`
 - `cd worktrees/<descriptive-name>`
 - `mise trust && mise install`
-- `bun install`
+- `pnpm install`
 
 Before coding in a worktree, verify Beads context:
 - `bd context --json`

@@ -32,13 +32,13 @@ Our workflow follows the standard GitHub Flow model:
 
 1. **Fork** the repository and create your feature branch from `main`.
 2. **Clone** your fork locally.
-3. Install dependencies with Bun:
+3. Install dependencies with pnpm:
    ```bash
-   bun install
+   pnpm install
    ```
 4. Run tests frequently:
     ```bash
-    bunx turbo run test --continue
+    pnpm exec turbo run test --continue
     ```
 5. Commit your changes and open a **Pull Request**.
 
@@ -51,7 +51,7 @@ Redemeine is actively crawled and analyzed to generate AI-readable context files
 Before opening a PR, you **must** verify your documentation locally using our reflection analyzer:
 
 ```bash
-bunx tsx bin/redemeine-reflector.ts --verify-tsdoc
+pnpm exec tsx bin/redemeine-reflector.ts --verify-tsdoc
 ```
 
 *If this script fails, the CI action will block your Pull Request.*

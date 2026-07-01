@@ -15,29 +15,30 @@ jobs:
     
     steps:
       - name: 🚚 Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
 
-      - name: 🥟 Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v6
         with:
-          bun-version: '1.3.11'
+          version: 11
 
       - name: 📦 Install Dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: 🧪 Run Test Suite
-        run: bunx turbo run test --continue
+        run: pnpm exec turbo run test --continue
 
       - name: 🏗️ Build TypeScript
-        run: bunx turbo run build --continue
+        run: pnpm exec turbo run build --continue
 
       - name: 🚀 Publish to npm (with Provenance)
-        run: bun publish --access public --provenance
+        run: pnpm -r publish --access public --provenance --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

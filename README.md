@@ -128,21 +128,21 @@ testAggregate(Counter)
 
 ```bash
 # Install dependencies
-bun install
+pnpm install
 
 # Build all packages
-bunx turbo run build
+pnpm exec turbo run build
 
 # Type check
-bunx turbo run typecheck
+pnpm exec turbo run typecheck
 
 # Run tests
-bunx turbo run test
+pnpm exec turbo run test
 ```
 
 ## Architecture
 
-Built as a Bun + Turbo monorepo with:
+Built as a pnpm + Turbo monorepo with:
 - **ESM-first** (`type: "module"`)
 - **tsup** for bundled builds with DTS generation
 - **Strict TypeScript** (`strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`)
