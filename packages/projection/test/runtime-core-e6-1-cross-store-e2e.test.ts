@@ -308,7 +308,7 @@ runCrossStore('E6.1 atomic+dedupe consistency baseline', async ({ store }) => {
   const replay = await restartedDaemon.processBatch();
   expect(replay.eventsProcessed).toBe(0);
   expect(await store.load('invoice-1')).toEqual({ fromEvents: 1, joinEvents: 0, seen: [1] });
-  expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+  expect(await store.getDedupeCheckpoint('v1|e6-1-atomic-dedupe|invoice|invoice-1|1')).toEqual({
     sequence: 1,
     timestamp: '2026-04-09T00:00:01.000Z'
   });
@@ -396,12 +396,12 @@ describe('E6.1 atomic baseline failure injection (inmemory control)', () => {
     await expect(daemon.processBatch()).rejects.toThrow('injected pre-commit failure');
     expect(await store.load('invoice-1')).toBeNull();
     expect(await store.getCheckpoint('__cursor__e6-1-atomic-failure-control')).toBeNull();
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toBeNull();
+    expect(await store.getDedupeCheckpoint('v1|e6-1-atomic-failure-control|invoice|invoice-1|1')).toBeNull();
 
     const retry = await daemon.processBatch();
     expect(retry.eventsProcessed).toBe(1);
     expect(await store.load('invoice-1')).toEqual({ applied: 1 });
-    expect(await store.getDedupeCheckpoint('invoice:invoice-1:1')).toEqual({
+    expect(await store.getDedupeCheckpoint('v1|e6-1-atomic-failure-control|invoice|invoice-1|1')).toEqual({
       sequence: 1,
       timestamp: '2026-04-09T00:00:01.000Z'
     });

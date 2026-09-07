@@ -173,7 +173,7 @@ describe('runtime-core E5.1 EventStore catch-up subscription', () => {
     expect(store.getDocument('invoice-1')).toEqual({ seen: [1, 2, 3] });
     expect(store.atomicWrites).toHaveLength(2);
     expect(store.atomicWrites[1]?.dedupe.upserts.map((entry) => entry.key)).toEqual([
-      'invoice:invoice-1:3'
+      'v1|eventstore-catchup-restart|invoice|invoice-1|3'
     ]);
   });
 

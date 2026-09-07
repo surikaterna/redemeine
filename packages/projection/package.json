@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec vitest run packages/projection/test --config ../../vitest.config.mts --exclude '**/*e2e*' --exclude '**/*integration*' --exclude '**/*e5-1*'",
+    "test": "pnpm exec vitest run packages/projection/test --config ../../vitest.config.mts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

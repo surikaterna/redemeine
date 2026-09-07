@@ -255,6 +255,8 @@ Run these focused suites to validate cross-package integration behavior before f
 | Router fanout (reverse + persisted links) | `pnpm --dir packages/projection-router-core run test` | Router tests pass for reverse rules + persisted link union, relink remove+add, and warn-and-skip semantics |
 | Lane ordering + batching modes | `pnpm --dir packages/projection-worker-core run test` | Worker-core tests pass for per-lane ordering, cross-lane parallelism, and micro-batching modes (`none`/`single`/`all`) |
 | Watermark semantics | `pnpm --dir packages/projection-runtime-store-inmemory run test` and `pnpm --dir packages/projection-runtime-store-mongodb run test` | Conformance tests pass for `commitAtomicMany`, `highestWatermark`, `byLaneWatermark`, and rejection semantics |
+| Cross-package router+worker+store integration | `pnpm exec vitest run packages/projection/test/runtime-v3-validation-matrix.integration.test.ts` | Matrix integration suite passes for router fanout + worker-core execution against both in-memory and mongodb-backed stores |
+| Runtime replay/cutover continuity | `pnpm exec vitest run packages/projection/test/runtime-core-e6-1-cross-store-e2e.test.ts` | E2E catches dedupe/cutover/restart invariants across both stores |
 
 ## Worker-lite limitations (intentional, non-blocking)
 
