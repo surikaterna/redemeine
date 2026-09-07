@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!website/build", "!!website/docs/api"]
+    "includes": ["**", "!!website/build", "!!docs/api"]
   },
   "formatter": {
     "enabled": true,
