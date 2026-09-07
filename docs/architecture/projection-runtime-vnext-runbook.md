@@ -243,7 +243,7 @@ Forbidden dependency direction:
 Enforcement command:
 
 ```bash
-bun run check:projection-runtime-boundaries
+pnpm run check:projection-runtime-boundaries
 ```
 
 ## Validation matrix (RT3-13)
@@ -252,11 +252,11 @@ Run these focused suites to validate cross-package integration behavior before f
 
 | Matrix area | Command | Expected evidence |
 |---|---|---|
-| Router fanout (reverse + persisted links) | `bun run --cwd packages/projection-router-core test` | Router tests pass for reverse rules + persisted link union, relink remove+add, and warn-and-skip semantics |
-| Lane ordering + batching modes | `bun run --cwd packages/projection-worker-core test` | Worker-core tests pass for per-lane ordering, cross-lane parallelism, and micro-batching modes (`none`/`single`/`all`) |
-| Watermark semantics | `bun run --cwd packages/projection-runtime-store-inmemory test` and `bun run --cwd packages/projection-runtime-store-mongodb test` | Conformance tests pass for `commitAtomicMany`, `highestWatermark`, `byLaneWatermark`, and rejection semantics |
-| Cross-package router+worker+store integration | `bun test packages/projection/test/runtime-v3-validation-matrix.integration.test.ts` | Matrix integration suite passes for router fanout + worker-core execution against both in-memory and mongodb-backed stores |
-| Runtime replay/cutover continuity | `bun test packages/projection/test/runtime-core-e6-1-cross-store-e2e.test.ts` | E2E catches dedupe/cutover/restart invariants across both stores |
+| Router fanout (reverse + persisted links) | `pnpm --dir packages/projection-router-core run test` | Router tests pass for reverse rules + persisted link union, relink remove+add, and warn-and-skip semantics |
+| Lane ordering + batching modes | `pnpm --dir packages/projection-worker-core run test` | Worker-core tests pass for per-lane ordering, cross-lane parallelism, and micro-batching modes (`none`/`single`/`all`) |
+| Watermark semantics | `pnpm --dir packages/projection-runtime-store-inmemory run test` and `pnpm --dir packages/projection-runtime-store-mongodb run test` | Conformance tests pass for `commitAtomicMany`, `highestWatermark`, `byLaneWatermark`, and rejection semantics |
+| Cross-package router+worker+store integration | `pnpm exec jest packages/projection/test/runtime-v3-validation-matrix.integration.test.ts --config jest.config.js` | Matrix integration suite passes for router fanout + worker-core execution against both in-memory and mongodb-backed stores |
+| Runtime replay/cutover continuity | `pnpm exec jest packages/projection/test/runtime-core-e6-1-cross-store-e2e.test.ts --config jest.config.js` | E2E catches dedupe/cutover/restart invariants across both stores |
 
 ## Worker-lite limitations (intentional, non-blocking)
 
@@ -277,7 +277,7 @@ All gates below are required for release sign-off.
 Command:
 
 ```bash
-bun run docs:build
+pnpm run docs:build
 ```
 
 Evidence to capture:
@@ -290,7 +290,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bun run verify:workspace
+pnpm run verify:workspace
 ```
 
 Evidence to capture:
@@ -303,7 +303,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bun run check:projection-runtime-boundaries
+pnpm run check:projection-runtime-boundaries
 ```
 
 Evidence to capture:
@@ -317,7 +317,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bun run lint:principles
+pnpm run lint:principles
 ```
 
 Evidence to capture:
@@ -330,7 +330,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bun test packages/projection/test
+pnpm exec jest packages/projection/test --config jest.config.js
 ```
 
 Evidence to capture:
@@ -343,7 +343,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bun test packages/projection-runtime-store-mongodb/test
+pnpm exec jest packages/projection-runtime-store-mongodb/test --config jest.config.js
 ```
 
 Evidence to capture:
@@ -356,7 +356,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bunx tsc -p packages/projection-runtime-core/tsconfig.json --noEmit --ignoreDeprecations 5.0
+pnpm exec tsc -p packages/projection-runtime-core/tsconfig.json --noEmit --ignoreDeprecations 5.0
 ```
 
 Evidence to capture:
@@ -369,7 +369,7 @@ Evidence to capture:
 Command:
 
 ```bash
-bunx tsc -p packages/projection-runtime-store-mongodb/tsconfig.json --noEmit --ignoreDeprecations 5.0
+pnpm exec tsc -p packages/projection-runtime-store-mongodb/tsconfig.json --noEmit --ignoreDeprecations 5.0
 ```
 
 Evidence to capture:

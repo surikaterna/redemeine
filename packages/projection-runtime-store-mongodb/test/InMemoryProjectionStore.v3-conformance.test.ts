@@ -1,4 +1,4 @@
-import { describe } from 'bun:test';
+import { describe } from '@jest/globals';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
 import { runV3StoreConformance } from './v3StoreConformanceHarness';
 

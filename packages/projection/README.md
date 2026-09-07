@@ -17,7 +17,7 @@ Three mechanisms reuse write-model projectors instead of duplicating folding log
 ## Installation
 
 ```bash
-bun add @redemeine/projection
+pnpm add @redemeine/projection
 ```
 
 Peer dependencies: `@redemeine/aggregate`.

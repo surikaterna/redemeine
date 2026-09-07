@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from '@jest/globals';
 import { InMemoryProjectionStore } from '../src';
 
 describe('InMemoryProjectionStore v3 conformance', () => {

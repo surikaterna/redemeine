@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from '@jest/globals';
 import { patch6902ToMongoUpdatePlan } from '../src/patch6902ToMongoUpdatePlan';
 
 describe('patch6902ToMongoUpdatePlan', () => {

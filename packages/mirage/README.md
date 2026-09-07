@@ -13,7 +13,7 @@ Mirage sits between the aggregate builder (`@redemeine/aggregate`) and your appl
 ## Installation
 
 ```bash
-bun add @redemeine/mirage
+pnpm add @redemeine/mirage
 ```
 
 Peer dependencies: `@redemeine/aggregate`, `@redemeine/kernel`.

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from '@jest/globals';
 import type { Checkpoint, EventBatch, ProjectionEvent } from '@redemeine/projection-runtime-core';
 import {
   createProjectionWorkerCore,

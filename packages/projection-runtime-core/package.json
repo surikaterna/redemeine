@@ -32,7 +32,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-runtime-core/test",
     "lint": "tsc --noEmit"
   },
   "private": true,

@@ -33,9 +33,9 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test ./test",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/testing/test",
     "lint": "tsc --noEmit",
-    "bench": "bun run bench/testing-suite.bench.ts"
+    "bench": "pnpm exec tsx bench/testing-suite.bench.ts"
   },
   "dependencies": {
     "@redemeine/mirage": "workspace:*",

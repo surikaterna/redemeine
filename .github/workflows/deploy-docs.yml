@@ -26,37 +26,36 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v6
 
-      - name: 🥟 Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
         with:
-          bun-version: '1.3.11'
+          node-version: 24
+          cache: 'pnpm'
           
       - name: Install Root dependencies
         # TypeDoc needs these to resolve imports like 'zod' and 'immer'
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
         
       - name: Install dependencies
         # Run inside the website folder
         working-directory: ./website
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
         
       - name: Build website
         # Run inside the website folder
         working-directory: ./website
-        run: bun run build
+        run: pnpm run build
         
       - name: Upload Build Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           # Docusaurus outputs to a 'build' folder inside 'website'
           path: './website/build' 
           
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "bun test ./test",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-runtime/test",
     "lint": "tsc --noEmit"
   },
   "private": true,
