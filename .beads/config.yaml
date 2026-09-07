@@ -15,6 +15,9 @@
 # Enable JSON output by default
 # json: false
 
+# Dolt remote is authoritative; do not generate a Git-tracked JSONL snapshot.
+export.auto: false
+
 # Feedback title formatting for mutating commands (create/update/close/dep/edit)
 # 0 = hide titles, N > 0 = truncate to N characters
 # output:
