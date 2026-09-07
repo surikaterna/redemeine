@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import { createSaga, type CanonicalSagaIdentityInput } from '../src';
 
 const BILLING_SAGA_IDENTITY: CanonicalSagaIdentityInput = {

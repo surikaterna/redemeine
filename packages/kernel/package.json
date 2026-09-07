@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --runTestsByPath ./test --passWithNoTests",
+    "test": "pnpm exec vitest run packages/kernel/test --config ../../vitest.config.mts --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "peerDependencies": {

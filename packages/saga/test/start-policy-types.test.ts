@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import { type SagaStartPolicy, startPolicy } from '../src/startPolicy';
 import type { SagaTriggerStartContract } from '../src/triggerContracts';
 

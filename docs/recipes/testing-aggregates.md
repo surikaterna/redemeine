@@ -17,10 +17,10 @@ The best way to test Event Sourced systems is using the **Given / When / Then** 
 
 Let's imagine a `Shipment` aggregate that tracks delivery status. You can only dispatch a shipment once.
 
-Here is a complete, copy-pasteable test suite demonstrating how effortless testing becomes with Redemeine, using standard Jest or Vitest syntax.
+Here is a complete, copy-pasteable Vitest suite demonstrating how effortless testing becomes with Redemeine.
 
 ```ts
-import { describe, it, expect } from 'vitest'; // or from '@jest/globals'
+import { describe, it, expect } from 'vitest';
 import { createMirage, extractUncommittedEvents, clearUncommittedEvents } from '@redemeine/mirage';
 
 // 1. Import your built aggregate blueprint from your domain folder
@@ -81,6 +81,6 @@ describe('Shipment Aggregate', () => {
 
 ### Why is this DX so good?
 
-1. **Zero Mocks:** Notice there are no `jest.mock('database')` or `spyOn(api)` calls. 
+1. **Zero Mocks:** Notice there are no `vi.mock('database')` or `vi.spyOn(api)` calls.
 2. **Speed:** These tests run in milliseconds because they are entirely CPU-bound data transformations.
 3. **Type-Safety:** Standard IDE autocomplete will guide you while writing your `.dispatchToCarrier()` arguments during test creation, ensuring your tests never drift from your actual Command typings.

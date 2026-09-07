@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import type { Checkpoint, IProjectionStore } from '../src/contracts';
 import { MongoProjectionStore } from '../src';
 import { enablePatches, produceWithPatches, type Draft, type Patch as ImmerPatch } from 'immer';

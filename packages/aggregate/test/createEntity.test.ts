@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import { createEntity } from '@redemeine/aggregate';
 import { Event } from '@redemeine/kernel';
 

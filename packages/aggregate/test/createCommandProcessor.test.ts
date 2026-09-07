@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
+import { afterEach, describe, expect, test } from 'vitest';
 import { createCommandProcessor } from '../src/createCommandProcessor';
 import { Command, resetIdentityFactory, setIdentityFactory } from '@redemeine/kernel';
 

@@ -91,7 +91,7 @@ async function preFlightCheck() {
       }
     }
 
-    if (!allDeps['jest'] && !allDeps['vitest']) {
+    if (!allDeps['vitest']) {
       const ans = await prompt(`No testing framework detected. Would you like to scaffold Vitest? (y/n) `);
       if (ans.trim().toLowerCase() === 'y' || ans.trim().toLowerCase() === 'yes') {
         try {

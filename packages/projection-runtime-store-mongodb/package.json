@@ -32,7 +32,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-runtime-store-mongodb/test",
+    "test": "pnpm exec vitest run packages/projection-runtime-store-mongodb/test --config ../../vitest.config.mts",
     "lint": "tsc --noEmit"
   },
   "private": true,

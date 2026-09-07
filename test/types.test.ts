@@ -1,5 +1,5 @@
-import { describe, expect, test } from '@jest/globals';
-import { EntityArray } from '../src/types';
+import { describe, expect, test } from 'vitest';
+import { EntityArray } from '../packages/kernel/src/types';
 
 describe('EntityArray', () => {
   test('upsert inserts then updates by id', () => {

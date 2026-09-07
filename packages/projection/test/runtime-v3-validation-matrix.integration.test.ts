@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import { createProjectionRouter, type ProjectionDefinitionLike, type ProjectionRouterEnvelope } from '../../projection-router-core/src';
 import {
   createProjectionWorkerCore,

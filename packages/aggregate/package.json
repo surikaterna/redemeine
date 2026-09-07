@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/aggregate/test",
+    "test": "pnpm exec vitest run packages/aggregate/test --config ../../vitest.config.mts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

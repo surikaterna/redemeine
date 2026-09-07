@@ -32,7 +32,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-router-core/test",
+    "test": "pnpm exec vitest run packages/projection-router-core/test --config ../../vitest.config.mts",
     "lint": "tsc --noEmit"
   },
   "private": true,

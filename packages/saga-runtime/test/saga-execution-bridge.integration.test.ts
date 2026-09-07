@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
+import * as sagaPackage from '@redemeine/saga';
 import {
   createSagaExecutionBridge,
   createReferenceAdaptersV1,
@@ -7,10 +8,6 @@ import {
   type SagaRuntimeSideEffectIntent,
   type SagaAggregateState
 } from '../src';
-
-declare const require: (id: string) => any;
-
-const sagaPackage = require('@redemeine/saga');
 
 const {
   createSaga,

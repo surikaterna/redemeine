@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import { createSagaTriggerBuilder } from '../src/triggers';
 
 describe('saga trigger builder DSL (definition-only)', () => {

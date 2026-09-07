@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/testing/test",
+    "test": "pnpm exec vitest run packages/testing/test --config ../../vitest.config.mts",
     "lint": "tsc --noEmit",
     "bench": "pnpm exec tsx bench/testing-suite.bench.ts"
   },

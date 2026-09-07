@@ -1,6 +1,4 @@
-declare const require: (id: string) => any;
-
-const sagaPackage = require('@redemeine/saga');
+import * as sagaPackage from '@redemeine/saga';
 
 const {
   createSaga,

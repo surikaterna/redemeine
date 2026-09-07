@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
-import { createEvent } from '../src/createEvent';
-import { resetIdentityFactory, setIdentityFactory } from '../src/identity';
+import { afterEach, describe, expect, test } from 'vitest';
+import { createEvent } from '../packages/kernel/src/createEvent';
+import { resetIdentityFactory, setIdentityFactory } from '../packages/kernel/src/identity';
 
 describe('createEvent', () => {
     afterEach(() => {

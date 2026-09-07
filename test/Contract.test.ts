@@ -1,6 +1,6 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import { z } from 'zod';
-import { Contract, ContractError, StateIntegrityError } from '../src/Contract';
+import { Contract, ContractError, StateIntegrityError } from '../packages/kernel/src/Contract';
 
 describe('Contract', () => {
   test('registers and validates commands/events/state', () => {

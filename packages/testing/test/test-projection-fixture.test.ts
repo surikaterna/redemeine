@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import { createProjection } from '../../projection/src';
 import { testProjection, TestProjectionEvent } from '../src/testProjection';
 

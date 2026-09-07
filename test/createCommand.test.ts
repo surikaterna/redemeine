@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
-import { createCommand } from '../src/createCommand';
-import { resetIdentityFactory, setIdentityFactory } from '../src/identity';
+import { afterEach, describe, expect, test } from 'vitest';
+import { createCommand } from '../packages/kernel/src/createCommand';
+import { resetIdentityFactory, setIdentityFactory } from '../packages/kernel/src/identity';
 
 describe('createCommand', () => {
     afterEach(() => {

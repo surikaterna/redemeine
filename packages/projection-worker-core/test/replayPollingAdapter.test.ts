@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import type { Checkpoint, EventBatch, ProjectionEvent } from '@redemeine/projection-runtime-core';
 import {
   createProjectionWorkerCore,

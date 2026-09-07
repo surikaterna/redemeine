@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import { createSagaAggregate, SagaTransitionInvariantError, type SagaAggregateState } from '../src/createSagaAggregate';
 
 const isoAt = (secondsOffset: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, secondsOffset)).toISOString();

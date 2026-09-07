@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import type { IProjectionLinkStore } from '../src/contracts';
 import { MongoProjectionLinkStore, toLinkId } from '../src';
 import { createProjectionLinkCollection } from './mocks';

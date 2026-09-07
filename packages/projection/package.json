@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection/test --testPathIgnorePatterns='.*e2e.*|.*integration.*|.*e5-1.*'",
+    "test": "pnpm exec vitest run packages/projection/test --config ../../vitest.config.mts --exclude '**/*e2e*' --exclude '**/*integration*' --exclude '**/*e5-1*'",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

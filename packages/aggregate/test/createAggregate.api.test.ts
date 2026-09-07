@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
 import { createMirage } from '@redemeine/mirage';
 import { CommandResult, Event, RedemeinePlugin } from '@redemeine/kernel';

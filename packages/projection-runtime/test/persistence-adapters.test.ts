@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it } from 'vitest';
 import type { ProjectionCheckpoint, Rfc6902Operation } from '../src';
 import {
   InMemoryProjectionPersistenceAdapter,

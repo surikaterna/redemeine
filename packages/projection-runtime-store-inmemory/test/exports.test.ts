@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, test } from 'vitest';
 import { InMemoryProjectionLinkStore, InMemoryProjectionStore } from '../src/index';
 
 describe('projection-runtime-store-inmemory exports', () => {

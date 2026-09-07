@@ -1,4 +1,4 @@
-import { describe, expect, test, jest } from '@jest/globals';
+import { describe, expect, test, vi } from 'vitest';
 import { createAggregate } from '@redemeine/aggregate';
 import { Event } from '@redemeine/kernel';
 
@@ -10,7 +10,7 @@ const initialState: TestState = { count: 0 };
 
 describe('onUnmatchedEvent', () => {
     test('calls custom handler when event has no projector', () => {
-        const handler = jest.fn();
+        const handler = vi.fn();
 
         const aggregate = createAggregate('Counter', initialState)
             .events({
@@ -28,7 +28,7 @@ describe('onUnmatchedEvent', () => {
     });
 
     test('uses default console.warn when no handler provided', () => {
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
         const aggregate = createAggregate('Counter', initialState)
             .events({
@@ -48,7 +48,7 @@ describe('onUnmatchedEvent', () => {
     });
 
     test('does not call handler when event matches a projector', () => {
-        const handler = jest.fn();
+        const handler = vi.fn();
 
         const aggregate = createAggregate('Counter', initialState)
             .events({
