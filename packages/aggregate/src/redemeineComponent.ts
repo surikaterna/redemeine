@@ -145,7 +145,6 @@ export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S
 
 // SAFETY: Using `Function` for event/selector storage because projectors have heterogeneous signatures
 // that are incompatible with a single typed function signature due to contravariance.
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 export type AnyFunction = Function;
 
 export interface ComponentBehaviorSnapshot<S> {
