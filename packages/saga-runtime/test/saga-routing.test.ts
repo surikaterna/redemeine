@@ -2,7 +2,15 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createSaga } from '@redemeine/saga';
-import { compileSagaRoutes, createStartEventBindings, matchSagaRoutes, SagaRouteCompilationError, type SagaStartEventBinding } from '../src/index';
+import {
+  assertMatchingSagaCorrelations,
+  compileSagaRoutes,
+  createStartEventBindings,
+  matchSagaRoutes,
+  normalizeSagaCorrelation,
+  SagaRouteCompilationError,
+  type SagaStartEventBinding
+} from '../src/index';
 
 interface OrderState {
   orderId: string;
@@ -55,6 +63,20 @@ function createDefinition(version = 1) {
     .build();
 }
 
+function createTwoTriggerDefinition() {
+  return createSaga<OrderState>({ identity: { namespace: 'commerce', name: 'multi-trigger', version: 1 } })
+    .initialState(() => ({ orderId: '' }))
+    .start((state, input: { orderId: string }) => {
+      state.orderId = input.orderId;
+    })
+    .correlateBy((input) => input.orderId)
+    .triggeredBy({ kind: 'first', toStartInput: (event: { payload: { orderId: string } }) => ({ orderId: event.payload.orderId }) })
+    .triggeredBy({ kind: 'second', toStartInput: (event: { payload: { orderId: string } }) => ({ orderId: event.payload.orderId }) })
+    .correlate(orders, () => 'order-42')
+    .on(orders, { placed: () => undefined })
+    .build();
+}
+
 function startBinding(definition: ReturnType<typeof createDefinition>): SagaStartEventBinding {
   return { definition, triggerIndex: 0, eventTypes: ['commerce.order-placed.v1'] };
 }
@@ -75,6 +97,10 @@ describe('saga route compilation', () => {
     });
 
     expect(matched.map(({ route }) => route.kind)).toEqual(['start', 'on']);
+    expect(assertMatchingSagaCorrelations(normalizeSagaCorrelation('order-42'), normalizeSagaCorrelation('order-42'))).toEqual({
+      type: 'string',
+      value: 'order-42'
+    });
     expect(matched.every(({ route }) => route.eventType === 'commerce.order-placed.v1')).toBe(true);
     expect(matched.every(({ eventId }) => eventId === 'event-retained-1')).toBe(true);
     expect(
@@ -126,6 +152,21 @@ describe('saga route compilation', () => {
     expectCompilationError(() => compileSagaRoutes([definition], [{ ...startBinding(definition), eventTypes: [] }]), 'invalid_start_binding');
     expectCompilationError(() => compileSagaRoutes([definition], [startBinding(createDefinition(2))]), 'invalid_start_binding');
     expectCompilationError(() => compileSagaRoutes([definition], [startBinding(definition), startBinding(definition)]), 'duplicate_start_binding');
+  });
+
+  it('rejects duplicate canonical start event types across different trigger indexes', () => {
+    const definition = createTwoTriggerDefinition();
+    expectCompilationError(
+      () =>
+        compileSagaRoutes(
+          [definition],
+          [
+            { definition, triggerIndex: 0, eventTypes: ['commerce.order-placed.v1'] },
+            { definition, triggerIndex: 1, eventTypes: ['commerce.order-placed.v1'] }
+          ]
+        ),
+      'duplicate_start_binding'
+    );
   });
 
   it('rejects duplicate .on handler routes', () => {

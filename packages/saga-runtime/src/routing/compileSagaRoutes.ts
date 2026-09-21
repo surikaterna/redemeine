@@ -139,15 +139,16 @@ function assertUniqueRoutes(routes: readonly CompiledSagaRoute[]): void {
   }
 }
 
-function assertUniqueOnWireTypes(routes: readonly CompiledSagaRoute[]): void {
+function assertUniqueWireTypes(routes: readonly CompiledSagaRoute[], kind: CompiledSagaRoute['kind']): void {
   const registrations = new Set<string>();
   for (const route of routes) {
-    if (route.kind !== 'on') continue;
+    if (route.kind !== kind) continue;
     const key = JSON.stringify([route.sagaKey, route.eventType]);
     if (registrations.has(key)) {
+      const code = kind === 'start' ? 'duplicate_start_binding' : 'duplicate_handler_route';
       throw new SagaRouteCompilationError(
-        'duplicate_handler_route',
-        `Definition ${route.sagaKey}@v${route.definitionVersion} registers canonical event type ${route.eventType} more than once`
+        code,
+        `Definition ${route.sagaKey}@v${route.definitionVersion} registers ${kind} event type ${route.eventType} more than once`
       );
     }
     registrations.add(key);
@@ -184,7 +185,8 @@ export function compileSagaRoutes(definitions: readonly SagaDefinition[], startE
       compareCodeUnits(left.eventType, right.eventType) || compareCodeUnits(left.sagaKey, right.sagaKey) || compareCodeUnits(left.routeId, right.routeId)
   );
   assertUniqueRoutes(routes);
-  assertUniqueOnWireTypes(routes);
+  assertUniqueWireTypes(routes, 'start');
+  assertUniqueWireTypes(routes, 'on');
   return { definitions: [...definitions], routes, routesByEventType: indexRoutes(routes) };
 }
 
