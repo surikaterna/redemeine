@@ -1,7 +1,7 @@
 import { createAggregate } from '@redemeine/aggregate';
 import type { BusinessStateValidationOptions } from './businessStateValidation';
 import { createSagaAggregateCommands } from './sagaAggregateCommands';
-import type { SagaAggregateState, SagaRecentWindowLimits } from './sagaAggregateContracts';
+import type { NormalizedSagaAggregateState, SagaAggregateState, SagaRecentWindowLimits } from './sagaAggregateContracts';
 import { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
 export interface CreateSagaAggregateOptions<TState = unknown> {
@@ -18,7 +18,7 @@ const defaultRecentWindowLimits: SagaRecentWindowLimits = {
   activities: 50
 };
 
-function createInitialState<TState>(): SagaAggregateState<TState> {
+function createInitialState<TState>(): NormalizedSagaAggregateState<TState> {
   return {
     id: null,
     sagaType: null,
@@ -49,27 +49,38 @@ function createWindowLimits(options: CreateSagaAggregateOptions): SagaRecentWind
   };
 }
 
-function mergeInitialState<TState>(partial?: Partial<SagaAggregateState<TState>>): SagaAggregateState<TState> {
+export function normalizeSagaAggregateState<TState>(partial?: Partial<SagaAggregateState<TState>>): NormalizedSagaAggregateState<TState> {
   const defaults = createInitialState<TState>();
   return {
     ...defaults,
     ...partial,
+    sagaKey: partial?.sagaKey ?? null,
+    definitionVersion: partial?.definitionVersion ?? null,
+    correlation: partial?.correlation ?? null,
+    businessState: partial?.businessState ?? null,
     totals: { ...defaults.totals, ...partial?.totals },
     recent: { ...defaults.recent, ...partial?.recent }
   };
 }
 
+function hydrateSagaAggregateState<TState>(state: SagaAggregateState<TState>): asserts state is NormalizedSagaAggregateState<TState> {
+  state.sagaKey ??= null;
+  state.definitionVersion ??= null;
+  state.correlation ??= null;
+  state.businessState ??= null;
+}
+
 const toSnakeCase = (value: string): string => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
-export function createSagaAggregate<TAggregateName extends string = 'saga', TState = unknown>(
-  options: CreateSagaAggregateOptions<TState> & { aggregateName?: TAggregateName } = {}
+function buildSagaAggregate<TAggregateName extends string, TState>(
+  aggregateName: TAggregateName,
+  options: CreateSagaAggregateOptions<TState>
 ) {
-  const aggregateName = (options.aggregateName ?? 'saga') as TAggregateName;
   const windowLimits = createWindowLimits(options);
   const projectors = createSagaAggregateProjectors<TState>(windowLimits);
-  const built = createAggregate(aggregateName, mergeInitialState(options.initialState))
+  const built = createAggregate(aggregateName, normalizeSagaAggregateState(options.initialState))
     .events(projectors)
-    .commands((emit) => createSagaAggregateCommands(emit, options.businessStateValidation))
+    .commands((emit) => createSagaAggregateCommands<TState>(emit, options.businessStateValidation))
     .overrideEventNames({
       instanceCreated: `${aggregateName}.${toSnakeCase('instanceCreated')}.event`,
       sourceEventObserved: `${aggregateName}.${toSnakeCase('sourceEventObserved')}.event`,
@@ -79,7 +90,32 @@ export function createSagaAggregate<TAggregateName extends string = 'saga', TSta
       businessStateRecorded: 'saga.business_state_recorded.event'
     })
     .build();
-  return { ...built, aggregateType: aggregateName, windowLimits };
+  return {
+    ...built,
+    aggregateType: aggregateName,
+    windowLimits,
+    process: (state: SagaAggregateState<TState>, command: Parameters<typeof built.process>[1]) => built.process(normalizeSagaAggregateState(state), command),
+    apply: (state: SagaAggregateState<TState>, event: Parameters<typeof built.apply>[1]) => built.apply(normalizeSagaAggregateState(state), event),
+    applyToDraft: (state: SagaAggregateState<TState>, event: Parameters<typeof built.applyToDraft>[1]) => {
+      hydrateSagaAggregateState(state);
+      built.applyToDraft(state, event);
+    }
+  };
 }
 
-export type SagaAggregate<TState = unknown> = ReturnType<typeof createSagaAggregate<string, TState>>;
+type BuiltSagaAggregate<TAggregateName extends string, TState> = ReturnType<typeof buildSagaAggregate<TAggregateName, TState>>;
+
+export function createSagaAggregate<TAggregateName extends 'saga' = 'saga', TState = unknown>(
+  options?: CreateSagaAggregateOptions<TState> & { aggregateName?: TAggregateName }
+): BuiltSagaAggregate<TAggregateName, TState>;
+export function createSagaAggregate<TAggregateName extends string, TState = unknown>(
+  options: CreateSagaAggregateOptions<TState> & { aggregateName: TAggregateName }
+): BuiltSagaAggregate<TAggregateName, TState>;
+export function createSagaAggregate(
+  options: CreateSagaAggregateOptions<unknown> & { aggregateName?: string } = {}
+): BuiltSagaAggregate<string, unknown> {
+  if (options.aggregateName !== undefined) return buildSagaAggregate(options.aggregateName, options);
+  return buildSagaAggregate('saga', options);
+}
+
+export type SagaAggregate<TState = unknown> = BuiltSagaAggregate<string, TState>;

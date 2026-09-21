@@ -1,10 +1,10 @@
 import type { EventEmitterFactory } from '@redemeine/aggregate';
 import type { ReadonlyDeep } from '@redemeine/kernel';
 import { type BusinessStateValidationOptions, validateBusinessState } from './businessStateValidation';
+import { assertCanonicalSagaCorrelation } from './identity/canonicalCorrelation';
 import type {
-  SagaAggregateState,
+  NormalizedSagaAggregateState,
   SagaBusinessStateRecordedEventPayload,
-  SagaCanonicalCorrelation,
   SagaCreateInstanceCommandPayload,
   SagaObserveSourceEventCommandPayload,
   SagaRecordActivityLifecycleCommandPayload,
@@ -14,7 +14,7 @@ import type {
 import { SagaTransitionInvariantError } from './sagaAggregateContracts';
 import type { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
-type SagaCommandState<TState> = ReadonlyDeep<SagaAggregateState<TState>>;
+type SagaCommandState<TState> = ReadonlyDeep<NormalizedSagaAggregateState<TState>>;
 type SagaEventEmitter<TState> = EventEmitterFactory<string, ReturnType<typeof createSagaAggregateProjectors<TState>>, Record<string, string>>;
 
 function toIso8601(value?: string): string {
@@ -41,19 +41,13 @@ function requireCreatedInstance(state: SagaCommandState<unknown>, command: strin
   });
 }
 
-function assertCorrelation(correlation: SagaCanonicalCorrelation): void {
-  const validString = correlation.type === 'string' && correlation.value.length > 0;
-  const validNumber = correlation.type === 'number' && Number.isSafeInteger(correlation.value) && !Object.is(correlation.value, -0);
-  if (!validString && !validNumber) throw new TypeError('recordBusinessState correlation must be canonical');
-}
-
 function assertBusinessStateIdentity(payload: SagaBusinessStateRecordedEventPayload): void {
   if (payload.sagaKey.length === 0) throw new TypeError('recordBusinessState sagaKey must not be empty');
   if (!Number.isSafeInteger(payload.definitionVersion) || payload.definitionVersion <= 0) {
     throw new TypeError('recordBusinessState definitionVersion must be a positive safe integer');
   }
   if (payload.sourceTriggerId.length === 0) throw new TypeError('recordBusinessState sourceTriggerId must not be empty');
-  assertCorrelation(payload.correlation);
+  assertCanonicalSagaCorrelation(payload.correlation);
 }
 
 function transitionDetails(state: SagaCommandState<unknown>, payload: SagaRecordStateTransitionCommandPayload) {

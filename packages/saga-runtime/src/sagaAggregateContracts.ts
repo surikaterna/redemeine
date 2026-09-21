@@ -1,11 +1,13 @@
+import type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
+
+export type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
+
 export interface SagaRecentWindowLimits {
   transitions: number;
   events: number;
   intents: number;
   activities: number;
 }
-
-export type SagaCanonicalCorrelation = { readonly type: 'string'; readonly value: string } | { readonly type: 'number'; readonly value: number };
 
 export interface SagaObservedSourceEventRecord {
   eventType: string;
@@ -128,11 +130,11 @@ export interface SagaActivityLifecycleRecord {
 export interface SagaAggregateState<TState = unknown> {
   id: string | null;
   sagaType: string | null;
-  sagaKey: string | null;
-  definitionVersion: number | null;
-  correlation: SagaCanonicalCorrelation | null;
-  businessState: TState | null;
-  lifecycleState: 'idle' | 'active' | 'completed' | 'failed' | 'cancelled';
+  sagaKey?: string | null;
+  definitionVersion?: number | null;
+  correlation?: SagaCanonicalCorrelation | null;
+  businessState?: TState | null;
+  lifecycleState: string;
   createdAt: string | null;
   updatedAt: string | null;
   transitionVersion: number;
@@ -148,6 +150,13 @@ export interface SagaAggregateState<TState = unknown> {
     intents: SagaIntentLifecycleRecord[];
     activities: SagaActivityLifecycleRecord[];
   };
+}
+
+export interface NormalizedSagaAggregateState<TState = unknown> extends SagaAggregateState<TState> {
+  sagaKey: string | null;
+  definitionVersion: number | null;
+  correlation: SagaCanonicalCorrelation | null;
+  businessState: TState | null;
 }
 
 export interface SagaAggregateProjection<TState = unknown> {
