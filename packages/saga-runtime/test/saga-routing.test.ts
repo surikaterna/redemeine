@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createSaga } from '@redemeine/saga';
@@ -18,6 +18,18 @@ const orders = createAggregate('orders', { count: 0 })
     }
   })
   .overrideEventNames({ placed: 'commerce.order-placed.v1', paid: 'commerce.order-paid.v1' })
+  .build();
+
+const ambiguousOrders = createAggregate('ambiguous-orders', { count: 0 })
+  .events({
+    placed: (state, _event: Event<{ orderId: string }>) => {
+      state.count += 1;
+    },
+    accepted: (state, _event: Event<{ orderId: string }>) => {
+      state.count += 1;
+    }
+  })
+  .overrideEventNames({ placed: 'commerce.same-event.v1', accepted: 'commerce.same-event.v1' })
   .build();
 
 function createDefinition(version = 1) {
@@ -62,7 +74,7 @@ describe('saga route compilation', () => {
       eventId: 'event-retained-1'
     });
 
-    expect(matched.map(({ route }) => route.kind)).toEqual(['on', 'start']);
+    expect(matched.map(({ route }) => route.kind)).toEqual(['start', 'on']);
     expect(matched.every(({ route }) => route.eventType === 'commerce.order-placed.v1')).toBe(true);
     expect(matched.every(({ eventId }) => eventId === 'event-retained-1')).toBe(true);
     expect(
@@ -80,14 +92,32 @@ describe('saga route compilation', () => {
 
   it('sorts routes deterministically by exact event type and route identity', () => {
     const definition = createDefinition();
-    const first = compileSagaRoutes([definition], [startBinding(definition)]).routes.map(({ routeId }) => routeId);
-    const second = compileSagaRoutes([definition], [startBinding(definition)]).routes.map(({ routeId }) => routeId);
+    const first = compileSagaRoutes([definition], [startBinding(definition)]).routes.map(({ eventType, routeId }) => ({ eventType, routeId }));
+    const localeCompare = jest.spyOn(String.prototype, 'localeCompare').mockImplementation(() => {
+      throw new Error('locale-dependent ordering used');
+    });
+    let second: typeof first;
+    try {
+      second = compileSagaRoutes([definition], [startBinding(definition)]).routes.map(({ eventType, routeId }) => ({ eventType, routeId }));
+    } finally {
+      localeCompare.mockRestore();
+    }
     expect(second).toEqual(first);
-    expect(first).toEqual(['on:orders:paid:commerce.order-paid.v1', 'on:orders:placed:commerce.order-placed.v1', 'start:0:commerce.order-placed.v1']);
+    expect(first.map(({ eventType }) => eventType)).toEqual(['commerce.order-paid.v1', 'commerce.order-placed.v1', 'commerce.order-placed.v1']);
   });
 
   it('rejects duplicate active definition families across versions', () => {
     expectCompilationError(() => compileSagaRoutes([createDefinition(1), createDefinition(2)]), 'duplicate_active_definition');
+  });
+
+  it('compiles different route identities for separately active definition versions', () => {
+    const routeFor = (version: number) => compileSagaRoutes([createDefinition(version)]).routes.find((route) => route.eventType === 'commerce.order-placed.v1');
+    const routeV1 = routeFor(1);
+    const routeV2 = routeFor(2);
+    if (!routeV1 || !routeV2) throw new Error('expected placed routes');
+    expect(routeV1.definitionVersion).toBe(1);
+    expect(routeV2.definitionVersion).toBe(2);
+    expect(routeV1.routeId).not.toBe(routeV2.routeId);
   });
 
   it('validates start trigger indexes, exact types, active definitions, and duplicate registrations', () => {
@@ -107,6 +137,15 @@ describe('saga route compilation', () => {
       .build();
     expectCompilationError(() => compileSagaRoutes([definition]), 'duplicate_handler_route');
   });
+
+  it('rejects distinct handler keys that resolve to one canonical wire event type', () => {
+    const definition = createSaga<OrderState>({ identity: { namespace: 'commerce', name: 'ambiguous', version: 1 } })
+      .initialState(() => ({ orderId: '' }))
+      .correlate(ambiguousOrders, () => 'order-42')
+      .on(ambiguousOrders, { placed: () => undefined, accepted: () => undefined })
+      .build();
+    expectCompilationError(() => compileSagaRoutes([definition]), 'duplicate_handler_route');
+  });
 });
 
 function expectCompilationError(execute: () => unknown, code: SagaRouteCompilationError['code']): void {
@@ -114,7 +153,7 @@ function expectCompilationError(execute: () => unknown, code: SagaRouteCompilati
     execute();
     throw new Error('expected route compilation failure');
   } catch (error) {
-    expect(error).toBeInstanceOf(SagaRouteCompilationError);
-    expect((error as SagaRouteCompilationError).code).toBe(code);
+    if (!(error instanceof SagaRouteCompilationError)) throw error;
+    expect(error.code).toBe(code);
   }
 }

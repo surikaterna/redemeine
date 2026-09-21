@@ -1,11 +1,5 @@
 import type { SagaAggregateDefinition, SagaCorrelationFactory, SagaDefinition, SagaHandler } from '@redemeine/saga';
-import type { SagaCanonicalCorrelation } from '../sagaAggregateContracts';
-
-export interface RuntimeAggregateDefinition extends SagaAggregateDefinition {
-  readonly types: {
-    readonly events: Readonly<Record<string, string>>;
-  };
-}
+import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
 
 export interface SagaStartEventBinding<TDefinition extends SagaDefinition = SagaDefinition> {
   readonly definition: TDefinition;

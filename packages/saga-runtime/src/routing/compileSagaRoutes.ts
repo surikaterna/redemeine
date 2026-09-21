@@ -1,12 +1,11 @@
 import type { SagaAggregateDefinition, SagaDefinition } from '@redemeine/saga';
-import { deriveSourceTriggerId } from '../identity/deterministicIds';
+import { deriveSagaRouteId, deriveSourceTriggerId } from '../identity/deterministicIds';
 import {
   type CompiledSagaOnRoute,
   type CompiledSagaRoute,
   type CompiledSagaRoutingTable,
   type CompiledSagaStartRoute,
   type MatchedSagaRoute,
-  type RuntimeAggregateDefinition,
   SagaRouteCompilationError,
   type SagaRouteSourceEvent,
   type SagaStartEventBinding
@@ -44,7 +43,13 @@ function compileStartRoutes(binding: SagaStartEventBinding): CompiledSagaStartRo
   assertExactEventTypes(binding.eventTypes);
   return binding.eventTypes.map((eventType) => ({
     kind: 'start',
-    routeId: `start:${triggerIndex}:${eventType}`,
+    routeId: deriveSagaRouteId({
+      kind: 'start',
+      sagaKey: definition.sagaKey,
+      definitionVersion: definition.identity.version,
+      triggerIndex,
+      eventType
+    }),
     sagaKey: definition.sagaKey,
     definitionVersion: definition.identity.version,
     eventType,
@@ -59,13 +64,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function getRuntimeAggregate(aggregate: SagaAggregateDefinition): RuntimeAggregateDefinition {
+function getRuntimeEventTypes(aggregate: SagaAggregateDefinition): Readonly<Record<string, string>> {
   const types: unknown = 'types' in aggregate ? aggregate.types : undefined;
   const events: unknown = isRecord(types) ? types.events : undefined;
   if (!isRecord(events) || Object.values(events).some((eventType) => typeof eventType !== 'string')) {
     throw new SagaRouteCompilationError('missing_event_type_map', 'Saga .on aggregate must expose its built runtime event type map');
   }
-  return aggregate as RuntimeAggregateDefinition;
+  const eventTypes: Record<string, string> = {};
+  for (const [key, eventType] of Object.entries(events)) {
+    if (typeof eventType !== 'string') {
+      throw new SagaRouteCompilationError('missing_event_type_map', `Runtime event type ${key} must be a string`);
+    }
+    eventTypes[key] = eventType;
+  }
+  return eventTypes;
 }
 
 function resolveCorrelation(definition: SagaDefinition, aggregate: SagaAggregateDefinition) {
@@ -76,22 +88,31 @@ function resolveCorrelation(definition: SagaDefinition, aggregate: SagaAggregate
   if (matches.length > 1) {
     throw new SagaRouteCompilationError('duplicate_route_correlation', `Multiple correlations are registered for ${aggregate.aggregateType}`);
   }
-  return matches[0]!.correlate;
+  const match = matches[0];
+  if (!match) throw new SagaRouteCompilationError('missing_route_correlation', `No correlation is registered for ${aggregate.aggregateType}`);
+  return match.correlate;
 }
 
 function compileOnRoutes(definition: SagaDefinition): CompiledSagaOnRoute[] {
   const routes: CompiledSagaOnRoute[] = [];
   for (const group of definition.handlers) {
-    const aggregate = getRuntimeAggregate(group.aggregate);
+    const eventTypes = getRuntimeEventTypes(group.aggregate);
     const correlate = resolveCorrelation(definition, group.aggregate);
     for (const [handlerKey, handler] of Object.entries(group.handlers)) {
-      const eventType = aggregate.types.events[handlerKey];
+      const eventType = eventTypes[handlerKey];
       if (!eventType) {
         throw new SagaRouteCompilationError('unknown_handler_event', `Handler ${group.aggregateType}.${handlerKey} has no runtime event type`);
       }
       routes.push({
         kind: 'on',
-        routeId: `on:${group.aggregateType}:${handlerKey}:${eventType}`,
+        routeId: deriveSagaRouteId({
+          kind: 'on',
+          sagaKey: definition.sagaKey,
+          definitionVersion: definition.identity.version,
+          aggregateType: group.aggregateType,
+          handlerKey,
+          eventType
+        }),
         sagaKey: definition.sagaKey,
         definitionVersion: definition.identity.version,
         eventType,
@@ -109,13 +130,34 @@ function compileOnRoutes(definition: SagaDefinition): CompiledSagaOnRoute[] {
 function assertUniqueRoutes(routes: readonly CompiledSagaRoute[]): void {
   const registrations = new Set<string>();
   for (const route of routes) {
-    const key = `${route.sagaKey}\0${route.kind}\0${route.routeId}`;
+    const key = JSON.stringify([route.sagaKey, route.kind, route.routeId]);
     if (registrations.has(key)) {
       const code = route.kind === 'start' ? 'duplicate_start_binding' : 'duplicate_handler_route';
       throw new SagaRouteCompilationError(code, `Duplicate ${route.kind} route ${route.routeId}`);
     }
     registrations.add(key);
   }
+}
+
+function assertUniqueOnWireTypes(routes: readonly CompiledSagaRoute[]): void {
+  const registrations = new Set<string>();
+  for (const route of routes) {
+    if (route.kind !== 'on') continue;
+    const key = JSON.stringify([route.sagaKey, route.eventType]);
+    if (registrations.has(key)) {
+      throw new SagaRouteCompilationError(
+        'duplicate_handler_route',
+        `Definition ${route.sagaKey}@v${route.definitionVersion} registers canonical event type ${route.eventType} more than once`
+      );
+    }
+    registrations.add(key);
+  }
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function indexRoutes(routes: readonly CompiledSagaRoute[]): ReadonlyMap<string, readonly CompiledSagaRoute[]> {
@@ -138,9 +180,11 @@ export function compileSagaRoutes(definitions: readonly SagaDefinition[], startE
     return compileStartRoutes(binding);
   });
   const routes = [...startRoutes, ...definitions.flatMap(compileOnRoutes)].sort(
-    (left, right) => left.eventType.localeCompare(right.eventType) || left.sagaKey.localeCompare(right.sagaKey) || left.routeId.localeCompare(right.routeId)
+    (left, right) =>
+      compareCodeUnits(left.eventType, right.eventType) || compareCodeUnits(left.sagaKey, right.sagaKey) || compareCodeUnits(left.routeId, right.routeId)
   );
   assertUniqueRoutes(routes);
+  assertUniqueOnWireTypes(routes);
   return { definitions: [...definitions], routes, routesByEventType: indexRoutes(routes) };
 }
 
