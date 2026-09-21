@@ -263,9 +263,46 @@ describe('durable saga state-turn processor', () => {
     if (!events || !events[0] || !events[1] || !events[2]) throw new Error('expected initialization events');
     repository.replaceEvents(outcome.instanceId, [events[2], events[0], events[1]]);
     const input = sourceEvent({ type: 'turn.order-paid.v1.event', commitId: 'source-2', eventId: 'event-2' });
-    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({ code: 'invalid_replay_order' });
+    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({ code: 'invalid_stored_event', kind: 'permanent' });
     repository.replaceEvents(outcome.instanceId, [events[0], events[0], events[1], events[2]]);
-    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({ code: 'invalid_replay_order' });
+    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({ code: 'invalid_stored_event', kind: 'permanent' });
+  });
+
+  it('requires one authoritative state record for each source observation', async () => {
+    const repository = new FakeTurnRepository();
+    const { table, outcome } = await initialize(repository, 'authoritative-order');
+    if (!outcome) throw new Error('expected initialization outcome');
+    const events = repository.appendCalls[0]?.events;
+    if (!events || !events[0] || !events[1] || !events[2]) throw new Error('expected initialization events');
+    const input = sourceEvent({ type: 'turn.order-paid.v1.event', commitId: 'source-2', eventId: 'event-2' });
+
+    repository.replaceEvents(outcome.instanceId, [events[0], events[1], events[1], events[2]]);
+    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({
+      code: 'invalid_stored_event', kind: 'permanent', retryable: false
+    });
+
+    repository.replaceEvents(outcome.instanceId, [events[0], events[2]]);
+    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({
+      code: 'invalid_stored_event', kind: 'permanent'
+    });
+
+    repository.replaceEvents(outcome.instanceId, [events[0], events[1], events[2], events[1]]);
+    await expect(processSagaSourceEvent(table, repository, input)).rejects.toMatchObject({
+      code: 'invalid_stored_event', kind: 'permanent'
+    });
+  });
+
+  it('accepts repeated authoritative observation/state pairs', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'authoritative-repeat');
+    const first = await processSagaSourceEvent(table, repository, sourceEvent({
+      type: 'turn.order-paid.v1.event', commitId: 'source-2', eventId: 'event-2'
+    }));
+    const second = await processSagaSourceEvent(table, repository, sourceEvent({
+      type: 'turn.order-paid.v1.event', commitId: 'source-3', eventId: 'event-3', eventIndex: 2
+    }));
+    expect(first[0]?.status).toBe('committed');
+    expect(second[0]?.status).toBe('committed');
   });
 
   it('fails closed when an existing instance uses another definition version', async () => {

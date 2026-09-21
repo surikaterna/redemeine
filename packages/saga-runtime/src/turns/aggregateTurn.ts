@@ -7,6 +7,7 @@ import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurn
 import {
   assertStoredSagaReplayOrder,
   createSagaStoredReplayContext,
+  finalizeStoredSagaReplay,
   validateStoredSagaEvent
 } from './storedEventValidation';
 
@@ -44,6 +45,7 @@ export function hydrateSagaTurn(snapshot: SagaTurnStreamSnapshot, instanceId: st
       );
     }
   }
+  finalizeStoredSagaReplay(replay);
   if (snapshot.events.length > 0 && state.id === null) {
     throw new SagaTurnIntegrityError('missing_instance_event', 'Stored saga stream has events but no created instance');
   }

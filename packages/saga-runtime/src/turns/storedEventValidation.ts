@@ -6,7 +6,7 @@ import {
   type SagaCanonicalCorrelation
 } from '../identity/canonicalCorrelation';
 import { assertSagaLifecycleState, type SagaLifecycleState } from '../sagaAggregateContracts';
-import { SagaTurnIntegrityError } from './errors';
+import { SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
 
 export type SagaStoredEventKind =
   | 'instanceCreated'
@@ -24,6 +24,8 @@ export interface ValidatedStoredSagaEvent {
 
 export interface SagaStoredReplayContext {
   created: boolean;
+  authoritative: boolean;
+  pendingObservations: number;
   lifecycleState: SagaLifecycleState | null;
   lastKind: SagaStoredEventKind | null;
   businessIdentity: string | null;
@@ -256,7 +258,18 @@ export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Rec
 }
 
 export function createSagaStoredReplayContext(): SagaStoredReplayContext {
-  return { created: false, lifecycleState: null, lastKind: null, businessIdentity: null };
+  return {
+    created: false,
+    authoritative: false,
+    pendingObservations: 0,
+    lifecycleState: null,
+    lastKind: null,
+    businessIdentity: null
+  };
+}
+
+function invalidReplay(message: string): SagaTurnPermanentError {
+  return new SagaTurnPermanentError('invalid_stored_event', message);
 }
 
 function assertTransitionOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
@@ -266,14 +279,14 @@ function assertTransitionOrder(context: SagaStoredReplayContext, payload: Record
   assertSagaLifecycleState(from);
   assertSagaLifecycleState(to);
   if (context.lifecycleState !== from || from === to || from === 'completed' || from === 'failed' || from === 'cancelled') {
-    throw new SagaTurnIntegrityError('invalid_replay_order', 'Stored lifecycle transition violates aggregate invariants');
+    throw invalidReplay('Stored lifecycle transition violates aggregate invariants');
   }
   context.lifecycleState = to;
 }
 
 function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
-  if (context.lastKind !== 'sourceEventObserved') {
-    throw new SagaTurnIntegrityError('invalid_replay_order', 'Business state must immediately follow an observed source event');
+  if (context.lastKind !== 'sourceEventObserved' || context.pendingObservations !== 1) {
+    throw invalidReplay('Each authoritative business state must pair with exactly one preceding source observation');
   }
   const identity = JSON.stringify([
     requireString(payload, 'sagaKey'),
@@ -281,24 +294,37 @@ function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<s
     serializeSagaCorrelation(canonicalCorrelation(payload.correlation))
   ]);
   if (context.businessIdentity !== null && context.businessIdentity !== identity) {
-    throw new SagaTurnIntegrityError('invalid_replay_order', 'Stored business state identity changes within one saga stream');
+    throw invalidReplay('Stored business state identity changes within one saga stream');
   }
   context.businessIdentity = identity;
+  context.authoritative = true;
+  context.pendingObservations = 0;
 }
 
 export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent): void {
   if (stored.kind === 'instanceCreated') {
-    if (context.created) throw new SagaTurnIntegrityError('invalid_replay_order', 'Saga stream contains multiple instance creation events');
+    if (context.created) throw invalidReplay('Saga stream contains multiple instance creation events');
     context.created = true;
     const lifecycle = stored.payload.lifecycleState;
     assertSagaLifecycleState(lifecycle);
     context.lifecycleState = lifecycle;
   } else if (!context.created) {
-    throw new SagaTurnIntegrityError('invalid_replay_order', 'Saga stream event appears before instance creation');
+    throw invalidReplay('Saga stream event appears before instance creation');
+  } else if (stored.kind === 'sourceEventObserved') {
+    context.pendingObservations += 1;
+    if (context.authoritative && context.pendingObservations > 1) {
+      throw invalidReplay('A new source observation cannot begin before the prior authoritative turn records business state');
+    }
   } else if (stored.kind === 'stateTransitioned') {
     assertTransitionOrder(context, stored.payload);
   } else if (stored.kind === 'businessStateRecorded') {
     assertBusinessOrder(context, stored.payload);
   }
   context.lastKind = stored.kind;
+}
+
+export function finalizeStoredSagaReplay(context: SagaStoredReplayContext): void {
+  if (context.authoritative && context.pendingObservations !== 0) {
+    throw invalidReplay('Authoritative saga stream ends with a source observation that has no business state');
+  }
 }
