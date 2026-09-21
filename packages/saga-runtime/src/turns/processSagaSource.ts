@@ -3,6 +3,7 @@ import type { SagaTurnProcessorOptions, SagaTurnRepository, SagaTurnRouteOutcome
 import { processSagaTurn } from './processSagaTurn';
 import { matchSagaTurnRouteGroups, resolveSagaTurnRouteGroup } from './routePlanning';
 import { normalizeSagaTurnSourceEvent } from './sourceValidation';
+import { createSagaTurnAggregateEvent } from './aggregateEvent';
 
 export async function processSagaSourceEvent(
   table: CompiledSagaRoutingTable,
@@ -11,8 +12,9 @@ export async function processSagaSourceEvent(
   options: SagaTurnProcessorOptions = {}
 ): Promise<readonly SagaTurnRouteOutcome[]> {
   const source = normalizeSagaTurnSourceEvent(sourceEvent);
-  const groups = matchSagaTurnRouteGroups(table, source);
-  const resolved = groups.map((group) => resolveSagaTurnRouteGroup(group, source));
+  const event = createSagaTurnAggregateEvent(source);
+  const groups = matchSagaTurnRouteGroups(table, source, event);
+  const resolved = groups.map((group) => resolveSagaTurnRouteGroup(group, source, event));
   const outcomes: SagaTurnRouteOutcome[] = [];
   for (const routeGroup of resolved) {
     outcomes.push(await processSagaTurn(repository, routeGroup, source, options));

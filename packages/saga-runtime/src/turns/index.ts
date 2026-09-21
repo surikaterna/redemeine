@@ -1,3 +1,4 @@
+export * from './aggregateEvent';
 export * from './contracts';
 export * from './errors';
 export * from './processSagaSource';

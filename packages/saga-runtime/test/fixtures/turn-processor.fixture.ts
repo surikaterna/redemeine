@@ -14,12 +14,17 @@ import {
 export interface TurnState {
   count: number;
   bad?: unknown;
+  lastEventId?: string;
 }
 
 export interface DefinitionCounters {
   initial: number;
   start: number;
   handler: number;
+  whenEvent?: unknown;
+  startEvent?: unknown;
+  onCorrelationEvent?: unknown;
+  handlerEvent?: unknown;
 }
 
 interface OrderPayload {
@@ -44,8 +49,13 @@ export function createCounters(): DefinitionCounters {
   return { initial: 0, start: 0, handler: 0 };
 }
 
-export function createTurnDefinition(name: string, counters: DefinitionCounters, onCorrelation?: (event: unknown) => unknown) {
-  return createSaga<TurnState>({ identity: { namespace: 'turns', name, version: 1 } })
+export function createTurnDefinition(
+  name: string,
+  counters: DefinitionCounters,
+  onCorrelation?: (event: unknown) => unknown,
+  version = 1
+) {
+  return createSaga<TurnState>({ identity: { namespace: 'turns', name, version } })
     .initialState(() => {
       counters.initial += 1;
       return { count: 0 };
@@ -57,12 +67,22 @@ export function createTurnDefinition(name: string, counters: DefinitionCounters,
     .correlateBy((input) => input.orderId)
     .triggeredBy({
       kind: 'domain',
-      toStartInput: (event: { payload: OrderPayload }) => ({ orderId: event.payload.orderId })
+      when: (event) => {
+        counters.whenEvent = event;
+        return true;
+      },
+      toStartInput: (event: { payload: OrderPayload }) => {
+        counters.startEvent = event;
+        return { orderId: event.payload.orderId };
+      }
     })
-    .correlate(orders, onCorrelation ?? ((event) => readOrderId(event)))
+    .correlate(orders, (event) => {
+      counters.onCorrelationEvent = event;
+      return onCorrelation?.(event) ?? readOrderId(event);
+    })
     .on(orders, {
-      placed: async (state, event, ctx) => runHandler(state, event.payload, ctx, counters),
-      paid: async (state, event, ctx) => runHandler(state, event.payload, ctx, counters)
+      placed: async (state, event, ctx) => runHandler(state, event, ctx, counters),
+      paid: async (state, event, ctx) => runHandler(state, event, ctx, counters)
     })
     .build();
 }
@@ -77,12 +97,16 @@ function readOrderId(event: unknown): string {
 }
 
 async function runHandler(
-  state: { count: number; bad?: unknown },
-  payload: OrderPayload,
+  state: { count: number; bad?: unknown; lastEventId?: string },
+  event: { id?: string; payload: OrderPayload },
   ctx: { schedule(id: string, delay: number): unknown },
   counters: DefinitionCounters
 ): Promise<void> {
   counters.handler += 1;
+  counters.handlerEvent = event;
+  if (event.id === undefined) throw new Error('handler event id is required');
+  state.lastEventId = event.id;
+  const { payload } = event;
   if (payload.mode === 'throw') throw new Error('handler exploded');
   if (payload.mode === 'intent') ctx.schedule('later', 1);
   state.count += payload.amount ?? 1;

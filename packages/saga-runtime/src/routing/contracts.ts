@@ -15,6 +15,7 @@ export interface CompiledSagaStartRoute {
   readonly eventType: string;
   readonly triggerIndex: number;
   readonly definition: SagaDefinition;
+  readonly when?: (trigger: unknown) => boolean;
   readonly toStartInput: (trigger: unknown) => unknown;
   readonly correlate: (startInput: unknown) => unknown;
 }

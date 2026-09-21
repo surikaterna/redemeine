@@ -4,7 +4,11 @@ import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnSourceEvent, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
-import { validateStoredSagaEvent } from './storedEventValidation';
+import {
+  assertStoredSagaReplayOrder,
+  createSagaStoredReplayContext,
+  validateStoredSagaEvent
+} from './storedEventValidation';
 
 export interface HydratedSagaTurn {
   readonly aggregate: SagaAggregate;
@@ -23,14 +27,21 @@ export function hydrateSagaTurn(snapshot: SagaTurnStreamSnapshot, instanceId: st
   }
   const aggregate = createSagaAggregate();
   const eventTypes = requireEventTypes(aggregate);
+  const replay = createSagaStoredReplayContext();
   let state = aggregate.initialState;
   for (const stored of snapshot.events) {
-    const event = validateStoredSagaEvent(stored, eventTypes);
+    const validated = validateStoredSagaEvent(stored, eventTypes);
+    assertStoredSagaReplayOrder(replay, validated);
     try {
-      state = aggregate.apply(state, event);
+      state = aggregate.apply(state, validated.event);
     } catch (error) {
       if (error instanceof SagaTurnError) throw error;
-      throw new SagaTurnIntegrityError('stored_event_projection_failed', `Stored saga event ${event.type} could not be projected`, {}, error);
+      throw new SagaTurnIntegrityError(
+        'stored_event_projection_failed',
+        `Stored saga event ${validated.event.type} could not be projected`,
+        {},
+        error
+      );
     }
   }
   if (snapshot.events.length > 0 && state.id === null) {
@@ -45,7 +56,11 @@ function assertExistingIdentity(state: SagaAggregateState, resolved: ResolvedSag
   }
   const version = resolved.onRoute?.definitionVersion ?? resolved.startRoute?.definitionVersion;
   if (state.definitionVersion !== version) {
-    throw new SagaTurnIntegrityError('definition_version_mismatch', 'Stored saga definition version is not active');
+    throw new SagaTurnPermanentError(
+      'definition_version_migration_unsupported',
+      'Existing saga definition version cannot be migrated by this processor slice',
+      { storedVersion: state.definitionVersion, activeVersion: version }
+    );
   }
   if (!state.correlation || serializeSagaCorrelation(state.correlation) !== serializeSagaCorrelation(resolved.correlation)) {
     throw new SagaTurnIntegrityError('correlation_mismatch', 'Stored saga correlation does not match the resolved route');
@@ -112,17 +127,6 @@ export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: Resolve
   return pending;
 }
 
-function handlerEvent(source: SagaTurnSourceEvent) {
-  return {
-    type: source.type,
-    payload: source.payload,
-    ...(source.aggregateType === undefined ? {} : { aggregateType: source.aggregateType }),
-    ...(source.aggregateId === undefined ? {} : { aggregateId: source.aggregateId }),
-    ...(source.sequence === undefined ? {} : { sequence: source.sequence }),
-    ...(source.metadata === undefined ? {} : { metadata: { ...source.metadata } })
-  };
-}
-
 export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent): Promise<readonly Event[]> {
   const route = resolved.onRoute;
   if (!route) throw new SagaTurnPermanentError('missing_on_route', 'Cannot update a saga without an on route');
@@ -132,7 +136,7 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
   assertExistingIdentity(turn.state, resolved);
   let output;
   try {
-    output = await runSagaHandler(turn.state.businessState, handlerEvent(source), route.handler, {
+    output = await runSagaHandler(turn.state.businessState, resolved.event, route.handler, {
       sagaId: resolved.instanceId,
       correlationId: source.correlationId ?? serializeSagaCorrelation(resolved.correlation),
       causationId: source.causationId ?? source.eventId

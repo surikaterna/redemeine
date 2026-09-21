@@ -55,6 +55,7 @@ function compileStartRoutes(binding: SagaStartEventBinding): CompiledSagaStartRo
     eventType,
     triggerIndex,
     definition,
+    ...(trigger.when === undefined ? {} : { when: trigger.when }),
     toStartInput: trigger.toStartInput,
     correlate
   }));

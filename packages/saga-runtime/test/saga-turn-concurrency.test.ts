@@ -94,7 +94,7 @@ describe('saga turn OCC and ordered fanout', () => {
     repository.beforeAppend = () => ({ status: 'conflict' });
     const promise = processSagaSourceEvent(table, repository, paidSource(), { maxConflictRetries: 2 });
     await expect(promise).rejects.toBeInstanceOf(SagaTurnTransientError);
-    await expect(promise).rejects.toMatchObject({ code: 'conflict_retry_exhausted' });
+    await expect(promise).rejects.toMatchObject({ kind: 'transient', retryable: true, code: 'conflict_retry_exhausted' });
     expect(repository.appendCalls).toHaveLength(3);
   });
 
@@ -122,7 +122,7 @@ describe('saga turn OCC and ordered fanout', () => {
     expect(repository.appendCalls).toHaveLength(4);
     expect(repository.appendCalls.slice(0, 2).every(({ events }) => events.length === 3)).toBe(true);
     expect(repository.appendCalls.slice(2).every(({ events }) => events.length === 2)).toBe(true);
-    expect(firstCounters).toEqual({ initial: 1, start: 0, handler: 1 });
-    expect(secondCounters).toEqual({ initial: 1, start: 0, handler: 1 });
+    expect(firstCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });
+    expect(secondCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });
   });
 });

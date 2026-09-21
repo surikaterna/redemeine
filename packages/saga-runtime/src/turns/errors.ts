@@ -2,13 +2,22 @@ export type SagaTurnErrorKind = 'transient' | 'permanent' | 'integrity' | 'unsup
 
 export class SagaTurnError extends Error {
   readonly kind: SagaTurnErrorKind;
+  readonly retryable: boolean;
   readonly code: string;
   readonly details: Readonly<Record<string, unknown>>;
 
-  constructor(kind: SagaTurnErrorKind, code: string, message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown) {
+  constructor(
+    kind: SagaTurnErrorKind,
+    retryable: boolean,
+    code: string,
+    message: string,
+    details: Readonly<Record<string, unknown>> = {},
+    cause?: unknown
+  ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = 'SagaTurnError';
     this.kind = kind;
+    this.retryable = retryable;
     this.code = code;
     this.details = details;
   }
@@ -16,28 +25,28 @@ export class SagaTurnError extends Error {
 
 export class SagaTurnTransientError extends SagaTurnError {
   constructor(code: string, message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown) {
-    super('transient', code, message, details, cause);
+    super('transient', true, code, message, details, cause);
     this.name = 'SagaTurnTransientError';
   }
 }
 
 export class SagaTurnPermanentError extends SagaTurnError {
   constructor(code: string, message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown) {
-    super('permanent', code, message, details, cause);
+    super('permanent', false, code, message, details, cause);
     this.name = 'SagaTurnPermanentError';
   }
 }
 
 export class SagaTurnIntegrityError extends SagaTurnError {
   constructor(code: string, message: string, details: Readonly<Record<string, unknown>> = {}, cause?: unknown) {
-    super('integrity', code, message, details, cause);
+    super('integrity', false, code, message, details, cause);
     this.name = 'SagaTurnIntegrityError';
   }
 }
 
 export class SagaTurnUnsupportedError extends SagaTurnError {
   constructor(code: string, message: string, details: Readonly<Record<string, unknown>> = {}) {
-    super('unsupported', code, message, details);
+    super('unsupported', false, code, message, details);
     this.name = 'SagaTurnUnsupportedError';
   }
 }

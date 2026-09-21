@@ -1,6 +1,7 @@
 import type { Event } from '@redemeine/kernel';
 import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
 import type { CompiledSagaRoute, CompiledSagaRoutingTable, SagaRouteSourceEvent } from '../routing/contracts';
+import type { SagaTurnAggregateEvent } from './aggregateEvent';
 
 export interface SagaTurnSourceEvent extends SagaRouteSourceEvent {
   readonly createDateTime: string;
@@ -83,6 +84,7 @@ export interface ResolvedSagaTurnRouteGroup {
   readonly sourceTriggerId: string;
   readonly instanceId: string;
   readonly correlation: SagaCanonicalCorrelation;
+  readonly event: SagaTurnAggregateEvent;
   readonly startRoute: Extract<CompiledSagaRoute, { kind: 'start' }> | null;
   readonly onRoute: Extract<CompiledSagaRoute, { kind: 'on' }> | null;
 }
