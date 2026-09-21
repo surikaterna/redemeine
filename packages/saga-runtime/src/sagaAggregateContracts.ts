@@ -23,8 +23,8 @@ export interface SagaObservedSourceEventRecord {
 }
 
 export interface SagaStateTransitionRecord {
-  fromState: string;
-  toState: string;
+  fromState: SagaLifecycleState;
+  toState: SagaLifecycleState;
   reason?: string;
   transitionAt: string;
   metadata?: Record<string, unknown>;
@@ -127,6 +127,8 @@ export interface SagaActivityLifecycleRecord {
   metadata?: Record<string, unknown>;
 }
 
+export type SagaLifecycleState = 'idle' | 'active' | 'completed' | 'failed' | 'cancelled';
+
 export interface SagaAggregateState<TState = unknown> {
   id: string | null;
   sagaType: string | null;
@@ -134,7 +136,7 @@ export interface SagaAggregateState<TState = unknown> {
   definitionVersion?: number | null;
   correlation?: SagaCanonicalCorrelation | null;
   businessState?: TState | null;
-  lifecycleState: string;
+  lifecycleState: SagaLifecycleState;
   createdAt: string | null;
   updatedAt: string | null;
   transitionVersion: number;
@@ -186,8 +188,8 @@ export interface SagaObserveSourceEventCommandPayload {
 }
 
 export interface SagaRecordStateTransitionCommandPayload {
-  fromState: string;
-  toState: string;
+  fromState: SagaLifecycleState;
+  toState: SagaLifecycleState;
   reason?: string;
   transitionAt?: string;
   metadata?: Record<string, unknown>;
@@ -252,6 +254,7 @@ export type SagaTransitionInvariantCode =
   | 'saga_instance_not_created'
   | 'saga_instance_already_created'
   | 'saga_transition_from_state_mismatch'
+  | 'saga_transition_invalid_lifecycle_state'
   | 'saga_transition_noop'
   | 'saga_transition_from_terminal_state';
 
@@ -265,4 +268,13 @@ export class SagaTransitionInvariantError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export function assertSagaLifecycleState(value: unknown): asserts value is SagaLifecycleState {
+  if (value === 'idle' || value === 'active' || value === 'completed' || value === 'failed' || value === 'cancelled') return;
+  throw new SagaTransitionInvariantError(
+    'saga_transition_invalid_lifecycle_state',
+    'Saga lifecycle state must be idle, active, completed, failed, or cancelled',
+    { value }
+  );
 }

@@ -9,6 +9,7 @@ import type {
   SagaSourceEventObservedEventPayload,
   SagaStateTransitionedEventPayload
 } from './sagaAggregateContracts';
+import { assertSagaLifecycleState } from './sagaAggregateContracts';
 
 function appendRecentWindow<T>(window: T[], value: T, limit: number): T[] {
   if (limit === 0) return [];
@@ -18,6 +19,7 @@ function appendRecentWindow<T>(window: T[], value: T, limit: number): T[] {
 export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWindowLimits) {
   return {
     instanceCreated: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaInstanceCreatedEventPayload>) => {
+      assertSagaLifecycleState(event.payload.lifecycleState);
       Object.assign(state, {
         id: event.payload.id,
         sagaType: event.payload.sagaType,
@@ -34,6 +36,7 @@ export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWi
       state.recent.events = appendRecentWindow(state.recent.events, event.payload.record, windowLimits.events);
     },
     stateTransitioned: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaStateTransitionedEventPayload>) => {
+      assertSagaLifecycleState(event.payload.record.toState);
       state.lifecycleState = event.payload.record.toState;
       state.updatedAt = event.payload.record.transitionAt;
       state.transitionVersion += 1;

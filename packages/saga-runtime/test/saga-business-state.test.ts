@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import {
   BusinessStateValidationError,
   CorrelationNormalizationError,
@@ -207,5 +207,23 @@ describe('business state validation', () => {
   it('enforces a configurable UTF-8 encoded byte ceiling', () => {
     expect(() => validateBusinessState('é', { maxBytes: 4 })).not.toThrow();
     expect(() => validateBusinessState('é', { maxBytes: 3 })).toThrow(expect.objectContaining({ code: 'business_state_too_large' }));
+    expect(() => validateBusinessState('\n', { maxBytes: 4 })).not.toThrow();
+    expect(() => validateBusinessState('\n', { maxBytes: 3 })).toThrow(expect.objectContaining({ code: 'business_state_too_large' }));
+    expect(() => validateBusinessState('😀', { maxBytes: 6 })).not.toThrow();
+    expect(() => validateBusinessState('😀', { maxBytes: 5 })).toThrow(expect.objectContaining({ code: 'business_state_too_large' }));
+  });
+
+  it('rejects oversized scalar strings and keys before passing a full token to TextEncoder', () => {
+    const oversized = 'x'.repeat(10_000);
+    const encode = jest.spyOn(TextEncoder.prototype, 'encode');
+    try {
+      expectValidationCode(() => validateBusinessState(oversized, { maxBytes: 1_024 }), 'business_state_too_large');
+      expect(encode).not.toHaveBeenCalled();
+      expectValidationCode(() => validateBusinessState({ [oversized]: true }, { maxBytes: 1_024 }), 'business_state_too_large');
+      const encodedInputLengths = encode.mock.calls.map(([input]) => input?.length ?? 0);
+      expect(Math.max(...encodedInputLengths)).toBeLessThan(oversized.length);
+    } finally {
+      encode.mockRestore();
+    }
   });
 });

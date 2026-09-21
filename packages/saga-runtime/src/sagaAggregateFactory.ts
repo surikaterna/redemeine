@@ -1,7 +1,7 @@
 import { createAggregate } from '@redemeine/aggregate';
 import type { BusinessStateValidationOptions } from './businessStateValidation';
 import { createSagaAggregateCommands } from './sagaAggregateCommands';
-import type { NormalizedSagaAggregateState, SagaAggregateState, SagaRecentWindowLimits } from './sagaAggregateContracts';
+import { assertSagaLifecycleState, type NormalizedSagaAggregateState, type SagaAggregateState, type SagaRecentWindowLimits } from './sagaAggregateContracts';
 import { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
 export interface CreateSagaAggregateOptions<TState = unknown> {
@@ -51,6 +51,8 @@ function createWindowLimits(options: CreateSagaAggregateOptions): SagaRecentWind
 
 export function normalizeSagaAggregateState<TState>(partial?: Partial<SagaAggregateState<TState>>): NormalizedSagaAggregateState<TState> {
   const defaults = createInitialState<TState>();
+  const lifecycleState: unknown = partial?.lifecycleState ?? defaults.lifecycleState;
+  assertSagaLifecycleState(lifecycleState);
   return {
     ...defaults,
     ...partial,
@@ -58,6 +60,7 @@ export function normalizeSagaAggregateState<TState>(partial?: Partial<SagaAggreg
     definitionVersion: partial?.definitionVersion ?? null,
     correlation: partial?.correlation ?? null,
     businessState: partial?.businessState ?? null,
+    lifecycleState,
     totals: { ...defaults.totals, ...partial?.totals },
     recent: { ...defaults.recent, ...partial?.recent }
   };
@@ -72,10 +75,7 @@ function hydrateSagaAggregateState<TState>(state: SagaAggregateState<TState>): a
 
 const toSnakeCase = (value: string): string => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
-function buildSagaAggregate<TAggregateName extends string, TState>(
-  aggregateName: TAggregateName,
-  options: CreateSagaAggregateOptions<TState>
-) {
+function buildSagaAggregate<TAggregateName extends string, TState>(aggregateName: TAggregateName, options: CreateSagaAggregateOptions<TState>) {
   const windowLimits = createWindowLimits(options);
   const projectors = createSagaAggregateProjectors<TState>(windowLimits);
   const built = createAggregate(aggregateName, normalizeSagaAggregateState(options.initialState))
@@ -111,9 +111,7 @@ export function createSagaAggregate<TAggregateName extends 'saga' = 'saga', TSta
 export function createSagaAggregate<TAggregateName extends string, TState = unknown>(
   options: CreateSagaAggregateOptions<TState> & { aggregateName: TAggregateName }
 ): BuiltSagaAggregate<TAggregateName, TState>;
-export function createSagaAggregate(
-  options: CreateSagaAggregateOptions<unknown> & { aggregateName?: string } = {}
-): BuiltSagaAggregate<string, unknown> {
+export function createSagaAggregate(options: CreateSagaAggregateOptions<unknown> & { aggregateName?: string } = {}): BuiltSagaAggregate<string, unknown> {
   if (options.aggregateName !== undefined) return buildSagaAggregate(options.aggregateName, options);
   return buildSagaAggregate('saga', options);
 }

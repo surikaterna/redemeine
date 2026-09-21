@@ -11,7 +11,7 @@ import type {
   SagaRecordIntentLifecycleCommandPayload,
   SagaRecordStateTransitionCommandPayload
 } from './sagaAggregateContracts';
-import { SagaTransitionInvariantError } from './sagaAggregateContracts';
+import { assertSagaLifecycleState, SagaTransitionInvariantError } from './sagaAggregateContracts';
 import type { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
 type SagaCommandState<TState> = ReadonlyDeep<NormalizedSagaAggregateState<TState>>;
@@ -62,6 +62,8 @@ function transitionDetails(state: SagaCommandState<unknown>, payload: SagaRecord
 }
 
 function assertStateTransition(state: SagaCommandState<unknown>, payload: SagaRecordStateTransitionCommandPayload): void {
+  assertSagaLifecycleState(payload.fromState);
+  assertSagaLifecycleState(payload.toState);
   const details = transitionDetails(state, payload);
   if (state.lifecycleState === 'completed' || state.lifecycleState === 'failed' || state.lifecycleState === 'cancelled') {
     throw new SagaTransitionInvariantError(
@@ -93,9 +95,11 @@ export function createSagaAggregateCommands<TState>(emit: SagaEventEmitter<TStat
           transitionVersion: state.transitionVersion
         });
       }
+      const lifecycleState = payload.lifecycleState ?? 'active';
+      assertSagaLifecycleState(lifecycleState);
       return emit.instanceCreated({
         ...payload,
-        lifecycleState: payload.lifecycleState ?? 'active',
+        lifecycleState,
         createdAt: toIso8601(payload.createdAt)
       });
     },
