@@ -1,0 +1,31 @@
+{
+  "name": "@redemeine/saga-runtime-store-tapeworm",
+  "version": "0.1.0",
+  "description": "Tapeworm persistence adapter for durable saga turns",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-runtime-store-tapeworm/test",
+    "lint": "tsc --noEmit"
+  },
+  "private": true,
+  "dependencies": {
+    "@redemeine/saga-runtime": "workspace:*",
+    "tapeworm": "0.6.0"
+  },
+  "devDependencies": {
+    "@types/bluebird": "3.5.42",
+    "bluebird": "2.11.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}
