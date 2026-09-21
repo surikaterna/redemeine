@@ -5,6 +5,7 @@ import {
   processSagaSourceEvent,
   SagaTurnError,
   SagaTurnIntegrityError,
+  SagaTurnPermanentError,
   SagaTurnUnsupportedError
 } from '../src/index';
 import {
@@ -163,6 +164,32 @@ describe('durable saga state-turn processor', () => {
     await expect(processSagaSourceEvent(table, repository, sourceEvent())).rejects.toMatchObject({ code: 'route_resolution_failed' });
     expect(repository.findCalls).toHaveLength(0);
     expect(repository.loadCalls).toHaveLength(0);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('rejects non-serializable source data before repository access', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('invalid-source', createCounters());
+    const promise = processSagaSourceEvent(table, repository, sourceEvent({ metadata: { invalid: () => undefined } }));
+    await expect(promise).rejects.toBeInstanceOf(SagaTurnPermanentError);
+    await expect(promise).rejects.toMatchObject({ code: 'invalid_source_event' });
+    expect(repository.findCalls).toHaveLength(0);
+    expect(repository.loadCalls).toHaveLength(0);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('validates unknown repository events before projection or handler execution', async () => {
+    const repository = new FakeTurnRepository();
+    const { counters, table, outcome } = await initialize(repository, 'invalid-stored-event');
+    if (!outcome) throw new Error('expected initialization outcome');
+    repository.replaceEvents(outcome.instanceId, [{ type: 'saga.unknown.event', payload: {} }]);
+    repository.appendCalls.length = 0;
+    const promise = processSagaSourceEvent(table, repository, sourceEvent({
+      type: 'turn.order-paid.v1.event', commitId: 'source-2', eventId: 'event-2'
+    }));
+    await expect(promise).rejects.toBeInstanceOf(SagaTurnIntegrityError);
+    await expect(promise).rejects.toMatchObject({ code: 'unknown_stored_event' });
+    expect(counters.handler).toBe(0);
     expect(repository.appendCalls).toHaveLength(0);
   });
 

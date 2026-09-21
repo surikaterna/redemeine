@@ -193,6 +193,10 @@ export class FakeTurnRepository implements SagaTurnRepository {
     this.eventsByStream.set(streamId, events.filter((event) => event.type !== 'saga.business_state_recorded.event'));
   }
 
+  replaceEvents(streamId: string, events: readonly Event[]): void {
+    this.eventsByStream.set(streamId, [...events]);
+  }
+
   private commitKey(streamId: string, commitId: string): string {
     return `${streamId}\u0000${commitId}`;
   }
