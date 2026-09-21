@@ -1,9 +1,19 @@
+export type {
+  SagaSchedulerTriggerPolicyContract,
+  SagaTriggerMisfirePolicy,
+  SagaTriggerMisfirePolicyCatchUpAll,
+  SagaTriggerMisfirePolicyCatchUpBounded,
+  SagaTriggerMisfirePolicyLatestOnly,
+  SagaTriggerMisfirePolicySkipUntilNext,
+  SagaTriggerRestartPolicy,
+  SagaTriggerStartContract
+} from '@redemeine/saga';
 export { createSagaDispatchContext, runSagaHandler } from '@redemeine/saga';
 export * from './createSagaAggregate';
-export * from './sagaExecutionBridge';
+export * from './identity/index';
 export * from './inboundRouter';
 export * from './referenceAdapters';
-export * from './schedulerPolicyEvaluator';
+export * from './routing/index';
 export {
   createRuntimeAuditLifecycleReadModel,
   type IntentExecutionLifecycleHistoryEntry,
@@ -35,13 +45,5 @@ export type {
   RuntimeTelemetryPublisherContract,
   RuntimeTelemetryRecord
 } from './runtimeObservabilityContracts';
-export type {
-  SagaSchedulerTriggerPolicyContract,
-  SagaTriggerMisfirePolicy,
-  SagaTriggerMisfirePolicyCatchUpAll,
-  SagaTriggerMisfirePolicyCatchUpBounded,
-  SagaTriggerMisfirePolicyLatestOnly,
-  SagaTriggerMisfirePolicySkipUntilNext,
-  SagaTriggerRestartPolicy,
-  SagaTriggerStartContract
-} from '@redemeine/saga';
+export * from './sagaExecutionBridge';
+export * from './schedulerPolicyEvaluator';
