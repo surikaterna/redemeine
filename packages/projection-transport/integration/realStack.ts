@@ -205,7 +205,24 @@ async function runPoisonAndRetry(client: MongoClient, channel: ConfirmChannel): 
   assert((await runChild('retry', retryQueue, 'retry')).code === 0, 'Retry child failed.');
   const retryDepth = (await channel.checkQueue(`${retryQueue}.retry`)).messageCount;
   assert(retryDepth === 1, 'Durable retry queue did not retain the delayed message.');
-  return { terminalDlq: true, durableRetryDepth: retryDepth, backoffMs: 60_000 };
+  const db = client.db(databaseName);
+  const publication = await db.collection('retryPublications').findOne({ scenario: 'retry' });
+  const settlement = await db.collection('settlements').findOne({ scenario: 'retry', kind: 'retry' });
+  assert(publication?.topologyVerified === true, 'Retry topology was not verified by the publisher.');
+  assert(publication.persistent === true && publication.mandatory === true, 'Retry publication flags missing.');
+  assert(publication.confirmCount === 1 && publication.returnedCount === 0, 'Retry confirmation evidence invalid.');
+  assert(publication.confirmedAt instanceof Date, 'Retry confirmation timestamp missing.');
+  assert(settlement?.observedAt instanceof Date, 'Retry NACK settlement timestamp missing.');
+  assert(publication.confirmedAt <= settlement.observedAt, 'Worker NACK preceded retry confirmation.');
+  return {
+    terminalDlq: true, durableRetryDepth: retryDepth, backoffMs: 60_000,
+    retryPublisher: {
+      persistent: true, mandatory: true, topologyVerified: true,
+      confirmCount: publication.confirmCount, returnedCount: publication.returnedCount,
+      backpressureWaitCount: publication.backpressureWaitCount,
+      confirmedAt: publication.confirmedAt, nackObservedAt: settlement.observedAt
+    }
+  };
 }
 
 async function verifyReducedRegistry(client: MongoClient, queue: string): Promise<boolean> {

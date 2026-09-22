@@ -144,13 +144,16 @@ describe('ProjectionRabbitWorker', () => {
     expect(events.at(-1)?.kind).toBe(kind);
   });
 
-  it('durably schedules bounded-gap retry before NACK and never sleeps with delivery held', async () => {
+  it('waits for confirmed durable retry publication before NACK', async () => {
     const events: RabbitSettlementEvent[] = [];
     const channel = new FakeChannel();
     const options = workerOptions(coordinator(retryable), events);
     const order: string[] = [];
+    let confirm!: () => void;
     options.scheduleRetry.mockImplementation(async () => {
-      order.push('scheduled');
+      order.push('published');
+      await new Promise<void>((resolve) => { confirm = resolve; });
+      order.push('confirmed');
       return { durable: true, notBeforeEpochMs: 11_000 };
     });
     channel.nack.mockImplementation(() => { order.push('nack'); });
@@ -158,7 +161,11 @@ describe('ProjectionRabbitWorker', () => {
     await worker.start(channel);
     channel.deliver(delivery());
     await flush();
-    expect(order).toEqual(['scheduled', 'nack']);
+    expect(order).toEqual(['published']);
+    expect(channel.nack).not.toHaveBeenCalled();
+    confirm();
+    await flush();
+    expect(order).toEqual(['published', 'confirmed', 'nack']);
     expect(events.at(-1)?.kind).toBe('retry');
   });
 

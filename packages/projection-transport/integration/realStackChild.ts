@@ -24,6 +24,7 @@ import {
   type StackState
 } from './realStackFixtures';
 import type { ICommit } from 'tapeworm';
+import { publishConfirmedRetry } from './confirmedRetryPublisher';
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -95,7 +96,7 @@ class ObservedSourceOrder implements ProjectionSourceOrderPort {
 async function run(): Promise<void> {
   const mongo = new MongoClient(mongoUri);
   const rabbit = await connect(rabbitUri);
-  const channel = await rabbit.createChannel();
+  const channel = await rabbit.createConfirmChannel();
   await mongo.connect();
   const db = mongo.db(databaseName);
   const projectionStore = new MongoProjectionStore<StackState>({
@@ -120,6 +121,9 @@ async function run(): Promise<void> {
     sourceOrder: new ObservedSourceOrder(transport, mongo), rangeReader,
     maxCommits: 100, maxBytes: 1_048_576, maxGapPages: 10, maxConflictRetries: 2
   });
+  await channel.assertQueue(`${queue}.retry`, {
+    durable: true, deadLetterExchange: '', deadLetterRoutingKey: queue
+  });
   let finish!: () => void;
   const settled = new Promise<void>((resolve) => { finish = resolve; });
   const worker = new ProjectionRabbitWorker({
@@ -128,10 +132,13 @@ async function run(): Promise<void> {
     coordinator,
     initialize: async () => { await transport.initialize(); await rangeReader.initialize(); },
     scheduleRetry: async (message, reason, minimumDelayMs) => {
-      channel.sendToQueue(`${queue}.retry`, message.content, {
-        persistent: true,
-        ...(message.properties.messageId ? { messageId: message.properties.messageId } : {}),
+      const publication = await publishConfirmedRetry(channel, `${queue}.retry`, message.content, {
+        messageId: message.properties.messageId ?? `${scenario}-retry`,
         expiration: String(minimumDelayMs), headers: { reason }
+      });
+      await db.collection('retryPublications').insertOne({
+        scenario, queue: `${queue}.retry`, persistent: true, mandatory: true,
+        topologyVerified: true, ...publication
       });
       return { durable: true, notBeforeEpochMs: Date.now() + minimumDelayMs };
     },
