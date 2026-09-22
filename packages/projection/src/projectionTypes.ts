@@ -21,8 +21,10 @@ type ProjectorPayload<TProjector> = TProjector extends (...args: infer TArgs) =>
     : unknown
   : unknown;
 
+type ProjectionProjector = (...args: never[]) => unknown;
+
 type EventProjectorsOf<TAggregate> = TAggregate extends { pure: { eventProjectors: infer TProjectors } }
-  ? TProjectors extends Record<string, CallableFunction>
+  ? TProjectors extends Record<string, ProjectionProjector>
     ? TProjectors
     : never
   : never;
@@ -33,9 +35,14 @@ export type ProjectionAggregateSource = {
 };
 
 /** Extended source required for mirror — provides draft mutation and initial state */
-export type MirrorableAggregateSource = ProjectionAggregateSource & {
+export type MirrorableAggregateSource<TState = never, TEvent = never> = ProjectionAggregateSource & {
+  initialState: TState;
+  applyToDraft(draft: TState, event: TEvent): void;
+};
+
+export type AnyMirrorableAggregateSource = ProjectionAggregateSource & {
   initialState: unknown;
-  applyToDraft: CallableFunction;
+  applyToDraft(...args: never[]): void;
 };
 
 /** Extract the state type from an aggregate that exposes initialState */
@@ -61,7 +68,7 @@ type HandlerEventTypeByKey<TAggregate, TEventKey extends string> = TEventKey | `
 export interface AggregateDefinition<TState, TPayloads extends Record<string, unknown>> {
   aggregateType: string;
   initialState: TState;
-  pure: { eventProjectors: Record<string, CallableFunction> };
+  pure: { eventProjectors: Record<string, ProjectionProjector> };
   metadata?: {
     commands?: Record<string, unknown>;
     events?: Record<string, unknown>;
@@ -136,7 +143,7 @@ export interface ProjectionBuilder<TState> {
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
-  mirror<TAggregate extends MirrorableAggregateSource>(
+  mirror<TAggregate extends AnyMirrorableAggregateSource>(
     aggregate: TAggregate,
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>>;

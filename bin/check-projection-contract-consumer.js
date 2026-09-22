@@ -45,7 +45,14 @@ try {
     files: ['consumer.ts']
   }));
   writeFileSync(join(temporaryDirectory, 'consumer.ts'), `
-import { createProjection } from '@redemeine/projection';
+import {
+  createProjection,
+  inherit,
+  type InheritExtended,
+  type MirrorableAggregateSource,
+  type ProjectionContext,
+  type ProjectionEvent
+} from '@redemeine/projection';
 import {
   projectionUuidToBase64Url22,
   validateProjectionQueueRegistryManifest,
@@ -61,6 +68,27 @@ const definition = createProjection('sample', () => ({}))
   .from(aggregate, {})
   .deduplication({ strategy: 'own_record' })
   .buildCommitDefinition();
+type MirrorState = { count: number };
+type ChangedEvent = Omit<ProjectionEvent, 'payload' | 'type'> & {
+  payload: { amount: number };
+  type: 'changed' | 'sample.changed.event';
+};
+const extended: InheritExtended<MirrorState, ChangedEvent> = inherit.extend((state, event) => {
+  state.count += event.payload.amount;
+});
+const defaultExtended: InheritExtended = extended;
+const mirrorSource = {
+  aggregateType: 'sample' as const,
+  initialState: { count: 0 },
+  pure: { eventProjectors: { changed: (_state: MirrorState, _event: ChangedEvent) => undefined } },
+  applyToDraft(state: MirrorState, event: ChangedEvent) { state.count += event.payload.amount; }
+} satisfies MirrorableAggregateSource<MirrorState, ChangedEvent>;
+const changedEvent: ChangedEvent = {
+  aggregateType: 'sample', aggregateId: 'one', type: 'sample.changed.event', payload: { amount: 1 },
+  sequence: 1, timestamp: '2024-01-01T00:00:00Z'
+};
+mirrorSource.applyToDraft(mirrorSource.initialState, changedEvent);
+const mirrored = createProjection('mirror').mirror(mirrorSource, { changed: extended }).build();
 const checkpoint: ProjectionSourceCheckpoint | null = { sequence: 0 };
 const sourceKey = projectionUuidToBase64Url22('00112233-4455-6677-8899-aabbccddeeff');
 const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
@@ -87,8 +115,16 @@ const manifest: ProjectionQueueRegistryManifest = {
 };
 validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, checkpoint, sourceKey, rangeRequest, manifest, store];
+void [definition, defaultExtended, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
 
+declare const context: ProjectionContext;
+declare const defaultOnly: InheritExtended;
+// @ts-expect-error default marker types cannot be invoked without explicit state and event arguments
+defaultOnly.after({ count: 0 }, changedEvent, context);
+// @ts-expect-error mirror sources retain their declared event payload
+mirrorSource.applyToDraft({ count: 0 }, { ...changedEvent, payload: { amount: 'invalid' } });
+// @ts-expect-error handler event payload remains inferred from the source projector
+createProjection('bad-handler', () => ({ count: 0 })).from(mirrorSource, { changed: (_state, event) => event.payload.missing });
 // @ts-expect-error none requires explicit duplicate-effects acknowledgement
 createProjection('unsafe', () => ({})).deduplication({ strategy: 'none', reason: 'unsafe' });
 // @ts-expect-error commit identity belongs to the envelope, not projection checkpoints

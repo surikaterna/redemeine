@@ -3,6 +3,7 @@ import type { InheritExtended } from './inherit';
 import { defaultIdentity, inherit, isInheritEntry, isInheritExtended } from './inherit';
 import type {
   AggregateStateOf,
+  AnyMirrorableAggregateSource,
   InheritableHandlersForAggregate,
   JoinStreamDefinition,
   MirrorableAggregateSource,
@@ -70,7 +71,6 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     handlers: Record<string, unknown>
   ): Record<string, ProjectionHandler<THandlerState>> {
     const resolved: Record<string, ProjectionHandler<THandlerState>> = {};
-    const applyToDraft = (aggregate as MirrorableAggregateSource).applyToDraft as (draft: THandlerState, event: BaseProjectionEvent) => void;
 
     for (const [key, value] of Object.entries(handlers)) {
       if (!value) continue;
@@ -78,12 +78,12 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
         this._assertMirrorable(aggregate);
         const after = (value as InheritExtended<THandlerState, BaseProjectionEvent>).after;
         resolved[key] = (draft, event, context) => {
-          applyToDraft(draft, event);
+          aggregate.applyToDraft(draft, event);
           after(draft, event, context);
         };
       } else if (isInheritEntry(value)) {
         this._assertMirrorable(aggregate);
-        resolved[key] = (draft, event) => applyToDraft(draft, event);
+        resolved[key] = (draft, event) => aggregate.applyToDraft(draft, event);
       } else {
         resolved[key] = value as ProjectionHandler<THandlerState>;
       }
@@ -91,8 +91,10 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return resolved;
   }
 
-  private _assertMirrorable(aggregate: ProjectionAggregateSource): asserts aggregate is MirrorableAggregateSource {
-    if (!(aggregate as Partial<MirrorableAggregateSource>).applyToDraft) {
+  private _assertMirrorable<THandlerState>(
+    aggregate: ProjectionAggregateSource
+  ): asserts aggregate is MirrorableAggregateSource<THandlerState, BaseProjectionEvent> {
+    if (!('applyToDraft' in aggregate) || typeof aggregate.applyToDraft !== 'function') {
       throw new Error(`Projection '${this._name}': inherit requires an aggregate with applyToDraft.`);
     }
   }
@@ -105,7 +107,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  mirror<TAggregate extends MirrorableAggregateSource>(
+  mirror<TAggregate extends AnyMirrorableAggregateSource>(
     aggregate: TAggregate,
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>> {
@@ -113,7 +115,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     for (const key of Object.keys(aggregate.pure.eventProjectors)) {
       if (!(key in explicit)) explicit[key] = inherit;
     }
-    const builder = this as unknown as ProjectionBuilderImpl<AggregateStateOf<TAggregate>>;
+    const builder = this as ProjectionBuilderImpl<AggregateStateOf<TAggregate>>;
     builder._fromStream = {
       aggregate,
       handlers: this._resolveHandlers<AggregateStateOf<TAggregate>>(aggregate, explicit)

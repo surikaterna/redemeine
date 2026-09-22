@@ -5,7 +5,7 @@ import type { ProjectionEvent } from './types';
 
 const INHERIT_BRAND = Symbol('inherit');
 
-export interface InheritExtended<TState = unknown, TEvent = unknown> {
+export interface InheritExtended<TState = never, TEvent = never> {
   readonly __inheritBrand: typeof INHERIT_BRAND;
   readonly after: (state: TState, event: TEvent, context: ProjectionContext) => void;
 }
