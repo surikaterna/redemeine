@@ -9,7 +9,7 @@ import {
   type ProjectionMigrationReceiptRecord
 } from '@redemeine/projection-runtime-store-mongodb';
 import { createProjectionCommitCoordinator } from '@redemeine/projection-worker-core';
-import { type Document, MongoClient } from 'mongodb';
+import { type ClientSession, type Document, MongoClient } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import type { ProjectionTransportDocument } from '../mongoTransportStore';
 import { createTapewormMongoCompleteCommitRangeReader } from '../tapewormMongoRangeReader';
@@ -93,7 +93,8 @@ async function main(): Promise<void> {
       linkCollection: targetDb.collection<ProjectionLinkRecord>(collections.links),
       dedupeCollection: targetDb.collection<ProjectionDedupeRecord>(collections.progress),
       migrationReceiptCollection: targetDb.collection<ProjectionMigrationReceiptRecord>(collections.migrationReceipts),
-      mongoClient: targetClient
+      mongoClient: projectionStoreClient(targetClient),
+      onSourceCommitReconciliation: () => process.stderr.write('projection-store-reconcile-observed\n')
     });
     const coordinator = createProjectionCommitCoordinator({
       queueBindingId: manifest.newRegistry.queueId,
@@ -146,6 +147,39 @@ class InjectedUnknownCommitError extends Error {
   hasErrorLabel(label: string): boolean {
     return label === 'UnknownTransactionCommitResult';
   }
+}
+
+function projectionStoreClient(client: MongoClient): Pick<MongoClient, 'startSession'> {
+  if (process.env.REDEMEINE_MIGRATION_TEST_STORE_UNKNOWN_AFTER_COMMIT !== '1') return client;
+  let injected = false;
+  return {
+    startSession: () =>
+      sessionWithPostCommitUnknown(client.startSession(), () => {
+        if (injected) return false;
+        injected = true;
+        return true;
+      })
+  };
+}
+
+function sessionWithPostCommitUnknown(session: ClientSession, shouldInject: () => boolean): ClientSession {
+  return new Proxy(session, {
+    get(target, property) {
+      if (property !== 'withTransaction') {
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async (...args: Parameters<ClientSession['withTransaction']>) => {
+        const result = await target.withTransaction(...args);
+        if (isCommittedStoreResult(result) && shouldInject()) throw new InjectedUnknownCommitError();
+        return result;
+      };
+    }
+  });
+}
+
+function isCommittedStoreResult(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'status' in value && value.status === 'committed';
 }
 
 async function execute(engine: ProjectionMigrationEngine, command: string | undefined, manifest: Parameters<ProjectionMigrationEngine['preflight']>[0]) {

@@ -270,8 +270,10 @@ async function run(): Promise<void> {
     assert(verifiedSources.code === 0, 'Source verification resume failed.');
     const crashReceiptCount = await crashReplay(args, db.collection(newCollections.migrationReceipts));
     assert(crashReceiptCount > 0 && crashReceiptCount < 8, 'Replay crash was not injected between sources.');
-    const replayed = await cli('replay', args);
+    const storeUnknownEnv = { ...process.env, REDEMEINE_MIGRATION_TEST_STORE_UNKNOWN_AFTER_COMMIT: '1' };
+    const replayed = await cli('replay', args, storeUnknownEnv);
     assert(replayed.code === 0, 'Replay failed.');
+    assert(replayed.stderr.includes('projection-store-reconcile-observed'), 'Projection store unknown-result reconciliation was not observed.');
     const replayRestart = await cli('replay', args);
     assert(replayRestart.code === 0 && replayRestart.receipt.mutated === false, 'Replay restart was not idempotent.');
     await db.collection<ProjectionTransportDocument>('projection_transport').insertOne({
@@ -371,6 +373,7 @@ async function run(): Promise<void> {
       replayCrashReceiptCount: crashReceiptCount,
       replayRestartAfterSigkill: true,
       activationConflictPreservedReplayState: true,
+      storeReconcileObserved: true,
       unknownCommitInjectedAfterCommit: true,
       activationReconcileObserved: true,
       replaySnapshot: replayed.receipt.snapshot,
