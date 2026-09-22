@@ -66,6 +66,7 @@ function adaptChannel(channel: Channel): ProjectionRabbitChannel {
     return value;
   };
   return {
+    assertExchange: (name, type, options) => channel.assertExchange(name, type, options),
     assertQueue: (name, options) => channel.assertQueue(name, options),
     prefetch: (count) => channel.prefetch(count),
     consume: (name, handler, options) => channel.consume(name, (message) => {

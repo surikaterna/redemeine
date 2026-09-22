@@ -20,10 +20,12 @@
   },
   "dependencies": {
     "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-mongodb": "workspace:*",
     "@redemeine/projection-worker-core": "workspace:*",
     "amqplib": "2.0.1",
     "mongodb": "6.18.0",
-    "tapeworm": "0.6.0"
+    "tapeworm": "0.6.0",
+    "tapeworm_persistence_store_mongodb": "3.1.0"
   },
   "devDependencies": {
     "@types/amqplib": "0.10.8",

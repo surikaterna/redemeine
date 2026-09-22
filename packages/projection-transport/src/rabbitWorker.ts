@@ -8,6 +8,10 @@ export interface RabbitDelivery {
 }
 
 export interface ProjectionRabbitChannel {
+  assertExchange(exchange: string, type: string, options: {
+    durable: true;
+    arguments: Readonly<Record<string, unknown>>;
+  }): Promise<unknown>;
   assertQueue(queue: string, options: {
     durable: true;
     deadLetterExchange: string;
@@ -40,6 +44,8 @@ export interface ProjectionRabbitRetryReceipt {
 export interface ProjectionRabbitWorkerOptions {
   readonly queue: string;
   readonly deadLetterExchange: string;
+  readonly deadLetterExchangeType?: string;
+  readonly deadLetterExchangeArguments?: Readonly<Record<string, unknown>>;
   readonly deadLetterRoutingKey?: string;
   readonly prefetch: number;
   readonly maxMessageBytes: number;
@@ -80,6 +86,11 @@ export class ProjectionRabbitWorker {
   async start(channel: ProjectionRabbitChannel): Promise<void> {
     if (this.channel) throw new Error('Projection Rabbit worker is already started.');
     await this.options.initialize();
+    await channel.assertExchange(
+      this.options.deadLetterExchange,
+      this.options.deadLetterExchangeType ?? 'direct',
+      { durable: true, arguments: this.options.deadLetterExchangeArguments ?? {} }
+    );
     await channel.assertQueue(this.options.queue, {
       durable: true,
       deadLetterExchange: this.options.deadLetterExchange,

@@ -202,6 +202,9 @@ importers:
       '@redemeine/projection-runtime-core':
         specifier: workspace:*
         version: link:../projection-runtime-core
+      '@redemeine/projection-runtime-store-mongodb':
+        specifier: workspace:*
+        version: link:../projection-runtime-store-mongodb
       '@redemeine/projection-worker-core':
         specifier: workspace:*
         version: link:../projection-worker-core
@@ -214,6 +217,9 @@ importers:
       tapeworm:
         specifier: 0.6.0
         version: 0.6.0
+      tapeworm_persistence_store_mongodb:
+        specifier: 3.1.0
+        version: 3.1.0
     devDependencies:
       '@types/amqplib':
         specifier: 0.10.8
@@ -1612,6 +1618,9 @@ packages:
   bluebird@2.11.0:
     resolution: {integrity: sha512-UfFSr22dmHPQqPP9XWHRhq+gWnHCYguQGkXQlbyPtW5qTnhFWA8/iXg765tH0cAjy7l/zPJ1aBTO0g5XgA7kvQ==}
 
+  bluebird@3.7.2:
+    resolution: {integrity: sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==}
+
   brace-expansion@1.1.15:
     resolution: {integrity: sha512-EwOCDEex4quD37XhqM3omwtMoJjr//isUZz1JopUNWms+4Z2ViyM/k1YIRePpoVNnQhENnxtFjLaxNHrT7xIUg==}
 
@@ -2756,6 +2765,9 @@ packages:
 
   tapeworm@0.6.0:
     resolution: {integrity: sha512-xEfaS0Aary+0/twyE1VHstPoUOniqjq2DDKWhhw53LwU/DUFWhD39lTT6x4bR8E/7XeMCxCbJ5XynF+gyW7zlQ==}
+
+  tapeworm_persistence_store_mongodb@3.1.0:
+    resolution: {integrity: sha512-XPzsxmtc4drYHzTzYnBjK6XIAPqAjEUFbr0ClMlWebwUBlaRo/DVHtcgj6UZj8Zx1J1OCnzr+7y70KIs1gRoMA==}
 
   term-size@2.2.1:
     resolution: {integrity: sha512-wK0Ri4fOGjv/XPy8SBHZChl8CM7uMc5VML7SqiQ0zG7+J5Vr+RMQDoHa2CNT6KHUnTGIXH34UDMkPzAUyapBZg==}
@@ -4307,6 +4319,8 @@ snapshots:
 
   bluebird@2.11.0: {}
 
+  bluebird@3.7.2: {}
+
   brace-expansion@1.1.15:
     dependencies:
       balanced-match: 1.0.2
@@ -5635,6 +5649,22 @@ snapshots:
       bluebird: 2.11.0
       lodash: 4.18.1
       uuid: 11.1.1
+
+  tapeworm_persistence_store_mongodb@3.1.0:
+    dependencies:
+      bluebird: 3.7.2
+      lodash: 4.18.1
+      mongodb: 6.18.0
+      tapeworm: 0.6.0
+      uuid: 11.1.1
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-providers'
+      - '@mongodb-js/zstd'
+      - gcp-metadata
+      - kerberos
+      - mongodb-client-encryption
+      - snappy
+      - socks
 
   term-size@2.2.1: {}
 

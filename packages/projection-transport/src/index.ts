@@ -10,6 +10,11 @@ export {
   type TapewormIndexedCommitRangeCapability
 } from './tapewormRangeReader';
 export {
+  createTapewormMongoCompleteCommitRangeReader,
+  type TapewormMongoRangeReader,
+  type TapewormMongoRangeReaderOptions
+} from './tapewormMongoRangeReader';
+export {
   MongoProjectionTransportStore,
   type MongoProjectionTransportStoreOptions,
   type ProjectionTransportBindingDocument,

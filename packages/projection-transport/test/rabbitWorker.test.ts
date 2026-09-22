@@ -28,12 +28,15 @@ function delivery(tag = 1, body: unknown = commitWire): RabbitDelivery {
 
 class FakeChannel implements ProjectionRabbitChannel {
   handler: ((message: RabbitDelivery | null) => void) | undefined;
+  readonly lifecycle: string[] = [];
   readonly ack = jest.fn<(message: RabbitDelivery) => void>();
   readonly nack = jest.fn<(message: RabbitDelivery, allUpTo: false, requeue: false) => void>();
   readonly cancel = jest.fn(async () => undefined);
-  readonly assertQueue = jest.fn(async () => undefined);
-  readonly prefetch = jest.fn(async () => undefined);
+  readonly assertExchange = jest.fn(async () => { this.lifecycle.push('exchange'); });
+  readonly assertQueue = jest.fn(async () => { this.lifecycle.push('queue'); });
+  readonly prefetch = jest.fn(async () => { this.lifecycle.push('prefetch'); });
   readonly consume = jest.fn(async (_queue: string, handler: (message: RabbitDelivery | null) => void) => {
+    this.lifecycle.push('consume');
     this.handler = handler;
     return { consumerTag: 'consumer-1' };
   });
@@ -72,11 +75,15 @@ describe('ProjectionRabbitWorker', () => {
     const options = workerOptions(coordinator(completed));
     const worker = new ProjectionRabbitWorker(options);
     await worker.start(channel);
+    expect(channel.assertExchange).toHaveBeenCalledWith('projection-dlx', 'direct', {
+      durable: true, arguments: {}
+    });
     expect(channel.assertQueue).toHaveBeenCalledWith('projection-direct', {
       durable: true, deadLetterExchange: 'projection-dlx', deadLetterRoutingKey: 'projection.failed'
     });
     expect(channel.prefetch).toHaveBeenCalledWith(4);
     expect(channel.consume).toHaveBeenCalledWith('projection-direct', expect.any(Function), { noAck: false });
+    expect(channel.lifecycle).toEqual(['exchange', 'queue', 'prefetch', 'consume']);
     const message = delivery();
     channel.deliver(message);
     channel.deliver(message);
@@ -221,5 +228,15 @@ describe('ProjectionRabbitWorker', () => {
     expect(cancelled).toHaveBeenCalledTimes(1);
     await worker.start(new FakeChannel());
     expect(options.initialize).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed before queue assertion when the DLX is missing or mismatched', async () => {
+    const channel = new FakeChannel();
+    channel.assertExchange.mockRejectedValue(new Error('PRECONDITION_FAILED exchange mismatch'));
+    const worker = new ProjectionRabbitWorker(workerOptions(coordinator(completed)));
+    await expect(worker.start(channel)).rejects.toThrow('exchange mismatch');
+    expect(channel.assertQueue).not.toHaveBeenCalled();
+    expect(channel.prefetch).not.toHaveBeenCalled();
+    expect(channel.consume).not.toHaveBeenCalled();
   });
 });
