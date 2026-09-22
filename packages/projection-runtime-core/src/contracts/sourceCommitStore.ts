@@ -12,6 +12,8 @@ export interface ProjectionSourceCommitLink {
   targetDocumentId: string;
   aggregateType: string;
   aggregateId: string;
+  /** Revision observed while routing. Null means that no membership existed. */
+  expectedRevision: number | null;
 }
 
 export interface ProjectionInDocumentTargetProgress {
@@ -23,6 +25,7 @@ export interface ProjectionInDocumentTargetProgress {
 export interface ProjectionInDocumentCommitProgress {
   strategy: 'in_document';
   targets: readonly ProjectionInDocumentTargetProgress[];
+  warnings?: { warnAtSourceCount?: number; warnAtMetadataBytes?: number };
 }
 
 export interface ProjectionOwnRecordCommitProgress {
@@ -32,6 +35,7 @@ export interface ProjectionOwnRecordCommitProgress {
     expectedSequence: number | null;
     finalSequence: number;
   };
+  warnings?: { warnAtSourceCount?: number; warnAtMetadataBytes?: number };
 }
 
 export interface ProjectionNoCommitProgress {
@@ -59,6 +63,7 @@ export interface CommitProjectionSourceCommitCommitted {
   status: 'committed';
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;
+  linkRevisions: Readonly<Record<string, number>>;
   progress: ProjectionSourceCommitProgress;
 }
 
@@ -75,7 +80,39 @@ export type CommitProjectionSourceCommitResult =
   | CommitProjectionSourceCommitRejected;
 
 export interface ProjectionSourceCommitStorePort<TState = unknown> {
+  loadProjectionSourceCommitSnapshot(
+    request: LoadProjectionSourceCommitSnapshotRequest
+  ): Promise<ProjectionSourceCommitSnapshot<TState>>;
   commitProjectionSourceCommit(
     request: CommitProjectionSourceCommitRequest<TState>
   ): Promise<CommitProjectionSourceCommitResult>;
+}
+
+export interface ProjectionSourceCommitSnapshotTarget<TState = unknown> {
+  targetDocumentId: string;
+  revision: number | null;
+  state: TState | null;
+  sourceProgress: Readonly<Record<ProjectionUuidBase64Url22, number>>;
+}
+
+export interface ProjectionSourceCommitSnapshotLink {
+  aggregateType: string;
+  aggregateId: string;
+  targetDocumentId: string | null;
+  revision: number | null;
+}
+
+export interface LoadProjectionSourceCommitSnapshotRequest {
+  projectionName: string;
+  projectionGeneration: string;
+  targetDocumentIds: readonly string[];
+  links: readonly { aggregateType: string; aggregateId: string }[];
+  progressStrategy: ProjectionSourceCommitProgress['strategy'];
+  sourceId?: string;
+}
+
+export interface ProjectionSourceCommitSnapshot<TState = unknown> {
+  targets: readonly ProjectionSourceCommitSnapshotTarget<TState>[];
+  links: readonly ProjectionSourceCommitSnapshotLink[];
+  ownRecordSequence: number | null;
 }

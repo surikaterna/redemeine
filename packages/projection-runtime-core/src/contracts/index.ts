@@ -184,6 +184,10 @@ export type {
   CommitProjectionSourceCommitCommitted,
   CommitProjectionSourceCommitRejected,
   CommitProjectionSourceCommitResult,
+  LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionSourceCommitSnapshot,
+  ProjectionSourceCommitSnapshotTarget,
+  ProjectionSourceCommitSnapshotLink,
   ProjectionSourceCommitStorePort
 } from './sourceCommitStore';
 export {
