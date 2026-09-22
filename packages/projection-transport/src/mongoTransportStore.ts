@@ -1,0 +1,199 @@
+import type {
+  ProjectionQueueRegistryBindResult,
+  ProjectionQueueRegistryBinding,
+  ProjectionQueueRegistryBindingPort,
+  ProjectionQueueRegistryManifest,
+  ProjectionSourceCommit,
+  ProjectionSourceCoverage,
+  ProjectionSourceCoverageAdvance,
+  ProjectionSourceDispatchAdmission,
+  ProjectionSourceOrderPort
+} from '@redemeine/projection-runtime-core';
+import {
+  hasMatchingProjectionRegistryIdentity,
+  validateProjectionQueueRegistryManifest,
+  validateProjectionSourceCommit
+} from '@redemeine/projection-runtime-core';
+import type { ClientSession, Collection, Document } from 'mongodb';
+
+export interface ProjectionTransportBindingDocument extends Document {
+  _id: string;
+  kind: 'binding';
+  queueBindingId: string;
+  manifest: ProjectionQueueRegistryManifest;
+  binding: ProjectionQueueRegistryBinding;
+}
+
+export interface ProjectionTransportCoverageDocument extends Document {
+  _id: string;
+  kind: 'coverage';
+  queueBindingId: string;
+  sourceId: string;
+  startAnchor: number;
+  sequence: number | null;
+}
+
+export interface MongoProjectionTransportStoreOptions {
+  readonly collection: Collection<ProjectionTransportDocument>;
+  readonly mongoClient: { startSession(): ClientSession };
+  readonly manifest: ProjectionQueueRegistryManifest;
+  readonly now?: () => string;
+}
+
+export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument;
+
+const BINDING_INDEX = 'projection_transport_queue_binding_unique';
+const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
+
+function sameManifest(left: ProjectionQueueRegistryManifest, right: ProjectionQueueRegistryManifest): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function coverageId(queueBindingId: string, sourceId: string): string {
+  return `coverage:${queueBindingId}:${sourceId}`;
+}
+
+function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceCoverage {
+  return { queueBindingId: row.queueBindingId, sourceId: row.sourceId, sequence: row.sequence };
+}
+
+export class MongoProjectionTransportStore implements ProjectionSourceOrderPort, ProjectionQueueRegistryBindingPort {
+  private readiness: Promise<void> | undefined;
+  private readonly now: () => string;
+
+  constructor(private readonly options: MongoProjectionTransportStoreOptions) {
+    this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  initialize(): Promise<void> {
+    this.readiness ??= this.ensureReady();
+    return this.readiness;
+  }
+
+  async bindImmutableManifest(manifest: ProjectionQueueRegistryManifest): Promise<ProjectionQueueRegistryBindResult> {
+    const issues = validateProjectionQueueRegistryManifest(manifest);
+    if (issues.length > 0) throw new Error(`Invalid registry manifest: ${issues.join(',')}`);
+    const binding: ProjectionQueueRegistryBinding = {
+      queueId: manifest.queueId,
+      manifestId: manifest.manifestId,
+      registryGeneration: manifest.registryGeneration,
+      identity: manifest.identity,
+      boundAt: this.now()
+    };
+    const before = await this.readBindingDocument(manifest.queueId);
+    if (before) return sameManifest(before.manifest, manifest)
+      ? { status: 'matches', binding: before.binding }
+      : { status: 'conflict', existing: before.binding, reason: 'Immutable queue registry manifest differs.' };
+    await this.options.collection.updateOne(
+      { _id: `binding:${manifest.queueId}` },
+      { $setOnInsert: { kind: 'binding', queueBindingId: manifest.queueId, manifest, binding } },
+      { upsert: true }
+    );
+    const existing = await this.readBindingDocument(manifest.queueId);
+    if (existing && sameManifest(existing.manifest, manifest)) return { status: 'bound', binding: existing.binding };
+    if (!existing) throw new Error('Queue binding insert outcome is unknown.');
+    return { status: 'conflict', existing: existing.binding, reason: 'Immutable queue registry manifest differs.' };
+  }
+
+  async readQueueBinding(queueId: string): Promise<ProjectionQueueRegistryBinding | null> {
+    return (await this.readBindingDocument(queueId))?.binding ?? null;
+  }
+
+  async admitForDispatch(
+    commit: ProjectionSourceCommit,
+    queueBindingId: string
+  ): Promise<ProjectionSourceDispatchAdmission> {
+    if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
+    await this.initialize();
+    if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
+    const startAnchor = this.options.manifest.sourceStartAnchors[commit.streamId] ?? 0;
+    const id = coverageId(queueBindingId, commit.streamId);
+    await this.options.collection.updateOne(
+      { _id: id },
+      { $setOnInsert: { kind: 'coverage', queueBindingId, sourceId: commit.streamId, startAnchor, sequence: null } },
+      { upsert: true }
+    );
+    const row = await this.readCoverage(id);
+    if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
+    return { dispatch: true, coverage: toCoverage(row) };
+  }
+
+  async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {
+    await this.initialize();
+    const id = coverageId(request.queueBindingId, request.sourceId);
+    const current = await this.readCoverage(id);
+    if (!current) throw new Error('Coverage must be admitted before it can advance.');
+    this.assertContiguousAdvance(current, request);
+    try {
+      const result = await this.options.collection.updateOne(
+        { _id: id, kind: 'coverage', sequence: request.expectedSequence },
+        { $set: { sequence: request.sequence } }
+      );
+      if (result.matchedCount === 1) return { ...toCoverage(current), sequence: request.sequence };
+    } catch (error) {
+      const reconciled = await this.reconcileCoverage(id, request);
+      if (reconciled) return reconciled;
+      throw error;
+    }
+    const reconciled = await this.reconcileCoverage(id, request);
+    if (reconciled) return reconciled;
+    throw new Error('Coverage compare-and-advance conflict.');
+  }
+
+  private async ensureReady(): Promise<void> {
+    await this.options.collection.createIndex({ kind: 1, queueBindingId: 1 }, { name: BINDING_INDEX, unique: true, partialFilterExpression: { kind: 'binding' } });
+    await this.options.collection.createIndex(
+      { kind: 1, queueBindingId: 1, sourceId: 1 },
+      { name: COVERAGE_INDEX, unique: true, partialFilterExpression: { kind: 'coverage' } }
+    );
+    const indexes = await this.options.collection.listIndexes().toArray();
+    const expectedKeys: Readonly<Record<string, readonly string[]>> = {
+      [BINDING_INDEX]: ['kind', 'queueBindingId'],
+      [COVERAGE_INDEX]: ['kind', 'queueBindingId', 'sourceId']
+    };
+    for (const name of [BINDING_INDEX, COVERAGE_INDEX]) {
+      const index = indexes.find((entry) => entry.name === name);
+      const keys = index?.key && typeof index.key === 'object' ? Object.keys(index.key) : [];
+      if (!index || index.unique !== true || 'expireAfterSeconds' in index || keys.join(',') !== expectedKeys[name]?.join(',')) {
+        throw new Error(`Required non-TTL index is not ready: ${name}`);
+      }
+    }
+    const bound = await this.bindImmutableManifest(this.options.manifest);
+    if (bound.status === 'conflict' || !hasMatchingProjectionRegistryIdentity(this.options.manifest, bound.binding)) {
+      throw new Error('Immutable projection registry binding mismatch.');
+    }
+    const session = this.options.mongoClient.startSession();
+    try {
+      await session.withTransaction(() => this.options.collection.findOne({ _id: '__projection_transport_readiness__' }, { session }), {
+        readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }
+      });
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  private assertContiguousAdvance(row: ProjectionTransportCoverageDocument, request: ProjectionSourceCoverageAdvance): void {
+    if (row.queueBindingId !== request.queueBindingId || row.sourceId !== request.sourceId) throw new Error('Coverage scope mismatch.');
+    if (request.expectedSequence !== row.sequence) throw new Error('Coverage compare-and-advance conflict.');
+    const expectedNext = row.sequence === null ? row.startAnchor : row.sequence + 1;
+    if (request.sequence !== expectedNext) throw new Error('Coverage advance must be contiguous from the immutable start anchor.');
+  }
+
+  private async reconcileCoverage(
+    id: string,
+    request: ProjectionSourceCoverageAdvance
+  ): Promise<ProjectionSourceCoverage | null> {
+    const row = await this.readCoverage(id);
+    return row?.sequence === request.sequence ? toCoverage(row) : null;
+  }
+
+  private async readCoverage(id: string): Promise<ProjectionTransportCoverageDocument | null> {
+    const row = await this.options.collection.findOne({ _id: id, kind: 'coverage' });
+    return row?.kind === 'coverage' ? row : null;
+  }
+
+  private async readBindingDocument(queueId: string): Promise<ProjectionTransportBindingDocument | null> {
+    const row = await this.options.collection.findOne({ _id: `binding:${queueId}`, kind: 'binding' });
+    return row?.kind === 'binding' ? row : null;
+  }
+}

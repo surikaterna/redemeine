@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"],
+      "@redemeine/projection-worker-core": ["../projection-worker-core/src/index.ts"],
+      "@redemeine/projection-transport": ["./src/index.ts"]
+    }
+  },
+  "include": ["integration/**/*.ts"]
+}
