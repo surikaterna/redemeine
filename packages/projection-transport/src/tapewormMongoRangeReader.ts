@@ -18,14 +18,19 @@ export interface TapewormMongoRangeReaderOptions<TEvent extends IBaseEvent = Tap
 export interface TapewormMongoRangeReader extends ProjectionCompleteCommitRangeReader {
   initialize(): Promise<void>;
   getIndexName(): string | null;
+  getQueryObservation(): TapewormMongoRangeQueryObservation;
+}
+
+export interface TapewormMongoRangeQueryObservation {
+  readonly cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator';
+  readonly maxReturnedDocuments: number;
+  readonly maxReturnedBytes: number;
 }
 
 function hasExactKeys(index: IndexDescriptionInfo): boolean {
   if (!index.key || typeof index.key !== 'object') return false;
   const entries = Object.entries(index.key);
-  return entries.length === 2 && entries.every(([key, direction], position) =>
-    key === RANGE_INDEX_KEYS[position] && direction === 1
-  );
+  return entries.length === 2 && entries.every(([key, direction], position) => key === RANGE_INDEX_KEYS[position] && direction === 1);
 }
 
 function hasCompatibleCollation(index: IndexDescriptionInfo): boolean {
@@ -33,19 +38,18 @@ function hasCompatibleCollation(index: IndexDescriptionInfo): boolean {
 }
 
 function isUsableRangeIndex(index: IndexDescriptionInfo): index is IndexDescriptionInfo & { name: string } {
-  return typeof index.name === 'string'
-    && hasExactKeys(index)
-    && index.unique === true
-    && index.sparse !== true
-    && index.hidden !== true
-    && index.partialFilterExpression === undefined
-    && hasCompatibleCollation(index);
+  return (
+    typeof index.name === 'string' &&
+    hasExactKeys(index) &&
+    index.unique === true &&
+    index.sparse !== true &&
+    index.hidden !== true &&
+    index.partialFilterExpression === undefined &&
+    hasCompatibleCollation(index)
+  );
 }
 
-function incomplete(
-  request: ProjectionCompleteCommitRangeRequest,
-  details: string
-): ProjectionCompleteCommitRangeResult {
+function incomplete(request: ProjectionCompleteCommitRangeRequest, details: string): ProjectionCompleteCommitRangeResult {
   return { status: 'incomplete', reason: 'history_unavailable', details, continuationAfterSequence: request.afterSequence };
 }
 
@@ -66,14 +70,14 @@ function decodeRow<TEvent extends IBaseEvent>(
   return { commit: decoded.commit, encodedByteLength: BSON.calculateObjectSize(row) };
 }
 
-function oversized(
-  request: ProjectionCompleteCommitRangeRequest,
-  entry: ProjectionEncodedSourceCommit
-): ProjectionCompleteCommitRangeResult {
+function oversized(request: ProjectionCompleteCommitRangeRequest, entry: ProjectionEncodedSourceCommit): ProjectionCompleteCommitRangeResult {
   return {
-    status: 'oversized_commit', sourceId: request.sourceId,
-    commitSequence: entry.commit.commitSequence, commitId: entry.commit.commitId,
-    encodedByteLength: entry.encodedByteLength, continuationAfterSequence: request.afterSequence
+    status: 'oversized_commit',
+    sourceId: request.sourceId,
+    commitSequence: entry.commit.commitSequence,
+    commitId: entry.commit.commitId,
+    encodedByteLength: entry.encodedByteLength,
+    continuationAfterSequence: request.afterSequence
   };
 }
 
@@ -81,23 +85,29 @@ export function createTapewormMongoCompleteCommitRangeReader<TEvent extends IBas
   options: TapewormMongoRangeReaderOptions<TEvent>
 ): TapewormMongoRangeReader {
   let indexName: string | null = null;
+  let maxReturnedDocuments = 0;
+  let maxReturnedBytes = 0;
   const initialize = async (): Promise<void> => {
     const indexes = await options.collection.listIndexes().toArray();
     const usable = indexes.filter(isUsableRangeIndex);
     if (usable.length !== 1) throw new Error('Exactly one usable Tapeworm streamId/commitSequence index is required.');
     indexName = usable[0]?.name ?? null;
   };
-  const readCompleteRange = async (
-    request: ProjectionCompleteCommitRangeRequest
-  ): Promise<ProjectionCompleteCommitRangeResult> => {
+  const readCompleteRange = async (request: ProjectionCompleteCommitRangeRequest): Promise<ProjectionCompleteCommitRangeResult> => {
     await initialize();
     if (!indexName) return incomplete(request, 'Tapeworm range index readiness failed.');
-    return readMongoRange(options, indexName, request);
+    const result = await readMongoRange(options, indexName, request);
+    if (result.status === 'complete') {
+      maxReturnedDocuments = Math.max(maxReturnedDocuments, result.commits.length);
+      maxReturnedBytes = Math.max(maxReturnedBytes, result.encodedByteLength);
+    }
+    return result;
   };
   return {
     capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
     initialize,
     getIndexName: () => indexName,
+    getQueryObservation: () => ({ cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator', maxReturnedDocuments, maxReturnedBytes }),
     readCompleteRange
   };
 }
@@ -108,10 +118,15 @@ async function readMongoRange<TEvent extends IBaseEvent>(
   request: ProjectionCompleteCommitRangeRequest
 ): Promise<ProjectionCompleteCommitRangeResult> {
   const after = request.afterSequence ?? -1;
-  const cursor = options.collection.find({
-    streamId: request.sourceId,
-    commitSequence: { $gt: after, $lte: request.throughSequence }
-  }).sort({ commitSequence: 1 }).hint(indexName).limit(request.maxCommits + 1).batchSize(1);
+  const cursor = options.collection
+    .find({
+      streamId: request.sourceId,
+      commitSequence: { $gt: after, $lte: request.throughSequence }
+    })
+    .sort({ commitSequence: 1 })
+    .hint(indexName)
+    .limit(request.maxCommits + 1)
+    .batchSize(1);
   const commits: ProjectionEncodedSourceCommit[] = [];
   let bytes = 0;
   let expected = after + 1;
@@ -137,7 +152,9 @@ function completePage(
   hasMore: boolean
 ): ProjectionCompleteCommitRangeResult {
   return {
-    status: 'complete', commits, encodedByteLength,
+    status: 'complete',
+    commits,
+    encodedByteLength,
     continuationAfterSequence: commits.at(-1)?.commit.commitSequence ?? request.afterSequence,
     hasMore
   };

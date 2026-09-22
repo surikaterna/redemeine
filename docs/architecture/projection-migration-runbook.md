@@ -33,9 +33,10 @@ All commands require these options (equivalent uppercase underscore environment 
 --progress projection_v2_progress
 --migration-receipts projection_v2_migration_receipts
 --runtime-module ./dist/projection-migration-runtime.js
+--executable-artifact-digest "sha256:$DEPLOYED_ARTIFACT_SHA256"
 ```
 
-The runtime module exports `migrationDefinitions`, whose order, names, generations, code/config identities, and selectors must match the persisted new registry. The source collection must have exactly one usable unique `{streamId:1, commitSequence:1}` nonpartial, nonsparse index.
+The runtime module exports `migrationDefinitions` and `migrationRuntimeIdentity`. The latter contains the canonical ordered definition names, generations, hashes, selectors, deduplication configuration, normalized runtime configuration digest, and executable artifact digest. The CLI validates this unknown-safe export, recomputes its registry digest, compares it with the persisted generation, queue and manifest identities, and requires the launcher-supplied artifact digest to match. A deployment with changed handlers must therefore publish and supply a new artifact digest even when definition names are unchanged. The source collection must have exactly one usable unique `{streamId:1, commitSequence:1}` nonpartial, nonsparse index.
 
 ## Lifecycle
 
@@ -54,7 +55,7 @@ pnpm --filter @redemeine/projection-transport migration verify $MIGRATION_ARGS
 
 `verify-sources` reads every range from real Tapeworm Mongo in pages capped at 100 commits and 8 MiB. It writes only non-TTL migration journal rows. Projection, link, live progress, transport binding, and active-pointer data remain untouched until exact global journal coverage is established. A restart skips only an exact journal row with the same manifest and expected/observed digest.
 
-`replay` rereads and verifies each authoritative range before applying it through the real projection commit coordinator and Mongo store. Every definition receives an atomic migration-only scalar receipt in the same snapshot/majority transaction as its documents, links and live strategy progress. This receipt makes restart safe for `none` without changing ordinary `none` behavior. Live transport coverage is not advanced during rebuild; its first live anchor is the declared replay end plus one.
+`replay` rereads and verifies each authoritative range before applying it through the real projection commit coordinator and Mongo store. The applying scan also streams and compares the complete count/digest, so a mismatch on either pass rejects the command. A mismatch detected during the applying scan is an integrity failure and does not claim rollback of already committed replay receipts; the required Tapeworm UUID/no-reset and fixed-range immutability guarantee prevents that race in supported deployments. Every definition receives an atomic migration-only scalar receipt in the same snapshot/majority transaction as its documents, links and live strategy progress. This receipt makes restart safe for `none` without changing ordinary `none` behavior. Live transport coverage is not advanced during rebuild; its first live anchor is the declared replay end plus one.
 
 After replay, tooling streams the actual isolated document, link, live-progress and migration-receipt collections in stable `_id` order with batch size 100 and stores canonical counts/digests. It never accepts caller-authored output evidence.
 

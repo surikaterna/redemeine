@@ -1,11 +1,13 @@
-import type {
-  ProjectionCommitDefinition,
-  ProjectionQueueRegistryManifest,
-  ProjectionSourceCommit
-} from '@redemeine/projection-runtime-core';
+import type { ProjectionCommitDefinition, ProjectionQueueRegistryManifest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type { Channel, ConsumeMessage } from 'amqplib';
 import type { IBaseEvent, ICommit } from 'tapeworm';
 import type { ProjectionRabbitChannel, RabbitDelivery } from '../src';
+import {
+  type ProjectionMigrationRuntimeIdentity,
+  projectionDefinitionRegistryDigest,
+  projectionMigrationRuntimeRegistryDigest,
+  projectionQueueRegistryDigest
+} from '../src';
 
 export const SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 export const PARTITION_ID = 'orders';
@@ -34,9 +36,14 @@ export function tapewormCommit(sequence: number, amounts: readonly number[]): IC
     metadata: { source: 'real-stack' },
     events: amounts.map((amount, index) => ({
       id: `33333333-3333-4333-8333-${String(offset + index).padStart(12, '0')}`,
-      type: 'Changed', version: offset + index, aggregateType: 'Order', aggregateId: 'one',
-      payload: { amount }, timestamp: '2026-09-22T00:00:00.000Z',
-      headers: { event: index }, metadata: { sequence }
+      type: 'Changed',
+      version: offset + index,
+      aggregateType: 'Order',
+      aggregateId: 'one',
+      payload: { amount },
+      timestamp: '2026-09-22T00:00:00.000Z',
+      headers: { event: index },
+      metadata: { sequence }
     }))
   };
 }
@@ -75,18 +82,44 @@ export function stackDefinitions() {
   ] as const;
 }
 
-export function stackManifest(queue: string): ProjectionQueueRegistryManifest {
-  return {
-    version: 1, manifestId: HASH, queueId: queue, registryGeneration: 'v1',
+export function stackManifest(
+  queue: string,
+  generation = 'v1',
+  sourceStartAnchors: Readonly<Record<string, number>> = { [SOURCE_ID]: 0 }
+): ProjectionQueueRegistryManifest {
+  const definitions = stackDefinitions().map(({ definition }) => ({
+    projectionName: definition.name,
+    generation,
+    definitionHash: HASH,
+    sourceSelectors: [definition.fromStream.aggregate.aggregateType]
+  }));
+  const payload = {
+    version: 1 as const,
+    queueId: queue,
+    registryGeneration: generation,
     identity: {
-      version: 1, normalizedDefinitionRegistryDigest: HASH,
-      normalizedRuntimeConfigurationDigest: HASH, executableCodeArtifactDigest: HASH
+      version: 1 as const,
+      normalizedDefinitionRegistryDigest: projectionDefinitionRegistryDigest(definitions),
+      normalizedRuntimeConfigurationDigest: HASH,
+      executableCodeArtifactDigest: HASH
     },
-    definitions: stackDefinitions().map(({ definition, generation }) => ({
-      projectionName: definition.name, generation, definitionHash: HASH, sourceSelectors: [definition.fromStream.aggregate.aggregateType]
-    })),
-    sourceStartAnchors: { [SOURCE_ID]: 0 }
+    definitions,
+    sourceStartAnchors
   };
+  return { ...payload, manifestId: projectionQueueRegistryDigest(payload) };
+}
+
+export function stackRuntimeIdentity(queue: string, generation: string): ProjectionMigrationRuntimeIdentity {
+  const manifest = stackManifest(queue, generation);
+  const definitions = stackDefinitions().map(({ definition }) => ({
+    projectionName: definition.name,
+    generation,
+    definitionHash: HASH,
+    sourceSelectors: [definition.fromStream.aggregate.aggregateType],
+    deduplication: definition.deduplication
+  }));
+  const payload = { version: 1 as const, queueId: queue, registryGeneration: generation, identity: manifest.identity, definitions };
+  return { ...payload, registryDigest: projectionMigrationRuntimeRegistryDigest(payload) };
 }
 
 export function adaptChannel(channel: Channel): ProjectionRabbitChannel {
@@ -100,16 +133,21 @@ export function adaptChannel(channel: Channel): ProjectionRabbitChannel {
     assertExchange: (name, type, options) => channel.assertExchange(name, type, options),
     assertQueue: (name, options) => channel.assertQueue(name, options),
     prefetch: (count) => channel.prefetch(count),
-    consume: (name, handler, options) => channel.consume(name, (message) => {
-      if (!message) return handler(null);
-      const projected: RabbitDelivery = {
-        content: message.content,
-        fields: { deliveryTag: message.fields.deliveryTag, redelivered: message.fields.redelivered },
-        properties: { ...(message.properties.messageId ? { messageId: message.properties.messageId } : {}) }
-      };
-      originals.set(projected, message);
-      handler(projected);
-    }, options),
+    consume: (name, handler, options) =>
+      channel.consume(
+        name,
+        (message) => {
+          if (!message) return handler(null);
+          const projected: RabbitDelivery = {
+            content: message.content,
+            fields: { deliveryTag: message.fields.deliveryTag, redelivered: message.fields.redelivered },
+            properties: { ...(message.properties.messageId ? { messageId: message.properties.messageId } : {}) }
+          };
+          originals.set(projected, message);
+          handler(projected);
+        },
+        options
+      ),
     cancel: (tag) => channel.cancel(tag),
     ack: (message) => channel.ack(original(message)),
     nack: (message, allUpTo, requeue) => channel.nack(original(message), allUpTo, requeue)
@@ -118,14 +156,21 @@ export function adaptChannel(channel: Channel): ProjectionRabbitChannel {
 
 export function toProjectionCommit(commit: ICommit<StackEvent>): ProjectionSourceCommit {
   const mapped = commit.events.map((event, eventIndex) => ({
-    eventId: event.id, eventIndex, streamVersion: event.version ?? -1,
-    aggregateType: event.aggregateType, aggregateId: event.aggregateId,
-    type: event.type, payload: event.payload, timestamp: event.timestamp
+    eventId: event.id,
+    eventIndex,
+    streamVersion: event.version ?? -1,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    type: event.type,
+    payload: event.payload,
+    timestamp: event.timestamp
   }));
   const first = mapped[0];
   if (!first) throw new Error('A Tapeworm commit must contain at least one event.');
   return {
-    streamId: commit.streamId, commitId: commit.id, commitSequence: commit.commitSequence,
+    streamId: commit.streamId,
+    commitId: commit.id,
+    commitSequence: commit.commitSequence,
     events: [first, ...mapped.slice(1)]
   };
 }

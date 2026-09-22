@@ -61,13 +61,20 @@ export interface ProjectionMigrationStatePort {
 }
 
 export interface ProjectionMigrationTrustedPreflightPort {
-  inspect(manifest: ProjectionMigrationManifest): Promise<readonly string[]>;
+  inspect(manifest: ProjectionMigrationManifest, mode?: 'preflight' | 'identity'): Promise<readonly string[]>;
 }
 
 export interface ProjectionMigrationReplayPort {
-  process(commit: ProjectionSourceCommit, context: {
-    migrationId: string; manifestDigest: ProjectionSha256Digest; sourceId: string; expectedSequence: number | null; finalSequence: number;
-  }): Promise<{ status: 'completed' | 'retryable' | 'terminal'; reason?: string }>;
+  process(
+    commit: ProjectionSourceCommit,
+    context: {
+      migrationId: string;
+      manifestDigest: ProjectionSha256Digest;
+      sourceId: string;
+      expectedSequence: number | null;
+      finalSequence: number;
+    }
+  ): Promise<{ status: 'completed' | 'retryable' | 'terminal'; reason?: string }>;
 }
 
 export interface ProjectionMigrationSnapshotPort {
