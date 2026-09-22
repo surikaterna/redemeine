@@ -21,6 +21,7 @@ import {
   type SagaRabbitWorker
 } from '../src/index';
 import type { RealSagaState } from './fixtures';
+import { readRabbitQueueCounts } from './rabbitQueueCounts';
 
 interface SourceEvent extends IBaseEvent {
   payload: unknown;
@@ -348,16 +349,12 @@ export function wrapRepository(base: SagaTurnRepository, append: SagaTurnReposit
 }
 
 export async function queueCounts(queue: string): Promise<{ ready: number; unacknowledged: number }> {
-  const base = required('REDEMEINE_RABBIT_MANAGEMENT_URL');
-  const auth = Buffer.from(`${required('REDEMEINE_RABBIT_USER')}:${required('REDEMEINE_RABBIT_PASSWORD')}`).toString('base64');
-  const response = await fetch(`${base}/api/queues/%2F/${encodeURIComponent(queue)}`, { headers: { Authorization: `Basic ${auth}` } });
-  if (!response.ok) throw new Error(`Rabbit management returned ${response.status}`);
-  const value: unknown = await response.json();
-  if (!value || typeof value !== 'object') throw new Error('Rabbit management response must be an object');
-  const ready = 'messages_ready' in value ? value.messages_ready : undefined;
-  const unacknowledged = 'messages_unacknowledged' in value ? value.messages_unacknowledged : undefined;
-  if (typeof ready !== 'number' || typeof unacknowledged !== 'number') throw new Error('Rabbit queue counts are invalid');
-  return { ready, unacknowledged };
+  return readRabbitQueueCounts({
+    baseUrl: required('REDEMEINE_RABBIT_MANAGEMENT_URL'),
+    username: required('REDEMEINE_RABBIT_USER'),
+    password: required('REDEMEINE_RABBIT_PASSWORD'),
+    queue
+  });
 }
 
 export async function waitForQueueSettled(queue: string): Promise<void> {
