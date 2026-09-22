@@ -275,4 +275,55 @@ describe('InMemoryProjectionStore v3 conformance', () => {
 
     expect(await store.load('doc-1')).toBeNull();
   });
+
+  test('commitAtomicMany rolls back earlier writes and dedupe when a later from pointer is malformed', async () => {
+    const store = new InMemoryProjectionStore<Record<string, unknown>>();
+
+    const result = await store.commitAtomicMany({
+      mode: 'atomic-all',
+      writes: [
+        {
+          routingKeySource: 'invoice-summary:doc-1',
+          documents: [
+            {
+              documentId: 'doc-1',
+              mode: 'full',
+              fullDocument: { total: 1 },
+              checkpoint: { sequence: 1 }
+            }
+          ],
+          dedupe: { upserts: [{ key: 'invoice:1:1', checkpoint: { sequence: 1 } }] }
+        },
+        {
+          routingKeySource: 'invoice-summary:doc-2',
+          documents: [
+            {
+              documentId: 'doc-2',
+              mode: 'patch',
+              fullDocument: { total: 2 },
+              patch: [{ op: 'copy', from: 'total', path: '/total' }],
+              checkpoint: { sequence: 2 }
+            }
+          ],
+          dedupe: { upserts: [] }
+        }
+      ]
+    });
+
+    expect(result).toEqual({
+      status: 'rejected',
+      highestWatermark: null,
+      failedAtIndex: 1,
+      failure: {
+        category: 'terminal',
+        code: 'invalid-request',
+        message: 'Invalid RFC6902 JSON Pointer path "total".',
+        retryable: false
+      },
+      reason: 'Invalid RFC6902 JSON Pointer path "total".',
+      committedCount: 0
+    });
+    expect(await store.load('doc-1')).toBeNull();
+    expect(await store.getDedupeCheckpoint('invoice:1:1')).toBeNull();
+  });
 });
