@@ -7,6 +7,7 @@ import {
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
   createProjectionLinkCollection,
+  createProjectionMigrationReceiptCollection,
   FakeMongoClient
 } from './mocks';
 
@@ -20,6 +21,7 @@ defineProjectionSourceCommitStoreConformance(
       collection: createProjectionDocumentCollection<{ value: number }>(),
       linkCollection: createProjectionLinkCollection(),
       dedupeCollection: dedupe,
+      migrationReceiptCollection: createProjectionMigrationReceiptCollection(),
       mongoClient: createFakeMongoClient()
     });
     await store.initializeProjectionSourceCommitStore();
@@ -209,4 +211,16 @@ test('reports an unknown none outcome as ambiguous and retryable', async () => {
   });
   const result = await store.commitProjectionSourceCommit({ ...base, progress: { strategy: 'none' } });
   expect(result).toMatchObject({ status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' });
+});
+
+test('reconciles none migration replay from its atomic receipt after unknown commit', async () => {
+  const base = makeRequest(); const receipts = createProjectionMigrationReceiptCollection();
+  const store = new MongoProjectionStore({ collection: createProjectionDocumentCollection(), linkCollection: createProjectionLinkCollection(),
+    dedupeCollection: createProjectionDedupeCollection(), migrationReceiptCollection: receipts,
+    mongoClient: createFakeMongoClient({ unknownAfterCommitOnTransaction: 2 }) });
+  const result = await store.commitProjectionSourceCommit({ ...base, progress: { strategy: 'none' },
+    migrationReceipt: { migrationId: 'migration', manifestDigest: `sha256:${'a'.repeat(64)}`, sourceId: base.commit.streamId,
+      expectedSequence: null, finalSequence: 0 } });
+  expect(result.status).toBe('committed');
+  expect(receipts.snapshot()).toHaveLength(1);
 });

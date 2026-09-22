@@ -29,6 +29,7 @@ export type {
   MongoSourceCommitReconciliation,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
+  ProjectionMigrationReceiptRecord,
   ProjectionLinkRecord
 } from './types';
 export { OWN_PROGRESS_INDEX } from './store/sourceCommitReadiness';

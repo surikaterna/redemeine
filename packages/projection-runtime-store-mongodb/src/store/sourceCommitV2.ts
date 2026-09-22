@@ -19,6 +19,8 @@ const scope = (name: string, generation: string): string => `${name}\u0000${gene
 const linkId = (name: string, generation: string, type: string, id: string): string =>
   `${scope(name, generation)}\u0000${type}\u0000${id}`;
 const ownId = (name: string, generation: string, source: string): string => `${scope(name, generation)}\u0000${source}`;
+export const migrationReceiptId = (migrationId: string, name: string, generation: string, source: string): string =>
+  `${migrationId}\u0000${scope(name, generation)}\u0000${source}`;
 
 type WriteResult = { matchedCount?: number; upsertedCount?: number };
 
@@ -108,6 +110,17 @@ const validateSnapshot = <TState>(
   return null;
 };
 
+const validateMigrationReceipt = async <TState>(request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>,
+  session: ClientSession): Promise<string | null> => {
+  if (!request.migrationReceipt) return null;
+  if (!options.migrationReceiptCollection) return 'migration receipt collection is required';
+  const receipt = request.migrationReceipt;
+  const _id = migrationReceiptId(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId);
+  const current = await options.migrationReceiptCollection.findOne({ _id }, { session });
+  if (current && current.manifestDigest !== receipt.manifestDigest) return 'migration receipt manifest conflict';
+  return (current?.commitSequence ?? null) === receipt.expectedSequence ? null : 'migration receipt sequence conflict';
+};
+
 const writeDocuments = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
@@ -186,6 +199,19 @@ const writeOwnProgress = async <TState>(
   if (!didWrite(result)) throw new Error('projection-v2-occ:own-record');
 };
 
+const writeMigrationReceipt = async <TState>(request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>,
+  session: ClientSession): Promise<void> => {
+  if (!request.migrationReceipt || !options.migrationReceiptCollection) return;
+  const receipt = request.migrationReceipt;
+  const _id = migrationReceiptId(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId);
+  const filter = receipt.expectedSequence === null ? { _id, commitSequence: { $exists: false } } : { _id, commitSequence: receipt.expectedSequence };
+  const result = await options.migrationReceiptCollection.updateOne(filter, { $set: { migrationId: receipt.migrationId,
+    manifestDigest: receipt.manifestDigest, projectionName: request.projectionName, projectionGeneration: request.projectionGeneration,
+    sourceId: receipt.sourceId, commitSequence: receipt.finalSequence, updatedAt: options.now?.() ?? new Date().toISOString() } },
+  { upsert: receipt.expectedSequence === null, session });
+  if (!didWrite(result)) throw new Error('projection-v2-occ:migration-receipt');
+};
+
 export const commitMongoV2 = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
@@ -206,11 +232,12 @@ export const commitMongoV2 = async <TState>(
         ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
       };
       const snapshot = await loadMongoV2Snapshot(snapshotRequest, options, session);
-      const failure = validateSnapshot(request, snapshot);
+      const failure = validateSnapshot(request, snapshot) ?? await validateMigrationReceipt(request, options, session);
       if (failure) return conflict(failure);
       const documentRevisions = await writeDocuments(request, options, session);
       const linkRevisions = await writeLinks(request, options, session);
       await writeOwnProgress(request, options, session);
+      await writeMigrationReceipt(request, options, session);
       return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
     });
   } catch (error) {

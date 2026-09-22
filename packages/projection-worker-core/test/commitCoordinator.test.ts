@@ -96,6 +96,7 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
   readonly revisions = new Map<string, number>();
   readonly inline = new Map<string, Record<string, number>>();
   readonly own = new Map<string, number>();
+  readonly migrationReceipts = new Map<string, { manifestDigest: string; sequence: number }>();
   conflicts = 0;
 
   async loadProjectionSourceCommitSnapshot(request: Parameters<ProjectionSourceCommitStorePort<State>['loadProjectionSourceCommitSnapshot']>[0]) {
@@ -131,6 +132,11 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
     if (request.progress.strategy === 'own_record') {
       this.own.set(`${request.projectionName}:${request.progress.source.sourceId}`, request.progress.source.finalSequence);
     }
+    if (request.migrationReceipt) {
+      this.migrationReceipts.set(`${request.projectionName}:${request.migrationReceipt.sourceId}`, {
+        manifestDigest: request.migrationReceipt.manifestDigest, sequence: request.migrationReceipt.finalSequence
+      });
+    }
     return {
       version: 1 as const,
       status: 'committed' as const,
@@ -139,6 +145,14 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
       linkRevisions: {},
       progress: request.progress
     };
+  }
+
+  async loadProjectionMigrationReceipt(request: {
+    migrationId: string; manifestDigest: `sha256:${string}`; projectionName: string; projectionGeneration: string; sourceId: string;
+  }): Promise<number | null> {
+    const row = this.migrationReceipts.get(`${request.projectionName}:${request.sourceId}`);
+    if (row && row.manifestDigest !== request.manifestDigest) throw new Error('manifest conflict');
+    return row?.sequence ?? null;
   }
 }
 
@@ -525,5 +539,25 @@ describe('source ordering and scheduling', () => {
     expect(await runtime.process(commit(0))).toMatchObject({ status: 'retryable', reason: 'unknown transaction result' });
     expect((await runtime.process(commit(0))).status).toBe('completed');
     expect(unknown).toHaveBeenCalledTimes(1);
+  });
+
+  test('atomically receipts and definition-scoped skips migration replay for all strategies', async () => {
+    const store = new MemoryCommitStore(); const order = orderPort();
+    const runtime = coordinator([
+      definition('inline', { strategy: 'in_document' }),
+      definition('own', { strategy: 'own_record' }),
+      definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'migration receipt' })
+    ], store, order);
+    const sourceCommit = commit(0);
+    const receipt = { migrationId: 'migration', manifestDigest: `sha256:${'a'.repeat(64)}` as const,
+      sourceId: sourceCommit.streamId, expectedSequence: null, finalSequence: 0 };
+    expect((await runtime.process(sourceCommit, receipt)).status).toBe('completed');
+    const writes = store.requests.length;
+    const repeated = await runtime.process(sourceCommit, receipt);
+    expect(repeated).toMatchObject({ status: 'completed', definitions: [
+      { outcome: { status: 'deduplicated' } }, { outcome: { status: 'deduplicated' } }, { outcome: { status: 'deduplicated' } }
+    ] });
+    expect(store.requests).toHaveLength(writes);
+    expect(order.advances).toEqual([]);
   });
 });
