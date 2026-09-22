@@ -573,13 +573,15 @@ type FakeMongoClientOptions = {
 };
 
 class FakeClientSession {
+  readonly transactionOptionsLog: Array<TransactionOptions | undefined> = [];
+
   constructor(private readonly options?: FakeMongoClientOptions, private readonly transactionNumber = 0) {}
 
   async withTransaction<T>(
     work: (session: ClientSession) => Promise<T>,
     transactionOptions?: TransactionOptions
   ): Promise<T> {
-    void transactionOptions;
+    this.transactionOptionsLog.push(transactionOptions);
     if (this.options?.failWithTransactionError) {
       throw this.options.failWithTransactionError;
     }

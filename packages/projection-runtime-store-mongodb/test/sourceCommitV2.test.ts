@@ -6,7 +6,8 @@ import {
   createFakeMongoClient,
   createProjectionDedupeCollection,
   createProjectionDocumentCollection,
-  createProjectionLinkCollection
+  createProjectionLinkCollection,
+  FakeMongoClient
 } from './mocks';
 
 let dedupe = createProjectionDedupeCollection();
@@ -166,6 +167,24 @@ test('fails readiness closed when transactions are unsupported', async () => {
     mongoClient: createFakeMongoClient({ failWithTransactionError: unsupported })
   });
   await expect(store.initializeProjectionSourceCommitStore()).rejects.toThrow('transactions are required');
+});
+
+test('enforces snapshot and majority concerns over caller transaction options', async () => {
+  const mongoClient = new FakeMongoClient();
+  const store = new MongoProjectionStore({
+    collection: createProjectionDocumentCollection(),
+    linkCollection: createProjectionLinkCollection(),
+    dedupeCollection: createProjectionDedupeCollection(),
+    mongoClient,
+    transactionOptions: { readConcern: 'local', writeConcern: { w: 1 } }
+  });
+  expect((await store.commitProjectionSourceCommit(makeRequest())).status).toBe('committed');
+  expect(mongoClient.sessions).toHaveLength(2);
+  for (const session of mongoClient.sessions) {
+    expect(session.transactionOptionsLog[0]).toMatchObject({
+      readConcern: 'snapshot', writeConcern: { w: 'majority' }
+    });
+  }
 });
 
 test('reconciles a reliable marker after an unknown commit result', async () => {

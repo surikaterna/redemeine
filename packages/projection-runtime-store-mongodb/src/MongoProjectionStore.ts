@@ -110,7 +110,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     }
     try {
       await this.initializeProjectionSourceCommitStore();
-      const result = await commitMongoV2(request, this.options, this.createSourceCommitTransactionExecutor());
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor());
       if (result.status === 'committed') {
         try {
           await this.reportDedupeWarnings(request);
@@ -165,10 +165,6 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       writeConcern: { w: 'majority' }
     };
     return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
-  }
-
-  private createSourceCommitTransactionExecutor(): TransactionExecutor {
-    return this.options.sourceCommitTransactionExecutor ?? this.createTransactionExecutor();
   }
 
   private isUnknownCommitOutcome(error: unknown): boolean {
