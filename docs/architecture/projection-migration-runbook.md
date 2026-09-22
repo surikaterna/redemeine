@@ -1,71 +1,79 @@
-# Projection commit migration runbook
+# Projection rebuild migration runbook
 
-This procedure migrates one nonsharded projection from legacy event markers or a scalar transport cursor to complete Tapeworm commits and generation-scoped scalar deduplication. It does not reinterpret legacy markers. A scalar cursor, unknown event marker, or partial event history is not evidence of a complete commit.
+This P1 procedure supports only a complete-commit rebuild into a fresh, physically isolated generation. In-place migration is rejected. Legacy event markers and scalar cursors are never interpreted as commit evidence. No command deletes old or new data.
 
-## Manifest and evidence
+## Provision immutable records
 
-The version 1 JSON manifest is accepted by `validateProjectionMigrationManifest`. Unknown fields are rejected. It binds:
+Before migration, provision two immutable `projection_generation_control` generation records and the old active pointer. Each generation record stores the complete queue registry manifest and its exact document, link, progress, and migration-receipt collection names. Every new collection name must differ from every old collection name. Persist the old immutable queue binding in `projection_transport`.
 
-- complete old and new immutable registry/queue manifests;
-- projection name, old/new generation, and old/new `in_document`, `own_record`, or `none` strategy;
-- immutable UUID source identities with an explicit no-reset declaration;
-- a separate transport start anchor for every source (zero is a valid first sequence);
-- contiguous complete-commit range count, boundaries, and SHA-256 digest for every source;
-- SHA-256 digests for the authoritative source ranges, executable code, and runtime configuration;
-- for certified in-place adoption, state and link snapshot digests at the exact same source boundary;
-- retention of the old feed, queue, code, and state artifacts for rollback.
+The version 2 migration manifest contains only operator intent and expected source ranges. It binds:
 
-Compute each range digest as `projectionMigrationDigest(commits.map(projectionMigrationDigest))`, then compute `authoritativeSourceDigest` and `authoritativeBoundaryDigest` with `projectionMigrationDigest(sourceCommitRanges)`. Compute `manifestDigest` with `projectionMigrationDigest(projectionMigrationManifestPayload(manifestWithoutDigest))`. Digests authenticate bytes/evidence; operators must acquire the range and snapshot evidence from their authoritative Tapeworm and state stores.
+- distinct old/new generations and complete old/new queue registry manifests;
+- immutable source UUID/no-reset declaration;
+- sorted, contiguous source ranges, each with count and expected streaming digest;
+- new live queue anchors equal to the final replayed sequence plus one;
+- a domain-separated streaming digest of all canonical range descriptors.
 
-Prefer `mode: "rebuild"` with a new generation. Replay every complete Tapeworm commit from each declared `firstSequence` through `lastSequence`, including commits with no target for the projection. The replay application must preserve source UUIDs and produce the verification evidence consumed below. `in_place` is accepted only when complete source boundaries and state/link snapshots share the declared boundary.
+The manifest is limited to 10,000 ranges and 8 MiB. Commit range digests use canonical BSON/EJSON-compatible encoding with length-framed, domain-separated incremental SHA-256. Generate them from the authoritative Tapeworm Mongo collection, not from legacy markers. Every command recomputes `manifestDigest`.
 
-Any logical strategy change or reset requires a new generation and rebuild/certified replay. `in_document -> own_record` cannot infer no-target commits; `own_record -> in_document` cannot infer target histories; `none` has no history to migrate. Inline document capacity is an operational sizing concern, not a strategy migration.
+## Required configuration
 
-## Commands
+All commands require these options (equivalent uppercase underscore environment variables are accepted):
 
-All commands emit one JSON receipt. Set the connection explicitly; examples use the private transport package from the repository root.
+```text
+--manifest ./migration-v2.json
+--mongo-uri "$TARGET_MONGO_URI"
+--database redemeine
+--source-mongo-uri "$TAPEWORM_MONGO_URI"
+--source-database events
+--source-collection tw_orders_commits
+--source-partition orders
+--documents projection_v2_documents
+--links projection_v2_links
+--progress projection_v2_progress
+--migration-receipts projection_v2_migration_receipts
+--runtime-module ./dist/projection-migration-runtime.js
+```
+
+The runtime module exports `migrationDefinitions`, whose order, names, generations, code/config identities, and selectors must match the persisted new registry. The source collection must have exactly one usable unique `{streamId:1, commitSequence:1}` nonpartial, nonsparse index.
+
+## Lifecycle
+
+Set a shell variable containing all required options, then run:
 
 ```bash
-pnpm --filter @redemeine/projection-transport migration preflight --dry-run --manifest ./migration.json
-pnpm --filter @redemeine/projection-transport migration preflight --manifest ./migration.json --mongo-uri "$MONGODB_URI" --database redemeine
+pnpm --filter @redemeine/projection-transport migration preflight --dry-run $MIGRATION_ARGS
+pnpm --filter @redemeine/projection-transport migration preflight $MIGRATION_ARGS
+pnpm --filter @redemeine/projection-transport migration verify-sources $MIGRATION_ARGS
+pnpm --filter @redemeine/projection-transport migration replay $MIGRATION_ARGS
+pnpm --filter @redemeine/projection-transport migration activate $MIGRATION_ARGS
+pnpm --filter @redemeine/projection-transport migration verify $MIGRATION_ARGS
 ```
 
-The dry run performs no Mongo connection, index creation, binding, or state write. After preflight, stop the old worker, prevent the new worker from starting, and drain the old queue. Record independently measured evidence such as:
+`--dry-run` performs read-only checks and creates no index, journal, binding, pointer, or projection write. Preflight compares caller intent to persisted immutable old/new generation records, the old queue binding and active pointer, and proves all new collections are empty.
 
-```json
-{"oldQueueDepth":0,"oldActiveWriters":0,"newActiveWriters":0,"drainedAt":"2026-09-22T00:00:00.000Z","digest":"sha256:<64 lowercase hex>"}
-```
+`verify-sources` reads every range from real Tapeworm Mongo in pages capped at 100 commits and 8 MiB. It writes only non-TTL migration journal rows. Projection, link, live progress, transport binding, and active-pointer data remain untouched until exact global journal coverage is established. A restart skips only an exact journal row with the same manifest and expected/observed digest.
+
+`replay` rereads and verifies each authoritative range before applying it through the real projection commit coordinator and Mongo store. Every definition receives an atomic migration-only scalar receipt in the same snapshot/majority transaction as its documents, links and live strategy progress. This receipt makes restart safe for `none` without changing ordinary `none` behavior. Live transport coverage is not advanced during rebuild; its first live anchor is the declared replay end plus one.
+
+After replay, tooling streams the actual isolated document, link, live-progress and migration-receipt collections in stable `_id` order with batch size 100 and stores canonical counts/digests. It never accepts caller-authored output evidence.
+
+`activate` performs one snapshot/majority Mongo transaction. It rechecks the immutable new generation, replayed state revision and manifest, inserts-or-matches the new queue binding, switches the active pointer from old to new, and advances migration state. An unknown result is successful only when rereads prove all three exact postconditions. Serving processes resolve the selected generation through `MongoProjectionGenerationResolver`; process startup and publisher routing remain deployment responsibilities.
+
+`verify` rereads source journal coverage, queue/pointer state, and actual output collections and compares them with the trusted replay snapshot.
+
+Every command emits a version 2 JSON receipt. Rejected, conflicting, or wrong-phase commands exit nonzero. Idempotent successful reruns exit zero.
+
+## Rollback and recovery
+
+Before activation only, run:
 
 ```bash
-pnpm --filter @redemeine/projection-transport migration quiesce --manifest ./migration.json --evidence ./quiesce.json --mongo-uri "$MONGODB_URI" --database redemeine
+pnpm --filter @redemeine/projection-transport migration rollback $MIGRATION_ARGS
 ```
 
-For a rebuild, call `replayProjectionMigrationRanges(manifest, completeTapewormReader, targetPort)` from the application-owned migration entrypoint against the **new generation**. The target port must atomically apply each commit and persist its migration-only source sequence; `loadAppliedSequence` makes a restarted replay skip already applied commits while still re-reading and digesting the entire authoritative range. This is required even when the live strategy is `none`. The function rejects sliced, missing, noncontiguous, oversized, or digest-mismatched history and applies every complete commit, including no-target commits. It returns the `replay.json` evidence with `replayedRangesDigest`, rebuilt `stateDigest` and `linkDigest`, and `completedAt`. Retain the old feed/artifacts and do not start either live writer during replay. Then immutably bind the new registry and atomically activate the migration state:
+This marks the migration rolled back while leaving the old pointer active and preserving all source, old-generation, new-generation, queue and journal data. It deletes nothing.
 
-```bash
-pnpm --filter @redemeine/projection-transport migration activate --manifest ./migration.json --evidence ./replay.json --mongo-uri "$MONGODB_URI" --database redemeine
-```
+Rollback after activation is unsupported and exits nonzero with `postActivationForwardRebuildRequired`. Recovery is a new forward rebuild into another fresh generation. Continuing old writers cannot alter active new reads because generations use distinct collections.
 
-Start exactly one new worker. Transport coverage anchors only establish ordering/catch-up coverage; they never suppress projection dispatch, including definitions using `none`. Compare rebuilt state/links and replay range evidence, then provide:
-
-```json
-{"replayedRangesDigest":"sha256:<manifest authoritativeSourceDigest>","stateDigest":"sha256:<observed>","linkDigest":"sha256:<observed>","activeWriters":1,"verifiedAt":"2026-09-22T01:00:00.000Z"}
-```
-
-```bash
-pnpm --filter @redemeine/projection-transport migration verify --manifest ./migration.json --evidence ./verify.json --mongo-uri "$MONGODB_URI" --database redemeine
-```
-
-Every phase is compare-and-set and restart-safe; rerunning a completed command returns an unmutated success receipt. A concurrent phase change is rejected.
-
-## Rollback
-
-Before activation, fix evidence and rerun, or leave the preflight/quiesced state without deleting legacy artifacts. After activation, rollback is permitted only while the old feed/code/state/queue remain retained and there have been no conflicting writes. Stop and drain the new worker first:
-
-```bash
-pnpm --filter @redemeine/projection-transport migration rollback --manifest ./migration.json --reason "verification failed" --old-feed-available true --conflicting-writes false --mongo-uri "$MONGODB_URI" --database redemeine
-```
-
-If the old feed/artifacts are unavailable or either generation has conflicting writes, the command rejects with `manualRebuildRequired`. Perform a new-generation rebuild; never infer rollback anchors from scalar cursors or legacy markers. The tool never deletes old collections, queues, code, or feeds.
-
-Legacy polling APIs retain their existing sequence semantics and deprecation state. This tooling is additive and performs no automatic reinterpretation.
+Out of scope: in-place migration, post-activation rollback, process supervision, deletion, unbounded external manifests, sharding, inbox and saga.

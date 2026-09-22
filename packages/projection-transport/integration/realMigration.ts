@@ -1,65 +1,141 @@
+import { spawn } from 'node:child_process';
+import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { MongoClient } from 'mongodb';
-import type { ProjectionQueueRegistryManifest, ProjectionSha256Digest } from '@redemeine/projection-runtime-core';
+import EventStore, { type ICommit } from 'tapeworm';
+import MongoTapewormPersistence from 'tapeworm_persistence_store_mongodb';
 import {
-  MongoProjectionMigrationRegistryPort, MongoProjectionMigrationStatePort, MongoProjectionTransportStore, ProjectionMigrationEngine,
-  projectionMigrationDigest, projectionMigrationManifestPayload, type ProjectionMigrationManifest, type ProjectionTransportDocument
+  MongoProjectionTransportStore, ProjectionMigrationStreamingDigest, projectionMigrationDigest, projectionMigrationManifestPayload,
+  projectionMigrationSourceDescriptorDigest, decodeTapewormProjectionCommit, type ProjectionGenerationCollections, type ProjectionMigrationManifest,
+  type ProjectionMigrationSourceRange, type ProjectionTransportDocument, type ProjectionGenerationRecord, type ProjectionActiveGenerationRecord,
+  type ProjectionMigrationStateDocument, type ProjectionMigrationJournalDocument
 } from '../src';
+import { PARTITION_ID, SOURCE_ID, stackDefinitions, stackManifest, tapewormCommit, type StackEvent } from './realStackFixtures';
 
-const sourceId = '01234567-89ab-4def-8123-456789abcdef';
-const digest = (value: unknown): ProjectionSha256Digest => projectionMigrationDigest(value);
+const sourceB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const uri = required('REDEMEINE_MONGO_URI');
+const evidencePath = required('REDEMEINE_EVIDENCE_PATH');
+const gitSha = required('REDEMEINE_GIT_SHA');
+const databaseName = `redemeine_projection_migration_${Date.now()}`;
+const manifestPath = `/tmp/redemeine-migration-manifest-${process.pid}.json`;
 
-function registry(queueId: string, generation: string): ProjectionQueueRegistryManifest {
-  return { version: 1, manifestId: digest(`${queueId}-manifest`), queueId, registryGeneration: generation,
-    identity: { version: 1, normalizedDefinitionRegistryDigest: digest(`${queueId}-definitions`),
-      normalizedRuntimeConfigurationDigest: digest(`${queueId}-config`), executableCodeArtifactDigest: digest(`${queueId}-code`) },
-    definitions: [{ projectionName: 'accounts', generation, definitionHash: digest(`${queueId}-definition`), sourceSelectors: ['Account'] }],
-    sourceStartAnchors: { [sourceId]: 0 } };
+function required(name: string): string { const value = process.env[name]; if (!value) throw new Error(`${name} is required.`); return value; }
+function assert(value: unknown, message: string): asserts value { if (!value) throw new Error(message); }
+
+function secondSource(value: ICommit<StackEvent>): ICommit<StackEvent> {
+  return { ...structuredClone(value), id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', streamId: sourceB,
+    events: value.events.map((event, index) => ({ ...event, id: `cccccccc-cccc-4ccc-8ccc-${String(index).padStart(12, '0')}` })) };
 }
 
-function migrationManifest(): ProjectionMigrationManifest {
-  const ranges = [{ sourceId, firstSequence: 0, lastSequence: 0, commitCount: 1, completeCommitBoundaries: true as const,
-    rangeDigest: digest([digest({ streamId: sourceId, commitSequence: 0 })]) }];
-  const boundary = digest(ranges);
-  const payload = { version: 1 as const, migrationId: 'real-migration', mode: 'rebuild' as const, oldRegistry: registry('old-queue', 'v1'),
-    newRegistry: registry('new-queue', 'v2'), projectionName: 'accounts', oldGeneration: 'v1', newGeneration: 'v2', oldStrategy: 'none' as const,
-    newStrategy: 'own_record' as const, streamIdentity: 'immutable_uuid_no_reset' as const, transportStartAnchors: { [sourceId]: 0 }, sourceCommitRanges: ranges,
-    authoritativeBoundaryDigest: boundary, authoritativeSourceDigest: boundary, snapshot: null, executableCodeDigest: digest('code'),
-    runtimeConfigDigest: digest('config'), retainOldArtifacts: true };
-  return { ...payload, manifestDigest: digest(projectionMigrationManifestPayload(payload)) };
-}
-
-async function main(): Promise<void> {
-  const uri = process.env.REDEMEINE_MONGO_URI;
-  if (!uri) throw new Error('REDEMEINE_MONGO_URI is required.');
-  const client = new MongoClient(uri); await client.connect();
-  const databaseName = `redemeine_projection_migration_${Date.now()}`;
-  try {
-    const database = client.db(databaseName);
-    const states = new MongoProjectionMigrationStatePort(database.collection('migration'));
-    await states.initialize();
-    const manifest = migrationManifest();
-    const transport = new MongoProjectionTransportStore({ collection: database.collection<ProjectionTransportDocument>('transport'), mongoClient: client, manifest: manifest.newRegistry });
-    const engine = new ProjectionMigrationEngine(states, new MongoProjectionMigrationRegistryPort(transport), () => '2026-09-22T01:00:00.000Z');
-    const concurrent = await Promise.all([engine.preflight(manifest), engine.preflight(manifest)]);
-    if (concurrent.filter((entry) => entry.mutated).length !== 1) throw new Error('Mongo preflight CAS did not choose exactly one writer.');
-    const quiescePayload = { oldQueueDepth: 0 as const, oldActiveWriters: 0 as const, newActiveWriters: 0 as const, drainedAt: '2026-09-22T00:00:00.000Z' };
-    await engine.quiesce(manifest, { ...quiescePayload, digest: digest(quiescePayload) });
-    const replay = { replayedRangesDigest: manifest.authoritativeSourceDigest, stateDigest: digest('state'), linkDigest: digest('links'),
-      completedAt: '2026-09-22T00:30:00.000Z' };
-    const activated = await engine.activate(manifest, replay);
-    const restarted = await engine.activate(manifest, replay);
-    const verification = { ...replay, activeWriters: 1 as const, verifiedAt: '2026-09-22T02:00:00.000Z' };
-    const verified = await engine.verify(manifest, verification);
-    const binding = await transport.readQueueBinding(manifest.newRegistry.queueId);
-    if (activated.phase !== 'activated' || restarted.mutated || verified.phase !== 'verified' || binding?.manifestId !== manifest.newRegistry.manifestId) {
-      throw new Error('Mongo migration activation/restart/binding verification failed.');
-    }
-    process.stdout.write(`${JSON.stringify({ status: 'PASS', databaseName, concurrentCasWinnerCount: 1, phase: verified.phase,
-      restartMutated: restarted.mutated, immutableBinding: binding.manifestId })}\n`);
-  } finally {
-    await client.db(databaseName).dropDatabase();
-    await client.close();
+function range(values: readonly ICommit<StackEvent>[]): ProjectionMigrationSourceRange {
+  const digest = new ProjectionMigrationStreamingDigest('redemeine:migration:complete-commits:v2');
+  for (const value of values) {
+    const decoded = decodeTapewormProjectionCommit(value, value.id);
+    if (decoded.status !== 'valid') throw new Error(decoded.reason);
+    digest.update(decoded.commit);
   }
+  return { sourceId: values[0]!.streamId, firstSequence: values[0]!.commitSequence, lastSequence: values.at(-1)!.commitSequence,
+    commitCount: values.length, expectedDigest: digest.finish().digest };
 }
 
-main().catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`); process.exitCode = 1; });
+function buildManifest(a: readonly ICommit<StackEvent>[], b: readonly ICommit<StackEvent>[]): ProjectionMigrationManifest {
+  const oldRegistry = stackManifest('migration-old');
+  const newRegistry = { ...stackManifest('migration-new'), registryGeneration: 'v2', manifestId: projectionMigrationDigest('migration-new'),
+    definitions: stackDefinitions().map(({ definition }) => ({ projectionName: definition.name, generation: 'v2',
+      definitionHash: oldRegistry.identity.normalizedDefinitionRegistryDigest, sourceSelectors: [definition.fromStream.aggregate.aggregateType] })),
+    sourceStartAnchors: { [SOURCE_ID]: 2, [sourceB]: 1 } };
+  const sourceRanges = [range(a), range(b)];
+  const payload = { version: 2 as const, migrationId: 'real-migration', projectionName: 'migration-stack', oldGeneration: 'v1', newGeneration: 'v2',
+    destinationStrategies: { 'P-own': 'own_record' as const, 'N-none': 'none' as const, 'Q-inline': 'in_document' as const,
+      'O-own-no-target': 'own_record' as const }, streamIdentity: 'immutable_uuid_no_reset' as const, oldRegistry,
+    newRegistry, sourceRanges, authoritativeSourceDigest: projectionMigrationSourceDescriptorDigest(sourceRanges) };
+  return { ...payload, manifestDigest: projectionMigrationDigest(projectionMigrationManifestPayload(payload), 'redemeine:migration:manifest:v2') };
+}
+
+function argumentsFor(manifest: ProjectionMigrationManifest, collections: ProjectionGenerationCollections): string[] {
+  return ['--manifest', manifestPath, '--mongo-uri', uri, '--source-mongo-uri', uri, '--database', databaseName, '--source-database', databaseName,
+    '--source-collection', `tw_${PARTITION_ID}_commits`, '--source-partition', PARTITION_ID, '--documents', collections.documents, '--links', collections.links,
+    '--progress', collections.progress, '--migration-receipts', collections.migrationReceipts, '--runtime-module', resolve('integration/migrationRuntime.ts')];
+}
+
+async function cli(command: string, args: readonly string[]): Promise<{ code: number | null; receipt: Record<string, unknown> }> {
+  const child = spawn('pnpm', ['exec', 'tsx', 'src/migration/cli.ts', command, ...args], { cwd: process.cwd(), env: process.env });
+  let stdout = ''; let stderr = ''; child.stdout.on('data', (chunk) => { stdout += String(chunk); }); child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+  const code = await new Promise<number | null>((resolveCode, reject) => { child.once('error', reject); child.once('close', resolveCode); });
+  const line = stdout.trim().split('\n').at(-1) ?? stderr.trim().split('\n').at(-1) ?? '{}';
+  return { code, receipt: JSON.parse(line) as Record<string, unknown> };
+}
+
+async function setup(client: MongoClient, manifest: ProjectionMigrationManifest, oldCollections: ProjectionGenerationCollections,
+  newCollections: ProjectionGenerationCollections): Promise<void> {
+  const db = client.db(databaseName);
+  const control = db.collection<ProjectionGenerationRecord | ProjectionActiveGenerationRecord>('projection_generation_control');
+  await control.insertMany([
+    { _id: `generation:${manifest.projectionName}:v1`, kind: 'generation', projectionName: manifest.projectionName, generation: 'v1', manifest: manifest.oldRegistry,
+      collections: oldCollections, strategies: Object.fromEntries(stackDefinitions().map((entry) => [entry.definition.name, entry.definition.deduplication.strategy])) },
+    { _id: `generation:${manifest.projectionName}:v2`, kind: 'generation', projectionName: manifest.projectionName, generation: 'v2', manifest: manifest.newRegistry,
+      collections: newCollections, strategies: manifest.destinationStrategies },
+    { _id: `active:${manifest.projectionName}`, kind: 'active', projectionName: manifest.projectionName, generation: 'v1', queueId: manifest.oldRegistry.queueId,
+      manifestDigest: projectionMigrationDigest('old-active'), revision: 0 }
+  ]);
+  const transport = new MongoProjectionTransportStore({ collection: db.collection<ProjectionTransportDocument>('projection_transport'), mongoClient: client,
+    manifest: manifest.oldRegistry });
+  assert((await transport.bindImmutableManifest(manifest.oldRegistry)).status !== 'conflict', 'Old queue binding setup failed.');
+}
+
+async function run(): Promise<void> {
+  const client = new MongoClient(uri); await client.connect(); const db = client.db(databaseName);
+  let evidence: Record<string, unknown> = {};
+  try {
+    const persistence = new MongoTapewormPersistence(db); const eventStore = Reflect.construct(EventStore, [persistence]) as InstanceType<typeof EventStore>;
+    const partition = await eventStore.openPartition(PARTITION_ID);
+    const sourceA = [tapewormCommit(0, [1, 2]), tapewormCommit(1, [3])]; const sourceBCommits = [secondSource(tapewormCommit(0, [4]))];
+    await partition.append([...sourceA, ...sourceBCommits]);
+    const manifest = buildManifest(sourceA, sourceBCommits);
+    const oldCollections = { documents: 'old_documents', links: 'old_links', progress: 'old_progress', migrationReceipts: 'old_receipts' };
+    const newCollections = { documents: 'new_documents', links: 'new_links', progress: 'new_progress', migrationReceipts: 'new_receipts' };
+    await setup(client, manifest, oldCollections, newCollections); await writeFile(manifestPath, JSON.stringify(manifest));
+    const args = argumentsFor(manifest, newCollections);
+    assert((await cli('preflight', [...args, '--dry-run'])).code === 0, 'Dry-run preflight failed.');
+    const namesAfterDryRun = (await db.listCollections().toArray()).map((entry) => entry.name);
+    assert(!namesAfterDryRun.includes('projection_migration_control')
+      && Object.values(newCollections).every((name) => !namesAfterDryRun.includes(name)), 'Dry-run created migration collections or indexes.');
+    assert((await cli('preflight', args)).code === 0, 'Preflight failed.');
+    const sourceCollection = db.collection<ICommit<StackEvent>>(`tw_${PARTITION_ID}_commits`);
+    await sourceCollection.updateOne({ streamId: sourceB }, { $set: { 'events.0.payload.amount': 999 } });
+    const corrupt = await cli('verify-sources', args); assert(corrupt.code !== 0, 'Corrupt final source was accepted.');
+    for (const name of Object.values(newCollections)) assert(await db.collection(name).countDocuments() === 0, `Corrupt verification mutated ${name}.`);
+    await sourceCollection.updateOne({ streamId: sourceB }, { $set: { 'events.0.payload.amount': 4 } });
+    const verifiedSources = await cli('verify-sources', args); assert(verifiedSources.code === 0, 'Source verification resume failed.');
+    const replayed = await cli('replay', args); assert(replayed.code === 0, 'Replay failed.');
+    const replayRestart = await cli('replay', args); assert(replayRestart.code === 0 && replayRestart.receipt.mutated === false, 'Replay restart was not idempotent.');
+    await db.collection<ProjectionTransportDocument>('projection_transport').insertOne({ _id: `binding:${manifest.newRegistry.queueId}`, kind: 'binding',
+      queueBindingId: manifest.newRegistry.queueId, manifest: manifest.oldRegistry,
+      binding: { queueId: manifest.newRegistry.queueId, manifestId: manifest.oldRegistry.manifestId, registryGeneration: 'conflict',
+        identity: manifest.oldRegistry.identity, boundAt: '2026-09-22T00:00:00.000Z' } });
+    const activationConflict = await cli('activate', args); assert(activationConflict.code !== 0, 'Conflicting activation was accepted.');
+    const beforeActivation = await db.collection<ProjectionMigrationStateDocument | ProjectionMigrationJournalDocument>('projection_migration_control')
+      .findOne({ _id: 'state:real-migration' });
+    assert(beforeActivation?.phase === 'sources_replayed', 'Activation conflict changed migration state.');
+    await db.collection<ProjectionTransportDocument>('projection_transport').deleteOne({ _id: `binding:${manifest.newRegistry.queueId}` });
+    await client.db('admin').command({ configureFailPoint: 'failCommand', mode: { times: 1 },
+      data: { failCommands: ['commitTransaction'], closeConnection: true } });
+    const [activationA, activationB] = await Promise.all([cli('activate', args), cli('activate', args)]);
+    assert(activationA.code === 0 && activationB.code === 0, 'Concurrent activation failed.');
+    const verified = await cli('verify', args); assert(verified.code === 0, 'Trusted output verification failed.');
+    const rollback = await cli('rollback', args); assert(rollback.code !== 0 && Array.isArray(rollback.receipt.reasons)
+      && rollback.receipt.reasons.includes('postActivationForwardRebuildRequired'), 'Post-activation rollback did not reject.');
+    const receiptCount = await db.collection(newCollections.migrationReceipts).countDocuments();
+    const active = await db.collection<ProjectionGenerationRecord | ProjectionActiveGenerationRecord>('projection_generation_control')
+      .findOne({ _id: `active:${manifest.projectionName}` });
+    assert(receiptCount === 8 && active?.generation === 'v2', 'Migration receipt or active pointer mismatch.');
+    evidence = { gitSha, databaseName, commands: ['preflight --dry-run', 'preflight', 'verify-sources(rejected)', 'verify-sources', 'replay', 'replay', 'activate(conflict)',
+      'activate(x2,unknown commit injected)', 'verify', 'rollback(rejected)'], dryRunCreatedNothing: true,
+      corruptSecondSourceProjectionCounts: [0, 0, 0, 0], journalRows: 2, receiptCount, activeGeneration: active.generation,
+      activationConflictPreservedReplayState: true, unknownCommitInjected: true,
+      replaySnapshot: replayed.receipt.snapshot, verifiedSnapshot: verified.receipt.snapshot, databaseDropped: true };
+  } finally { await db.dropDatabase(); await client.close(); }
+  await writeFile(evidencePath, JSON.stringify(evidence));
+}
+
+run().catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`); process.exitCode = 1; });
