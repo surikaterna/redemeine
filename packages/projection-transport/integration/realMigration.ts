@@ -146,7 +146,8 @@ async function run(): Promise<void> {
     await client.db('admin').command({ configureFailPoint: 'failCommand', mode: { times: 1 },
       data: { failCommands: ['commitTransaction'], closeConnection: true } });
     const [activationA, activationB] = await Promise.all([cli('activate', args), cli('activate', args)]);
-    assert([activationA, activationB].filter((result) => result.code === 0).length === 1, 'Concurrent activation did not choose one winner.');
+    assert([activationA, activationB].filter((result) => result.code === 0).length === 1,
+      `Concurrent activation did not choose one winner: ${JSON.stringify([activationA, activationB])}`);
     const activationRestart = await cli('activate', args);
     assert(activationRestart.code === 0 && activationRestart.receipt.mutated === false, 'Activated restart was not idempotent.');
     const verified = await cli('verify', args); assert(verified.code === 0, 'Trusted output verification failed.');
