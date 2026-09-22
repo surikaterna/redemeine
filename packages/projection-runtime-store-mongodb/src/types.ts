@@ -1,4 +1,5 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
+import type { ProjectionUuidBase64Url22 } from '@redemeine/projection-runtime-core';
 import type { Checkpoint } from './contracts';
 
 export interface ProjectionDocumentRecord<TState = unknown> {
@@ -6,20 +7,27 @@ export interface ProjectionDocumentRecord<TState = unknown> {
   state: TState;
   checkpoint: Checkpoint;
   updatedAt: string;
+  v2Revision?: number;
+  sourceProgress?: Readonly<Record<ProjectionUuidBase64Url22, number>>;
 }
 
 export interface ProjectionLinkRecord {
   _id: string;
   aggregateType: string;
   aggregateId: string;
-  targetDocId: string;
+  targetDocId: string | null;
   createdAt: string;
+  v2Revision?: number;
 }
 
 export interface ProjectionDedupeRecord {
   _id: string;
   checkpoint: Checkpoint;
   updatedAt: string;
+  projectionName?: string;
+  projectionGeneration?: string;
+  sourceId?: string;
+  commitSequence?: number;
 }
 
 export interface MongoCollectionLike<TDocument extends Document = Document> {

@@ -1,10 +1,22 @@
 import type { ClientSession, UpdateOptions } from 'mongodb';
-import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, ProjectionStoreCommitAtomicManyRequest } from './contracts';
+import type {
+  Checkpoint,
+  IProjectionStore,
+  ProjectionStoreAtomicManyResult,
+  ProjectionStoreCommitAtomicManyRequest
+} from './contracts';
+import type {
+  CommitProjectionSourceCommitRequest,
+  CommitProjectionSourceCommitResult,
+  LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionSourceCommitSnapshot
+} from '@redemeine/projection-runtime-core';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
+import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
@@ -72,6 +84,23 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     });
   }
 
+  async loadProjectionSourceCommitSnapshot(
+    request: LoadProjectionSourceCommitSnapshotRequest
+  ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+    return loadMongoV2Snapshot(request, this.options);
+  }
+
+  async commitProjectionSourceCommit(
+    request: CommitProjectionSourceCommitRequest<TState>
+  ): Promise<CommitProjectionSourceCommitResult> {
+    try {
+      return await commitMongoV2(request, this.options, this.createTransactionExecutor());
+    } catch (error) {
+      if (!this.isUnknownCommitOutcome(error)) throw error;
+      return this.reconcileUnknownCommit(request);
+    }
+  }
+
   async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
     const row = await this.options.linkCollection.findOne({ _id: `${aggregateType}:${aggregateId}` });
     return row ? row.targetDocId : null;
@@ -106,6 +135,44 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private createTransactionExecutor(): TransactionExecutor {
-    return createTransactionExecutor(() => this.options.mongoClient.startSession(), this.options.transactionOptions);
+    const transactionOptions = this.options.transactionOptions ?? {
+      readConcern: { level: 'snapshot' },
+      writeConcern: { w: 'majority' }
+    };
+    return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
+  }
+
+  private isUnknownCommitOutcome(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    const labelled = error as Error & { hasErrorLabel?: (label: string) => boolean };
+    return labelled.hasErrorLabel?.('UnknownTransactionCommitResult') === true;
+  }
+
+  private async reconcileUnknownCommit(
+    request: CommitProjectionSourceCommitRequest<TState>
+  ): Promise<CommitProjectionSourceCommitResult> {
+    if (request.progress.strategy === 'none') {
+      return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
+    }
+    const snapshot = await this.loadProjectionSourceCommitSnapshot({
+      projectionName: request.projectionName,
+      projectionGeneration: request.projectionGeneration,
+      targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
+      links: request.stagedLinks.map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
+      progressStrategy: request.progress.strategy,
+      ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
+    });
+    const markersMatch = request.progress.strategy === 'own_record'
+      ? snapshot.ownRecordSequence === request.progress.source.finalSequence
+      : request.progress.targets.every((target) => {
+          const actual = snapshot.targets.find((entry) => entry.targetDocumentId === target.targetDocumentId);
+          return JSON.stringify(actual?.sourceProgress ?? {}) === JSON.stringify(target.final);
+        });
+    if (!markersMatch) {
+      return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
+    }
+    const documentRevisions = Object.fromEntries(request.finalDocuments.map((entry) => [entry.targetDocumentId, (entry.expectedRevision ?? 0) + 1]));
+    const linkRevisions = Object.fromEntries(request.stagedLinks.map((entry) => [`${entry.aggregateType}:${entry.aggregateId}`, (entry.expectedRevision ?? 0) + 1]));
+    return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
   }
 }

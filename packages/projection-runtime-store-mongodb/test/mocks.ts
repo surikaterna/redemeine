@@ -306,8 +306,13 @@ const matches = <TDocument extends AnyRecord>(
       continue;
     }
 
-    if (getByPath(doc, key) !== filter[key]) {
-      if (!deepEqual(getByPath(doc, key), filter[key])) {
+    const expected = filter[key];
+    if (isRecord(expected) && typeof expected.$exists === 'boolean') {
+      if ((getByPath(doc, key) !== undefined) !== expected.$exists) return false;
+      continue;
+    }
+    if (getByPath(doc, key) !== expected) {
+      if (!deepEqual(getByPath(doc, key), expected)) {
         return false;
       }
     }
