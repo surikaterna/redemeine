@@ -124,7 +124,8 @@ async function runCrashScenario(
   await declareTopology(channel, queue);
   await publish(channel, queue, wire, wire.id);
   const crashed = await runChild(scenario, queue, 'ack', point);
-  assert(crashed.signal === 'SIGKILL', `${point}: child did not terminate at the barrier.`);
+  const killed = crashed.signal === 'SIGKILL' || crashed.code === 128 + 9;
+  assert(killed, `${point}: child did not terminate at the barrier.`);
   const stores = await scenarioCollections(client, scenario);
   const barrier = await stores.barriers.findOne({ scenario, point });
   assert(barrier !== null, `${point}: durable crash barrier missing.`);
