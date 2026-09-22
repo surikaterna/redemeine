@@ -1,13 +1,5 @@
+import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
 import type { Checkpoint } from './contracts';
-import type {
-  Document,
-  MongoClient,
-  TransactionOptions,
-  UpdateOptions,
-  DeleteOptions,
-  FindOptions,
-  BulkWriteOptions
-} from 'mongodb';
 
 export interface ProjectionDocumentRecord<TState = unknown> {
   _id: string;
@@ -30,17 +22,14 @@ export interface ProjectionDedupeRecord {
   updatedAt: string;
 }
 
-export interface MongoCollectionLike<TDocument = Document> {
-  findOne(filter: Record<string, unknown>, options?: FindOptions<Document>): Promise<TDocument | null>;
+export interface MongoCollectionLike<TDocument extends Document = Document> {
+  findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
   updateOne(
     filter: Record<string, unknown>,
     update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
     options?: Pick<UpdateOptions, 'upsert' | 'session'>
   ): Promise<unknown>;
-  bulkWrite(
-    operations: ReadonlyArray<Record<string, unknown>>,
-    options?: Pick<BulkWriteOptions, 'ordered' | 'session'>
-  ): Promise<unknown>;
+  bulkWrite(operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>, options?: Pick<BulkWriteOptions, 'ordered' | 'session'>): Promise<unknown>;
   deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
   deleteMany(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
 }
@@ -63,10 +52,7 @@ export interface MongoProjectionLinkStoreOptions {
   now?: () => string;
 }
 
-export type MongoPatchPlanMode =
-  | 'compiled-update-document'
-  | 'compiled-update-pipeline'
-  | 'fallback-full-document';
+export type MongoPatchPlanMode = 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document';
 
 export interface MongoPatchPlanTelemetryEvent {
   documentId: string;

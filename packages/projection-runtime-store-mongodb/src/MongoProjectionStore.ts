@@ -1,22 +1,11 @@
-import type {
-  ClientSession,
-  UpdateOptions
-} from 'mongodb';
-import type {
-  Checkpoint,
-  IProjectionStore,
-  ProjectionStoreAtomicManyResult,
-  ProjectionStoreCommitAtomicManyRequest
-} from './contracts';
+import type { ClientSession, UpdateOptions } from 'mongodb';
+import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, ProjectionStoreCommitAtomicManyRequest } from './contracts';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
-import type {
-  MongoPatchPlanTelemetryEvent,
-  MongoProjectionStoreOptions
-} from './types';
+import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
 
@@ -69,8 +58,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return commitAtomicMany({
       execute: this.createTransactionExecutor(),
       request,
-      collection: this.options.collection as any,
-      dedupeCollection: this.options.dedupeCollection as any,
+      collection: this.options.collection,
+      dedupeCollection: this.options.dedupeCollection,
       now: this.now,
       buildDocumentWriteOperation: (write) =>
         buildDocumentWriteOperation({
@@ -98,12 +87,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return row ? row.checkpoint : null;
   }
 
-  private async saveWithSession(
-    documentId: string,
-    state: TState,
-    checkpoint: Checkpoint,
-    session?: ClientSession
-  ): Promise<void> {
+  private async saveWithSession(documentId: string, state: TState, checkpoint: Checkpoint, session?: ClientSession): Promise<void> {
     const updateOptions: Pick<UpdateOptions, 'upsert' | 'session'> | undefined = session
       ? withSession<Pick<UpdateOptions, 'upsert'>>({ upsert: true }, session)
       : { upsert: true };
@@ -122,10 +106,6 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private createTransactionExecutor(): TransactionExecutor {
-    return createTransactionExecutor(
-      () => this.options.mongoClient.startSession(),
-      this.options.transactionOptions
-    );
+    return createTransactionExecutor(() => this.options.mongoClient.startSession(), this.options.transactionOptions);
   }
-
 }

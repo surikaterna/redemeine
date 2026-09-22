@@ -1,12 +1,9 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, ClientSession } from 'mongodb';
-import type { ProjectionDocumentRecord } from '../types';
+import type { MongoCollectionLike, ProjectionDocumentRecord } from '../types';
 import type { CommitAtomicWrite } from './persistCommitAtomicTypes';
 import { withSession } from './withSession';
 
-const buildProjectionOps = <TState>(
-  write: CommitAtomicWrite<TState>,
-  now: () => string
-): Array<AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>> => {
+const buildProjectionOps = <TState>(write: CommitAtomicWrite<TState>, now: () => string): Array<AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>> => {
   const ops = write.documents.map((document) => ({
     updateOne: {
       filter: { _id: document.documentId },
@@ -41,7 +38,7 @@ const buildProjectionOps = <TState>(
 export const persistCommitAtomicProjectionOps = async <TState>(
   write: CommitAtomicWrite<TState>,
   session: ClientSession,
-  collection: { bulkWrite: (...args: unknown[]) => Promise<unknown> },
+  collection: Pick<MongoCollectionLike<ProjectionDocumentRecord<TState>>, 'bulkWrite'>,
   now: () => string
 ): Promise<void> => {
   const projectionOps = buildProjectionOps(write, now);
