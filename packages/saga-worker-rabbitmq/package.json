@@ -1,0 +1,29 @@
+{
+  "name": "@redemeine/saga-worker-rabbitmq",
+  "version": "0.1.0",
+  "description": "RabbitMQ manual-ack worker for durable saga turns",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-worker-rabbitmq/test",
+    "lint": "tsc --noEmit"
+  },
+  "private": true,
+  "dependencies": {
+    "@redemeine/saga-runtime": "workspace:*",
+    "amqplib": "2.0.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}
