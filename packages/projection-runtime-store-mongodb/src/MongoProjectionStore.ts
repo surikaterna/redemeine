@@ -1,10 +1,3 @@
-import { BSON, type ClientSession, type TransactionOptions, type UpdateOptions } from 'mongodb';
-import type {
-  Checkpoint,
-  IProjectionStore,
-  ProjectionStoreAtomicManyResult,
-  ProjectionStoreCommitAtomicManyRequest
-} from './contracts';
 import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
@@ -13,13 +6,15 @@ import type {
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
+import { BSON, type ClientSession, type TransactionOptions, type UpdateOptions } from 'mongodb';
+import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, ProjectionStoreCommitAtomicManyRequest } from './contracts';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
+import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
+import { commitMongoV2, loadMongoV2Snapshot, migrationReceiptId } from './store/sourceCommitV2';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
-import { commitMongoV2, loadMongoV2Snapshot, migrationReceiptId } from './store/sourceCommitV2';
-import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
@@ -89,9 +84,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     });
   }
 
-  async loadProjectionSourceCommitSnapshot(
-    request: LoadProjectionSourceCommitSnapshotRequest
-  ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+  async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
     await this.initializeProjectionSourceCommitStore();
     return loadMongoV2Snapshot(request, this.options);
   }
@@ -101,9 +94,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return this.sourceCommitReadiness;
   }
 
-  async commitProjectionSourceCommit(
-    request: CommitProjectionSourceCommitRequest<TState>
-  ): Promise<CommitProjectionSourceCommitResult> {
+  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
     const malformed = validateCommitProjectionSourceCommitRelationships(request);
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
@@ -126,7 +117,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async loadProjectionMigrationReceipt(request: {
-    migrationId: string; manifestDigest: `sha256:${string}`; projectionName: string; projectionGeneration: string; sourceId: string;
+    migrationId: string;
+    manifestDigest: `sha256:${string}`;
+    projectionName: string;
+    projectionGeneration: string;
+    sourceId: string;
   }): Promise<number | null> {
     if (!this.options.migrationReceiptCollection) throw new Error('Migration receipt collection is required.');
     const _id = migrationReceiptId(request.migrationId, request.projectionName, request.projectionGeneration, request.sourceId);
@@ -183,19 +178,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return labelled.hasErrorLabel?.('UnknownTransactionCommitResult') === true;
   }
 
-  private async reconcileUnknownCommit(
-    request: CommitProjectionSourceCommitRequest<TState>
-  ): Promise<CommitProjectionSourceCommitResult> {
-    if (request.migrationReceipt) {
-      const receipt = request.migrationReceipt;
-      const sequence = await this.loadProjectionMigrationReceipt({ migrationId: receipt.migrationId, manifestDigest: receipt.manifestDigest,
-        projectionName: request.projectionName, projectionGeneration: request.projectionGeneration, sourceId: receipt.sourceId });
-      if (sequence === receipt.finalSequence) {
-        this.reportReconciliation(request, 'committed');
-        return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence,
-          documentRevisions: {}, linkRevisions: {}, progress: request.progress };
-      }
-    }
+  private async reconcileUnknownCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
+    const migrationResult = await this.reconcileMigrationReceipt(request);
+    if (migrationResult) return migrationResult;
     if (request.progress.strategy === 'none') {
       this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
@@ -208,37 +193,63 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       progressStrategy: request.progress.strategy,
       ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
     });
-    const markersMatch = request.progress.strategy === 'own_record'
-      ? snapshot.ownRecordSequence === request.progress.source.finalSequence
-      : request.progress.targets.every((target) => {
-          const actual = snapshot.targets.find((entry) => entry.targetDocumentId === target.targetDocumentId);
-          const progress = actual?.sourceProgress ?? {};
-          const keys = Object.keys(progress);
-          return keys.length === Object.keys(target.final).length && keys.every((key) =>
-            progress[key as ProjectionUuidBase64Url22] === target.final[key as ProjectionUuidBase64Url22]
-          );
-        });
-    const documentsMatch = request.finalDocuments.every((expected) => {
-      const actual = snapshot.targets.find((entry) => entry.targetDocumentId === expected.targetDocumentId);
-      return actual?.revision === (expected.expectedRevision ?? 0) + 1;
-    });
-    const linksMatch = request.stagedLinks.every((expected, index) =>
-      snapshot.links[index]?.revision === (expected.expectedRevision ?? 0) + 1
-    );
-    if (!markersMatch || !documentsMatch || !linksMatch) {
+    if (!this.reconciliationSnapshotMatches(request, snapshot)) {
       this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
     }
     const documentRevisions = Object.fromEntries(request.finalDocuments.map((entry) => [entry.targetDocumentId, (entry.expectedRevision ?? 0) + 1]));
-    const linkRevisions = Object.fromEntries(request.stagedLinks.map((entry) => [`${entry.aggregateType}:${entry.aggregateId}`, (entry.expectedRevision ?? 0) + 1]));
+    const linkRevisions = Object.fromEntries(
+      request.stagedLinks.map((entry) => [`${entry.aggregateType}:${entry.aggregateId}`, (entry.expectedRevision ?? 0) + 1])
+    );
     this.reportReconciliation(request, 'committed');
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
   }
 
-  private reportReconciliation(
-    request: CommitProjectionSourceCommitRequest<TState>,
-    outcome: 'committed' | 'ambiguous'
-  ): void {
+  private async reconcileMigrationReceipt(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult | null> {
+    const receipt = request.migrationReceipt;
+    if (!receipt) return null;
+    const sequence = await this.loadProjectionMigrationReceipt({
+      migrationId: receipt.migrationId,
+      manifestDigest: receipt.manifestDigest,
+      projectionName: request.projectionName,
+      projectionGeneration: request.projectionGeneration,
+      sourceId: receipt.sourceId
+    });
+    if (sequence !== receipt.finalSequence) return null;
+    this.reportReconciliation(request, 'committed');
+    return {
+      version: 1,
+      status: 'committed',
+      commitSequence: request.commit.commitSequence,
+      documentRevisions: {},
+      linkRevisions: {},
+      progress: request.progress
+    };
+  }
+
+  private reconciliationSnapshotMatches(request: CommitProjectionSourceCommitRequest<TState>, snapshot: ProjectionSourceCommitSnapshot<TState>): boolean {
+    if (request.progress.strategy === 'none') return false;
+    const markersMatch =
+      request.progress.strategy === 'own_record'
+        ? snapshot.ownRecordSequence === request.progress.source.finalSequence
+        : request.progress.targets.every((target) => {
+            const actual = snapshot.targets.find((entry) => entry.targetDocumentId === target.targetDocumentId);
+            const progress = actual?.sourceProgress ?? {};
+            const keys = Object.keys(progress);
+            return (
+              keys.length === Object.keys(target.final).length &&
+              keys.every((key) => progress[key as ProjectionUuidBase64Url22] === target.final[key as ProjectionUuidBase64Url22])
+            );
+          });
+    const documentsMatch = request.finalDocuments.every((expected) => {
+      const actual = snapshot.targets.find((entry) => entry.targetDocumentId === expected.targetDocumentId);
+      return actual?.revision === (expected.expectedRevision ?? 0) + 1;
+    });
+    const linksMatch = request.stagedLinks.every((expected, index) => snapshot.links[index]?.revision === (expected.expectedRevision ?? 0) + 1);
+    return markersMatch && documentsMatch && linksMatch;
+  }
+
+  private reportReconciliation(request: CommitProjectionSourceCommitRequest<TState>, outcome: 'committed' | 'ambiguous'): void {
     try {
       this.options.onSourceCommitReconciliation?.({ strategy: request.progress.strategy, outcome });
     } catch {
