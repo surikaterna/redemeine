@@ -62,6 +62,7 @@
     "docs:dev": "pnpm --dir website run start",
     "docs:build": "pnpm run docs:install && pnpm --dir website run build",
     "check:projection-runtime-boundaries": "node ./bin/check-projection-runtime-boundaries.js",
+    "check:projection-contract-consumer": "node ./bin/check-projection-contract-consumer.js",
     "verify:workspace": "pnpm exec turbo run typecheck build test --continue"
   },
   "workspaces": [
