@@ -52,9 +52,10 @@ function definition(
     fromStream: {
       aggregate: { aggregateType, initialState: {}, pure: { eventProjectors: {} } },
       handlers: {
-        Changed(state, event) {
+        Changed(state, event, context) {
           state.count += Number(event.payload.amount);
           state.seen.push(Number(event.payload.amount));
+          context.subscribeTo({ aggregateType: `Linked${prefix}` }, event.aggregateId);
         }
       }
     },

@@ -87,6 +87,7 @@ async function scenarioCollections(client: MongoClient, scenario: string) {
   const db = client.db(databaseName);
   return {
     documents: db.collection<{ _id: string; state: StackState }>(`${scenario}_documents`),
+    links: db.collection(`${scenario}_links`),
     dedupe: db.collection(`${scenario}_dedupe`),
     transport: db.collection<ProjectionTransportDocument>(`${scenario}_transport`),
     attempts: db.collection('definitionAttempts'),
@@ -109,6 +110,7 @@ async function assertProjectionState(client: MongoClient, scenario: string, expe
   assert(n?.state.count === expectedN, `${scenario}: N state mismatch.`);
   assert(cursor?.kind === 'coverage' && cursor.sequence === coverage, `${scenario}: coverage mismatch.`);
   assert(ownNoTarget?.commitSequence === coverage, `${scenario}: own no-target progress missing.`);
+  assert(await stores.links.countDocuments() === 3, `${scenario}: staged projection links missing.`);
 }
 
 async function runCrashScenario(
@@ -129,8 +131,15 @@ async function runCrashScenario(
   const stores = await scenarioCollections(client, scenario);
   const barrier = await stores.barriers.findOne({ scenario, point });
   assert(barrier !== null, `${point}: durable crash barrier missing.`);
-  if (point === 'before_save') assert(await stores.documents.countDocuments() === 0, 'before_save leaked state.');
-  if (point === 'after_p') assert(await stores.documents.countDocuments() === 1, 'after_p did not isolate first definition.');
+  if (point === 'before_save') {
+    assert(await stores.documents.countDocuments() === 0, 'before_save leaked state.');
+    assert(await stores.links.countDocuments() === 0, 'before_save leaked links.');
+    assert(await stores.dedupe.countDocuments() === 0, 'before_save leaked progress.');
+  }
+  if (point === 'after_p') {
+    assert(await stores.documents.countDocuments() === 1, 'after_p did not isolate first definition.');
+    assert(await stores.links.countDocuments() === 1, 'after_p did not isolate first definition links.');
+  }
   if (point === 'after_all') {
     assert(await stores.transport.countDocuments({ kind: 'coverage' }) === 1, 'after_all admission metadata missing.');
     const row = await stores.transport.findOne({ kind: 'coverage' });
