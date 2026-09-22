@@ -131,29 +131,31 @@ const run = async (): Promise<void> => {
   assert(commitTransactionFailures > 0, 'unknown commit result failpoint did not execute');
 
   let storeReconciliations = 0;
-  const throwUnknownAfterCommit = async <T>(work: (session: ClientSession) => Promise<T>): Promise<T> => {
-    const session = client.startSession();
-    try {
-      const result = await session.withTransaction(() => work(session), {
-        readConcern: 'snapshot',
-        writeConcern: { w: 'majority' }
-      });
-      if (result === undefined) throw new Error('transaction returned no result');
+  const unknownAfterCommitClient = {
+    startSession: (): ClientSession => {
+      const session = client.startSession();
+      const withUnknownResult: ClientSession['withTransaction'] = async (work, options) => {
+        await session.withTransaction(work, options);
       const unknown = new Error('injected final UnknownTransactionCommitResult') as Error & {
         hasErrorLabel(label: string): boolean;
       };
       unknown.hasErrorLabel = (label) => label === 'UnknownTransactionCommitResult';
       throw unknown;
-    } finally {
-      await session.endSession();
+      };
+      return new Proxy(session, {
+        get: (target, property) => {
+          if (property === 'withTransaction') return withUnknownResult;
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+      });
     }
   };
   const reconcilingStore = new MongoProjectionStore({
     collection: documents,
     linkCollection: links,
     dedupeCollection: dedupe,
-    mongoClient: client,
-    sourceCommitTransactionExecutor: throwUnknownAfterCommit,
+    mongoClient: unknownAfterCommitClient,
     onSourceCommitReconciliation: (event) => {
       if (event.outcome === 'committed') storeReconciliations += 1;
     }
@@ -168,11 +170,6 @@ const run = async (): Promise<void> => {
   assert((await reconcilingStore.commitProjectionSourceCommit(reconciled)).status === 'committed', 'store reconciliation failed');
   assert(storeReconciliations === 1, 'store reconciliation path was not observed');
 
-  const ownBaseline = request('oversized-own-baseline', 0, [], {
-    strategy: 'own_record',
-    source: { sourceId, expectedSequence: null, finalSequence: 0 }
-  });
-  assert((await store.commitProjectionSourceCommit(ownBaseline)).status === 'committed', 'own baseline failed');
   const inlineBaseline = request(
     'oversized',
     0,
@@ -183,8 +180,7 @@ const run = async (): Promise<void> => {
   assert((await store.commitProjectionSourceCommit(inlineBaseline)).status === 'committed', 'inline baseline failed');
   const baselineDocument = await documents.findOne({ _id: 'rollback-first' });
   const baselineLink = await links.findOne({ aggregateId: 'rollback' });
-  const baselineOwn = await dedupe.findOne({ projectionName: 'oversized-own-baseline' });
-  assert(Boolean(baselineDocument && baselineLink && baselineOwn), 'capacity baseline incomplete');
+  assert(Boolean(baselineDocument && baselineLink), 'inline capacity baseline incomplete');
 
   const oversizedPayloadBytes = 16 * 1024 * 1024 + 64 * 1024;
   const oversized = request(
@@ -205,10 +201,10 @@ const run = async (): Promise<void> => {
     },
     [{ operation: 'subscribe', targetDocumentId: 'rollback-second', aggregateType: 'Order', aggregateId: 'rollback', expectedRevision: 1 }]
   );
-  let serverCapacityFailures = 0;
+  let inlineServerCapacityFailures = 0;
   const capacityMonitor = (event: CommandFailedEvent): void => {
     const failure = event.failure as { code?: number };
-    if (event.commandName === 'update' && failure.code === 10334) serverCapacityFailures += 1;
+    if (event.commandName === 'update' && failure.code === 10334) inlineServerCapacityFailures += 1;
   };
   client.on('commandFailed', capacityMonitor);
   const oversizedResult = await store.commitProjectionSourceCommit(oversized);
@@ -217,11 +213,50 @@ const run = async (): Promise<void> => {
     oversizedResult.status === 'rejected' && oversizedResult.category === 'terminal' && !oversizedResult.retryable,
     `oversized result was ${JSON.stringify(oversizedResult)}`
   );
-  assert(serverCapacityFailures === 1, 'capacity failure was not returned by MongoDB update command');
+  assert(inlineServerCapacityFailures === 1, 'inline capacity failure was not returned by MongoDB update command');
   assert(JSON.stringify(await documents.findOne({ _id: 'rollback-first' })) === JSON.stringify(baselineDocument), 'capacity rollback changed baseline target');
   assert(await documents.countDocuments({ _id: { $in: ['rollback-second', 'rollback-oversized'] } }) === 0, 'capacity rollback leaked a new target');
   assert(JSON.stringify(await links.findOne({ aggregateId: 'rollback' })) === JSON.stringify(baselineLink), 'capacity rollback changed baseline link');
-  assert(JSON.stringify(await dedupe.findOne({ projectionName: 'oversized-own-baseline' })) === JSON.stringify(baselineOwn), 'capacity rollback changed own progress');
+
+  const ownBaseline = request(
+    'oversized-own',
+    0,
+    [{ targetDocumentId: 'own-first', expectedRevision: null, finalDocument: { value: 1 } }],
+    { strategy: 'own_record', source: { sourceId, expectedSequence: null, finalSequence: 0 } },
+    [{ operation: 'subscribe', targetDocumentId: 'own-first', aggregateType: 'Order', aggregateId: 'own-rollback', expectedRevision: null }]
+  );
+  assert((await store.commitProjectionSourceCommit(ownBaseline)).status === 'committed', 'own baseline failed');
+  const baselineOwnDocument = await documents.findOne({ _id: 'own-first' });
+  const baselineOwnLink = await links.findOne({ aggregateId: 'own-rollback' });
+  const baselineOwn = await dedupe.findOne({ projectionName: 'oversized-own' });
+  assert(Boolean(baselineOwnDocument && baselineOwnLink && baselineOwn), 'own capacity baseline incomplete');
+  const oversizedOwn = request(
+    'oversized-own',
+    1,
+    [
+      { targetDocumentId: 'own-first', expectedRevision: 1, finalDocument: { value: 2 } },
+      { targetDocumentId: 'own-oversized', expectedRevision: null, finalDocument: { padding: 'x'.repeat(oversizedPayloadBytes) } }
+    ],
+    { strategy: 'own_record', source: { sourceId, expectedSequence: 0, finalSequence: 1 } },
+    [{ operation: 'subscribe', targetDocumentId: 'own-oversized', aggregateType: 'Order', aggregateId: 'own-rollback', expectedRevision: 1 }]
+  );
+  let ownServerCapacityFailures = 0;
+  const ownCapacityMonitor = (event: CommandFailedEvent): void => {
+    const failure = event.failure as { code?: number };
+    if (event.commandName === 'update' && failure.code === 10334) ownServerCapacityFailures += 1;
+  };
+  client.on('commandFailed', ownCapacityMonitor);
+  const oversizedOwnResult = await store.commitProjectionSourceCommit(oversizedOwn);
+  client.off('commandFailed', ownCapacityMonitor);
+  assert(
+    oversizedOwnResult.status === 'rejected' && oversizedOwnResult.category === 'terminal' && !oversizedOwnResult.retryable,
+    `oversized own result was ${JSON.stringify(oversizedOwnResult)}`
+  );
+  assert(ownServerCapacityFailures === 1, 'own capacity failure was not returned by MongoDB update command');
+  assert(JSON.stringify(await documents.findOne({ _id: 'own-first' })) === JSON.stringify(baselineOwnDocument), 'own rollback changed baseline target');
+  assert(await documents.findOne({ _id: 'own-oversized' }) === null, 'own rollback leaked oversized target');
+  assert(JSON.stringify(await links.findOne({ aggregateId: 'own-rollback' })) === JSON.stringify(baselineOwnLink), 'own rollback changed baseline link');
+  assert(JSON.stringify(await dedupe.findOne({ projectionName: 'oversized-own' })) === JSON.stringify(baselineOwn), 'own rollback advanced scalar progress');
 
   const buildInfo = await db.admin().command({ buildInfo: 1 });
   const receipt = {
@@ -232,7 +267,9 @@ const run = async (): Promise<void> => {
     belowLimitBsonBytes: BSON.calculateObjectSize((await documents.findOne({ _id: 'below' })) ?? {}),
     attemptedOversizedPayloadBytes: oversizedPayloadBytes,
     capacityResult: oversizedResult.status,
-    serverCapacityFailures,
+    inlineServerCapacityFailures,
+    ownCapacityResult: oversizedOwnResult.status,
+    ownServerCapacityFailures,
     driverUnknownCommitRetries: commitTransactionFailures,
     storeReconciliations,
     noneDedupeOperations,
