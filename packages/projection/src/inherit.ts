@@ -10,21 +10,26 @@ type TypedInheritExtended<TState, TEvent> = {
   readonly __inheritBrand: typeof INHERIT_BRAND;
   readonly after: (state: TState, event: TEvent, context: ProjectionContext) => void;
 };
-type DefaultInheritAfter = {
-  // Preserve the legacy unparameterized callback surface; explicit type arguments remain strict.
-  bivarianceHack(state: unknown, event: unknown, context: ProjectionContext): void;
+type ResolveInheritType<T> = T extends InheritTypeUnspecified ? unknown : T;
+type LegacyCompatibleInheritAfter<TState, TEvent> = {
+  // Preserve legacy defaults independently; fully explicit callbacks remain contravariant.
+  bivarianceHack(
+    state: ResolveInheritType<TState>,
+    event: ResolveInheritType<TEvent>,
+    context: ProjectionContext
+  ): void;
 }['bivarianceHack'];
-type DefaultInheritExtended = {
+type LegacyCompatibleInheritExtended<TState, TEvent> = {
   readonly __inheritBrand: typeof INHERIT_BRAND;
-  readonly after: DefaultInheritAfter;
+  readonly after: LegacyCompatibleInheritAfter<TState, TEvent>;
 };
 
-export type InheritExtended<TState = InheritTypeUnspecified, TEvent = InheritTypeUnspecified> = [TState, TEvent] extends [
-  InheritTypeUnspecified,
-  InheritTypeUnspecified
-]
-  ? DefaultInheritExtended
-  : TypedInheritExtended<TState, TEvent>;
+export type InheritExtended<TState = InheritTypeUnspecified, TEvent = InheritTypeUnspecified> =
+  [TState] extends [InheritTypeUnspecified]
+    ? LegacyCompatibleInheritExtended<TState, TEvent>
+    : [TEvent] extends [InheritTypeUnspecified]
+      ? LegacyCompatibleInheritExtended<TState, TEvent>
+      : TypedInheritExtended<TState, TEvent>;
 
 export interface InheritToken {
   readonly __inheritBrand: typeof INHERIT_BRAND;
