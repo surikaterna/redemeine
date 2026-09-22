@@ -146,7 +146,9 @@ async function run(): Promise<void> {
     await client.db('admin').command({ configureFailPoint: 'failCommand', mode: { times: 1 },
       data: { failCommands: ['commitTransaction'], closeConnection: true } });
     const [activationA, activationB] = await Promise.all([cli('activate', args), cli('activate', args)]);
-    assert(activationA.code === 0 && activationB.code === 0, 'Concurrent activation failed.');
+    assert([activationA, activationB].filter((result) => result.code === 0).length === 1, 'Concurrent activation did not choose one winner.');
+    const activationRestart = await cli('activate', args);
+    assert(activationRestart.code === 0 && activationRestart.receipt.mutated === false, 'Activated restart was not idempotent.');
     const verified = await cli('verify', args); assert(verified.code === 0, 'Trusted output verification failed.');
     const rollback = await cli('rollback', args); assert(rollback.code !== 0 && Array.isArray(rollback.receipt.reasons)
       && rollback.receipt.reasons.includes('postActivationForwardRebuildRequired'), 'Post-activation rollback did not reject.');
@@ -155,7 +157,7 @@ async function run(): Promise<void> {
       .findOne({ _id: `active:${manifest.projectionName}` });
     assert(receiptCount === 8 && active?.generation === 'v2', 'Migration receipt or active pointer mismatch.');
     evidence = { gitSha, databaseName, commands: ['preflight --dry-run', 'preflight', 'verify-sources(rejected)', 'verify-sources', 'replay', 'replay', 'activate(conflict)',
-      'activate(x2,unknown commit injected)', 'verify', 'rollback(rejected)'], dryRunCreatedNothing: true,
+      'activate(x2 one CAS winner,unknown commit injected)', 'activate(idempotent)', 'verify', 'rollback(rejected)'], dryRunCreatedNothing: true,
       corruptSecondSourceProjectionCounts: [0, 0, 0, 0], journalRows: 2, receiptCount, activeGeneration: active.generation,
       replayCrashReceiptCount: crashReceiptCount, replayRestartAfterSigkill: true,
       activationConflictPreservedReplayState: true, unknownCommitInjected: true,
