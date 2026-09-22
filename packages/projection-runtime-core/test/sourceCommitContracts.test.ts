@@ -253,8 +253,58 @@ describe('immutable queue registry manifest', () => {
       'identity.executableCodeArtifactDigest'
     ]);
     expect(validateProjectionQueueRegistryManifest({ version: 1 })).toEqual(expect.arrayContaining([
-      'manifestId', 'identity', 'identity.version', 'definitions'
+      'manifestId', 'identity', 'identity.version', 'definitions', 'sourceStartAnchors'
     ]));
+  });
+
+  test('rejects malformed, unnormalized, empty, and duplicate source selectors', () => {
+    const manifest = createManifest();
+    const issues = validateProjectionQueueRegistryManifest({
+      ...manifest,
+      definitions: [
+        { ...manifest.definitions[0], sourceSelectors: ['invoice', ' invoice ', '', 'invoice'] },
+        { ...manifest.definitions[0], sourceSelectors: null }
+      ]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      'definitions[0].sourceSelectors[1].normalized',
+      'definitions[0].sourceSelectors[1].duplicate',
+      'definitions[0].sourceSelectors[2]',
+      'definitions[0].sourceSelectors[3].duplicate',
+      'definitions[1].sourceSelectors',
+      'definitions[1].duplicate'
+    ]));
+    expect(validateProjectionQueueRegistryManifest({
+      ...manifest,
+      definitions: [{ ...manifest.definitions[0], sourceSelectors: [] }]
+    })).toContain('definitions[0].sourceSelectors.empty');
+  });
+
+  test('accepts sequence zero anchors and rejects unsafe source anchor records', () => {
+    const manifest = createManifest();
+    expect(validateProjectionQueueRegistryManifest(manifest)).toEqual([]);
+    const uppercaseId = streamId.toUpperCase();
+    const issues = validateProjectionQueueRegistryManifest({
+      ...manifest,
+      sourceStartAnchors: {
+        [streamId]: 0,
+        [uppercaseId]: -1,
+        'not-a-uuid': Number.MAX_SAFE_INTEGER + 1
+      }
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      `sourceStartAnchors.${uppercaseId}.sourceId`,
+      `sourceStartAnchors.${uppercaseId}.duplicate`,
+      `sourceStartAnchors.${uppercaseId}.sequence`,
+      'sourceStartAnchors.not-a-uuid.sourceId',
+      'sourceStartAnchors.not-a-uuid.sequence'
+    ]));
+    expect(validateProjectionQueueRegistryManifest({ ...manifest, sourceStartAnchors: [] }))
+      .toContain('sourceStartAnchors');
+    expect(validateProjectionQueueRegistryManifest({
+      ...manifest,
+      sourceStartAnchors: Object.create({ inherited: 0 })
+    })).toContain('sourceStartAnchors');
   });
 
   test.each([

@@ -103,11 +103,40 @@ const unboundedRange: ProjectionCompleteCommitRangeRequest = {
 const unboundManifest: ProjectionQueueRegistryManifest = {
   version: 1, manifestId: digest, queueId: 'q', registryGeneration: 'v1', definitions: [], sourceStartAnchors: {}
 };
-void [invalidCheckpoint, invalidNone, unboundedRange, unboundManifest];
+// @ts-expect-error selectors remain a normalized string array
+const invalidSelectors: ProjectionQueueRegistryManifest = { ...manifest, definitions: [{ projectionName: 'p', generation: 'v1', definitionHash: digest, sourceSelectors: null }] };
+// @ts-expect-error source anchors remain a UUID-to-sequence record
+const invalidAnchors: ProjectionQueueRegistryManifest = { ...manifest, sourceStartAnchors: [] };
+void [invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
+`);
+
+  writeFileSync(join(temporaryDirectory, 'runtime.mjs'), `
+import { validateProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
+const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const issues = validateProjectionQueueRegistryManifest({
+  version: 1,
+  manifestId: digest,
+  queueId: 'q',
+  registryGeneration: 'v1',
+  identity: {
+    version: 1,
+    normalizedDefinitionRegistryDigest: digest,
+    normalizedRuntimeConfigurationDigest: digest,
+    executableCodeArtifactDigest: digest
+  },
+  definitions: [{
+    projectionName: 'p', generation: 'v1', definitionHash: digest, sourceSelectors: [' invoice ', 'invoice']
+  }],
+  sourceStartAnchors: []
+});
+if (!issues.includes('definitions[0].sourceSelectors[0].normalized')
+  || !issues.includes('definitions[0].sourceSelectors[1].duplicate')
+  || !issues.includes('sourceStartAnchors')) process.exit(1);
 `);
 
   const tsc = join(runtimeDirectory, 'node_modules/typescript/bin/tsc');
   run(process.execPath, [tsc, '-p', join(temporaryDirectory, 'tsconfig.json')]);
+  run(process.execPath, [join(temporaryDirectory, 'runtime.mjs')]);
   console.log('✅ Installed projection contract consumer compiled successfully.');
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
