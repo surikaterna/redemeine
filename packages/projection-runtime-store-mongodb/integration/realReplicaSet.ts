@@ -131,16 +131,19 @@ const run = async (): Promise<void> => {
   assert(commitTransactionFailures > 0, 'unknown commit result failpoint did not execute');
 
   let storeReconciliations = 0;
+  let proxiedTransactionCount = 0;
   const unknownAfterCommitClient = {
     startSession: (): ClientSession => {
       const session = client.startSession();
       const withUnknownResult: ClientSession['withTransaction'] = async (work, options) => {
-        await session.withTransaction(work, options);
-      const unknown = new Error('injected final UnknownTransactionCommitResult') as Error & {
-        hasErrorLabel(label: string): boolean;
-      };
-      unknown.hasErrorLabel = (label) => label === 'UnknownTransactionCommitResult';
-      throw unknown;
+        proxiedTransactionCount += 1;
+        const result = await session.withTransaction(work, options);
+        if (proxiedTransactionCount === 1) return result;
+        const unknown = new Error('injected final UnknownTransactionCommitResult') as Error & {
+          hasErrorLabel(label: string): boolean;
+        };
+        unknown.hasErrorLabel = (label) => label === 'UnknownTransactionCommitResult';
+        throw unknown;
       };
       return new Proxy(session, {
         get: (target, property) => {
