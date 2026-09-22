@@ -10,9 +10,13 @@ type TypedInheritExtended<TState, TEvent> = {
   readonly __inheritBrand: typeof INHERIT_BRAND;
   readonly after: (state: TState, event: TEvent, context: ProjectionContext) => void;
 };
+type DefaultInheritAfter = {
+  // Preserve the legacy unparameterized callback surface; explicit type arguments remain strict.
+  bivarianceHack(state: unknown, event: unknown, context: ProjectionContext): void;
+}['bivarianceHack'];
 type DefaultInheritExtended = {
   readonly __inheritBrand: typeof INHERIT_BRAND;
-  readonly after: <TState, TEvent>(state: TState, event: TEvent, context: ProjectionContext) => void;
+  readonly after: DefaultInheritAfter;
 };
 
 export type InheritExtended<TState = InheritTypeUnspecified, TEvent = InheritTypeUnspecified> = [TState, TEvent] extends [

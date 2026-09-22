@@ -76,6 +76,9 @@ type ChangedEvent = Omit<ProjectionEvent, 'payload' | 'type'> & {
 const extended: InheritExtended<MirrorState, ChangedEvent> = inherit.extend((state, event) => {
   state.count += event.payload.amount;
 });
+const defaultExtended: InheritExtended = inherit.extend((state: MirrorState, event: ChangedEvent) => {
+  state.count += event.payload.amount;
+});
 const mirrorSource = {
   aggregateType: 'sample' as const,
   initialState: { count: 0 },
@@ -115,7 +118,7 @@ const manifest: ProjectionQueueRegistryManifest = {
 };
 validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
+void [definition, defaultExtended, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
 
 declare const context: ProjectionContext;
 declare const defaultOnly: InheritExtended;
