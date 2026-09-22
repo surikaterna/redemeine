@@ -30,3 +30,33 @@ export {
   type RabbitSettlementEvent,
   type RabbitSettlementKind
 } from './rabbitWorker';
+export { projectionMigrationDigest, projectionMigrationManifestPayload } from './migration/digest';
+export { ProjectionMigrationEngine } from './migration/engine';
+export { MongoProjectionMigrationRegistryPort, MongoProjectionMigrationStatePort } from './migration/mongoPorts';
+export {
+  replayProjectionMigrationRanges,
+  type ProjectionMigrationReplayOptions,
+  type ProjectionMigrationReplayPort
+} from './migration/replay';
+export type {
+  ProjectionMigrationManifest,
+  ProjectionMigrationMode,
+  ProjectionMigrationPhase,
+  ProjectionMigrationQuiesceEvidence,
+  ProjectionMigrationReplayEvidence,
+  ProjectionMigrationReceipt,
+  ProjectionMigrationRegistryPort,
+  ProjectionMigrationSnapshotEvidence,
+  ProjectionMigrationSourceEvidence,
+  ProjectionMigrationState,
+  ProjectionMigrationStatePort,
+  ProjectionMigrationStrategy,
+  ProjectionMigrationVerification
+} from './migration/types';
+export {
+  parseProjectionMigrationManifest,
+  parseProjectionMigrationQuiesceEvidence,
+  parseProjectionMigrationReplayEvidence,
+  parseProjectionMigrationVerification,
+  validateProjectionMigrationManifest
+} from './migration/validate';

@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.integration.json --noEmit",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-transport/test",
     "test:real-stack": "bash integration/run-real-stack.sh",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "migration": "tsx src/migration/cli.ts"
   },
   "dependencies": {
     "@redemeine/projection-runtime-core": "workspace:*",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/amqplib": "0.10.8",
     "tsup": "8.4.0",
+    "tsx": "4.21.0",
     "typescript": "5.8.3"
   }
 }
