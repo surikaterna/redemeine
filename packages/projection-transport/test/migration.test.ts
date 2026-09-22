@@ -1,156 +1,158 @@
 import { describe, expect, it } from '@jest/globals';
 import type { ProjectionCompleteCommitRangeReader, ProjectionQueueRegistryManifest, ProjectionSha256Digest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import {
-  ProjectionMigrationEngine, projectionMigrationDigest, projectionMigrationManifestPayload, replayProjectionMigrationRanges, validateProjectionMigrationManifest,
-  type ProjectionMigrationManifest, type ProjectionMigrationRegistryPort, type ProjectionMigrationState, type ProjectionMigrationStatePort
+  ProjectionMigrationEngine, ProjectionMigrationStreamingDigest, projectionMigrationDigest, projectionMigrationManifestPayload,
+  projectionMigrationSourceDescriptorDigest, replayProjectionMigrationRanges, verifyProjectionMigrationSources,
+  scanProjectionMigrationRange, validateProjectionMigrationManifest, type ProjectionMigrationActivationPort, type ProjectionMigrationManifest,
+  type ProjectionMigrationRangeJournal, type ProjectionMigrationSnapshot, type ProjectionMigrationState, type ProjectionMigrationStatePort
 } from '../src';
 
-const SOURCE_ID = '01234567-89ab-4def-8123-456789abcdef';
-const digest = (label: string): ProjectionSha256Digest => projectionMigrationDigest(label);
-const commits: readonly ProjectionSourceCommit[] = [0, 1].map((sequence) => ({ streamId: SOURCE_ID, commitId: `commit-${sequence}`, commitSequence: sequence,
-  events: [{ eventId: `event-${sequence}`, eventIndex: 0, streamVersion: sequence, aggregateType: 'Account', aggregateId: 'a-1', type: 'Changed', payload: {},
-    timestamp: '2026-09-22T00:00:00.000Z' }] })) as ProjectionSourceCommit[];
+const SOURCE_A = '01234567-89ab-4def-8123-456789abcdef';
+const SOURCE_B = '11234567-89ab-4def-8123-456789abcdef';
+const digest = (value: unknown): ProjectionSha256Digest => projectionMigrationDigest(value);
+const commit = (sourceId: string, sequence: number): ProjectionSourceCommit => ({ streamId: sourceId,
+  commitId: `${sourceId.slice(0, 8)}-0000-4000-8000-${String(sequence).padStart(12, '0')}`, commitSequence: sequence,
+  events: [{ eventId: `${sourceId.slice(0, 8)}-0000-4000-9000-${String(sequence).padStart(12, '0')}`, eventIndex: 0,
+    streamVersion: sequence, aggregateType: 'Account', aggregateId: sourceId, type: 'Changed', payload: { sequence },
+    timestamp: '2026-09-22T00:00:00.000Z' }] });
 
-function registry(queueId: string, generation: string, anchor = 0): ProjectionQueueRegistryManifest {
-  return {
-    version: 1, manifestId: digest(`${queueId}-manifest`), queueId, registryGeneration: generation,
-    identity: { version: 1, normalizedDefinitionRegistryDigest: digest(`${queueId}-definitions`),
-      normalizedRuntimeConfigurationDigest: digest(`${queueId}-config`), executableCodeArtifactDigest: digest(`${queueId}-code`) },
-    definitions: [{ projectionName: 'accounts', generation, definitionHash: digest(`${queueId}-definition`), sourceSelectors: ['Account'] }],
-    sourceStartAnchors: { [SOURCE_ID]: anchor }
-  };
+function commitDigest(commits: readonly ProjectionSourceCommit[]): ProjectionSha256Digest {
+  const stream = new ProjectionMigrationStreamingDigest('redemeine:migration:complete-commits:v2');
+  for (const value of commits) stream.update(value);
+  return stream.finish().digest;
 }
 
-function manifest(overrides: Partial<ProjectionMigrationManifest> = {}): ProjectionMigrationManifest {
-  const ranges = [{ sourceId: SOURCE_ID, firstSequence: 0, lastSequence: 1, commitCount: 2, completeCommitBoundaries: true as const,
-    rangeDigest: projectionMigrationDigest(commits.map(projectionMigrationDigest)) }];
-  const boundary = projectionMigrationDigest(ranges);
-  const payload = {
-    version: 1 as const, migrationId: 'accounts-v2', mode: 'rebuild' as const, oldRegistry: registry('old-queue', 'v1'), newRegistry: registry('new-queue', 'v2'),
-    projectionName: 'accounts', oldGeneration: 'v1', newGeneration: 'v2', oldStrategy: 'in_document' as const, newStrategy: 'in_document' as const,
-    streamIdentity: 'immutable_uuid_no_reset' as const, transportStartAnchors: { [SOURCE_ID]: 0 }, sourceCommitRanges: ranges,
-    authoritativeBoundaryDigest: boundary, authoritativeSourceDigest: boundary, snapshot: null, executableCodeDigest: digest('code'),
-    runtimeConfigDigest: digest('config'), retainOldArtifacts: true, ...overrides
-  };
-  return { ...payload, manifestDigest: projectionMigrationDigest(projectionMigrationManifestPayload(payload)) };
+function registry(queueId: string, generation: string, anchors: Readonly<Record<string, number>>): ProjectionQueueRegistryManifest {
+  return { version: 1, manifestId: digest(`${queueId}:manifest`), queueId, registryGeneration: generation,
+    identity: { version: 1, normalizedDefinitionRegistryDigest: digest(`${queueId}:definitions`),
+      normalizedRuntimeConfigurationDigest: digest(`${queueId}:config`), executableCodeArtifactDigest: digest(`${queueId}:code`) },
+    definitions: [{ projectionName: 'accounts', generation, definitionHash: digest(`${queueId}:definition`), sourceSelectors: ['Account'] }],
+    sourceStartAnchors: anchors };
+}
+
+function manifest(strategy: ProjectionMigrationManifest['destinationStrategies'][string] = 'none'): ProjectionMigrationManifest {
+  const ranges = [
+    { sourceId: SOURCE_A, firstSequence: 0, lastSequence: 1, commitCount: 2, expectedDigest: commitDigest([commit(SOURCE_A, 0), commit(SOURCE_A, 1)]) },
+    { sourceId: SOURCE_B, firstSequence: 0, lastSequence: 0, commitCount: 1, expectedDigest: commitDigest([commit(SOURCE_B, 0)]) }
+  ];
+  const payload = { version: 2 as const, migrationId: 'accounts-v2', projectionName: 'accounts', oldGeneration: 'v1', newGeneration: 'v2',
+    destinationStrategies: { accounts: strategy }, streamIdentity: 'immutable_uuid_no_reset' as const,
+    oldRegistry: registry('old-queue', 'v1', { [SOURCE_A]: 0, [SOURCE_B]: 0 }),
+    newRegistry: registry('new-queue', 'v2', { [SOURCE_A]: 2, [SOURCE_B]: 1 }), sourceRanges: ranges,
+    authoritativeSourceDigest: projectionMigrationSourceDescriptorDigest(ranges) };
+  return { ...payload, manifestDigest: projectionMigrationDigest(projectionMigrationManifestPayload(payload), 'redemeine:migration:manifest:v2') };
+}
+
+function alternateManifest(): ProjectionMigrationManifest {
+  const value = manifest();
+  const payload = { ...value, newRegistry: { ...value.newRegistry, manifestId: digest('alternate-new-registry') } };
+  return { ...payload, manifestDigest: projectionMigrationDigest(projectionMigrationManifestPayload(payload), 'redemeine:migration:manifest:v2') };
 }
 
 class MemoryStates implements ProjectionMigrationStatePort {
-  state: ProjectionMigrationState | null = null;
-  failNext = false;
-  writes = 0;
+  state: ProjectionMigrationState | null = null; journals = new Map<string, ProjectionMigrationRangeJournal>(); writes = 0;
   async load(): Promise<ProjectionMigrationState | null> { return this.state; }
   async compareAndSet(expected: number | null, state: ProjectionMigrationState): Promise<boolean> {
-    if (this.failNext) { this.failNext = false; return false; }
-    if ((this.state?.revision ?? null) !== expected) return false;
-    this.state = state; this.writes += 1; return true;
+    if ((this.state?.revision ?? null) !== expected) return false; this.state = state; this.writes += 1; return true;
+  }
+  async readJournal(): Promise<readonly ProjectionMigrationRangeJournal[]> { return [...this.journals.values()]; }
+  async writeJournal(row: ProjectionMigrationRangeJournal): Promise<'written' | 'matches' | 'conflict'> {
+    const existing = this.journals.get(row.rangeKey); if (existing) return JSON.stringify(existing) === JSON.stringify(row) ? 'matches' : 'conflict';
+    this.journals.set(row.rangeKey, row); return 'written';
   }
 }
 
-class MemoryRegistry implements ProjectionMigrationRegistryPort {
-  result: 'bound' | 'matches' | 'conflict' = 'bound';
-  calls = 0;
-  async adopt(): Promise<'bound' | 'matches' | 'conflict'> { this.calls += 1; return this.result; }
+function reader(corruptSource?: string): ProjectionCompleteCommitRangeReader {
+  return { capability: { completeCommitBoundaries: true, unslicedCommitEvents: true }, readCompleteRange: async (request) => {
+    if (request.sourceId === corruptSource) return { status: 'incomplete', reason: 'history_unavailable', details: 'corrupt', continuationAfterSequence: request.afterSequence };
+    const values = Array.from({ length: request.throughSequence - (request.afterSequence ?? -1) }, (_, index) => commit(request.sourceId, (request.afterSequence ?? -1) + index + 1));
+    return { status: 'complete', commits: values.map((value) => ({ commit: value, encodedByteLength: 100 })), encodedByteLength: values.length * 100,
+      continuationAfterSequence: request.throughSequence, hasMore: false };
+  } };
 }
 
-const quiescePayload = { oldQueueDepth: 0 as const, oldActiveWriters: 0 as const, newActiveWriters: 0 as const, drainedAt: '2026-09-22T00:00:00.000Z' };
-const quiesced = { ...quiescePayload, digest: projectionMigrationDigest(quiescePayload) };
-const replay = (value: ProjectionMigrationManifest) => ({ replayedRangesDigest: value.authoritativeSourceDigest, stateDigest: digest('rebuilt-state'),
-  linkDigest: digest('rebuilt-links'), completedAt: '2026-09-22T00:30:00.000Z' });
+const snapshot: ProjectionMigrationSnapshot = { documents: { count: 1, digest: digest('documents') }, links: { count: 1, digest: digest('links') },
+  progress: { count: 1, digest: digest('progress') } };
 
-describe('projection migration', () => {
-  it('dry-runs without mutation and handles sequence zero as a real anchor', async () => {
-    const states = new MemoryStates();
-    const result = await new ProjectionMigrationEngine(states, new MemoryRegistry()).preflight(manifest(), true);
-    expect(result).toMatchObject({ status: 'ok', mutated: false, phase: null });
-    expect(states.writes).toBe(0);
+describe('P1-r9 projection migration', () => {
+  it.each(['in_document', 'own_record', 'none'] as const)('accepts rebuild-only seq0 manifest for %s', (strategy) => {
+    expect(validateProjectionMigrationManifest(manifest(strategy))).toEqual([]);
   });
 
-  it('rejects corrupt, unknown, partial, scalar-cursor-like, and unprovable manifests', () => {
-    const valid = manifest();
-    const corrupt = { ...valid, manifestDigest: digest('wrong'), legacyCursor: 4 };
-    expect(validateProjectionMigrationManifest(corrupt)).toEqual(expect.arrayContaining(['manifest.legacyCursor.unknown', 'manifestDigest.mismatch']));
-    const partial = manifest({ sourceCommitRanges: [{ ...valid.sourceCommitRanges[0]!, completeCommitBoundaries: false }] as never });
-    expect(validateProjectionMigrationManifest(partial)).toContain('sourceCommitRanges[0].completeCommitBoundaries');
-    const missing = manifest({ sourceCommitRanges: [] });
-    expect(validateProjectionMigrationManifest(missing)).toEqual(expect.arrayContaining(['sourceCommitRanges.coverage', 'authoritativeSourceDigest.mismatch']));
+  it('rejects in-place/same generation, unknown, unsorted, bad anchors, and configured bounds', () => {
+    const value = manifest();
+    expect(validateProjectionMigrationManifest({ ...value, mode: 'in_place' })).toContain('manifest.mode.unknown');
+    expect(validateProjectionMigrationManifest({ ...value, newGeneration: value.oldGeneration })).toContain('freshGeneration');
+    expect(validateProjectionMigrationManifest({ ...value, sourceRanges: [...value.sourceRanges].reverse() })).toContain('sourceRanges[1].order');
+    expect(validateProjectionMigrationManifest({ ...value, newRegistry: { ...value.newRegistry, sourceStartAnchors: { [SOURCE_A]: 0 } } })).toContain('newRegistry.sourceStartAnchors.coverage');
+    expect(validateProjectionMigrationManifest(value, 8 * 1024 * 1024 + 1)).toContain('manifest.unsupportedBound');
+    expect(validateProjectionMigrationManifest({ ...value, sourceRanges: Array.from({ length: 10_001 }, () => value.sourceRanges[0]) })).toContain('sourceRanges.unsupportedBound');
   });
 
-  it.each([
-    ['in_document', 'own_record'], ['own_record', 'in_document'], ['none', 'in_document'], ['in_document', 'none']
-  ] as const)('requires a new generation for %s to %s', (oldStrategy, newStrategy) => {
-    const candidate = manifest({ mode: 'in_place', oldGeneration: 'v1', newGeneration: 'v1', oldStrategy, newStrategy,
-      newRegistry: registry('new-queue', 'v1'), snapshot: { boundaryDigest: manifest().authoritativeBoundaryDigest, stateDigest: digest('state'), linkDigest: digest('links') } });
-    expect(validateProjectionMigrationManifest(candidate)).toContain('strategyChange.requiresNewGeneration');
+  it('uses constant-size streaming digest state with deterministic length framing', () => {
+    const one = new ProjectionMigrationStreamingDigest('vector'); one.update({ b: 2, a: 1 });
+    const two = new ProjectionMigrationStreamingDigest('vector'); two.update({ a: 1, b: 2 });
+    const vector = one.finish(); expect(vector).toEqual(two.finish());
+    expect(vector.digest).toBe('sha256:66770a2ed231945e52885136e46be1c8a4a48e4788972650fa456b513fa11cb6');
+    const long = new ProjectionMigrationStreamingDigest('vector');
+    for (let index = 0; index < 10_000; index += 1) long.update(index);
+    expect(Object.keys(long)).toHaveLength(3);
   });
 
-  it('accepts certified in-place adoption only at the source snapshot boundary', () => {
-    const base = manifest();
-    const candidate = manifest({ mode: 'in_place', oldGeneration: 'v1', newGeneration: 'v1', newRegistry: registry('new-queue', 'v1'),
-      snapshot: { boundaryDigest: base.authoritativeBoundaryDigest, stateDigest: digest('state'), linkDigest: digest('links') } });
-    expect(validateProjectionMigrationManifest(candidate)).toEqual([]);
-    expect(validateProjectionMigrationManifest(manifest({ ...candidate, snapshot: { ...candidate.snapshot!, boundaryDigest: digest('other') } }))).toContain('snapshot.boundaryDigest.mismatch');
+  it('globally verifies all sources before replay and resumes exact journal rows', async () => {
+    const states = new MemoryStates(); const value = manifest(); let applies = 0;
+    await expect(verifyProjectionMigrationSources(value, reader(SOURCE_B), states, () => '2026-09-22T00:00:00.000Z')).rejects.toThrow('unavailable');
+    expect(states.journals.size).toBe(1); expect(applies).toBe(0);
+    await verifyProjectionMigrationSources(value, reader(), states, () => '2026-09-22T00:00:00.000Z');
+    expect(states.journals.size).toBe(2);
+    await replayProjectionMigrationRanges(value, reader(), { process: async () => { applies += 1; return { status: 'completed' }; } });
+    expect(applies).toBe(3);
   });
 
-  it('rejects dual writers and an undrained queue without advancing', async () => {
-    const states = new MemoryStates(); const engine = new ProjectionMigrationEngine(states, new MemoryRegistry()); const value = manifest();
-    await engine.preflight(value);
-    const result = await engine.quiesce(value, { ...quiesced, oldActiveWriters: 1 as never });
-    expect(result).toMatchObject({ status: 'rejected', mutated: false, reasons: ['dualWriterOrUndrained'] });
-    expect(states.state?.phase).toBe('preflighted');
+  it('pins every source read to 100 commits and 8 MiB and rejects oversized history', async () => {
+    const range = manifest().sourceRanges[1]!; let observedRequest: { maxCommits: number; maxBytes: number } | undefined;
+    const oversized: ProjectionCompleteCommitRangeReader = { capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
+      readCompleteRange: async (request) => { observedRequest = request; return { status: 'oversized_commit', sourceId: request.sourceId,
+        commitSequence: 0, commitId: 'oversized', encodedByteLength: request.maxBytes + 1, continuationAfterSequence: request.afterSequence }; } };
+    await expect(scanProjectionMigrationRange(oversized, range)).rejects.toThrow('unavailable');
+    expect(observedRequest).toMatchObject({ maxCommits: 100, maxBytes: 8 * 1024 * 1024 });
   });
 
-  it('is restart-safe and idempotent through every phase', async () => {
-    const states = new MemoryStates(); const registryPort = new MemoryRegistry(); const value = manifest();
-    const engine = new ProjectionMigrationEngine(states, registryPort, () => '2026-09-22T01:00:00.000Z');
-    await engine.preflight(value); expect((await engine.preflight(value)).mutated).toBe(false);
-    await engine.quiesce(value, quiesced); expect((await engine.quiesce(value, quiesced)).mutated).toBe(false);
-    states.failNext = true; expect((await engine.activate(value, replay(value))).reasons).toContain('concurrentChange');
-    expect(states.state?.phase).toBe('quiesced');
-    await engine.activate(value, replay(value)); expect((await engine.activate(value, replay(value))).mutated).toBe(false);
-    const verification = { replayedRangesDigest: value.authoritativeSourceDigest, stateDigest: digest('rebuilt-state'), linkDigest: digest('rebuilt-links'),
-      activeWriters: 1 as const, verifiedAt: '2026-09-22T02:00:00.000Z' };
-    await engine.verify(value, verification); expect((await engine.verify(value, verification)).mutated).toBe(false);
-    expect(states.state?.phase).toBe('verified');
+  it('enforces phases, manifest identity, trusted snapshots, and preactivation-only rollback', async () => {
+    const states = new MemoryStates(); const active: ProjectionMigrationActivationPort = { activate: async (_manifest, state) => {
+      const next = { ...state, revision: state.revision + 1, phase: 'activated' as const }; states.state = next; return next;
+    }, verifyActive: async () => true };
+    const engine = new ProjectionMigrationEngine({ states, preflight: { inspect: async () => [] }, sourceReader: reader(),
+      replay: { process: async () => ({ status: 'completed' }) }, snapshot: { read: async () => snapshot }, activation: active,
+      now: () => '2026-09-22T00:00:00.000Z' });
+    const value = manifest(); expect((await engine.preflight(value, true)).mutated).toBe(false);
+    await engine.preflight(value); await engine.verifySources(value); await engine.replay(value);
+    const conflicting = { ...value, manifestDigest: digest('other') };
+    expect((await engine.activate(conflicting)).reasons).toContain('manifestDigest.mismatch');
+    await engine.activate(value); expect((await engine.verify(value)).phase).toBe('verified');
+    expect((await engine.rollback(value)).reasons).toContain('postActivationForwardRebuildRequired');
   });
 
-  it('adopts an immutable registry and rejects conflicts', async () => {
-    const states = new MemoryStates(); const registryPort = new MemoryRegistry(); const value = manifest();
-    const engine = new ProjectionMigrationEngine(states, registryPort); await engine.preflight(value); await engine.quiesce(value, quiesced);
-    registryPort.result = 'conflict';
-    expect((await engine.activate(value, replay(value))).reasons).toContain('newRegistry.conflict');
-    expect(states.state?.phase).toBe('quiesced');
-  });
-
-  it('rolls back only with retained feed and no conflicting post-activation writes', async () => {
-    const states = new MemoryStates(); const value = manifest(); const engine = new ProjectionMigrationEngine(states, new MemoryRegistry());
-    await engine.preflight(value); await engine.quiesce(value, quiesced); await engine.activate(value, replay(value));
-    expect((await engine.rollback(value, 'bad verification', false, false)).reasons).toContain('manualRebuildRequired');
-    expect((await engine.rollback(value, 'bad verification', true, true)).reasons).toContain('manualRebuildRequired');
-    expect(await engine.rollback(value, 'bad verification', true, false)).toMatchObject({ status: 'ok', phase: 'rolled_back', mutated: true });
-    expect((await engine.rollback(value, 'again', true, false)).mutated).toBe(false);
-  });
-
-  it('replays every complete commit and rejects corrupt authoritative ranges', async () => {
-    const reader: ProjectionCompleteCommitRangeReader = { capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
-      readCompleteRange: async () => ({ status: 'complete', commits: commits.map((commit) => ({ commit, encodedByteLength: 10 })), encodedByteLength: 20,
-        continuationAfterSequence: 1, hasMore: false }) };
-    const applied: number[] = [];
-    const evidence = await replayProjectionMigrationRanges(manifest(), reader, { loadAppliedSequence: async () => null,
-      applyCompleteCommit: async (commit) => { applied.push(commit.commitSequence); },
-      snapshotDigests: async () => ({ stateDigest: digest('rebuilt-state'), linkDigest: digest('rebuilt-links') }) },
-    { now: () => '2026-09-22T00:30:00.000Z' });
-    expect(applied).toEqual([0, 1]);
-    expect(evidence.replayedRangesDigest).toBe(manifest().authoritativeSourceDigest);
-    let corruptApplies = 0;
-    await expect(replayProjectionMigrationRanges(manifest({ sourceCommitRanges: [{ ...manifest().sourceCommitRanges[0]!, rangeDigest: digest('corrupt') }] }), reader,
-      { loadAppliedSequence: async () => null, applyCompleteCommit: async () => { corruptApplies += 1; },
-        snapshotDigests: async () => ({ stateDigest: digest('state'), linkDigest: digest('links') }) })).rejects.toThrow('digest mismatch');
-    expect(corruptApplies).toBe(0);
-    const resumed: number[] = [];
-    await replayProjectionMigrationRanges(manifest(), reader, { loadAppliedSequence: async () => 0,
-      applyCompleteCommit: async (commit) => { resumed.push(commit.commitSequence); },
-      snapshotDigests: async () => ({ stateDigest: digest('rebuilt-state'), linkDigest: digest('rebuilt-links') }) });
-    expect(resumed).toEqual([1]);
+  it('rejects migrationId manifest reuse in every phase', async () => {
+    const original = manifest(); const alternate = alternateManifest();
+    const preflightStates = new MemoryStates(); preflightStates.state = { migrationId: original.migrationId,
+      manifestDigest: original.manifestDigest, revision: 0, phase: 'preflighted' };
+    const preflightEngine = new ProjectionMigrationEngine({ states: preflightStates, preflight: { inspect: async () => [] }, sourceReader: reader(),
+      replay: { process: async () => ({ status: 'completed' }) }, snapshot: { read: async () => snapshot },
+      activation: { activate: async () => null, verifyActive: async () => true } });
+    expect((await preflightEngine.preflight(alternate)).reasons).toContain('migrationId.manifestConflict');
+    const phases = ['preflighted', 'sources_verified', 'sources_replayed', 'activated', 'verified'] as const;
+    for (const phase of phases) {
+      const states = new MemoryStates(); states.state = { migrationId: original.migrationId, manifestDigest: original.manifestDigest, revision: 1, phase,
+        ...(phase === 'sources_replayed' || phase === 'activated' || phase === 'verified' ? { replaySnapshot: snapshot } : {}) };
+      const engine = new ProjectionMigrationEngine({ states, preflight: { inspect: async () => [] }, sourceReader: reader(),
+        replay: { process: async () => ({ status: 'completed' }) }, snapshot: { read: async () => snapshot },
+        activation: { activate: async () => null, verifyActive: async () => true } });
+      const result = phase === 'preflighted' ? await engine.verifySources(alternate)
+        : phase === 'sources_verified' ? await engine.replay(alternate)
+          : phase === 'sources_replayed' ? await engine.activate(alternate)
+            : phase === 'activated' ? await engine.verify(alternate) : await engine.rollback(alternate);
+      expect(result.reasons).toContain('manifestConflictOrMissing');
+    }
   });
 });

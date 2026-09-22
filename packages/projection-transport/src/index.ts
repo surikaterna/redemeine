@@ -30,33 +30,46 @@ export {
   type RabbitSettlementEvent,
   type RabbitSettlementKind
 } from './rabbitWorker';
-export { projectionMigrationDigest, projectionMigrationManifestPayload } from './migration/digest';
+export { ProjectionMigrationStreamingDigest, projectionMigrationDigest, projectionMigrationManifestPayload } from './migration/digest';
 export { ProjectionMigrationEngine } from './migration/engine';
-export { MongoProjectionMigrationRegistryPort, MongoProjectionMigrationStatePort } from './migration/mongoPorts';
 export {
+  MongoProjectionMigrationActivationPort,
+  MongoProjectionMigrationPreflightPort,
+  MongoProjectionMigrationSnapshotPort,
+  MongoProjectionMigrationStatePort,
+  MongoProjectionGenerationResolver,
+  type ProjectionActiveGenerationRecord,
+  type ProjectionGenerationCollections,
+  type ProjectionGenerationRecord,
+  type ProjectionMigrationJournalDocument,
+  type ProjectionMigrationStateDocument
+} from './migration/mongoPorts';
+export {
+  assertExactJournal,
   replayProjectionMigrationRanges,
-  type ProjectionMigrationReplayOptions,
-  type ProjectionMigrationReplayPort
+  scanProjectionMigrationRange,
+  verifyProjectionMigrationSources
 } from './migration/replay';
 export type {
+  ProjectionMigrationActivationPort,
   ProjectionMigrationManifest,
-  ProjectionMigrationMode,
   ProjectionMigrationPhase,
-  ProjectionMigrationQuiesceEvidence,
-  ProjectionMigrationReplayEvidence,
+  ProjectionMigrationRangeJournal,
+  ProjectionMigrationReplayPort,
   ProjectionMigrationReceipt,
-  ProjectionMigrationRegistryPort,
-  ProjectionMigrationSnapshotEvidence,
-  ProjectionMigrationSourceEvidence,
+  ProjectionMigrationSnapshot,
+  ProjectionMigrationSnapshotPort,
+  ProjectionMigrationSourceRange,
   ProjectionMigrationState,
   ProjectionMigrationStatePort,
   ProjectionMigrationStrategy,
-  ProjectionMigrationVerification
+  ProjectionMigrationTrustedPreflightPort
 } from './migration/types';
 export {
   parseProjectionMigrationManifest,
-  parseProjectionMigrationQuiesceEvidence,
-  parseProjectionMigrationReplayEvidence,
-  parseProjectionMigrationVerification,
+  PROJECTION_MIGRATION_MAX_MANIFEST_BYTES,
+  PROJECTION_MIGRATION_MAX_RANGES,
+  projectionMigrationRangeKey,
+  projectionMigrationSourceDescriptorDigest,
   validateProjectionMigrationManifest
 } from './migration/validate';
