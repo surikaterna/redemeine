@@ -4,6 +4,9 @@ set -euo pipefail
 IMAGE="mongo:8.0.14"
 CONTAINER="redemeine-projection-v2-$RANDOM"
 PORT="${REDEMEINE_MONGO_PORT:-27029}"
+GIT_SHA="$(git rev-parse HEAD)"
+EVIDENCE_PATH="/tmp/redemeine-zyfy3-evidence-${GIT_SHA}-$RANDOM.json"
+RECEIPT_PATH="${REDEMEINE_ZYFY3_RECEIPT_PATH:-/tmp/redemeine-zyfy3-${GIT_SHA}.json}"
 
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -31,5 +34,11 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
-REDEMEINE_MONGO_URI="mongodb://localhost:${PORT}/?replicaSet=rs0" pnpm exec tsx integration/realReplicaSet.ts
-echo "container_cleanup=$CONTAINER"
+MONGO_DIGEST="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
+REDEMEINE_MONGO_URI="mongodb://localhost:${PORT}/?replicaSet=rs0" \
+  pnpm exec tsx integration/realReplicaSet.ts > "$EVIDENCE_PATH"
+docker rm -f "$CONTAINER" >/dev/null
+trap - EXIT
+REDEMEINE_EVIDENCE_PATH="$EVIDENCE_PATH" REDEMEINE_RECEIPT_PATH="$RECEIPT_PATH" \
+  REDEMEINE_MONGO_CONTAINER="$CONTAINER" REDEMEINE_MONGO_DIGEST="$MONGO_DIGEST" \
+  pnpm exec tsx integration/finalizeReplicaSetReceipt.ts
