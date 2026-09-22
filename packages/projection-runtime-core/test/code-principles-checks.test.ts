@@ -84,17 +84,14 @@ describe('code principles checks', () => {
     writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
     writeFile(
       repoRoot,
-      'packages/projection-runtime-core/src/bad.ts',
+      'packages/projection/src/bad.ts',
       'const one: Record<string, any> = {};\nconst two: string | any = "";\nconst three: any [] = [];\nconst four = one as any;\ntype Five = Promise<any>;\nexport default four;\n'
     );
 
-    const result = runCodePrinciplesChecks({
-      repoRoot,
-      sourceRoots: ['packages/projection-runtime-core/src']
-    });
+    const result = runCodePrinciplesChecks({ repoRoot });
 
-    expect(result.violations).toContain('packages/projection-runtime-core/src/bad.ts: default export is not allowed.');
-    expect(result.violations).toContain("packages/projection-runtime-core/src/bad.ts: explicit 'any' is not allowed (5 at 1:27, 2:21, 3:14, 4:21, 5:21).");
+    expect(result.violations).toContain('packages/projection/src/bad.ts: default export is not allowed.');
+    expect(result.violations).toContain("packages/projection/src/bad.ts: explicit 'any' is not allowed (5 at 1:27, 2:21, 3:14, 4:21, 5:21).");
   });
 
   test('ignores any text in comments and strings', () => {
