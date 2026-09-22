@@ -15,6 +15,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.integration.json --noEmit",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-transport/test",
+    "test:real-migration": "bash integration/run-real-migration.sh",
     "test:real-stack": "bash integration/run-real-stack.sh",
     "lint": "tsc --noEmit",
     "migration": "tsx src/migration/cli.ts"
