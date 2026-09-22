@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { afterEach, describe, expect, test } from '@jest/globals';
 import { runCodePrinciplesChecks } from '../../../bin/code-principles-checks';
 
 function createTempRepoRoot(): string {
@@ -56,16 +56,29 @@ describe('code principles checks', () => {
     expect(result.scannedFiles).toEqual(['packages/projection-runtime-core/src/ok.ts']);
   });
 
+  test('scans projection source by default while excluding tests and declarations', () => {
+    const repoRoot = createTempRepoRoot();
+    tempRoots.push(repoRoot);
+
+    writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
+    writeFile(repoRoot, 'packages/projection/src/public.ts', 'export const value = 1;\n');
+    writeFile(repoRoot, 'packages/projection/src/public.test.ts', 'const unsafe: any = 1;\n');
+    writeFile(repoRoot, 'packages/projection/src/generated.d.ts', 'declare const unsafe: any;\n');
+
+    const result = runCodePrinciplesChecks({ repoRoot });
+
+    expect(result.violations).toEqual([]);
+    expect(result.scannedFiles).toContain('packages/projection/src/public.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/public.test.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/generated.d.ts');
+  });
+
   test('reports default export and explicit any violations', () => {
     const repoRoot = createTempRepoRoot();
     tempRoots.push(repoRoot);
 
     writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
-    writeFile(
-      repoRoot,
-      'packages/projection-runtime-core/src/bad.ts',
-      'const value: any = 42;\nexport default value;\n'
-    );
+    writeFile(repoRoot, 'packages/projection-runtime-core/src/bad.ts', 'const value: any = 42;\nexport default value;\n');
 
     const result = runCodePrinciplesChecks({
       repoRoot,

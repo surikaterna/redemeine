@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_SOURCE_ROOTS = [
+  'packages/projection/src',
   'packages/projection-runtime-core/src',
   'packages/projection-runtime-store-inmemory/src',
   'packages/projection-runtime-store-mongodb/src'
@@ -12,10 +13,7 @@ const DEFAULT_SOURCE_ROOTS = [
 const DEFAULT_RULES = {
   requiredDocsPath: 'docs/code-principles.md',
   maxTsLines: 350,
-  lineCountExemptions: new Set([
-    'packages/projection-runtime-core/src/ProjectionDaemon.ts',
-    'packages/projection-runtime-core/src/createProjection.ts'
-  ])
+  lineCountExemptions: new Set(['packages/projection-runtime-core/src/ProjectionDaemon.ts', 'packages/projection-runtime-core/src/createProjection.ts'])
 };
 
 function normalize(filePath) {
@@ -90,9 +88,7 @@ function checkFileLength(relativePath, sourceText, rules, violations) {
     return;
   }
 
-  violations.push(
-    `${relativePath}: ${lineCount} lines exceeds maximum ${rules.maxTsLines} lines for production TypeScript files.`
-  );
+  violations.push(`${relativePath}: ${lineCount} lines exceeds maximum ${rules.maxTsLines} lines for production TypeScript files.`);
 }
 
 function checkRequiredDocs(repoRoot, rules, violations) {
@@ -109,9 +105,7 @@ function runCodePrinciplesChecks(options = {}) {
     ...DEFAULT_RULES,
     ...(options.rules ?? {}),
     lineCountExemptions: new Set(
-      options.rules?.lineCountExemptions
-        ? Array.from(options.rules.lineCountExemptions)
-        : Array.from(DEFAULT_RULES.lineCountExemptions)
+      options.rules?.lineCountExemptions ? Array.from(options.rules.lineCountExemptions) : Array.from(DEFAULT_RULES.lineCountExemptions)
     )
   };
 
