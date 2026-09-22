@@ -40,12 +40,12 @@ const baseRequest = (strategy: CommitProjectionSourceCommitRequest<{ value: numb
 
 export const defineProjectionSourceCommitStoreConformance = (
   label: string,
-  createStore: () => ProjectionSourceCommitStorePort<{ value: number }>,
+  createStore: () => ProjectionSourceCommitStorePort<{ value: number }> | Promise<ProjectionSourceCommitStorePort<{ value: number }>>,
   dedupeOperationCount?: () => number
 ): void => {
   describe(`${label} projection source commit store`, () => {
     test('commits sequence zero, state, inline progress, and link atomically', async () => {
-      const store = createStore();
+      const store = await createStore();
       const request = baseRequest({
         strategy: 'in_document',
         targets: [{ targetDocumentId: 'target-a', expected: {}, final: { [encodedSource]: 0 } }]
@@ -61,7 +61,7 @@ export const defineProjectionSourceCommitStoreConformance = (
     });
 
     test('rolls back all writes on a late link fence conflict', async () => {
-      const store = createStore();
+      const store = await createStore();
       const first = baseRequest({ strategy: 'none' });
       expect((await store.commitProjectionSourceCommit(first)).status).toBe('committed');
       const conflicting = {
@@ -77,7 +77,7 @@ export const defineProjectionSourceCommitStoreConformance = (
     });
 
     test('advances one own-record scalar for a no-target commit', async () => {
-      const store = createStore();
+      const store = await createStore();
       const base = baseRequest({
         strategy: 'own_record',
         source: { sourceId, expectedSequence: null, finalSequence: 7 }
@@ -91,8 +91,59 @@ export const defineProjectionSourceCommitStoreConformance = (
       expect(snapshot.ownRecordSequence).toBe(7);
     });
 
+    test('supports sparse sequences, marker deletion, and fenced unsubscribe', async () => {
+      const store = await createStore();
+      const first = baseRequest({
+        strategy: 'in_document',
+        targets: [{ targetDocumentId: 'target-a', expected: {}, final: { [encodedSource]: 0 } }]
+      });
+      expect((await store.commitProjectionSourceCommit(first)).status).toBe('committed');
+      const secondSource = 'AAAAAAAAQACAAAAAAAAAAg' as ProjectionUuidBase64Url22;
+      const second: CommitProjectionSourceCommitRequest<{ value: number }> = {
+        ...first,
+        commit: { ...first.commit, commitSequence: 9 },
+        finalDocuments: [{ targetDocumentId: 'target-a', expectedRevision: 1, finalDocument: { value: 9 } }],
+        stagedLinks: [{ ...first.stagedLinks[0]!, operation: 'unsubscribe', expectedRevision: 1 }],
+        progress: {
+          strategy: 'in_document',
+          targets: [{ targetDocumentId: 'target-a', expected: { [encodedSource]: 0 }, final: { [secondSource]: 9 } }]
+        }
+      };
+      expect((await store.commitProjectionSourceCommit(second)).status).toBe('committed');
+      const snapshot = await store.loadProjectionSourceCommitSnapshot({
+        projectionName: 'orders', projectionGeneration: 'v2', targetDocumentIds: ['target-a'],
+        links: [{ aggregateType: 'Order', aggregateId: 'one' }], progressStrategy: 'in_document'
+      });
+      expect(snapshot.targets[0]).toMatchObject({ revision: 2, state: { value: 9 }, sourceProgress: { [secondSource]: 9 } });
+      expect(snapshot.links[0]).toMatchObject({ targetDocumentId: null, revision: 2 });
+    });
+
+    test('rejects a stale whole-map expectation without publishing state', async () => {
+      const store = await createStore();
+      const first = baseRequest({
+        strategy: 'in_document',
+        targets: [{ targetDocumentId: 'target-a', expected: {}, final: { [encodedSource]: 0 } }]
+      });
+      expect((await store.commitProjectionSourceCommit(first)).status).toBe('committed');
+      const stale = {
+        ...first,
+        commit: { ...first.commit, commitSequence: 4 },
+        finalDocuments: [{ targetDocumentId: 'target-a', expectedRevision: 1, finalDocument: { value: 4 } }],
+        stagedLinks: [],
+        progress: {
+          strategy: 'in_document' as const,
+          targets: [{ targetDocumentId: 'target-a', expected: {}, final: { [encodedSource]: 4 } }]
+        }
+      };
+      expect((await store.commitProjectionSourceCommit(stale)).status).toBe('rejected');
+      const snapshot = await store.loadProjectionSourceCommitSnapshot({
+        projectionName: 'orders', projectionGeneration: 'v2', targetDocumentIds: ['target-a'], links: [], progressStrategy: 'in_document'
+      });
+      expect(snapshot.targets[0]).toMatchObject({ revision: 1, state: { value: 1 }, sourceProgress: { [encodedSource]: 0 } });
+    });
+
     test('none performs no projection dedupe operations', async () => {
-      const store = createStore();
+      const store = await createStore();
       const before = dedupeOperationCount?.() ?? 0;
       await store.loadProjectionSourceCommitSnapshot({
         projectionName: 'orders', projectionGeneration: 'v2', targetDocumentIds: [], links: [], progressStrategy: 'none'

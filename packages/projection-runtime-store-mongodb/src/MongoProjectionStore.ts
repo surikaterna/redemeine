@@ -1,4 +1,4 @@
-import type { ClientSession, UpdateOptions } from 'mongodb';
+import { BSON, type ClientSession, type TransactionOptions, type UpdateOptions } from 'mongodb';
 import type {
   Checkpoint,
   IProjectionStore,
@@ -9,7 +9,8 @@ import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
   LoadProjectionSourceCommitSnapshotRequest,
-  ProjectionSourceCommitSnapshot
+  ProjectionSourceCommitSnapshot,
+  ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
@@ -17,6 +18,7 @@ import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWit
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
 import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
+import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
 
 const defaultNow = (): string => new Date().toISOString();
@@ -32,6 +34,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     string,
     { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
   >();
+  private sourceCommitReadiness: Promise<void> | undefined;
+  private readonly emittedDedupeWarnings = new Set<string>();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
     this.now = options.now ?? defaultNow;
@@ -87,14 +91,29 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   async loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+    await this.initializeProjectionSourceCommitStore();
     return loadMongoV2Snapshot(request, this.options);
+  }
+
+  async initializeProjectionSourceCommitStore(): Promise<void> {
+    this.sourceCommitReadiness ??= ensureSourceCommitStoreReady(this.options, this.createTransactionExecutor());
+    return this.sourceCommitReadiness;
   }
 
   async commitProjectionSourceCommit(
     request: CommitProjectionSourceCommitRequest<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
     try {
-      return await commitMongoV2(request, this.options, this.createTransactionExecutor());
+      await this.initializeProjectionSourceCommitStore();
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor());
+      if (result.status === 'committed') {
+        try {
+          await this.reportDedupeWarnings(request);
+        } catch {
+          // Measurement and telemetry are both best effort after durable commit.
+        }
+      }
+      return result;
     } catch (error) {
       if (!this.isUnknownCommitOutcome(error)) throw error;
       return this.reconcileUnknownCommit(request);
@@ -108,7 +127,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
 
   async getCheckpoint(key: string): Promise<Checkpoint | null> {
     const row = await this.options.collection.findOne({ _id: key });
-    return row ? row.checkpoint : null;
+    return row?.checkpoint ?? null;
   }
 
   async getDedupeCheckpoint(key: string): Promise<Checkpoint | null> {
@@ -135,8 +154,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private createTransactionExecutor(): TransactionExecutor {
-    const transactionOptions = this.options.transactionOptions ?? {
-      readConcern: { level: 'snapshot' },
+    const transactionOptions: TransactionOptions = {
+      ...this.options.transactionOptions,
+      readConcern: 'snapshot',
       writeConcern: { w: 'majority' }
     };
     return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
@@ -166,13 +186,61 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       ? snapshot.ownRecordSequence === request.progress.source.finalSequence
       : request.progress.targets.every((target) => {
           const actual = snapshot.targets.find((entry) => entry.targetDocumentId === target.targetDocumentId);
-          return JSON.stringify(actual?.sourceProgress ?? {}) === JSON.stringify(target.final);
+          const progress = actual?.sourceProgress ?? {};
+          const keys = Object.keys(progress);
+          return keys.length === Object.keys(target.final).length && keys.every((key) =>
+            progress[key as ProjectionUuidBase64Url22] === target.final[key as ProjectionUuidBase64Url22]
+          );
         });
-    if (!markersMatch) {
+    const documentsMatch = request.finalDocuments.every((expected) => {
+      const actual = snapshot.targets.find((entry) => entry.targetDocumentId === expected.targetDocumentId);
+      return actual?.revision === (expected.expectedRevision ?? 0) + 1;
+    });
+    const linksMatch = request.stagedLinks.every((expected, index) =>
+      snapshot.links[index]?.revision === (expected.expectedRevision ?? 0) + 1
+    );
+    if (!markersMatch || !documentsMatch || !linksMatch) {
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
     }
     const documentRevisions = Object.fromEntries(request.finalDocuments.map((entry) => [entry.targetDocumentId, (entry.expectedRevision ?? 0) + 1]));
     const linkRevisions = Object.fromEntries(request.stagedLinks.map((entry) => [`${entry.aggregateType}:${entry.aggregateId}`, (entry.expectedRevision ?? 0) + 1]));
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
+  }
+
+  private async reportDedupeWarnings(request: CommitProjectionSourceCommitRequest<TState>): Promise<void> {
+    if (request.progress.strategy !== 'in_document' || !request.progress.warnings) return;
+    for (const target of request.progress.targets) {
+      const row = await this.options.collection.findOne({ _id: target.targetDocumentId });
+      if (!row) continue;
+      const sourceCount = Object.keys(target.final).length;
+      const metadataBytes = BSON.calculateObjectSize(row);
+      this.emitWarning(request, target.targetDocumentId, 'source_count', sourceCount, request.progress.warnings.warnAtSourceCount);
+      this.emitWarning(request, target.targetDocumentId, 'metadata_bytes', metadataBytes, request.progress.warnings.warnAtMetadataBytes);
+    }
+  }
+
+  private emitWarning(
+    request: CommitProjectionSourceCommitRequest<TState>,
+    targetDocumentId: string,
+    kind: 'source_count' | 'metadata_bytes',
+    observed: number,
+    threshold: number | undefined
+  ): void {
+    if (threshold === undefined || observed <= threshold) return;
+    const key = `${request.projectionName}:${request.projectionGeneration}:${targetDocumentId}:${kind}`;
+    if (this.emittedDedupeWarnings.has(key)) return;
+    this.emittedDedupeWarnings.add(key);
+    try {
+      this.options.onDedupeWarning?.({
+        projectionName: request.projectionName,
+        projectionGeneration: request.projectionGeneration,
+        targetDocumentId,
+        kind,
+        observed,
+        threshold
+      });
+    } catch {
+      // Telemetry must never alter a committed projection result.
+    }
   }
 }

@@ -5,7 +5,7 @@ import type { Checkpoint } from './contracts';
 export interface ProjectionDocumentRecord<TState = unknown> {
   _id: string;
   state: TState;
-  checkpoint: Checkpoint;
+  checkpoint?: Checkpoint;
   updatedAt: string;
   v2Revision?: number;
   sourceProgress?: Readonly<Record<ProjectionUuidBase64Url22, number>>;
@@ -40,6 +40,11 @@ export interface MongoCollectionLike<TDocument extends Document = Document> {
   bulkWrite(operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>, options?: Pick<BulkWriteOptions, 'ordered' | 'session'>): Promise<unknown>;
   deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
   deleteMany(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
+  createIndex(
+    keys: Record<string, 1 | -1>,
+    options: { name: string; unique: boolean; partialFilterExpression?: Record<string, unknown> }
+  ): Promise<string>;
+  listIndexes(): { toArray(): Promise<Array<Record<string, unknown>>> };
 }
 
 export type MongoClientLike = Pick<MongoClient, 'startSession'>;
@@ -53,6 +58,16 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   now?: () => string;
   patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
   patchPlanCacheMaxEntries?: number;
+  onDedupeWarning?: (warning: MongoProjectionDedupeWarning) => void;
+}
+
+export interface MongoProjectionDedupeWarning {
+  projectionName: string;
+  projectionGeneration: string;
+  targetDocumentId: string;
+  kind: 'source_count' | 'metadata_bytes';
+  observed: number;
+  threshold: number;
 }
 
 export interface MongoProjectionLinkStoreOptions {

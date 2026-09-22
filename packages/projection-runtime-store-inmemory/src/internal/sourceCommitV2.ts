@@ -135,8 +135,12 @@ export const commitV2 = <TState>(
     const revision = (document.expectedRevision ?? 0) + 1;
     const key = documentKey(request.projectionName, request.projectionGeneration, document.targetDocumentId);
     const sourceProgress = progress.get(document.targetDocumentId) ?? state.documentMetadata.get(key)?.sourceProgress ?? {};
-    const checkpoint = documents.get(document.targetDocumentId)?.checkpoint ?? { sequence: -1 };
-    nextDocuments.set(document.targetDocumentId, { state: structuredClone(document.finalDocument), checkpoint, updatedAt: new Date().toISOString() });
+    const checkpoint = documents.get(document.targetDocumentId)?.checkpoint;
+    nextDocuments.set(document.targetDocumentId, {
+      state: structuredClone(document.finalDocument),
+      ...(checkpoint === undefined ? {} : { checkpoint }),
+      updatedAt: new Date().toISOString()
+    });
     state.documentMetadata.set(key, { revision, sourceProgress: { ...sourceProgress } });
     revisions[document.targetDocumentId] = revision;
   }

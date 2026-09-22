@@ -12,6 +12,7 @@ import type {
   ProjectionDocumentRecord,
   ProjectionLinkRecord
 } from '../types';
+import { isMongoPhysicalCapacityError } from './mongoCapacityError';
 
 const scope = (name: string, generation: string): string => `${name}\u0000${generation}`;
 const linkId = (name: string, generation: string, type: string, id: string): string =>
@@ -209,6 +210,15 @@ export const commitMongoV2 = async <TState>(
     });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('projection-v2-occ:')) return conflict(error.message);
+    if (isMongoPhysicalCapacityError(error)) {
+      return {
+        version: 1,
+        status: 'rejected',
+        category: 'terminal',
+        retryable: false,
+        reason: 'MongoDB physical BSON/document capacity exceeded'
+      };
+    }
     throw error;
   }
 };
