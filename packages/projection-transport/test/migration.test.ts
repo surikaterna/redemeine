@@ -1,3 +1,6 @@
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from '@jest/globals';
 import type {
   ProjectionCompleteCommitRangeReader,
@@ -7,6 +10,7 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   assertRuntimeMatchesManifest,
+  inspectProjectionMigrationRuntimeArtifact,
   type ProjectionMigrationActivationPort,
   ProjectionMigrationEngine,
   type ProjectionMigrationManifest,
@@ -18,9 +22,10 @@ import {
   parseProjectionMigrationRuntimeModule,
   projectionDefinitionRegistryDigest,
   projectionGenerationCollectionsAreIsolated,
+  projectionMigrationDefinitionHash,
   projectionMigrationDigest,
   projectionMigrationManifestPayload,
-  projectionMigrationRuntimeRegistryDigest,
+  projectionMigrationRuntimeConfigurationDigest,
   projectionMigrationSourceDescriptorDigest,
   projectionQueueRegistryDigest,
   replayProjectionMigrationRanges,
@@ -56,8 +61,32 @@ function commitDigest(commits: readonly ProjectionSourceCommit[]): ProjectionSha
   return stream.finish().digest;
 }
 
-function registry(queueId: string, generation: string, anchors: Readonly<Record<string, number>>): ProjectionQueueRegistryManifest {
-  const definitions = [{ projectionName: 'accounts', generation, definitionHash: digest(`${queueId}:definition`), sourceSelectors: ['Account'] }];
+function deployment(generation: string, strategy: ProjectionMigrationManifest['destinationStrategies'][string] = 'none') {
+  const deduplication = strategy === 'none' ? { strategy, duplicateEffects: 'acknowledged' as const, reason: 'migration' } : { strategy };
+  return {
+    projectionName: 'accounts',
+    generation,
+    from: { aggregateType: 'Account', aggregateKeys: ['aggregateType'], aggregatePureKeys: [], aggregateEventProjectorKeys: [], handlerKeys: ['Changed'] },
+    joins: [],
+    reverseSubscriptions: [],
+    subscriptions: [],
+    deduplication,
+    hookKeys: [],
+    identityConfiguration: { mode: 'aggregateId' }
+  };
+}
+
+function registry(
+  queueId: string,
+  generation: string,
+  anchors: Readonly<Record<string, number>>,
+  strategy: ProjectionMigrationManifest['destinationStrategies'][string] = 'none',
+  artifactDigest: ProjectionSha256Digest = digest(`${queueId}:code`)
+): ProjectionQueueRegistryManifest {
+  const configuration = deployment(generation, strategy);
+  const definitions = [
+    { projectionName: 'accounts', generation, definitionHash: projectionMigrationDefinitionHash(configuration, artifactDigest), sourceSelectors: ['Account'] }
+  ];
   const payload = {
     version: 1 as const,
     queueId,
@@ -65,8 +94,8 @@ function registry(queueId: string, generation: string, anchors: Readonly<Record<
     identity: {
       version: 1 as const,
       normalizedDefinitionRegistryDigest: projectionDefinitionRegistryDigest(definitions),
-      normalizedRuntimeConfigurationDigest: digest(`${queueId}:config`),
-      executableCodeArtifactDigest: digest(`${queueId}:code`)
+      normalizedRuntimeConfigurationDigest: projectionMigrationRuntimeConfigurationDigest([configuration]),
+      executableCodeArtifactDigest: artifactDigest
     },
     definitions,
     sourceStartAnchors: anchors
@@ -87,8 +116,8 @@ function manifest(strategy: ProjectionMigrationManifest['destinationStrategies']
     newGeneration: 'v2',
     destinationStrategies: { accounts: strategy },
     streamIdentity: 'immutable_uuid_no_reset' as const,
-    oldRegistry: registry('old-queue', 'v1', { [SOURCE_A]: 0, [SOURCE_B]: 0 }),
-    newRegistry: registry('new-queue', 'v2', { [SOURCE_A]: 2, [SOURCE_B]: 1 }),
+    oldRegistry: registry('old-queue', 'v1', { [SOURCE_A]: 0, [SOURCE_B]: 0 }, strategy),
+    newRegistry: registry('new-queue', 'v2', { [SOURCE_A]: 2, [SOURCE_B]: 1 }, strategy),
     sourceRanges: ranges,
     authoritativeSourceDigest: projectionMigrationSourceDescriptorDigest(ranges)
   };
@@ -254,34 +283,99 @@ describe('P1-r9 projection migration', () => {
     expect(applies).toBe(2);
   });
 
-  it('validates canonical runtime identity and detects same-name handler artifact changes', () => {
+  it('recomputes full definition identity and rejects stale declarations or artifact bytes', () => {
     const registry = manifest().newRegistry;
-    const definition = {
-      ...registry.definitions[0]!,
-      deduplication: { strategy: 'none' as const, duplicateEffects: 'acknowledged' as const, reason: 'migration' }
-    };
-    const payload = {
-      version: 1 as const,
-      queueId: registry.queueId,
-      registryGeneration: registry.registryGeneration,
-      identity: registry.identity,
-      definitions: [definition]
-    };
-    const migrationRuntimeIdentity = { ...payload, registryDigest: projectionMigrationRuntimeRegistryDigest(payload) };
     const executable = {
       generation: 'v2',
-      definition: { name: 'accounts', fromStream: { aggregate: { aggregateType: 'Account' } }, deduplication: definition.deduplication }
+      definition: {
+        name: 'accounts',
+        fromStream: { aggregate: { aggregateType: 'Account' }, handlers: { Changed() {} } },
+        joinStreams: [],
+        reverseSubscribeStreams: [],
+        initialState() {},
+        identity() {
+          return 'id';
+        },
+        subscriptions: [],
+        deduplication: { strategy: 'none' as const, duplicateEffects: 'acknowledged' as const, reason: 'migration' }
+      }
     };
-    const parsed = parseProjectionMigrationRuntimeModule({ migrationDefinitions: [executable], migrationRuntimeIdentity });
+    const declared = deployment('v2');
+    const parsed = parseProjectionMigrationRuntimeModule({ migrationDefinitions: [executable], migrationDeploymentDefinitions: [declared] });
+    expect(() => assertRuntimeMatchesManifest(parsed, registry, { accounts: 'none' }, registry.identity.executableCodeArtifactDigest)).not.toThrow();
+    expect(() => assertRuntimeMatchesManifest(parsed, registry, { accounts: 'none' }, digest('changed-handler-artifact'))).toThrow('bundle identity');
     expect(() =>
-      assertRuntimeMatchesManifest(parsed.migrationRuntimeIdentity, registry, { accounts: 'none' }, registry.identity.executableCodeArtifactDigest)
-    ).not.toThrow();
-    expect(() => assertRuntimeMatchesManifest(parsed.migrationRuntimeIdentity, registry, { accounts: 'none' }, digest('changed-handler-artifact'))).toThrow(
-      'artifact digest mismatch'
-    );
+      parseProjectionMigrationRuntimeModule({
+        migrationDefinitions: [
+          { ...executable, definition: { ...executable.definition, joinStreams: [{ aggregate: { aggregateType: 'Joined' }, handlers: { Joined() {} } }] } }
+        ],
+        migrationDeploymentDefinitions: [declared]
+      })
+    ).toThrow('normalized deployment');
     expect(() =>
-      parseProjectionMigrationRuntimeModule({ migrationDefinitions: [executable], migrationRuntimeIdentity: { ...migrationRuntimeIdentity, unchecked: true } })
-    ).toThrow('Invalid migrationRuntimeIdentity');
+      parseProjectionMigrationRuntimeModule({
+        migrationDefinitions: [
+          {
+            ...executable,
+            definition: { ...executable.definition, reverseSubscribeStreams: [{ aggregate: { aggregateType: 'Reverse' }, handlers: { Reversed() {} } }] }
+          }
+        ],
+        migrationDeploymentDefinitions: [declared]
+      })
+    ).toThrow('normalized deployment');
+    expect(() =>
+      parseProjectionMigrationRuntimeModule({
+        migrationDefinitions: [
+          { ...executable, definition: { ...executable.definition, fromStream: { ...executable.definition.fromStream, handlers: { Other() {} } } } }
+        ],
+        migrationDeploymentDefinitions: [declared]
+      })
+    ).toThrow('normalized deployment');
+  });
+
+  it('hashes immutable bundle bytes before import and rejects changed code, mutable files, and symlinks', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'redemeine-runtime-artifact-'));
+    const source = (amount: number) =>
+      `const definition={name:'accounts',fromStream:{aggregate:{aggregateType:'Account'},handlers:{Changed(){return ${amount}}}},joinStreams:[],reverseSubscribeStreams:[],initialState(){},identity(){return'id'},subscriptions:[],deduplication:{strategy:'none',duplicateEffects:'acknowledged',reason:'migration'}};export const migrationDefinitions=[{generation:'v2',definition}];export const migrationDeploymentDefinitions=[{projectionName:'accounts',generation:'v2',from:{aggregateType:'Account',aggregateKeys:['aggregateType'],aggregatePureKeys:[],aggregateEventProjectorKeys:[],handlerKeys:['Changed']},joins:[],reverseSubscriptions:[],subscriptions:[],deduplication:{strategy:'none',duplicateEffects:'acknowledged',reason:'migration'},hookKeys:[],identityConfiguration:{mode:'aggregateId'}}];`;
+    const originalPath = join(directory, 'original.mjs');
+    const changedPath = join(directory, 'changed.mjs');
+    try {
+      await writeFile(originalPath, source(1));
+      await expect(inspectProjectionMigrationRuntimeArtifact(originalPath)).rejects.toThrow('immutable');
+      await chmod(originalPath, 0o444);
+      await writeFile(changedPath, source(2));
+      await chmod(changedPath, 0o444);
+      const original = await inspectProjectionMigrationRuntimeArtifact(originalPath);
+      const persisted = registry('new-queue', 'v2', { [SOURCE_A]: 2, [SOURCE_B]: 1 }, 'none', original.digest);
+      const parsed = parseProjectionMigrationRuntimeModule({
+        migrationDefinitions: [
+          {
+            generation: 'v2',
+            definition: {
+              name: 'accounts',
+              fromStream: { aggregate: { aggregateType: 'Account' }, handlers: { Changed() {} } },
+              joinStreams: [],
+              reverseSubscribeStreams: [],
+              initialState() {},
+              identity() {
+                return 'id';
+              },
+              subscriptions: [],
+              deduplication: { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'migration' }
+            }
+          }
+        ],
+        migrationDeploymentDefinitions: [deployment('v2')]
+      });
+      expect(() => assertRuntimeMatchesManifest(parsed, persisted, { accounts: 'none' }, original.digest)).not.toThrow();
+      const changed = await inspectProjectionMigrationRuntimeArtifact(changedPath);
+      expect(() => assertRuntimeMatchesManifest(parsed, persisted, { accounts: 'none' }, changed.digest)).toThrow('bundle identity');
+      const link = join(directory, 'linked.mjs');
+      await symlink(originalPath, link);
+      await expect(inspectProjectionMigrationRuntimeArtifact(link)).rejects.toThrow('non-symlink');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('rejects every old/new and intra-generation collection alias', () => {

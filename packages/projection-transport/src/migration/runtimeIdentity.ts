@@ -1,143 +1,213 @@
 import {
-  isProjectionSha256Digest,
   type ProjectionDeduplicationStrategy,
   type ProjectionQueueRegistryManifest,
+  type ProjectionRegistryDefinitionManifest,
   type ProjectionRegistryManifestIdentity
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionCommitRegistryDefinition } from '@redemeine/projection-worker-core';
 import { projectionMigrationDigest } from './digest';
 import type { ProjectionMigrationStrategy } from './types';
 
-export interface ProjectionMigrationRuntimeDefinition {
+export interface ProjectionMigrationStreamConfiguration {
+  readonly aggregateType: string;
+  readonly aggregateKeys: readonly string[];
+  readonly aggregatePureKeys: readonly string[];
+  readonly aggregateEventProjectorKeys: readonly string[];
+  readonly handlerKeys: readonly string[];
+}
+export interface ProjectionMigrationDeploymentDefinition {
   readonly projectionName: string;
   readonly generation: string;
-  readonly definitionHash: `sha256:${string}`;
-  readonly sourceSelectors: readonly string[];
+  readonly from: ProjectionMigrationStreamConfiguration;
+  readonly joins: readonly ProjectionMigrationStreamConfiguration[];
+  readonly reverseSubscriptions: readonly ProjectionMigrationStreamConfiguration[];
+  readonly subscriptions: readonly { aggregateType: string; aggregateId: string }[];
   readonly deduplication: ProjectionDeduplicationStrategy;
+  readonly hookKeys: readonly string[];
+  readonly identityConfiguration: unknown;
 }
-
-export interface ProjectionMigrationRuntimeIdentity {
-  readonly version: 1;
-  readonly queueId: string;
-  readonly registryGeneration: string;
-  readonly identity: ProjectionRegistryManifestIdentity;
-  readonly definitions: readonly ProjectionMigrationRuntimeDefinition[];
-  readonly registryDigest: `sha256:${string}`;
-}
-
 export interface ProjectionMigrationRuntimeModule {
   readonly migrationDefinitions: readonly ProjectionCommitRegistryDefinition<unknown>[];
-  readonly migrationRuntimeIdentity: ProjectionMigrationRuntimeIdentity;
+  readonly migrationDeploymentDefinitions: readonly ProjectionMigrationDeploymentDefinition[];
 }
 
-const ROOT_KEYS = ['version', 'queueId', 'registryGeneration', 'identity', 'definitions', 'registryDigest'] as const;
-const IDENTITY_KEYS = ['version', 'normalizedDefinitionRegistryDigest', 'normalizedRuntimeConfigurationDigest', 'executableCodeArtifactDigest'] as const;
-const DEFINITION_KEYS = ['projectionName', 'generation', 'definitionHash', 'sourceSelectors', 'deduplication'] as const;
-
-export function projectionDefinitionRegistryDigest(definitions: ProjectionQueueRegistryManifest['definitions']): `sha256:${string}` {
+export function projectionDefinitionRegistryDigest(definitions: readonly ProjectionRegistryDefinitionManifest[]): `sha256:${string}` {
   return projectionMigrationDigest(definitions, 'redemeine:projection:definition-registry:v1');
 }
-
 export function projectionQueueRegistryDigest(manifest: Omit<ProjectionQueueRegistryManifest, 'manifestId'>): `sha256:${string}` {
   return projectionMigrationDigest(manifest, 'redemeine:projection:queue-registry:v1');
 }
-
-export function projectionMigrationRuntimeRegistryDigest(identity: Omit<ProjectionMigrationRuntimeIdentity, 'registryDigest'>): `sha256:${string}` {
-  return projectionMigrationDigest(identity, 'redemeine:migration:runtime-registry:v1');
+export function projectionMigrationDefinitionHash(
+  configuration: ProjectionMigrationDeploymentDefinition,
+  artifactDigest: `sha256:${string}`
+): `sha256:${string}` {
+  return projectionMigrationDigest({ configuration, artifactDigest }, 'redemeine:migration:definition:v2');
+}
+export function projectionMigrationRuntimeConfigurationDigest(configurations: readonly ProjectionMigrationDeploymentDefinition[]): `sha256:${string}` {
+  return projectionMigrationDigest(configurations, 'redemeine:migration:runtime-configuration:v2');
 }
 
 export function parseProjectionMigrationRuntimeModule(value: unknown): ProjectionMigrationRuntimeModule {
-  if (!moduleRecord(value) || unknownKeys(value, ['migrationDefinitions', 'migrationRuntimeIdentity']).length) {
-    throw new Error('Runtime module must export only canonical migration material.');
+  if (!moduleRecord(value) || unknownKeys(value, ['migrationDefinitions', 'migrationDeploymentDefinitions']).length) {
+    throw new Error('Runtime bundle must export only migrationDefinitions and migrationDeploymentDefinitions.');
   }
-  if (!Array.isArray(value.migrationDefinitions)) throw new Error('Runtime module must export migrationDefinitions.');
-  const identity = parseIdentity(value.migrationRuntimeIdentity);
-  assertExecutableDefinitions(value.migrationDefinitions, identity);
-  return { migrationDefinitions: value.migrationDefinitions, migrationRuntimeIdentity: identity };
+  if (!Array.isArray(value.migrationDefinitions) || !Array.isArray(value.migrationDeploymentDefinitions)) {
+    throw new Error('Runtime bundle exports are incomplete.');
+  }
+  const declared = value.migrationDeploymentDefinitions.map(parseDeploymentDefinition);
+  assertExecutableDefinitions(value.migrationDefinitions, declared);
+  return { migrationDefinitions: value.migrationDefinitions, migrationDeploymentDefinitions: declared };
 }
 
 export function assertRuntimeMatchesManifest(
-  runtime: ProjectionMigrationRuntimeIdentity,
+  runtime: ProjectionMigrationRuntimeModule,
   manifest: ProjectionQueueRegistryManifest,
   strategies: Readonly<Record<string, ProjectionMigrationStrategy>>,
-  launchedArtifactDigest: string
+  artifactDigest: `sha256:${string}`
 ): void {
-  const declared = runtime.definitions.map(({ deduplication: _, ...definition }) => definition);
+  const definitions = runtime.migrationDeploymentDefinitions.map<ProjectionRegistryDefinitionManifest>((configuration) => ({
+    projectionName: configuration.projectionName,
+    generation: configuration.generation,
+    definitionHash: projectionMigrationDefinitionHash(configuration, artifactDigest),
+    sourceSelectors: sourceSelectors(configuration)
+  }));
+  const identity: ProjectionRegistryManifestIdentity = {
+    version: 1,
+    normalizedDefinitionRegistryDigest: projectionDefinitionRegistryDigest(definitions),
+    normalizedRuntimeConfigurationDigest: projectionMigrationRuntimeConfigurationDigest(runtime.migrationDeploymentDefinitions),
+    executableCodeArtifactDigest: artifactDigest
+  };
   if (
-    runtime.queueId !== manifest.queueId ||
-    runtime.registryGeneration !== manifest.registryGeneration ||
-    !equal(runtime.identity, manifest.identity) ||
-    !equal(declared, manifest.definitions) ||
-    runtime.registryDigest !== projectionMigrationRuntimeRegistryDigest(withoutDigest(runtime)) ||
-    manifest.manifestId !== projectionQueueRegistryDigest(withoutManifestId(manifest)) ||
-    manifest.identity.normalizedDefinitionRegistryDigest !== projectionDefinitionRegistryDigest(manifest.definitions)
+    !equal(definitions, manifest.definitions) ||
+    !equal(identity, manifest.identity) ||
+    manifest.manifestId !== projectionQueueRegistryDigest(withoutManifestId(manifest))
   ) {
-    throw new Error('Runtime registry identity does not match the canonical immutable manifest.');
+    throw new Error('Runtime bundle identity does not match the canonical immutable manifest.');
   }
-  if (launchedArtifactDigest !== runtime.identity.executableCodeArtifactDigest) throw new Error('Launcher executable artifact digest mismatch.');
-  const runtimeStrategies = Object.fromEntries(runtime.definitions.map((entry) => [entry.projectionName, entry.deduplication.strategy]));
-  if (!equal(runtimeStrategies, strategies)) throw new Error('Runtime deduplication configuration does not match the migration manifest.');
+  const actualStrategies = Object.fromEntries(runtime.migrationDeploymentDefinitions.map((entry) => [entry.projectionName, entry.deduplication.strategy]));
+  if (!equal(actualStrategies, strategies)) throw new Error('Runtime deduplication configuration does not match the migration manifest.');
 }
 
-function parseIdentity(value: unknown): ProjectionMigrationRuntimeIdentity {
-  if (
-    !record(value) ||
-    unknownKeys(value, ROOT_KEYS).length ||
-    value.version !== 1 ||
-    typeof value.queueId !== 'string' ||
-    typeof value.registryGeneration !== 'string' ||
-    !isProjectionSha256Digest(value.registryDigest)
-  )
-    throw new Error('Invalid migrationRuntimeIdentity.');
-  const identity = value.identity;
-  const definitions = value.definitions;
-  if (
-    !record(identity) ||
-    unknownKeys(identity, IDENTITY_KEYS).length ||
-    identity.version !== 1 ||
-    !isProjectionSha256Digest(identity.normalizedDefinitionRegistryDigest) ||
-    !isProjectionSha256Digest(identity.normalizedRuntimeConfigurationDigest) ||
-    !isProjectionSha256Digest(identity.executableCodeArtifactDigest) ||
-    !Array.isArray(definitions)
-  )
-    throw new Error('Invalid runtime identity material.');
-  const parsedDefinitions = definitions.map(validateDefinition);
+export function normalizeProjectionMigrationDefinitions<TState>(
+  values: readonly ProjectionCommitRegistryDefinition<TState>[],
+  identityConfigurations: readonly unknown[]
+): readonly ProjectionMigrationDeploymentDefinition[] {
+  if (values.length !== identityConfigurations.length) throw new Error('Identity configuration coverage mismatch.');
+  return values.map((entry, index) => normalizeDefinition(entry, identityConfigurations[index]));
+}
+
+function normalizeDefinition<TState>(
+  entry: ProjectionCommitRegistryDefinition<TState>,
+  identityConfiguration: unknown
+): ProjectionMigrationDeploymentDefinition {
+  const definition = entry.definition;
   return {
-    version: 1,
-    queueId: value.queueId,
-    registryGeneration: value.registryGeneration,
-    identity: {
-      version: 1,
-      normalizedDefinitionRegistryDigest: identity.normalizedDefinitionRegistryDigest,
-      normalizedRuntimeConfigurationDigest: identity.normalizedRuntimeConfigurationDigest,
-      executableCodeArtifactDigest: identity.executableCodeArtifactDigest
-    },
-    definitions: parsedDefinitions,
-    registryDigest: value.registryDigest
+    projectionName: definition.name,
+    generation: entry.generation,
+    from: normalizeStream(definition.fromStream),
+    joins: (definition.joinStreams ?? []).map(normalizeStream),
+    reverseSubscriptions: (definition.reverseSubscribeStreams ?? []).map(normalizeStream),
+    subscriptions: definition.subscriptions.map((value) => ({ aggregateType: value.aggregate.aggregateType, aggregateId: value.aggregateId })),
+    deduplication: definition.deduplication,
+    hookKeys: Object.keys(definition.hooks ?? {}).sort(),
+    identityConfiguration
   };
 }
+function normalizeStream(value: { aggregate: { aggregateType: string }; handlers: Record<string, unknown> }): ProjectionMigrationStreamConfiguration {
+  const aggregate = value.aggregate as { aggregateType: string; pure?: unknown };
+  const pure = record(aggregate.pure) ? aggregate.pure : {};
+  const projectors = record(pure.eventProjectors) ? pure.eventProjectors : {};
+  return {
+    aggregateType: aggregate.aggregateType,
+    aggregateKeys: Object.keys(aggregate).sort(),
+    aggregatePureKeys: Object.keys(pure).sort(),
+    aggregateEventProjectorKeys: Object.keys(projectors).sort(),
+    handlerKeys: Object.keys(value.handlers).sort()
+  };
+}
+function sourceSelectors(value: ProjectionMigrationDeploymentDefinition): readonly string[] {
+  return [
+    ...new Set([
+      value.from.aggregateType,
+      ...value.joins.map((entry) => entry.aggregateType),
+      ...value.reverseSubscriptions.map((entry) => entry.aggregateType)
+    ])
+  ].sort();
+}
 
-function validateDefinition(value: unknown): ProjectionMigrationRuntimeDefinition {
+function assertExecutableDefinitions(
+  values: readonly unknown[],
+  declared: readonly ProjectionMigrationDeploymentDefinition[]
+): asserts values is readonly ProjectionCommitRegistryDefinition<unknown>[] {
+  if (values.length !== declared.length) throw new Error('Runtime executable definition coverage mismatch.');
+  if (!values.every(isExecutableDefinition)) throw new Error('Invalid executable runtime definition.');
+  const normalized = normalizeProjectionMigrationDefinitions(
+    values,
+    declared.map((entry) => entry.identityConfiguration)
+  );
+  if (!equal(normalized, declared)) throw new Error('Executable definitions do not match normalized deployment configuration.');
+}
+
+function parseDeploymentDefinition(value: unknown): ProjectionMigrationDeploymentDefinition {
+  const keys = ['projectionName', 'generation', 'from', 'joins', 'reverseSubscriptions', 'subscriptions', 'deduplication', 'hookKeys', 'identityConfiguration'];
   if (
     !record(value) ||
-    unknownKeys(value, DEFINITION_KEYS).length ||
+    unknownKeys(value, keys).length ||
     typeof value.projectionName !== 'string' ||
     typeof value.generation !== 'string' ||
-    !isProjectionSha256Digest(value.definitionHash) ||
-    !Array.isArray(value.sourceSelectors) ||
-    !value.sourceSelectors.every((selector) => typeof selector === 'string')
+    !Array.isArray(value.joins) ||
+    !Array.isArray(value.reverseSubscriptions) ||
+    !Array.isArray(value.subscriptions) ||
+    !Array.isArray(value.hookKeys) ||
+    !value.hookKeys.every(isString)
   )
-    throw new Error('Invalid runtime definition identity.');
-  const deduplication = parseDeduplication(value.deduplication);
+    throw new Error('Invalid deployment definition.');
+  assertCanonicalConfiguration(value.identityConfiguration);
   return {
     projectionName: value.projectionName,
     generation: value.generation,
-    definitionHash: value.definitionHash,
-    sourceSelectors: value.sourceSelectors,
-    deduplication
+    from: parseStream(value.from),
+    joins: value.joins.map(parseStream),
+    reverseSubscriptions: value.reverseSubscriptions.map(parseStream),
+    subscriptions: value.subscriptions.map(parseSubscription),
+    deduplication: parseDeduplication(value.deduplication),
+    hookKeys: [...value.hookKeys].sort(),
+    identityConfiguration: value.identityConfiguration
   };
 }
-
+function parseStream(value: unknown): ProjectionMigrationStreamConfiguration {
+  if (
+    !record(value) ||
+    unknownKeys(value, ['aggregateType', 'aggregateKeys', 'aggregatePureKeys', 'aggregateEventProjectorKeys', 'handlerKeys']).length ||
+    typeof value.aggregateType !== 'string' ||
+    !Array.isArray(value.aggregateKeys) ||
+    !value.aggregateKeys.every(isString) ||
+    !Array.isArray(value.aggregatePureKeys) ||
+    !value.aggregatePureKeys.every(isString) ||
+    !Array.isArray(value.aggregateEventProjectorKeys) ||
+    !value.aggregateEventProjectorKeys.every(isString) ||
+    !Array.isArray(value.handlerKeys) ||
+    !value.handlerKeys.every(isString)
+  )
+    throw new Error('Invalid deployment stream.');
+  return {
+    aggregateType: value.aggregateType,
+    aggregateKeys: [...value.aggregateKeys].sort(),
+    aggregatePureKeys: [...value.aggregatePureKeys].sort(),
+    aggregateEventProjectorKeys: [...value.aggregateEventProjectorKeys].sort(),
+    handlerKeys: [...value.handlerKeys].sort()
+  };
+}
+function parseSubscription(value: unknown): { aggregateType: string; aggregateId: string } {
+  if (
+    !record(value) ||
+    unknownKeys(value, ['aggregateType', 'aggregateId']).length ||
+    typeof value.aggregateType !== 'string' ||
+    typeof value.aggregateId !== 'string'
+  )
+    throw new Error('Invalid deployment subscription.');
+  return { aggregateType: value.aggregateType, aggregateId: value.aggregateId };
+}
 function parseDeduplication(value: unknown): ProjectionDeduplicationStrategy {
   if (!record(value)) throw new Error('Invalid runtime deduplication identity.');
   if (
@@ -148,51 +218,22 @@ function parseDeduplication(value: unknown): ProjectionDeduplicationStrategy {
   )
     return { strategy: 'none', duplicateEffects: 'acknowledged', reason: value.reason };
   if ((value.strategy === 'in_document' || value.strategy === 'own_record') && !unknownKeys(value, ['strategy', 'warnings']).length) {
-    const warnings = parseWarnings(value.warnings);
-    return warnings ? { strategy: value.strategy, warnings } : { strategy: value.strategy };
+    if (value.warnings === undefined) return { strategy: value.strategy };
+    if (!record(value.warnings) || unknownKeys(value.warnings, ['warnAtSourceCount', 'warnAtMetadataBytes']).length) throw new Error('Invalid warnings.');
+    if (
+      (value.warnings.warnAtSourceCount !== undefined && !Number.isSafeInteger(value.warnings.warnAtSourceCount)) ||
+      (value.warnings.warnAtMetadataBytes !== undefined && !Number.isSafeInteger(value.warnings.warnAtMetadataBytes))
+    )
+      throw new Error('Invalid warnings.');
+    return {
+      strategy: value.strategy,
+      warnings: {
+        ...(Number.isSafeInteger(value.warnings.warnAtSourceCount) ? { warnAtSourceCount: Number(value.warnings.warnAtSourceCount) } : {}),
+        ...(Number.isSafeInteger(value.warnings.warnAtMetadataBytes) ? { warnAtMetadataBytes: Number(value.warnings.warnAtMetadataBytes) } : {})
+      }
+    };
   }
   throw new Error('Invalid runtime deduplication identity.');
-}
-
-function parseWarnings(value: unknown): { warnAtSourceCount?: number; warnAtMetadataBytes?: number } | undefined {
-  if (value === undefined) return undefined;
-  if (!record(value) || unknownKeys(value, ['warnAtSourceCount', 'warnAtMetadataBytes']).length) throw new Error('Invalid deduplication warnings.');
-  const result: { warnAtSourceCount?: number; warnAtMetadataBytes?: number } = {};
-  if (value.warnAtSourceCount !== undefined) {
-    if (!Number.isSafeInteger(value.warnAtSourceCount)) throw new Error('Invalid deduplication warnings.');
-    result.warnAtSourceCount = Number(value.warnAtSourceCount);
-  }
-  if (value.warnAtMetadataBytes !== undefined) {
-    if (!Number.isSafeInteger(value.warnAtMetadataBytes)) throw new Error('Invalid deduplication warnings.');
-    result.warnAtMetadataBytes = Number(value.warnAtMetadataBytes);
-  }
-  return result;
-}
-
-function assertExecutableDefinitions(
-  values: readonly unknown[],
-  identity: ProjectionMigrationRuntimeIdentity
-): asserts values is readonly ProjectionCommitRegistryDefinition<unknown>[] {
-  if (values.length !== identity.definitions.length) throw new Error('Runtime executable definition coverage mismatch.');
-  for (const [index, value] of values.entries()) {
-    if (!record(value) || typeof value.generation !== 'string' || !record(value.definition)) throw new Error('Invalid executable runtime definition.');
-    const expected = identity.definitions[index]!;
-    const definition = value.definition;
-    const selector = record(definition.fromStream) && record(definition.fromStream.aggregate) ? definition.fromStream.aggregate.aggregateType : undefined;
-    if (
-      value.generation !== expected.generation ||
-      definition.name !== expected.projectionName ||
-      !equal([selector], expected.sourceSelectors) ||
-      !equal(definition.deduplication, expected.deduplication)
-    ) {
-      throw new Error('Executable runtime definitions do not match declared identity material.');
-    }
-  }
-}
-
-function withoutDigest(value: ProjectionMigrationRuntimeIdentity): Omit<ProjectionMigrationRuntimeIdentity, 'registryDigest'> {
-  const { registryDigest: _, ...payload } = value;
-  return payload;
 }
 function withoutManifestId(value: ProjectionQueueRegistryManifest): Omit<ProjectionQueueRegistryManifest, 'manifestId'> {
   const { manifestId: _, ...payload } = value;
@@ -211,4 +252,29 @@ function unknownKeys(value: Record<string, unknown>, allowed: readonly string[])
 }
 function equal(left: unknown, right: unknown): boolean {
   return projectionMigrationDigest(left) === projectionMigrationDigest(right);
+}
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+function isExecutableDefinition(value: unknown): value is ProjectionCommitRegistryDefinition<unknown> {
+  return (
+    record(value) &&
+    typeof value.generation === 'string' &&
+    record(value.definition) &&
+    typeof value.definition.name === 'string' &&
+    record(value.definition.fromStream) &&
+    typeof value.definition.initialState === 'function' &&
+    typeof value.definition.identity === 'function' &&
+    Array.isArray(value.definition.subscriptions) &&
+    record(value.definition.deduplication)
+  );
+}
+function assertCanonicalConfiguration(value: unknown): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') return;
+  if (Array.isArray(value)) {
+    for (const entry of value) assertCanonicalConfiguration(entry);
+    return;
+  }
+  if (!record(value)) throw new Error('Identity configuration must be canonical data.');
+  for (const entry of Object.values(value)) assertCanonicalConfiguration(entry);
 }

@@ -1,13 +1,15 @@
-import type { ProjectionCommitDefinition, ProjectionQueueRegistryManifest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionQueueRegistryManifest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type { Channel, ConsumeMessage } from 'amqplib';
 import type { IBaseEvent, ICommit } from 'tapeworm';
 import type { ProjectionRabbitChannel, RabbitDelivery } from '../src';
 import {
-  type ProjectionMigrationRuntimeIdentity,
+  normalizeProjectionMigrationDefinitions,
   projectionDefinitionRegistryDigest,
-  projectionMigrationRuntimeRegistryDigest,
+  projectionMigrationDefinitionHash,
+  projectionMigrationRuntimeConfigurationDigest,
   projectionQueueRegistryDigest
 } from '../src';
+import { identityConfigurations, runtimeDefinitions } from './migrationRuntimeDefinitions';
 
 export const SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 export const PARTITION_ID = 'orders';
@@ -48,50 +50,22 @@ export function tapewormCommit(sequence: number, amounts: readonly number[]): IC
   };
 }
 
-function definition(
-  name: string,
-  prefix: string,
-  deduplication: ProjectionCommitDefinition<StackState>['deduplication'],
-  aggregateType = 'Order'
-): ProjectionCommitDefinition<StackState> {
-  return {
-    name,
-    fromStream: {
-      aggregate: { aggregateType, initialState: {}, pure: { eventProjectors: {} } },
-      handlers: {
-        Changed(state, event, context) {
-          state.count += Number(event.payload.amount);
-          state.seen.push(Number(event.payload.amount));
-          context.subscribeTo({ aggregateType: `Linked${prefix}` }, event.aggregateId);
-        }
-      }
-    },
-    initialState: () => ({ count: 0, seen: [] }),
-    identity: (event) => `${prefix}:${event.aggregateId}`,
-    subscriptions: [],
-    deduplication
-  };
-}
-
 export function stackDefinitions() {
-  return [
-    { generation: 'v1', definition: definition('P-own', 'P', { strategy: 'own_record' }) },
-    { generation: 'v1', definition: definition('N-none', 'N', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'crash matrix' }) },
-    { generation: 'v1', definition: definition('Q-inline', 'Q', { strategy: 'in_document' }) },
-    { generation: 'v1', definition: definition('O-own-no-target', 'O', { strategy: 'own_record' }, 'Other') }
-  ] as const;
+  return runtimeDefinitions('v1');
 }
 
 export function stackManifest(
   queue: string,
   generation = 'v1',
-  sourceStartAnchors: Readonly<Record<string, number>> = { [SOURCE_ID]: 0 }
+  sourceStartAnchors: Readonly<Record<string, number>> = { [SOURCE_ID]: 0 },
+  artifactDigest: `sha256:${string}` = HASH
 ): ProjectionQueueRegistryManifest {
-  const definitions = stackDefinitions().map(({ definition }) => ({
-    projectionName: definition.name,
+  const configurations = normalizeProjectionMigrationDefinitions(runtimeDefinitions(generation), identityConfigurations);
+  const definitions = configurations.map((configuration) => ({
+    projectionName: configuration.projectionName,
     generation,
-    definitionHash: HASH,
-    sourceSelectors: [definition.fromStream.aggregate.aggregateType]
+    definitionHash: projectionMigrationDefinitionHash(configuration, artifactDigest),
+    sourceSelectors: [configuration.from.aggregateType]
   }));
   const payload = {
     version: 1 as const,
@@ -100,26 +74,13 @@ export function stackManifest(
     identity: {
       version: 1 as const,
       normalizedDefinitionRegistryDigest: projectionDefinitionRegistryDigest(definitions),
-      normalizedRuntimeConfigurationDigest: HASH,
-      executableCodeArtifactDigest: HASH
+      normalizedRuntimeConfigurationDigest: projectionMigrationRuntimeConfigurationDigest(configurations),
+      executableCodeArtifactDigest: artifactDigest
     },
     definitions,
     sourceStartAnchors
   };
   return { ...payload, manifestId: projectionQueueRegistryDigest(payload) };
-}
-
-export function stackRuntimeIdentity(queue: string, generation: string): ProjectionMigrationRuntimeIdentity {
-  const manifest = stackManifest(queue, generation);
-  const definitions = stackDefinitions().map(({ definition }) => ({
-    projectionName: definition.name,
-    generation,
-    definitionHash: HASH,
-    sourceSelectors: [definition.fromStream.aggregate.aggregateType],
-    deduplication: definition.deduplication
-  }));
-  const payload = { version: 1 as const, queueId: queue, registryGeneration: generation, identity: manifest.identity, definitions };
-  return { ...payload, registryDigest: projectionMigrationRuntimeRegistryDigest(payload) };
 }
 
 export function adaptChannel(channel: Channel): ProjectionRabbitChannel {

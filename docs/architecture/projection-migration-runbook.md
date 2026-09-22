@@ -32,11 +32,14 @@ All commands require these options (equivalent uppercase underscore environment 
 --links projection_v2_links
 --progress projection_v2_progress
 --migration-receipts projection_v2_migration_receipts
---runtime-module ./dist/projection-migration-runtime.js
---executable-artifact-digest "sha256:$DEPLOYED_ARTIFACT_SHA256"
+--runtime-module ./dist/projection-migration-runtime.bundle.mjs
 ```
 
-The runtime module exports `migrationDefinitions` and `migrationRuntimeIdentity`. The latter contains the canonical ordered definition names, generations, hashes, selectors, deduplication configuration, normalized runtime configuration digest, and executable artifact digest. The CLI validates this unknown-safe export, recomputes its registry digest, compares it with the persisted generation, queue and manifest identities, and requires the launcher-supplied artifact digest to match. A deployment with changed handlers must therefore publish and supply a new artifact digest even when definition names are unchanged. The source collection must have exactly one usable unique `{streamId:1, commitSequence:1}` nonpartial, nonsparse index.
+`--runtime-module` must identify a regular, non-symlink, read-only JavaScript bundle. The bundle must be self-contained: deployment code and its runtime dependencies are bundled rather than resolved transitively at migration time. The CLI resolves the real path, opens and hashes the actual bytes with SHA-256 before import, validates file identity and metadata while reading, and re-hashes after import and after the command. Deployment must place the bundle on an immutable filesystem for the command duration; this does not claim to hash code outside the required self-contained bundle.
+
+The bundle exports `migrationDefinitions` and `migrationDeploymentDefinitions`. The latter declares identity configuration alongside canonical names, generations, source/join/reverse aggregate types, handler key sets, subscriptions, hooks, deduplication options and warning thresholds. The CLI derives the same material from the executable definition objects and rejects stale declarations. Definition hashes bind this normalized configuration to the actual bundle-byte digest; the definition registry, runtime configuration and queue manifest digests are recomputed and compared with persisted generation and queue identities before every phase. There is no caller-supplied executable digest. Changed handler bytes reject even if names and declarations remain unchanged; changed routing or handler configuration rejects even if declarations remain stale. Functions are covered by bundle bytes and are never authenticated with `Function.toString()`.
+
+The source collection must have exactly one usable unique `{streamId:1, commitSequence:1}` nonpartial, nonsparse index.
 
 ## Lifecycle
 

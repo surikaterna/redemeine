@@ -1,4 +1,4 @@
-import { stackDefinitions, stackRuntimeIdentity } from './realStackFixtures';
+import { deploymentDefinitions, runtimeDefinitions } from './migrationRuntimeDefinitions';
 
-export const migrationDefinitions = stackDefinitions().map((entry) => ({ ...entry, generation: 'v2' }));
-export const migrationRuntimeIdentity = stackRuntimeIdentity('migration-new', 'v2');
+export const migrationDefinitions = runtimeDefinitions('v2');
+export const migrationDeploymentDefinitions = deploymentDefinitions('v2');

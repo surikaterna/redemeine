@@ -1,9 +1,8 @@
-import type { ProjectionQueueRegistryBinding, ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
-import { type ClientSession, type Collection, type Document, type MongoClient } from 'mongodb';
+import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
+import { type Collection, type Document } from 'mongodb';
 import type { ProjectionTransportDocument } from '../mongoTransportStore';
 import { ProjectionMigrationStreamingDigest, projectionMigrationDigest } from './digest';
 import type {
-  ProjectionMigrationActivationPort,
   ProjectionMigrationManifest,
   ProjectionMigrationRangeJournal,
   ProjectionMigrationSnapshot,
@@ -45,10 +44,6 @@ export interface ProjectionGenerationCollections {
   links: string;
   progress: string;
   migrationReceipts: string;
-}
-export interface ProjectionMigrationActivationHooks {
-  afterTransactionCommitted?(): void;
-  reconciliationObserved?(): void;
 }
 
 export class MongoProjectionGenerationResolver {
@@ -207,113 +202,6 @@ export class MongoProjectionMigrationSnapshotPort implements ProjectionMigration
   }
 }
 
-export class MongoProjectionMigrationActivationPort implements ProjectionMigrationActivationPort {
-  constructor(
-    private readonly client: MongoClient,
-    private readonly states: Collection<ProjectionMigrationStateDocument | ProjectionMigrationJournalDocument>,
-    private readonly transport: Collection<ProjectionTransportDocument>,
-    private readonly control: Collection<ProjectionGenerationRecord | ProjectionActiveGenerationRecord>,
-    private readonly now: () => string = () => new Date().toISOString(),
-    private readonly hooks: ProjectionMigrationActivationHooks = {}
-  ) {}
-  async activate(manifest: ProjectionMigrationManifest, expected: ProjectionMigrationState): Promise<ProjectionMigrationState | null> {
-    const next: ProjectionMigrationState = { ...expected, revision: expected.revision + 1, phase: 'activated', activatedAt: this.now() };
-    const session = this.client.startSession();
-    let post: ActivationPostState | null = null;
-    try {
-      await session.withTransaction(
-        async () => {
-          post = await this.writeActivation(manifest, expected, next, session);
-        },
-        { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } }
-      );
-      this.hooks.afterTransactionCommitted?.();
-      return next;
-    } catch (error) {
-      if (!hasUnknownLabel(error)) return null;
-      this.hooks.reconciliationObserved?.();
-      return post && (await this.reconcile(post)) ? next : null;
-    } finally {
-      await session.endSession();
-    }
-  }
-  async verifyActive(manifest: ProjectionMigrationManifest): Promise<boolean> {
-    const active = await this.control.findOne({ _id: activeId(manifest.projectionName), kind: 'active' });
-    const binding = await this.transport.findOne({ _id: `binding:${manifest.newRegistry.queueId}`, kind: 'binding' });
-    const expectedActive = {
-      _id: activeId(manifest.projectionName),
-      kind: 'active',
-      projectionName: manifest.projectionName,
-      generation: manifest.newGeneration,
-      queueId: manifest.newRegistry.queueId,
-      manifestDigest: manifest.newRegistry.manifestId,
-      revision: 1
-    };
-    return canonicalEqual(active, expectedActive) && bindingMatches(binding, manifest.newRegistry);
-  }
-  private async writeActivation(
-    manifest: ProjectionMigrationManifest,
-    expected: ProjectionMigrationState,
-    next: ProjectionMigrationState,
-    session: ClientSession
-  ): Promise<ActivationPostState> {
-    const generation = await this.control.findOne({ _id: generationId(manifest.projectionName, manifest.newGeneration), kind: 'generation' }, { session });
-    if (!isGeneration(generation) || !canonicalEqual(generation.manifest, manifest.newRegistry)) throw new Error('immutable generation conflict');
-    const binding: ProjectionQueueRegistryBinding = {
-      queueId: manifest.newRegistry.queueId,
-      manifestId: manifest.newRegistry.manifestId,
-      registryGeneration: manifest.newRegistry.registryGeneration,
-      identity: manifest.newRegistry.identity,
-      boundAt: this.now()
-    };
-    await this.transport.updateOne(
-      { _id: `binding:${manifest.newRegistry.queueId}` },
-      { $setOnInsert: { kind: 'binding', queueBindingId: manifest.newRegistry.queueId, manifest: manifest.newRegistry, binding } },
-      { upsert: true, session }
-    );
-    const storedBinding = await this.transport.findOne({ _id: `binding:${manifest.newRegistry.queueId}`, kind: 'binding' }, { session });
-    if (!bindingMatches(storedBinding, manifest.newRegistry)) throw new Error('immutable binding conflict');
-    const oldActive = {
-      _id: activeId(manifest.projectionName),
-      kind: 'active' as const,
-      projectionName: manifest.projectionName,
-      generation: manifest.oldGeneration,
-      queueId: manifest.oldRegistry.queueId,
-      manifestDigest: manifest.oldRegistry.manifestId,
-      revision: 0
-    };
-    const active = {
-      ...oldActive,
-      generation: manifest.newGeneration,
-      queueId: manifest.newRegistry.queueId,
-      manifestDigest: manifest.newRegistry.manifestId,
-      revision: 1
-    };
-    const pointer = await this.control.replaceOne(oldActive, active, { session });
-    const state = await this.states.replaceOne(
-      { _id: stateId(manifest.migrationId), kind: 'state', revision: expected.revision, manifestDigest: manifest.manifestDigest, phase: 'sources_replayed' },
-      { _id: stateId(manifest.migrationId), kind: 'state', ...next },
-      { session }
-    );
-    if (pointer.modifiedCount !== 1 || state.modifiedCount !== 1) throw new Error('activation CAS conflict');
-    return { state: { _id: stateId(manifest.migrationId), kind: 'state', ...next }, binding: storedBinding, active };
-  }
-  private async reconcile(expected: ActivationPostState): Promise<boolean> {
-    const [state, binding, active] = await Promise.all([
-      this.states.findOne({ _id: expected.state._id, kind: 'state' }),
-      this.transport.findOne({ _id: expected.binding._id, kind: 'binding' }),
-      this.control.findOne({ _id: expected.active._id, kind: 'active' })
-    ]);
-    return canonicalEqual(state, expected.state) && canonicalEqual(binding, expected.binding) && canonicalEqual(active, expected.active);
-  }
-}
-
-interface ActivationPostState {
-  state: ProjectionMigrationStateDocument;
-  binding: ProjectionTransportDocument;
-  active: ProjectionActiveGenerationRecord;
-}
-
 async function digestCursor(collection: Collection<StringDocument>, filter: Document, domain: string): Promise<{ count: number; digest: `sha256:${string}` }> {
   const digest = new ProjectionMigrationStreamingDigest(`redemeine:migration:snapshot:${domain}:v2`);
   for await (const row of collection.find(filter).sort({ _id: 1 }).batchSize(100)) digest.update(row);
@@ -337,9 +225,6 @@ function isActive(value: unknown): value is ProjectionActiveGenerationRecord {
 }
 function mongoCode(error: unknown): number | null {
   return typeof error === 'object' && error !== null && 'code' in error ? Number(error.code) : null;
-}
-function hasUnknownLabel(error: unknown): boolean {
-  return error instanceof Error && (error as Error & { hasErrorLabel?: (label: string) => boolean }).hasErrorLabel?.('UnknownTransactionCommitResult') === true;
 }
 function canonicalEqual(left: unknown, right: unknown): boolean {
   return projectionMigrationDigest(left) === projectionMigrationDigest(right);

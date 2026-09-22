@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { MongoClient } from 'mongodb';
 import EventStore, { type ICommit } from 'tapeworm';
 import MongoTapewormPersistence from 'tapeworm_persistence_store_mongodb';
@@ -21,12 +21,14 @@ import {
   projectionMigrationManifestPayload,
   projectionMigrationSourceDescriptorDigest
 } from '../src';
-import { HASH, PARTITION_ID, SOURCE_ID, type StackEvent, stackDefinitions, stackManifest, tapewormCommit } from './realStackFixtures';
+import { PARTITION_ID, SOURCE_ID, type StackEvent, stackDefinitions, stackManifest, tapewormCommit } from './realStackFixtures';
 
 const sourceB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const uri = required('REDEMEINE_MONGO_URI');
 const evidencePath = required('REDEMEINE_EVIDENCE_PATH');
 const gitSha = required('REDEMEINE_GIT_SHA');
+const runtimeArtifactPath = required('REDEMEINE_RUNTIME_ARTIFACT');
+const runtimeArtifactDigest = required('REDEMEINE_RUNTIME_ARTIFACT_DIGEST') as `sha256:${string}`;
 const databaseName = `redemeine_projection_migration_${Date.now()}`;
 const manifestPath = `/tmp/redemeine-migration-manifest-${process.pid}.json`;
 
@@ -74,7 +76,12 @@ function range(values: readonly ICommit<StackEvent>[]): ProjectionMigrationSourc
 
 function buildManifest(a: readonly ICommit<StackEvent>[], b: readonly ICommit<StackEvent>[]): ProjectionMigrationManifest {
   const oldRegistry = stackManifest('migration-old');
-  const newRegistry = stackManifest('migration-new', 'v2', { [SOURCE_ID]: a.at(-1)!.commitSequence + 1, [sourceB]: b.at(-1)!.commitSequence + 1 });
+  const newRegistry = stackManifest(
+    'migration-new',
+    'v2',
+    { [SOURCE_ID]: a.at(-1)!.commitSequence + 1, [sourceB]: b.at(-1)!.commitSequence + 1 },
+    runtimeArtifactDigest
+  );
   const sourceRanges = [range(a), range(b)];
   const payload = {
     version: 2 as const,
@@ -122,9 +129,7 @@ function argumentsFor(manifest: ProjectionMigrationManifest, collections: Projec
     '--migration-receipts',
     collections.migrationReceipts,
     '--runtime-module',
-    resolve('integration/migrationRuntime.ts'),
-    '--executable-artifact-digest',
-    HASH
+    runtimeArtifactPath
   ];
 }
 
@@ -228,6 +233,13 @@ async function run(): Promise<void> {
   const db = client.db(databaseName);
   let evidence: Record<string, unknown> = {};
   try {
+    const artifactBytes = await readFile(runtimeArtifactPath);
+    const artifactStat = await stat(runtimeArtifactPath);
+    assert(`sha256:${createHash('sha256').update(artifactBytes).digest('hex')}` === runtimeArtifactDigest, 'Runtime artifact digest mismatch.');
+    assert(
+      (artifactStat.mode & 0o777) === 0o444 && !/\bfrom\s+['"]|import\s*\(/.test(artifactBytes.toString()),
+      'Runtime artifact is mutable or has external module imports.'
+    );
     const persistence = new MongoTapewormPersistence(db);
     const eventStore = Reflect.construct(EventStore, [persistence]) as InstanceType<typeof EventStore>;
     const partition = await eventStore.openPartition(PARTITION_ID);
@@ -340,6 +352,13 @@ async function run(): Promise<void> {
         tapewormPersistenceMongo: transportPackage.dependencies.tapeworm_persistence_store_mongodb,
         projectionTransport: transportPackage.version,
         projectionMongoStore: storePackage.version
+      },
+      runtimeArtifact: {
+        digest: runtimeArtifactDigest,
+        bytes: artifactStat.size,
+        mode: '0444',
+        bundledSelfContained: true,
+        hashedBeforeImportAndRecheckedEachCommand: true
       },
       sourceIndex: {
         name: sourceIndex.name,

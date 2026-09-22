@@ -1,8 +1,8 @@
 export { ProjectionMigrationStreamingDigest, projectionMigrationDigest, projectionMigrationManifestPayload } from './migration/digest';
 export { ProjectionMigrationEngine } from './migration/engine';
+export { MongoProjectionMigrationActivationPort, type ProjectionMigrationActivationHooks } from './migration/mongoActivation';
 export {
   MongoProjectionGenerationResolver,
-  MongoProjectionMigrationActivationPort,
   MongoProjectionMigrationPreflightPort,
   MongoProjectionMigrationSnapshotPort,
   MongoProjectionMigrationStatePort,
@@ -20,13 +20,19 @@ export {
   verifyProjectionMigrationSources
 } from './migration/replay';
 export {
+  inspectProjectionMigrationRuntimeArtifact,
+  loadProjectionMigrationRuntimeArtifact,
+  type ProjectionMigrationRuntimeArtifact
+} from './migration/runtimeArtifact';
+export {
   assertRuntimeMatchesManifest,
-  type ProjectionMigrationRuntimeDefinition,
-  type ProjectionMigrationRuntimeIdentity,
+  normalizeProjectionMigrationDefinitions,
+  type ProjectionMigrationDeploymentDefinition,
   type ProjectionMigrationRuntimeModule,
   parseProjectionMigrationRuntimeModule,
   projectionDefinitionRegistryDigest,
-  projectionMigrationRuntimeRegistryDigest,
+  projectionMigrationDefinitionHash,
+  projectionMigrationRuntimeConfigurationDigest,
   projectionQueueRegistryDigest
 } from './migration/runtimeIdentity';
 export type {
