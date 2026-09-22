@@ -1,18 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import { SagaTurnIntegrityError, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
+import { type SagaTurnAppendRequest, SagaTurnIntegrityError } from '@redemeine/saga-runtime';
 import Bluebird from 'bluebird';
-import {
-  ConcurrencyError,
-  DuplicateCommitError,
-  type ICommit,
-  type IPersistencePartition,
-  type NodeCallback
-} from 'tapeworm';
-import {
-  createTapewormSagaTurnRepository,
-  type TapewormSagaEvent,
-  type TapewormPartitionReadiness
-} from '../src/index';
+import { ConcurrencyError, DuplicateCommitError, type ICommit, type IPersistencePartition, type NodeCallback } from 'tapeworm';
+import { createTapewormSagaTurnRepository, type TapewormPartitionReadiness, type TapewormSagaEvent } from '../src/index';
 
 const readiness: TapewormPartitionReadiness = {
   partitionOpened: true,
@@ -38,6 +28,7 @@ type AppendFailure = Error | { readonly error: Error; readonly afterWrite: boole
 
 class FakeTapewormPartition implements IPersistencePartition<TapewormSagaEvent> {
   readonly commits: ICommit<TapewormSagaEvent>[] = [];
+  queryAllCalls = 0;
   appendFailure?: AppendFailure;
 
   append(commit: ICommit<TapewormSagaEvent>, callback?: NodeCallback<ICommit<TapewormSagaEvent>>) {
@@ -53,7 +44,8 @@ class FakeTapewormPartition implements IPersistencePartition<TapewormSagaEvent> 
   }
 
   queryAll(callback?: NodeCallback<ICommit<TapewormSagaEvent>[]>) {
-    return Bluebird.resolve([...this.commits]).nodeify(callback);
+    this.queryAllCalls += 1;
+    return Bluebird.reject<ICommit<TapewormSagaEvent>[]>(new Error('queryAll must not be called')).nodeify(callback);
   }
 
   queryStream(streamId: string, from?: number | NodeCallback<ICommit<TapewormSagaEvent>[]>, callback?: NodeCallback<ICommit<TapewormSagaEvent>[]>) {
@@ -89,6 +81,7 @@ describe('Tapeworm saga turn repository', () => {
     const loaded = await target.load('saga-1');
     expect(loaded.nextCommitSequence).toBe(1);
     expect(loaded.events).toHaveLength(2);
+    expect(partition.queryAllCalls).toBe(0);
   });
 
   it('continues commit and event versions contiguously', async () => {
@@ -100,45 +93,86 @@ describe('Tapeworm saga turn repository', () => {
     expect(partition.commits[1]?.events[0]?.version).toBe(2);
   });
 
-  it('reconciles duplicate and ambiguous-success writes through identity readback', async () => {
+  it('reconciles an equivalent duplicate through expected-stream readback without queryAll', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);
     await target.append(request());
     partition.appendFailure = new DuplicateCommitError('duplicate');
     const duplicate = await target.append(request({ expectedNextCommitSequence: 1 }));
     expect(duplicate).toMatchObject({ status: 'reconciled', commit: { commitId: 'turn-1' } });
-
-    partition.appendFailure = { error: new Error('network timeout'), afterWrite: true };
-    const ambiguous = await target.append(request({ commitId: 'turn-2', expectedNextCommitSequence: 1 }));
-    expect(ambiguous).toMatchObject({ status: 'reconciled', commit: { commitId: 'turn-2' } });
+    expect(partition.queryAllCalls).toBe(0);
   });
 
-  it('maps concurrency without readback to conflict and rethrows unknown failures', async () => {
+  it('reconciles ambiguous success through expected-stream readback without queryAll', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    partition.appendFailure = { error: new Error('network timeout'), afterWrite: true };
+    const ambiguous = await target.append(request());
+    expect(ambiguous).toMatchObject({ status: 'reconciled', commit: { commitId: 'turn-1' } });
+    expect(partition.queryAllCalls).toBe(0);
+  });
+
+  it('maps concurrency without expected-stream readback to conflict without queryAll', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);
     partition.appendFailure = new ConcurrencyError('conflict');
     await expect(target.append(request())).resolves.toEqual({ status: 'conflict' });
-    partition.appendFailure = new Error('network down');
-    await expect(target.append(request())).rejects.toThrow('network down');
+    expect(partition.queryAllCalls).toBe(0);
   });
 
-  it('rejects deterministic commit aliases outside the expected stream', async () => {
+  it('rethrows an unknown append failure without queryAll', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    partition.appendFailure = new Error('network down');
+    await expect(target.append(request())).rejects.toThrow('network down');
+    expect(partition.queryAllCalls).toBe(0);
+  });
+
+  it('classifies an incompatible duplicate as nonretryable without queryAll', async () => {
     const partition = new FakeTapewormPartition();
     partition.commits.push({
-      id: 'turn-1', partitionId: 'sagas', streamId: 'other-saga', commitSequence: 0,
+      id: 'turn-1',
+      partitionId: 'sagas',
+      streamId: 'other-saga',
+      commitSequence: 0,
       events: [{ id: 'turn-1:event:0', type: 'saga.instance_created.event', version: 0, payload: {} }],
       sagaTurnIdentity: { sourceTriggerId: 'other', sagaKey: 'other', instanceId: 'other-saga', routeId: 'other' }
     });
     partition.appendFailure = new DuplicateCommitError('duplicate');
-    await expect(repository(partition).append(request())).rejects.toMatchObject({
-      code: 'incompatible_turn_commit', retryable: false
+    const expected = request();
+    await expect(repository(partition).append(expected)).rejects.toMatchObject({
+      code: 'incompatible_turn_commit',
+      retryable: false,
+      details: { commitId: 'turn-1', streamId: 'saga-1', expectedIdentity: expected.identity }
     });
+    expect(partition.queryAllCalls).toBe(0);
+  });
+
+  it('rejects a same-stream duplicate with incompatible identity diagnostics without queryAll', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const actual = request();
+    await target.append(actual);
+    const expected = request({
+      expectedNextCommitSequence: 1,
+      identity: { ...actual.identity, routeId: 'different-route' }
+    });
+    partition.appendFailure = new DuplicateCommitError('duplicate');
+    await expect(target.append(expected)).rejects.toMatchObject({
+      code: 'incompatible_turn_commit',
+      retryable: false,
+      details: { expectedIdentity: expected.identity, actualIdentity: actual.identity }
+    });
+    expect(partition.queryAllCalls).toBe(0);
   });
 
   it('rejects malformed stream ordering before exposing repository state', async () => {
     const partition = new FakeTapewormPartition();
     partition.commits.push({
-      id: 'bad', partitionId: 'sagas', streamId: 'saga-1', commitSequence: 1,
+      id: 'bad',
+      partitionId: 'sagas',
+      streamId: 'saga-1',
+      commitSequence: 1,
       events: [{ id: 'bad:event:0', type: 'saga.instance_created.event', version: 0, payload: {} }]
     });
     await expect(repository(partition).load('saga-1')).rejects.toBeInstanceOf(SagaTurnIntegrityError);

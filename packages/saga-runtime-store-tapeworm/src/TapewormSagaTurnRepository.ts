@@ -1,7 +1,7 @@
 import {
-  SagaTurnIntegrityError,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
+  SagaTurnIntegrityError,
   type SagaTurnRepository,
   type SagaTurnStoredCommit,
   type SagaTurnStreamSnapshot
@@ -42,6 +42,26 @@ function buildCommit(request: SagaTurnAppendRequest, partitionId: string, firstE
 
 function findById(commits: readonly ICommit<TapewormSagaEvent>[], commitId: string): ICommit<TapewormSagaEvent> | null {
   return commits.find(({ id }) => id === commitId) ?? null;
+}
+
+function sameIdentity(left: SagaTurnStoredCommit['identity'], right: SagaTurnAppendRequest['identity']): boolean {
+  return (
+    left.sourceTriggerId === right.sourceTriggerId && left.sagaKey === right.sagaKey && left.instanceId === right.instanceId && left.routeId === right.routeId
+  );
+}
+
+function incompatibleCommit(request: SagaTurnAppendRequest, actualIdentity?: SagaTurnStoredCommit['identity'], cause?: unknown): SagaTurnIntegrityError {
+  return new SagaTurnIntegrityError(
+    'incompatible_turn_commit',
+    'Deterministic commit ID is already used by an incompatible saga turn',
+    {
+      commitId: request.commitId,
+      streamId: request.streamId,
+      expectedIdentity: request.identity,
+      ...(actualIdentity === undefined ? {} : { actualIdentity })
+    },
+    cause
+  );
 }
 
 export class TapewormSagaTurnRepository implements SagaTurnRepository {
@@ -85,29 +105,21 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
   }
 
   private async reconcileAppendFailure(error: unknown, request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
-    let expectedStreamCommit: ICommit<TapewormSagaEvent> | null = null;
+    let expectedStreamCommit: ICommit<TapewormSagaEvent> | null;
     try {
       expectedStreamCommit = findById((await this.readStream(request.streamId)).commits, request.commitId);
-      if (expectedStreamCommit) return { status: 'reconciled', commit: storedCommitFromTapeworm(expectedStreamCommit) };
-      await this.assertNoGlobalCommitAlias(request);
     } catch (readbackError) {
       if (readbackError instanceof SagaTurnIntegrityError) throw readbackError;
       throw error;
     }
-    if (error instanceof ConcurrencyError) return { status: 'conflict' };
-    if (error instanceof DuplicateCommitError) throw error;
-    throw error;
-  }
-
-  private async assertNoGlobalCommitAlias(request: SagaTurnAppendRequest): Promise<void> {
-    const all: unknown = await this.options.partition.queryAll();
-    if (!Array.isArray(all)) throw new TypeError('Tapeworm queryAll result must be an array');
-    const matching = all.find((candidate) => {
-      return typeof candidate === 'object' && candidate !== null && 'id' in candidate && candidate.id === request.commitId;
-    });
-    if (matching) {
-      throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Deterministic commit ID exists outside the expected saga stream');
+    if (expectedStreamCommit) {
+      const stored = storedCommitFromTapeworm(expectedStreamCommit);
+      if (!sameIdentity(stored.identity, request.identity)) throw incompatibleCommit(request, stored.identity, error);
+      return { status: 'reconciled', commit: stored };
     }
+    if (error instanceof ConcurrencyError) return { status: 'conflict' };
+    if (error instanceof DuplicateCommitError) throw incompatibleCommit(request, undefined, error);
+    throw error;
   }
 }
 
