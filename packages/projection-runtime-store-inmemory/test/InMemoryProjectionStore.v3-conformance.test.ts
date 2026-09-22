@@ -2,6 +2,15 @@ import { describe, expect, test } from '@jest/globals';
 import { InMemoryProjectionStore } from '../src';
 
 describe('InMemoryProjectionStore v3 conformance', () => {
+  test('load distinguishes a stored undefined state from a missing document', async () => {
+    const store = new InMemoryProjectionStore<undefined>();
+
+    await store.save('present', undefined, { sequence: 1 });
+
+    expect(await store.load('present')).toBeUndefined();
+    expect(await store.load('absent')).toBeNull();
+  });
+
   test('commitAtomicMany applies full+patch writes and returns highest watermark', async () => {
     const store = new InMemoryProjectionStore<{ total?: number; status?: string }>();
 

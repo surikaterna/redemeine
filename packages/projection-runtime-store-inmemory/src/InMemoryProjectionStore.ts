@@ -18,7 +18,8 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   private dedupe = new Map<string, Checkpoint>();
 
   async load(id: string): Promise<TState | null> {
-    return this.documents.get(id)?.state ?? null;
+    const document = this.documents.get(id);
+    return document ? document.state : null;
   }
 
   async save(id: string, state: TState, cursor: Checkpoint): Promise<void> {
