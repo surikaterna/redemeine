@@ -69,6 +69,7 @@ const definition = createProjection('sample', () => ({}))
   .deduplication({ strategy: 'own_record' })
   .buildCommitDefinition();
 type MirrorState = { count: number };
+type NarrowState = { count: 0 };
 type ChangedEvent = Omit<ProjectionEvent, 'payload' | 'type'> & {
   payload: { amount: number };
   type: 'changed' | 'sample.changed.event';
@@ -80,6 +81,9 @@ const defaultExtended: InheritExtended = inherit.extend((state: MirrorState, eve
   state.count += event.payload.amount;
 });
 const stateExtended: InheritExtended<MirrorState> = inherit.extend((state: MirrorState, event: ChangedEvent) => {
+  state.count += event.payload.amount;
+});
+const supertypeStateExtended: InheritExtended<NarrowState> = inherit.extend((state: MirrorState, event: ChangedEvent) => {
   state.count += event.payload.amount;
 });
 const mirrorSource = {
@@ -121,7 +125,7 @@ const manifest: ProjectionQueueRegistryManifest = {
 };
 validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, defaultExtended, stateExtended, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
+void [definition, defaultExtended, stateExtended, supertypeStateExtended, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
 
 declare const context: ProjectionContext;
 declare const defaultOnly: InheritExtended;
@@ -130,6 +134,8 @@ stateExtended.after({ count: 0 }, changedEvent, context);
 extended.after({ count: 0 }, changedEvent, context);
 // @ts-expect-error partial generics retain the explicit state contract
 const wrongPartialState: InheritExtended<MirrorState> = inherit.extend((_state: { wrong: boolean }, _event: ChangedEvent) => {});
+// @ts-expect-error an explicit partial state rejects a callback accepting only a related narrower state
+const unsafePartialNarrowState: InheritExtended<MirrorState> = inherit.extend((_state: NarrowState, _event: ChangedEvent) => {});
 // @ts-expect-error partial generic invocation retains the explicit state contract
 stateExtended.after({ wrong: true }, changedEvent, context);
 // @ts-expect-error explicitly typed extensions reject callbacks with incompatible state
@@ -142,7 +148,6 @@ mirrorSource.applyToDraft({ count: 0 }, { ...changedEvent, payload: { amount: 'i
 type WideEvent = Omit<ChangedEvent, 'payload'> & { payload: { amount: number | string } };
 // @ts-expect-error a narrow event mutator cannot be assigned where wider events may be supplied
 const unsafeWideEventSource: MirrorableAggregateSource<MirrorState, WideEvent> = mirrorSource;
-type NarrowState = { count: 0 };
 // @ts-expect-error state appears in input and output positions and is invariant
 const unsafeNarrowStateSource: MirrorableAggregateSource<NarrowState, ChangedEvent> = mirrorSource;
 // @ts-expect-error handler event payload remains inferred from the source projector
@@ -165,7 +170,7 @@ const unboundManifest: ProjectionQueueRegistryManifest = {
 const invalidSelectors: ProjectionQueueRegistryManifest = { ...manifest, definitions: [{ projectionName: 'p', generation: 'v1', definitionHash: digest, sourceSelectors: null }] };
 // @ts-expect-error source anchors remain a UUID-to-sequence record
 const invalidAnchors: ProjectionQueueRegistryManifest = { ...manifest, sourceStartAnchors: [] };
-void [wrongPartialState, wrongExtended, wrongExplicitEvent, unsafeWideEventSource, unsafeNarrowStateSource, invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
+void [wrongPartialState, unsafePartialNarrowState, wrongExtended, wrongExplicitEvent, unsafeWideEventSource, unsafeNarrowStateSource, invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
 `);
 
   writeFileSync(join(temporaryDirectory, 'runtime.mjs'), `
