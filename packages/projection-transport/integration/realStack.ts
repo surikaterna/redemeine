@@ -212,7 +212,9 @@ async function verifyReducedRegistry(client: MongoClient, queue: string): Promis
 
 async function resourceIsAbsent(kind: 'queue' | 'exchange', name: string): Promise<boolean> {
   const connection = await connect(rabbitUri);
+  connection.on('error', () => undefined);
   const probe = await connection.createChannel();
+  probe.on('error', () => undefined);
   try {
     if (kind === 'queue') await probe.checkQueue(name);
     else await probe.checkExchange(name);
