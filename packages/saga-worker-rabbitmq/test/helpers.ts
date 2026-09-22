@@ -178,7 +178,9 @@ export function options(
     source,
     limits,
     processEvent,
-    onSettlementError: (failure) => failures.push(failure),
+    onSettlementError: (failure) => {
+      failures.push(failure);
+    },
     ...overrides
   };
 }

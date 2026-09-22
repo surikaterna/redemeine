@@ -63,7 +63,7 @@ export interface SagaRabbitWorkerOptions {
   readonly source: SagaRabbitSourceScope;
   readonly limits: SagaRabbitWorkerLimits;
   readonly processEvent: SagaSourceEventProcessor;
-  readonly onSettlementError: (failure: SagaRabbitSettlementError) => void;
+  readonly onSettlementError: (failure: SagaRabbitSettlementError) => void | Promise<void>;
 }
 
 export interface SagaRabbitWorker {

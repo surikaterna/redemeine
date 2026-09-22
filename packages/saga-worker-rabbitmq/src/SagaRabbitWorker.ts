@@ -98,7 +98,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
 
   async handle(message: ConsumeMessage): Promise<void> {
     const settlement = await this.determineSettlement(message);
-    this.settle(message, settlement);
+    await this.settle(message, settlement);
   }
 
   private async startGeneration(generation: number): Promise<string> {
@@ -179,27 +179,27 @@ class RabbitSagaWorker implements SagaRabbitWorker {
     }
   }
 
-  private settle(message: ConsumeMessage, settlement: Settlement): void {
+  private settle(message: ConsumeMessage, settlement: Settlement): void | Promise<never> {
     try {
       if (settlement.type === 'ack') this.options.channel.ack(message, false);
       else this.options.channel.nack(message, false, settlement.requeue);
     } catch (error) {
-      this.reportSettlementError({
+      return this.reportSettlementError({
         error,
         message,
         settlement: settlement.type,
         ...(settlement.type === 'nack' ? { requeue: settlement.requeue } : {})
-      });
-      throw error;
+      }, error);
     }
   }
 
-  private reportSettlementError(failure: SagaRabbitSettlementError): void {
+  private async reportSettlementError(failure: SagaRabbitSettlementError, channelError: unknown): Promise<never> {
     try {
-      this.options.onSettlementError(failure);
+      await this.options.onSettlementError(failure);
     } catch {
-      // The delivery task still observes the original channel error.
+      // Observer failures are contained so the original channel failure remains authoritative.
     }
+    throw channelError;
   }
 
   private onDelivery(generation: number, message: ConsumeMessage | null): void {
@@ -208,23 +208,24 @@ class RabbitSagaWorker implements SagaRabbitWorker {
       return;
     }
     if (!this.acceptsDelivery(generation) || this.inFlight.size >= this.options.limits.prefetch) {
-      try {
-        this.settle(message, { type: 'nack', requeue: true });
-      } catch {
-        // settle reported the channel failure through onSettlementError.
-      }
+      const failedSettlement = this.settle(message, { type: 'nack', requeue: true });
+      if (failedSettlement) this.trackTask(failedSettlement);
       return;
     }
+    this.trackTask(this.handle(message));
+  }
+
+  private trackTask(task: Promise<void>): void {
     let pending: Promise<void> | undefined;
-    pending = this.runTracked(message, () => {
+    pending = this.runTracked(task, () => {
       if (pending) this.inFlight.delete(pending);
     });
     this.inFlight.add(pending);
   }
 
-  private async runTracked(message: ConsumeMessage, finalize: () => void): Promise<void> {
+  private async runTracked(task: Promise<void>, finalize: () => void): Promise<void> {
     try {
-      await this.handle(message);
+      await task;
     } catch {
       // handle reports settlement failures; processing failures become NACK dispositions.
     } finally {

@@ -103,6 +103,30 @@ describe('Rabbit saga worker delivery', () => {
     expect(failures).toEqual([expect.objectContaining({ settlement: 'nack', requeue: true })]);
   });
 
+  it.each(['ack', 'nack'] as const)(
+    'contains an async-rejecting observer and preserves the original %s error',
+    async (settlement) => {
+      const channel = new FakeChannel();
+      const channelError = new Error(`${settlement} channel closed`);
+      const observerError = new Error('observer failed');
+      if (settlement === 'ack') channel.ackError = channelError;
+      else channel.nackError = channelError;
+      const processEvent = settlement === 'ack' ? noRoutes : async () => {
+        throw new SagaTurnTransientError('temporary', 'temporary');
+      };
+      const target = createSagaRabbitWorker(options(channel, processEvent, [], {
+        onSettlementError: async () => {
+          await Promise.resolve();
+          throw observerError;
+        }
+      }));
+
+      await expect(target.handle(message())).rejects.toBe(channelError);
+      expect(channel.acks).toHaveLength(settlement === 'ack' ? 1 : 0);
+      expect(channel.nacks).toHaveLength(settlement === 'nack' ? 1 : 0);
+    }
+  );
+
   it('observes tracked settlement exceptions without rejecting stop', async () => {
     const channel = new FakeChannel();
     const failures: unknown[] = [];
@@ -114,6 +138,44 @@ describe('Rabbit saga worker delivery', () => {
     await flush();
     await expect(target.stop()).resolves.toBeUndefined();
     expect(failures).toHaveLength(1);
+  });
+
+  it('contains tracked async observer rejection without unhandled rejection or retained drain task', async () => {
+    const channel = new FakeChannel();
+    const observer = deferred<void>();
+    const channelError = new Error('channel closed');
+    const observedErrors: unknown[] = [];
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    channel.ackError = channelError;
+    const target = createSagaRabbitWorker(options(channel, noRoutes, [], {
+      onSettlementError: async (failure) => {
+        observedErrors.push(failure.error);
+        await observer.promise;
+        throw new Error('observer failed');
+      }
+    }));
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await target.start();
+      channel.callbacks[0]?.(message());
+      await flush();
+      let stopped = false;
+      const stopping = target.stop().then(() => {
+        stopped = true;
+      });
+      await flush();
+      expect(stopped).toBe(false);
+      observer.resolve();
+      await stopping;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(observedErrors).toEqual([channelError]);
+      expect(unhandled).toEqual([]);
+      await expect(target.stop()).resolves.toBeUndefined();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('rejects oversized bodies before JSON decoding', () => {
