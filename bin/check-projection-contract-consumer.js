@@ -48,7 +48,10 @@ try {
 import { createProjection } from '@redemeine/projection';
 import {
   projectionUuidToBase64Url22,
+  validateProjectionQueueRegistryManifest,
   type ProjectionNoCommitProgress,
+  type ProjectionCompleteCommitRangeRequest,
+  type ProjectionQueueRegistryManifest,
   type ProjectionSourceCheckpoint,
   type ProjectionSourceCommitStorePort
 } from '@redemeine/projection-runtime-core';
@@ -60,8 +63,31 @@ const definition = createProjection('sample', () => ({}))
   .buildCommitDefinition();
 const checkpoint: ProjectionSourceCheckpoint | null = { sequence: 0 };
 const sourceKey = projectionUuidToBase64Url22('00112233-4455-6677-8899-aabbccddeeff');
+const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
+const rangeRequest: ProjectionCompleteCommitRangeRequest = {
+  sourceId: '00112233-4455-6677-8899-aabbccddeeff',
+  afterSequence: null,
+  throughSequence: 0,
+  maxCommits: 10,
+  maxBytes: 1_048_576
+};
+const manifest: ProjectionQueueRegistryManifest = {
+  version: 1,
+  manifestId: digest,
+  queueId: 'projection-v1',
+  registryGeneration: 'v1',
+  identity: {
+    version: 1,
+    normalizedDefinitionRegistryDigest: digest,
+    normalizedRuntimeConfigurationDigest: digest,
+    executableCodeArtifactDigest: digest
+  },
+  definitions: [],
+  sourceStartAnchors: {}
+};
+validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, checkpoint, sourceKey, store];
+void [definition, checkpoint, sourceKey, rangeRequest, manifest, store];
 
 // @ts-expect-error none requires explicit duplicate-effects acknowledgement
 createProjection('unsafe', () => ({})).deduplication({ strategy: 'none', reason: 'unsafe' });
@@ -69,7 +95,15 @@ createProjection('unsafe', () => ({})).deduplication({ strategy: 'none', reason:
 const invalidCheckpoint: ProjectionSourceCheckpoint = { sequence: 0, commitId: 'not-allowed' };
 // @ts-expect-error none carries no projection dedupe checkpoint payload
 const invalidNone = { strategy: 'none', source: { finalSequence: 0 } } satisfies ProjectionNoCommitProgress;
-void [invalidCheckpoint, invalidNone];
+// @ts-expect-error bounded complete-range reads require an explicit byte limit
+const unboundedRange: ProjectionCompleteCommitRangeRequest = {
+  sourceId: '00112233-4455-6677-8899-aabbccddeeff', afterSequence: null, throughSequence: 0, maxCommits: 10
+};
+// @ts-expect-error immutable manifests require normalized config and executable artifact identity
+const unboundManifest: ProjectionQueueRegistryManifest = {
+  version: 1, manifestId: digest, queueId: 'q', registryGeneration: 'v1', definitions: [], sourceStartAnchors: {}
+};
+void [invalidCheckpoint, invalidNone, unboundedRange, unboundManifest];
 `);
 
   const tsc = join(runtimeDirectory, 'node_modules/typescript/bin/tsc');

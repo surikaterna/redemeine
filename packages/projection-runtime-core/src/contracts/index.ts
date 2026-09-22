@@ -149,19 +149,28 @@ export type {
   ProjectionSourceOrderPort,
   ProjectionCompleteCommitRangeCapability,
   ProjectionCompleteCommitRangeRequest,
+  ProjectionEncodedSourceCommit,
   ProjectionCompleteCommitRange,
   ProjectionIncompleteCommitRange,
+  ProjectionOversizedCommitRange,
   ProjectionCompleteCommitRangeResult,
   ProjectionCompleteCommitRangeReader,
   ProjectionCompleteCommitRangeValidation
 } from './sourceOrder';
 export { isCompleteCommitRangeCapability, validateCompleteCommitRange } from './sourceOrder';
 export type {
+  ProjectionSha256Digest,
   ProjectionRegistryDefinitionManifest,
+  ProjectionRegistryManifestIdentity,
   ProjectionQueueRegistryManifest,
   ProjectionQueueRegistryBinding,
   ProjectionQueueRegistryBindResult,
   ProjectionQueueRegistryBindingPort
+} from './registry';
+export {
+  hasMatchingProjectionRegistryIdentity,
+  isProjectionSha256Digest,
+  validateProjectionQueueRegistryManifest
 } from './registry';
 export type {
   ProjectionSourceCommitDocument,

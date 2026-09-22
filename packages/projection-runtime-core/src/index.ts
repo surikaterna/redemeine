@@ -157,12 +157,16 @@ export type {
   ProjectionSourceOrderPort,
   ProjectionCompleteCommitRangeCapability,
   ProjectionCompleteCommitRangeRequest,
+  ProjectionEncodedSourceCommit,
   ProjectionCompleteCommitRange,
   ProjectionIncompleteCommitRange,
+  ProjectionOversizedCommitRange,
   ProjectionCompleteCommitRangeResult,
   ProjectionCompleteCommitRangeReader,
   ProjectionCompleteCommitRangeValidation,
+  ProjectionSha256Digest,
   ProjectionRegistryDefinitionManifest,
+  ProjectionRegistryManifestIdentity,
   ProjectionQueueRegistryManifest,
   ProjectionQueueRegistryBinding,
   ProjectionQueueRegistryBindResult,
@@ -197,5 +201,8 @@ export {
   projectionUuidToBase64Url22,
   projectionBase64Url22ToUuid,
   isCompleteCommitRangeCapability,
-  validateCompleteCommitRange
+  validateCompleteCommitRange,
+  hasMatchingProjectionRegistryIdentity,
+  isProjectionSha256Digest,
+  validateProjectionQueueRegistryManifest
 } from './contracts';

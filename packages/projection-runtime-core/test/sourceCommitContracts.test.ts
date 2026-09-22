@@ -1,14 +1,18 @@
 import { describe, expect, test } from '@jest/globals';
 import {
+  hasMatchingProjectionRegistryIdentity,
   isCompleteCommitRangeCapability,
   projectionBase64Url22ToUuid,
   projectionUuidToBase64Url22,
   validateCompleteCommitRange,
+  validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '../src';
 import type {
   CommitProjectionSourceCommitRequest,
   ProjectionCompleteCommitRangeRequest,
+  ProjectionQueueRegistryManifest,
+  ProjectionQueueRegistryBinding,
   ProjectionSourceCheckpoint,
   ProjectionSourceCommit,
   ProjectionSourceCommitStorePort,
@@ -16,6 +20,7 @@ import type {
 } from '../src';
 
 const streamId = '00112233-4455-6677-8899-aabbccddeeff';
+const digest = `sha256:${'a'.repeat(64)}` as const;
 
 function createCommit(sequence = 0): ProjectionSourceCommit {
   return {
@@ -116,22 +121,79 @@ describe('ordering and range contracts', () => {
     })).toBe(false);
   });
 
-  test('accepts complete contiguous ranges and rejects sliced boundaries', () => {
+  test('accepts byte-accounted complete contiguous ranges and rejects sliced boundaries', () => {
     const request: ProjectionCompleteCommitRangeRequest = {
       sourceId: streamId,
       afterSequence: null,
-      throughSequence: 0
+      throughSequence: 0,
+      maxCommits: 10,
+      maxBytes: 1_024
     };
     expect(validateCompleteCommitRange(request, {
       status: 'complete',
-      commits: [createCommit(0)],
+      commits: [{ commit: createCommit(0), encodedByteLength: 512 }],
+      encodedByteLength: 512,
+      continuationAfterSequence: 0,
       hasMore: false
     }).valid).toBe(true);
     expect(validateCompleteCommitRange(request, {
       status: 'incomplete',
       reason: 'sliced_boundary',
-      details: 'first event was sliced by the upstream query'
+      details: 'first event was sliced by the upstream query',
+      continuationAfterSequence: null
     })).toEqual({ valid: false, issues: ['sliced_boundary'] });
+  });
+
+  test('rejects invalid limits, byte mismatches, excess counts, and out-of-range commits', () => {
+    const request = {
+      sourceId: streamId,
+      afterSequence: 0,
+      throughSequence: 1,
+      maxCommits: 0,
+      maxBytes: 500
+    };
+    const result = validateCompleteCommitRange(request, {
+      status: 'complete',
+      commits: [
+        { commit: createCommit(1), encodedByteLength: 300 },
+        { commit: createCommit(2), encodedByteLength: 300 }
+      ],
+      encodedByteLength: 599,
+      continuationAfterSequence: 2,
+      hasMore: false
+    });
+    expect(result.issues).toEqual(expect.arrayContaining([
+      'request.maxCommits', 'max_commits', 'boundary[2]', 'encoded_bytes_mismatch', 'max_bytes'
+    ]));
+    expect(validateCompleteCommitRange({
+      ...request,
+      maxCommits: 1,
+      maxBytes: Number.MAX_SAFE_INTEGER + 1
+    }, {
+      status: 'complete',
+      commits: [],
+      encodedByteLength: 0,
+      continuationAfterSequence: 0,
+      hasMore: false
+    }).issues).toContain('request.maxBytes');
+  });
+
+  test('reports an oversized first commit without advancing continuation', () => {
+    const request: ProjectionCompleteCommitRangeRequest = {
+      sourceId: streamId,
+      afterSequence: 4,
+      throughSequence: 8,
+      maxCommits: 2,
+      maxBytes: 1_024
+    };
+    expect(validateCompleteCommitRange(request, {
+      status: 'oversized_commit',
+      sourceId: streamId,
+      commitSequence: 5,
+      commitId: '123e4567-e89b-12d3-a456-426614174000',
+      encodedByteLength: 1_025,
+      continuationAfterSequence: 4
+    })).toEqual({ valid: false, issues: ['oversized_commit'] });
   });
 
   test('transport coverage can only admit dispatch, including redelivery', async () => {
@@ -148,6 +210,71 @@ describe('ordering and range contracts', () => {
     };
     const admission = await port.admitForDispatch(createCommit(0), 'queue-v1');
     expect(admission.dispatch).toBe(true);
+  });
+});
+
+describe('immutable queue registry manifest', () => {
+  function createManifest(): ProjectionQueueRegistryManifest {
+    return {
+      version: 1,
+      manifestId: digest,
+      queueId: 'projection-v1',
+      registryGeneration: 'generation-v1',
+      identity: {
+        version: 1,
+        normalizedDefinitionRegistryDigest: digest,
+        normalizedRuntimeConfigurationDigest: digest,
+        executableCodeArtifactDigest: digest
+      },
+      definitions: [{
+        projectionName: 'summary',
+        generation: 'v1',
+        definitionHash: digest,
+        sourceSelectors: ['invoice']
+      }],
+      sourceStartAnchors: { [streamId]: 0 }
+    };
+  }
+
+  test('requires versioned SHA-256 identities for runtime configuration and executable code', () => {
+    expect(validateProjectionQueueRegistryManifest(createManifest())).toEqual([]);
+    const invalid = createManifest();
+    const issues = validateProjectionQueueRegistryManifest({
+      ...invalid,
+      identity: {
+        version: 1,
+        normalizedDefinitionRegistryDigest: digest,
+        normalizedRuntimeConfigurationDigest: 'sha256:short',
+        executableCodeArtifactDigest: ''
+      }
+    } as ProjectionQueueRegistryManifest);
+    expect(issues).toEqual([
+      'identity.normalizedRuntimeConfigurationDigest',
+      'identity.executableCodeArtifactDigest'
+    ]);
+    expect(validateProjectionQueueRegistryManifest({ version: 1 })).toEqual(expect.arrayContaining([
+      'manifestId', 'identity', 'identity.version', 'definitions'
+    ]));
+  });
+
+  test.each([
+    'normalizedDefinitionRegistryDigest',
+    'normalizedRuntimeConfigurationDigest',
+    'executableCodeArtifactDigest'
+  ] as const)('rejects a binding with changed %s', (field) => {
+    const manifest = createManifest();
+    const matchingBinding: ProjectionQueueRegistryBinding = {
+      queueId: manifest.queueId,
+      manifestId: manifest.manifestId,
+      registryGeneration: manifest.registryGeneration,
+      identity: manifest.identity,
+      boundAt: '2026-09-22T12:00:00.000Z'
+    };
+    expect(hasMatchingProjectionRegistryIdentity(manifest, matchingBinding)).toBe(true);
+    expect(hasMatchingProjectionRegistryIdentity(manifest, {
+      ...matchingBinding,
+      identity: { ...matchingBinding.identity, [field]: `sha256:${'b'.repeat(64)}` }
+    })).toBe(false);
   });
 });
 
