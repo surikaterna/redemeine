@@ -142,6 +142,42 @@ export const defineProjectionSourceCommitStoreConformance = (
       expect(snapshot.targets[0]).toMatchObject({ revision: 1, state: { value: 1 }, sourceProgress: { [encodedSource]: 0 } });
     });
 
+    test.each([
+      ['progress-only target', ['target-a'], ['target-b']],
+      ['mixed marked and unmarked documents', ['target-a', 'target-b'], ['target-a']]
+    ])('rejects malformed in-document relationships: %s', async (_label, documentIds, progressIds) => {
+      const store = await createStore();
+      const base = baseRequest({ strategy: 'in_document', targets: [] });
+      const malformed: CommitProjectionSourceCommitRequest<{ value: number }> = {
+        ...base,
+        finalDocuments: documentIds.map((targetDocumentId) => ({
+          targetDocumentId,
+          expectedRevision: null,
+          finalDocument: { value: 1 }
+        })),
+        stagedLinks: [],
+        progress: {
+          strategy: 'in_document',
+          targets: progressIds.map((targetDocumentId) => ({
+            targetDocumentId,
+            expected: {},
+            final: { [encodedSource]: 0 }
+          }))
+        }
+      };
+      expect(await store.commitProjectionSourceCommit(malformed)).toMatchObject({
+        status: 'rejected', category: 'terminal', retryable: false
+      });
+      const snapshot = await store.loadProjectionSourceCommitSnapshot({
+        projectionName: 'orders', projectionGeneration: 'v2', targetDocumentIds: ['target-a', 'target-b'],
+        links: [], progressStrategy: 'in_document'
+      });
+      expect(snapshot.targets).toEqual([
+        { targetDocumentId: 'target-a', revision: null, state: null, sourceProgress: {} },
+        { targetDocumentId: 'target-b', revision: null, state: null, sourceProgress: {} }
+      ]);
+    });
+
     test('none performs no projection dedupe operations', async () => {
       const store = await createStore();
       const before = dedupeOperationCount?.() ?? 0;

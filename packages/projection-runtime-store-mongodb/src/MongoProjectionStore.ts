@@ -12,6 +12,7 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
+import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
@@ -103,9 +104,13 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   async commitProjectionSourceCommit(
     request: CommitProjectionSourceCommitRequest<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
+    const malformed = validateCommitProjectionSourceCommitRelationships(request);
+    if (malformed) {
+      return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
+    }
     try {
       await this.initializeProjectionSourceCommitStore();
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor());
+      const result = await commitMongoV2(request, this.options, this.createSourceCommitTransactionExecutor());
       if (result.status === 'committed') {
         try {
           await this.reportDedupeWarnings(request);
@@ -162,6 +167,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
   }
 
+  private createSourceCommitTransactionExecutor(): TransactionExecutor {
+    return this.options.sourceCommitTransactionExecutor ?? this.createTransactionExecutor();
+  }
+
   private isUnknownCommitOutcome(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const labelled = error as Error & { hasErrorLabel?: (label: string) => boolean };
@@ -172,6 +181,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     request: CommitProjectionSourceCommitRequest<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
     if (request.progress.strategy === 'none') {
+      this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
     }
     const snapshot = await this.loadProjectionSourceCommitSnapshot({
@@ -200,11 +210,24 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       snapshot.links[index]?.revision === (expected.expectedRevision ?? 0) + 1
     );
     if (!markersMatch || !documentsMatch || !linksMatch) {
+      this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
     }
     const documentRevisions = Object.fromEntries(request.finalDocuments.map((entry) => [entry.targetDocumentId, (entry.expectedRevision ?? 0) + 1]));
     const linkRevisions = Object.fromEntries(request.stagedLinks.map((entry) => [`${entry.aggregateType}:${entry.aggregateId}`, (entry.expectedRevision ?? 0) + 1]));
+    this.reportReconciliation(request, 'committed');
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
+  }
+
+  private reportReconciliation(
+    request: CommitProjectionSourceCommitRequest<TState>,
+    outcome: 'committed' | 'ambiguous'
+  ): void {
+    try {
+      this.options.onSourceCommitReconciliation?.({ strategy: request.progress.strategy, outcome });
+    } catch {
+      // Outcome telemetry cannot alter reconciliation.
+    }
   }
 
   private async reportDedupeWarnings(request: CommitProjectionSourceCommitRequest<TState>): Promise<void> {

@@ -208,5 +208,6 @@ export {
   validateCompleteCommitRange,
   hasMatchingProjectionRegistryIdentity,
   isProjectionSha256Digest,
-  validateProjectionQueueRegistryManifest
+  validateProjectionQueueRegistryManifest,
+  validateCommitProjectionSourceCommitRelationships
 } from './contracts';

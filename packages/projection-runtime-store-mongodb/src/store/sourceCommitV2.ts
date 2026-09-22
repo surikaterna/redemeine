@@ -6,6 +6,7 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
+import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
 import type {
   MongoProjectionStoreOptions,
   ProjectionDedupeRecord,
@@ -190,6 +191,10 @@ export const commitMongoV2 = async <TState>(
   options: MongoProjectionStoreOptions<TState>,
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>
 ): Promise<CommitProjectionSourceCommitResult> => {
+  const malformed = validateCommitProjectionSourceCommitRelationships(request);
+  if (malformed) {
+    return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
+  }
   try {
     return await execute(async (session) => {
       const snapshotRequest: LoadProjectionSourceCommitSnapshotRequest = {

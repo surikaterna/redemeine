@@ -88,6 +88,23 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
   ): Promise<CommitProjectionSourceCommitResult>;
 }
 
+export function validateCommitProjectionSourceCommitRelationships<TState>(
+  request: CommitProjectionSourceCommitRequest<TState>
+): string | null {
+  if (request.progress.strategy !== 'in_document') return null;
+  const documentIds = request.finalDocuments.map((document) => document.targetDocumentId);
+  const progressIds = request.progress.targets.map((target) => target.targetDocumentId);
+  const documentSet = new Set(documentIds);
+  const progressSet = new Set(progressIds);
+  if (documentSet.size !== documentIds.length) return 'in-document request contains duplicate final document targets';
+  if (progressSet.size !== progressIds.length) return 'in-document request contains duplicate progress targets';
+  if (documentSet.size !== progressSet.size) return 'in-document progress targets must exactly match final document targets';
+  for (const targetId of documentSet) {
+    if (!progressSet.has(targetId)) return 'in-document progress targets must exactly match final document targets';
+  }
+  return null;
+}
+
 export interface ProjectionSourceCommitSnapshotTarget<TState = unknown> {
   targetDocumentId: string;
   revision: number | null;

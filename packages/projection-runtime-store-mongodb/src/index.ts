@@ -26,6 +26,7 @@ export type {
   MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
   MongoProjectionDedupeWarning,
+  MongoSourceCommitReconciliation,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
   ProjectionLinkRecord

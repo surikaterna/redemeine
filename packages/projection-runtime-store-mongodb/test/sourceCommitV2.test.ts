@@ -169,13 +169,16 @@ test('fails readiness closed when transactions are unsupported', async () => {
 });
 
 test('reconciles a reliable marker after an unknown commit result', async () => {
+  const reconciliations: string[] = [];
   const store = new MongoProjectionStore({
     collection: createProjectionDocumentCollection(), linkCollection: createProjectionLinkCollection(),
     dedupeCollection: createProjectionDedupeCollection(),
-    mongoClient: createFakeMongoClient({ unknownAfterCommitOnTransaction: 2 })
+    mongoClient: createFakeMongoClient({ unknownAfterCommitOnTransaction: 2 }),
+    onSourceCommitReconciliation: (event) => reconciliations.push(`${event.strategy}:${event.outcome}`)
   });
   const result = await store.commitProjectionSourceCommit(makeRequest());
   expect(result.status).toBe('committed');
+  expect(reconciliations).toEqual(['in_document:committed']);
 });
 
 test('reports an unknown none outcome as ambiguous and retryable', async () => {

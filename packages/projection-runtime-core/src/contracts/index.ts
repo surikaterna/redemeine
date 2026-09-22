@@ -190,6 +190,7 @@ export type {
   ProjectionSourceCommitSnapshotLink,
   ProjectionSourceCommitStorePort
 } from './sourceCommitStore';
+export { validateCommitProjectionSourceCommitRelationships } from './sourceCommitStore';
 export {
   evaluateCutoverReadiness,
   transitionToCutover,

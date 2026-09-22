@@ -5,9 +5,11 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
+import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
 import type { StoredDocument } from './storedDocument';
 
 export interface V2DocumentMetadata {
+  targetDocumentId: string;
   revision: number;
   sourceProgress: Readonly<Record<ProjectionUuidBase64Url22, number>>;
 }
@@ -48,6 +50,14 @@ const reject = (reason: string): CommitProjectionSourceCommitResult => ({
   status: 'rejected',
   category: 'conflict',
   retryable: true,
+  reason
+});
+
+const rejectMalformed = (reason: string): CommitProjectionSourceCommitResult => ({
+  version: 1,
+  status: 'rejected',
+  category: 'terminal',
+  retryable: false,
   reason
 });
 
@@ -118,6 +128,8 @@ export const commitV2 = <TState>(
   documents: Map<string, StoredDocument<TState>>,
   current: V2State
 ): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
+  const malformed = validateCommitProjectionSourceCommitRelationships(request);
+  if (malformed) return { result: rejectMalformed(malformed) };
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
   if (failure) return { result: reject(failure) };
   const nextDocuments = new Map(documents);
@@ -141,7 +153,7 @@ export const commitV2 = <TState>(
       ...(checkpoint === undefined ? {} : { checkpoint }),
       updatedAt: new Date().toISOString()
     });
-    state.documentMetadata.set(key, { revision, sourceProgress: { ...sourceProgress } });
+    state.documentMetadata.set(key, { targetDocumentId: document.targetDocumentId, revision, sourceProgress: { ...sourceProgress } });
     revisions[document.targetDocumentId] = revision;
   }
   for (const link of request.stagedLinks) {
@@ -160,6 +172,12 @@ export const commitV2 = <TState>(
     state,
     result: { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions: revisions, linkRevisions, progress: request.progress }
   };
+};
+
+export const deleteV2TargetMetadata = (state: V2State, targetDocumentId: string): void => {
+  for (const [key, metadata] of state.documentMetadata) {
+    if (metadata.targetDocumentId === targetDocumentId) state.documentMetadata.delete(key);
+  }
 };
 
 export const collectWarnings = <TState>(request: CommitProjectionSourceCommitRequest<TState>): ProjectionDedupeWarning[] => {

@@ -11,7 +11,14 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import { executeCommitAtomicMany } from './internal/commitAtomicMany';
 import type { StoredDocument } from './internal/storedDocument';
-import { collectWarnings, commitV2, loadV2Snapshot, type ProjectionDedupeWarning, type V2State } from './internal/sourceCommitV2';
+import {
+  collectWarnings,
+  commitV2,
+  deleteV2TargetMetadata,
+  loadV2Snapshot,
+  type ProjectionDedupeWarning,
+  type V2State
+} from './internal/sourceCommitV2';
 
 /**
  * In-memory projection storage for tests and local development.
@@ -88,6 +95,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
 
   async delete(id: string): Promise<void> {
     this.documents.delete(id);
+    deleteV2TargetMetadata(this.v2, id);
   }
 
   async getCheckpoint(id: string): Promise<Checkpoint | null> {

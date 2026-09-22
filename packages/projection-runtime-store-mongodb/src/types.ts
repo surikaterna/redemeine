@@ -1,4 +1,4 @@
-import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
+import type { AnyBulkWriteOperation, BulkWriteOptions, ClientSession, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
 import type { ProjectionUuidBase64Url22 } from '@redemeine/projection-runtime-core';
 import type { Checkpoint } from './contracts';
 
@@ -59,6 +59,13 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
   patchPlanCacheMaxEntries?: number;
   onDedupeWarning?: (warning: MongoProjectionDedupeWarning) => void;
+  sourceCommitTransactionExecutor?: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>;
+  onSourceCommitReconciliation?: (event: MongoSourceCommitReconciliation) => void;
+}
+
+export interface MongoSourceCommitReconciliation {
+  strategy: 'in_document' | 'own_record' | 'none';
+  outcome: 'committed' | 'ambiguous';
 }
 
 export interface MongoProjectionDedupeWarning {
