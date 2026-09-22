@@ -132,24 +132,20 @@ export const loadV2Snapshot = <TState>(
     : state.ownProgress.get(ownKey(request.projectionName, request.projectionGeneration, request.sourceId)) ?? null
 });
 
-export const commitV2 = <TState>(
+const cloneV2State = (current: V2State): V2State => ({
+  documentMetadata: new Map(current.documentMetadata),
+  links: new Map(current.links),
+  ownProgress: new Map(current.ownProgress),
+  migrationReceipts: new Map(current.migrationReceipts)
+});
+
+const applyDocuments = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
-  current: V2State
-): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
-  const malformed = validateCommitProjectionSourceCommitRelationships(request);
-  if (malformed) return { result: rejectMalformed(malformed) };
-  const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
-  if (failure) return { result: reject(failure) };
+  state: V2State
+): { documents: Map<string, StoredDocument<TState>>; revisions: Record<string, number> } => {
   const nextDocuments = new Map(documents);
-  const state: V2State = {
-    documentMetadata: new Map(current.documentMetadata),
-    links: new Map(current.links),
-    ownProgress: new Map(current.ownProgress),
-    migrationReceipts: new Map(current.migrationReceipts)
-  };
   const revisions: Record<string, number> = {};
-  const linkRevisions: Record<string, number> = {};
   const progress = request.progress.strategy === 'in_document'
     ? new Map(request.progress.targets.map((target) => [target.targetDocumentId, target.final]))
     : new Map<string, Readonly<Record<ProjectionUuidBase64Url22, number>>>();
@@ -166,13 +162,22 @@ export const commitV2 = <TState>(
     state.documentMetadata.set(key, { targetDocumentId: document.targetDocumentId, revision, sourceProgress: { ...sourceProgress } });
     revisions[document.targetDocumentId] = revision;
   }
+  return { documents: nextDocuments, revisions };
+};
+
+const applyLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): Record<string, number> => {
+  const revisions: Record<string, number> = {};
   for (const link of request.stagedLinks) {
     const key = linkKey(request.projectionName, request.projectionGeneration, link.aggregateType, link.aggregateId);
     const revision = (link.expectedRevision ?? 0) + 1;
     const targetDocumentId = link.operation === 'subscribe' ? link.targetDocumentId : null;
     state.links.set(key, { targetDocumentId, revision });
-    linkRevisions[`${link.aggregateType}:${link.aggregateId}`] = revision;
+    revisions[`${link.aggregateType}:${link.aggregateId}`] = revision;
   }
+  return revisions;
+};
+
+const applyProgress = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): void => {
   if (request.progress.strategy === 'own_record') {
     const source = request.progress.source;
     state.ownProgress.set(ownKey(request.projectionName, request.projectionGeneration, source.sourceId), source.finalSequence);
@@ -183,10 +188,26 @@ export const commitV2 = <TState>(
       manifestDigest: receipt.manifestDigest, sequence: receipt.finalSequence
     });
   }
+};
+
+export const commitV2 = <TState>(
+  request: CommitProjectionSourceCommitRequest<TState>,
+  documents: Map<string, StoredDocument<TState>>,
+  current: V2State
+): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
+  const malformed = validateCommitProjectionSourceCommitRelationships(request);
+  if (malformed) return { result: rejectMalformed(malformed) };
+  const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
+  if (failure) return { result: reject(failure) };
+  const state = cloneV2State(current);
+  const appliedDocuments = applyDocuments(request, documents, state);
+  const linkRevisions = applyLinks(request, state);
+  applyProgress(request, state);
   return {
-    documents: nextDocuments,
+    documents: appliedDocuments.documents,
     state,
-    result: { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions: revisions, linkRevisions, progress: request.progress }
+    result: { version: 1, status: 'committed', commitSequence: request.commit.commitSequence,
+      documentRevisions: appliedDocuments.revisions, linkRevisions, progress: request.progress }
   };
 };
 
