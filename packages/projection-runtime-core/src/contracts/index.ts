@@ -120,6 +120,63 @@ export type {
   ProjectionGenerationRollbackContract,
   ProjectionGenerationSwitchContract
 } from './rebuild';
+export type {
+  ProjectionJsonPrimitive,
+  ProjectionJsonValue,
+  ProjectionJsonObject,
+  ProjectionSourceCheckpoint,
+  ProjectionSourceEvent,
+  ProjectionSourceCommit,
+  ProjectionSourceCommitValidationSuccess,
+  ProjectionSourceCommitValidationFailure,
+  ProjectionSourceCommitValidationResult
+} from './sourceCommit';
+export {
+  isCanonicalProjectionUuid,
+  isProjectionJsonValue,
+  validateProjectionSourceCommit
+} from './sourceCommit';
+export type { ProjectionUuidBase64Url22 } from './uuidCodec';
+export {
+  isProjectionUuidBase64Url22,
+  projectionUuidToBase64Url22,
+  projectionBase64Url22ToUuid
+} from './uuidCodec';
+export type {
+  ProjectionSourceCoverage,
+  ProjectionSourceDispatchAdmission,
+  ProjectionSourceCoverageAdvance,
+  ProjectionSourceOrderPort,
+  ProjectionCompleteCommitRangeCapability,
+  ProjectionCompleteCommitRangeRequest,
+  ProjectionCompleteCommitRange,
+  ProjectionIncompleteCommitRange,
+  ProjectionCompleteCommitRangeResult,
+  ProjectionCompleteCommitRangeReader,
+  ProjectionCompleteCommitRangeValidation
+} from './sourceOrder';
+export { isCompleteCommitRangeCapability, validateCompleteCommitRange } from './sourceOrder';
+export type {
+  ProjectionRegistryDefinitionManifest,
+  ProjectionQueueRegistryManifest,
+  ProjectionQueueRegistryBinding,
+  ProjectionQueueRegistryBindResult,
+  ProjectionQueueRegistryBindingPort
+} from './registry';
+export type {
+  ProjectionSourceCommitDocument,
+  ProjectionSourceCommitLink,
+  ProjectionInDocumentTargetProgress,
+  ProjectionInDocumentCommitProgress,
+  ProjectionOwnRecordCommitProgress,
+  ProjectionNoCommitProgress,
+  ProjectionSourceCommitProgress,
+  CommitProjectionSourceCommitRequest,
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRejected,
+  CommitProjectionSourceCommitResult,
+  ProjectionSourceCommitStorePort
+} from './sourceCommitStore';
 export {
   evaluateCutoverReadiness,
   transitionToCutover,
