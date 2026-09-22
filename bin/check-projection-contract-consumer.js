@@ -76,7 +76,6 @@ type ChangedEvent = Omit<ProjectionEvent, 'payload' | 'type'> & {
 const extended: InheritExtended<MirrorState, ChangedEvent> = inherit.extend((state, event) => {
   state.count += event.payload.amount;
 });
-const defaultExtended: InheritExtended = extended;
 const mirrorSource = {
   aggregateType: 'sample' as const,
   initialState: { count: 0 },
@@ -88,6 +87,7 @@ const changedEvent: ChangedEvent = {
   sequence: 1, timestamp: '2024-01-01T00:00:00Z'
 };
 mirrorSource.applyToDraft(mirrorSource.initialState, changedEvent);
+const unparameterizedMirror: MirrorableAggregateSource = mirrorSource;
 const mirrored = createProjection('mirror').mirror(mirrorSource, { changed: extended }).build();
 const checkpoint: ProjectionSourceCheckpoint | null = { sequence: 0 };
 const sourceKey = projectionUuidToBase64Url22('00112233-4455-6677-8899-aabbccddeeff');
@@ -115,14 +115,22 @@ const manifest: ProjectionQueueRegistryManifest = {
 };
 validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, defaultExtended, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
+void [definition, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
 
 declare const context: ProjectionContext;
 declare const defaultOnly: InheritExtended;
-// @ts-expect-error default marker types cannot be invoked without explicit state and event arguments
 defaultOnly.after({ count: 0 }, changedEvent, context);
+extended.after({ count: 0 }, changedEvent, context);
+// @ts-expect-error explicitly typed extensions reject callbacks with incompatible state
+const wrongExtended: InheritExtended<MirrorState, ChangedEvent> = inherit.extend((_state: { wrong: boolean }, _event: ChangedEvent) => {});
 // @ts-expect-error mirror sources retain their declared event payload
 mirrorSource.applyToDraft({ count: 0 }, { ...changedEvent, payload: { amount: 'invalid' } });
+type WideEvent = Omit<ChangedEvent, 'payload'> & { payload: { amount: number | string } };
+// @ts-expect-error a narrow event mutator cannot be assigned where wider events may be supplied
+const unsafeWideEventSource: MirrorableAggregateSource<MirrorState, WideEvent> = mirrorSource;
+type NarrowState = { count: 0 };
+// @ts-expect-error state appears in input and output positions and is invariant
+const unsafeNarrowStateSource: MirrorableAggregateSource<NarrowState, ChangedEvent> = mirrorSource;
 // @ts-expect-error handler event payload remains inferred from the source projector
 createProjection('bad-handler', () => ({ count: 0 })).from(mirrorSource, { changed: (_state, event) => event.payload.missing });
 // @ts-expect-error none requires explicit duplicate-effects acknowledgement
@@ -143,7 +151,7 @@ const unboundManifest: ProjectionQueueRegistryManifest = {
 const invalidSelectors: ProjectionQueueRegistryManifest = { ...manifest, definitions: [{ projectionName: 'p', generation: 'v1', definitionHash: digest, sourceSelectors: null }] };
 // @ts-expect-error source anchors remain a UUID-to-sequence record
 const invalidAnchors: ProjectionQueueRegistryManifest = { ...manifest, sourceStartAnchors: [] };
-void [invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
+void [wrongExtended, unsafeWideEventSource, unsafeNarrowStateSource, invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
 `);
 
   writeFileSync(join(temporaryDirectory, 'runtime.mjs'), `

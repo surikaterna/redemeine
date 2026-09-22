@@ -1,11 +1,10 @@
 import type { ProjectionDeduplicationStrategy } from './deduplication';
-import type { InheritExtended } from './inherit';
 import { defaultIdentity, inherit, isInheritEntry, isInheritExtended } from './inherit';
 import type {
   AggregateStateOf,
-  AnyMirrorableAggregateSource,
   InheritableHandlersForAggregate,
   JoinStreamDefinition,
+  MirrorableAggregateConstraint,
   MirrorableAggregateSource,
   ProjectionAggregateSource,
   ProjectionBuilder,
@@ -76,7 +75,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       if (!value) continue;
       if (isInheritExtended(value)) {
         this._assertMirrorable(aggregate);
-        const after = (value as InheritExtended<THandlerState, BaseProjectionEvent>).after;
+        const after = value.after;
         resolved[key] = (draft, event, context) => {
           aggregate.applyToDraft(draft, event);
           after(draft, event, context);
@@ -107,7 +106,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  mirror<TAggregate extends AnyMirrorableAggregateSource>(
+  mirror<TAggregate extends MirrorableAggregateConstraint>(
     aggregate: TAggregate,
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>> {

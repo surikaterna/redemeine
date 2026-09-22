@@ -34,15 +34,22 @@ export type ProjectionAggregateSource = {
   pure: { eventProjectors: Record<string, unknown> };
 };
 
+declare const MIRROR_TYPES_UNSPECIFIED: unique symbol;
+type MirrorTypesUnspecified = typeof MIRROR_TYPES_UNSPECIFIED;
+type MirrorState<TState> = TState extends MirrorTypesUnspecified ? unknown : TState;
+type ApplyToDraft<TState, TEvent> = [TState, TEvent] extends [MirrorTypesUnspecified, MirrorTypesUnspecified]
+  ? (...args: never[]) => void
+  : (draft: TState, event: TEvent) => void;
+
 /** Extended source required for mirror — provides draft mutation and initial state */
-export type MirrorableAggregateSource<TState = never, TEvent = never> = ProjectionAggregateSource & {
-  initialState: TState;
-  applyToDraft(draft: TState, event: TEvent): void;
+export type MirrorableAggregateSource<TState = MirrorTypesUnspecified, TEvent = MirrorTypesUnspecified> = ProjectionAggregateSource & {
+  initialState: MirrorState<TState>;
+  applyToDraft: ApplyToDraft<TState, TEvent>;
 };
 
-export type AnyMirrorableAggregateSource = ProjectionAggregateSource & {
+export type MirrorableAggregateConstraint = ProjectionAggregateSource & {
   initialState: unknown;
-  applyToDraft(...args: never[]): void;
+  applyToDraft: MirrorableAggregateSource['applyToDraft'];
 };
 
 /** Extract the state type from an aggregate that exposes initialState */
@@ -143,7 +150,7 @@ export interface ProjectionBuilder<TState> {
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
-  mirror<TAggregate extends AnyMirrorableAggregateSource>(
+  mirror<TAggregate extends MirrorableAggregateConstraint>(
     aggregate: TAggregate,
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>>;
