@@ -27,6 +27,12 @@ function secondSource(value: ICommit<StackEvent>): ICommit<StackEvent> {
     events: value.events.map((event, index) => ({ ...event, id: `cccccccc-cccc-4ccc-8ccc-${String(index).padStart(12, '0')}` })) };
 }
 
+function sourceCommit(sequence: number, amount: number): ICommit<StackEvent> {
+  const value = tapewormCommit(sequence, [amount]);
+  return { ...value, events: value.events.map((event) => ({ ...event,
+    id: `33333333-3333-4333-8333-${String(sequence).padStart(12, '0')}`, version: sequence })) };
+}
+
 function range(values: readonly ICommit<StackEvent>[]): ProjectionMigrationSourceRange {
   const digest = new ProjectionMigrationStreamingDigest('redemeine:migration:complete-commits:v2');
   for (const value of values) {
@@ -43,7 +49,7 @@ function buildManifest(a: readonly ICommit<StackEvent>[], b: readonly ICommit<St
   const newRegistry = { ...stackManifest('migration-new'), registryGeneration: 'v2', manifestId: projectionMigrationDigest('migration-new'),
     definitions: stackDefinitions().map(({ definition }) => ({ projectionName: definition.name, generation: 'v2',
       definitionHash: oldRegistry.identity.normalizedDefinitionRegistryDigest, sourceSelectors: [definition.fromStream.aggregate.aggregateType] })),
-    sourceStartAnchors: { [SOURCE_ID]: 2, [sourceB]: 1 } };
+    sourceStartAnchors: { [SOURCE_ID]: a.at(-1)!.commitSequence + 1, [sourceB]: b.at(-1)!.commitSequence + 1 } };
   const sourceRanges = [range(a), range(b)];
   const payload = { version: 2 as const, migrationId: 'real-migration', projectionName: 'migration-stack', oldGeneration: 'v1', newGeneration: 'v2',
     destinationStrategies: { 'P-own': 'own_record' as const, 'N-none': 'none' as const, 'Q-inline': 'in_document' as const,
@@ -64,6 +70,22 @@ async function cli(command: string, args: readonly string[]): Promise<{ code: nu
   const code = await new Promise<number | null>((resolveCode, reject) => { child.once('error', reject); child.once('close', resolveCode); });
   const line = stdout.trim().split('\n').at(-1) ?? stderr.trim().split('\n').at(-1) ?? '{}';
   return { code, receipt: JSON.parse(line) as Record<string, unknown> };
+}
+
+async function crashReplay(args: readonly string[], receipts: import('mongodb').Collection): Promise<number> {
+  const child = spawn('pnpm', ['exec', 'tsx', 'src/migration/cli.ts', 'replay', ...args], { cwd: process.cwd(), env: process.env,
+    stdio: ['ignore', 'ignore', 'inherit'], detached: true });
+  for (let attempt = 0; attempt < 6_000; attempt += 1) {
+    const count = await receipts.countDocuments();
+    if (count > 0) {
+      process.kill(-child.pid!, 'SIGKILL');
+      await new Promise<void>((resolveClose) => child.once('close', () => resolveClose()));
+      return count;
+    }
+    if (child.exitCode !== null) throw new Error('Replay completed before crash injection.');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  }
+  process.kill(-child.pid!, 'SIGKILL'); throw new Error('Timed out waiting for replay receipt before crash.');
 }
 
 async function setup(client: MongoClient, manifest: ProjectionMigrationManifest, oldCollections: ProjectionGenerationCollections,
@@ -89,7 +111,8 @@ async function run(): Promise<void> {
   try {
     const persistence = new MongoTapewormPersistence(db); const eventStore = Reflect.construct(EventStore, [persistence]) as InstanceType<typeof EventStore>;
     const partition = await eventStore.openPartition(PARTITION_ID);
-    const sourceA = [tapewormCommit(0, [1, 2]), tapewormCommit(1, [3])]; const sourceBCommits = [secondSource(tapewormCommit(0, [4]))];
+    const sourceA = Array.from({ length: 30 }, (_, sequence) => sourceCommit(sequence, sequence + 1));
+    const sourceBCommits = [secondSource(sourceCommit(0, 31))];
     await partition.append([...sourceA, ...sourceBCommits]);
     const manifest = buildManifest(sourceA, sourceBCommits);
     const oldCollections = { documents: 'old_documents', links: 'old_links', progress: 'old_progress', migrationReceipts: 'old_receipts' };
@@ -105,8 +128,10 @@ async function run(): Promise<void> {
     await sourceCollection.updateOne({ streamId: sourceB }, { $set: { 'events.0.payload.amount': 999 } });
     const corrupt = await cli('verify-sources', args); assert(corrupt.code !== 0, 'Corrupt final source was accepted.');
     for (const name of Object.values(newCollections)) assert(await db.collection(name).countDocuments() === 0, `Corrupt verification mutated ${name}.`);
-    await sourceCollection.updateOne({ streamId: sourceB }, { $set: { 'events.0.payload.amount': 4 } });
+    await sourceCollection.updateOne({ streamId: sourceB }, { $set: { 'events.0.payload.amount': 31 } });
     const verifiedSources = await cli('verify-sources', args); assert(verifiedSources.code === 0, 'Source verification resume failed.');
+    const crashReceiptCount = await crashReplay(args, db.collection(newCollections.migrationReceipts));
+    assert(crashReceiptCount > 0 && crashReceiptCount < 8, 'Replay crash was not injected between sources.');
     const replayed = await cli('replay', args); assert(replayed.code === 0, 'Replay failed.');
     const replayRestart = await cli('replay', args); assert(replayRestart.code === 0 && replayRestart.receipt.mutated === false, 'Replay restart was not idempotent.');
     await db.collection<ProjectionTransportDocument>('projection_transport').insertOne({ _id: `binding:${manifest.newRegistry.queueId}`, kind: 'binding',
@@ -132,6 +157,7 @@ async function run(): Promise<void> {
     evidence = { gitSha, databaseName, commands: ['preflight --dry-run', 'preflight', 'verify-sources(rejected)', 'verify-sources', 'replay', 'replay', 'activate(conflict)',
       'activate(x2,unknown commit injected)', 'verify', 'rollback(rejected)'], dryRunCreatedNothing: true,
       corruptSecondSourceProjectionCounts: [0, 0, 0, 0], journalRows: 2, receiptCount, activeGeneration: active.generation,
+      replayCrashReceiptCount: crashReceiptCount, replayRestartAfterSigkill: true,
       activationConflictPreservedReplayState: true, unknownCommitInjected: true,
       replaySnapshot: replayed.receipt.snapshot, verifiedSnapshot: verified.receipt.snapshot, databaseDropped: true };
   } finally { await db.dropDatabase(); await client.close(); }
