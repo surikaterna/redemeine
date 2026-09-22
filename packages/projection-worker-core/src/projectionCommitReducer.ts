@@ -8,7 +8,8 @@ import type {
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import { projectionUuidToBase64Url22 } from '@redemeine/projection-runtime-core';
-import { linksByKey, routeEvent, type RoutingLinkState } from './projectionCommitRouting';
+import { produce } from 'immer';
+import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState } from './projectionCommitRouting';
 
 export type ProjectionReductionResult<TState> =
   | { status: 'planned'; request: CommitProjectionSourceCommitRequest<TState> }
@@ -140,6 +141,73 @@ function needsSnapshot<TState>(reduction: ReductionState<TState>): ProjectionRed
   };
 }
 
+function applyHandler<TState>(
+  definition: ProjectionCommitDefinition<TState>,
+  reduction: ReductionState<TState>,
+  document: { state: TState },
+  routed: RoutedEvent<TState>,
+  targetId: string
+): void {
+  document.state = produce(document.state, (draft) => {
+    routed.handler(draft, routed.event, createContext(reduction, targetId));
+  });
+  if (definition.hooks?.afterEach) {
+    const state = clone(document.state);
+    definition.hooks.afterEach(state, routed.event);
+    document.state = state;
+  }
+  reduction.touched.add(targetId);
+}
+
+function applyEvents<TState>(
+  definition: ProjectionCommitDefinition<TState>,
+  commit: ProjectionSourceCommit,
+  snapshot: ProjectionSourceCommitSnapshot<TState>,
+  reduction: ReductionState<TState>,
+  sourceKey: ProjectionUuidBase64Url22
+): void {
+  for (const sourceEvent of commit.events) {
+    const routed = routeEvent(definition, sourceEvent, reduction.links);
+    if (!routed) continue;
+    for (const targetId of routed.targetIds) {
+      if (!canApplyToTarget(definition, snapshot, targetId, sourceKey, commit.commitSequence)) continue;
+      const document = getDocument(definition, snapshot, reduction, targetId);
+      if (document) applyHandler(definition, reduction, document, routed, targetId);
+    }
+  }
+}
+
+function createRequest<TState>(
+  definition: ProjectionCommitDefinition<TState>,
+  generation: string,
+  commit: ProjectionSourceCommit,
+  snapshot: ProjectionSourceCommitSnapshot<TState>,
+  reduction: ReductionState<TState>,
+  sourceKey: ProjectionUuidBase64Url22
+): CommitProjectionSourceCommitRequest<TState> {
+  const targetIds = [...reduction.touched].sort();
+  const finalDocuments = targetIds.map((targetDocumentId) => {
+    const document = reduction.documents.get(targetDocumentId);
+    if (!document) throw new Error(`Missing reduced document ${targetDocumentId}.`);
+    return { targetDocumentId, expectedRevision: document.revision, finalDocument: document.state };
+  });
+  return {
+    version: 1, mode: 'atomic-all', projectionName: definition.name, projectionGeneration: generation,
+    commit, finalDocuments, stagedLinks: [...reduction.stagedLinks.values()],
+    progress: createProgress(definition, commit, snapshot, targetIds, sourceKey)
+  };
+}
+
+function allResolvedTargetsDeduplicated<TState>(
+  definition: ProjectionCommitDefinition<TState>,
+  commit: ProjectionSourceCommit,
+  reduction: ReductionState<TState>
+): boolean {
+  return definition.deduplication.strategy === 'in_document'
+    && reduction.touched.size === 0
+    && commit.events.some((event) => routeEvent(definition, event, reduction.links)?.targetIds.length);
+}
+
 export function reduceProjectionSourceCommit<TState>(
   definition: ProjectionCommitDefinition<TState>,
   generation: string,
@@ -155,47 +223,17 @@ export function reduceProjectionSourceCommit<TState>(
     missingTargets: new Set(), missingLinks: new Map()
   };
   try {
-    for (const sourceEvent of commit.events) {
-      const routed = routeEvent(definition, sourceEvent, reduction.links);
-      if (!routed) continue;
-      for (const targetId of routed.targetIds) {
-        if (!canApplyToTarget(definition, snapshot, targetId, sourceKey, commit.commitSequence)) continue;
-        if (sourceEvent.aggregateType !== definition.fromStream.aggregate.aggregateType) {
-          stageLink(reduction, 'subscribe', sourceEvent.aggregateType, sourceEvent.aggregateId, targetId);
-        }
-        const document = getDocument(definition, snapshot, reduction, targetId);
-        if (!document) continue;
-        routed.handler(document.state as never, routed.event, createContext(reduction, targetId));
-        definition.hooks?.afterEach?.(document.state, routed.event);
-        reduction.touched.add(targetId);
-      }
-    }
+    applyEvents(definition, commit, snapshot, reduction, sourceKey);
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'projection handler threw';
     return { status: 'terminal', reason };
   }
   const missing = needsSnapshot(reduction);
   if (missing) return missing;
-  if (definition.deduplication.strategy === 'in_document'
-    && reduction.touched.size === 0
-    && commit.events.some((event) => routeEvent(definition, event, reduction.links)?.targetIds.length)) {
-    return { status: 'deduplicated' };
+  try {
+    if (allResolvedTargetsDeduplicated(definition, commit, reduction)) return { status: 'deduplicated' };
+    return { status: 'planned', request: createRequest(definition, generation, commit, snapshot, reduction, sourceKey) };
+  } catch (error) {
+    return { status: 'terminal', reason: error instanceof Error ? error.message : 'projection plan failed' };
   }
-  const targetIds = [...reduction.touched].sort();
-  return {
-    status: 'planned',
-    request: {
-      version: 1,
-      mode: 'atomic-all',
-      projectionName: definition.name,
-      projectionGeneration: generation,
-      commit,
-      finalDocuments: targetIds.map((targetDocumentId) => {
-        const document = reduction.documents.get(targetDocumentId) as { state: TState; revision: number | null };
-        return { targetDocumentId, expectedRevision: document.revision, finalDocument: document.state };
-      }),
-      stagedLinks: [...reduction.stagedLinks.values()],
-      progress: createProgress(definition, commit, snapshot, targetIds, sourceKey)
-    }
-  };
 }

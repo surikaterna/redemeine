@@ -208,6 +208,9 @@ importers:
       '@redemeine/projection-runtime-core':
         specifier: workspace:*
         version: link:../projection-runtime-core
+      immer:
+        specifier: ^10.2.0
+        version: 10.2.0
     devDependencies:
       tsup:
         specifier: ^8.4.0

@@ -208,6 +208,23 @@ describe('complete projection commit reducer', () => {
     }]);
   });
 
+  test('runs handlers with Immer draft semantics without mutating loaded state', () => {
+    const loaded: State = { count: 2, seen: [] };
+    Object.freeze(loaded.seen);
+    Object.freeze(loaded);
+    const result = reduceProjectionSourceCommit(
+      definition('drafts', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' }),
+      'g1', commit(0),
+      snapshot({ targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: loaded, sourceProgress: {} }] })
+    );
+    expect(loaded).toEqual({ count: 2, seen: [] });
+    expect(result.status === 'planned' && result.request.finalDocuments[0]?.finalDocument).toEqual({
+      count: 3,
+      seen: ['Added']
+    });
+    expect(result.status === 'planned' && Object.isFrozen(result.request.finalDocuments[0]?.finalDocument)).toBe(true);
+  });
+
   test('fans out deterministically and leaves in-document progress empty for no-target commits', () => {
     const fanout = definition('fanout', { strategy: 'in_document' });
     fanout.identity = () => ['B', 'A', 'B'];
@@ -244,6 +261,36 @@ describe('complete projection commit reducer', () => {
       finalDocuments: [{ targetDocumentId: 'target', finalDocument: { count: 0, seen: [] } }],
       stagedLinks: [{ operation: 'unsubscribe', targetDocumentId: 'target', expectedRevision: 7 }]
     });
+  });
+
+  test('does not stage an implicit subscription for a joined no-op handler', () => {
+    const joined = definition('joined-no-op', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' });
+    joined.fromStream.aggregate.aggregateType = 'Account';
+    joined.fromStream.handlers = {};
+    joined.joinStreams = [{ aggregate: { aggregateType: 'Order' }, handlers: { Added: () => undefined } }];
+    const result = reduceProjectionSourceCommit(joined, 'g1', commit(0), snapshot({
+      targets: [{ targetDocumentId: 'target', revision: 2, state: { count: 0, seen: [] }, sourceProgress: {} }],
+      links: [{ aggregateType: 'Order', aggregateId: SOURCE_A, targetDocumentId: 'target', revision: 7 }]
+    }));
+    expect(result.status === 'planned' && result.request.stagedLinks).toEqual([]);
+  });
+
+  test('stages only an explicit joined subscribe request', () => {
+    const joined = definition('joined-subscribe', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' });
+    joined.fromStream.aggregate.aggregateType = 'Account';
+    joined.fromStream.handlers = {};
+    joined.joinStreams = [{
+      aggregate: { aggregateType: 'Order' },
+      handlers: { Added: (state, event, context) => context.subscribeTo({ aggregateType: 'Order' }, event.aggregateId) }
+    }];
+    const result = reduceProjectionSourceCommit(joined, 'g1', commit(0), snapshot({
+      targets: [{ targetDocumentId: 'target', revision: 2, state: { count: 0, seen: [] }, sourceProgress: {} }],
+      links: [{ aggregateType: 'Order', aggregateId: SOURCE_A, targetDocumentId: 'target', revision: 7 }]
+    }));
+    expect(result.status === 'planned' && result.request.stagedLinks).toEqual([{
+      operation: 'subscribe', aggregateType: 'Order', aggregateId: SOURCE_A,
+      targetDocumentId: 'target', expectedRevision: 7
+    }]);
   });
 
   test('applies exact own-record, in-document and none sequence-only semantics', async () => {

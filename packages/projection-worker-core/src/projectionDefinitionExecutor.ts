@@ -6,7 +6,7 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
-import { reduceProjectionSourceCommit } from './projectionCommitReducer';
+import { reduceProjectionSourceCommit, type ProjectionReductionResult } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
@@ -84,6 +84,61 @@ function mergeLinks(
   return [...links.values()];
 }
 
+type AttemptResult<TState> =
+  | { kind: 'done'; outcome: ProjectionDefinitionCommitOutcome }
+  | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
+  | { kind: 'conflict'; reason: string };
+
+async function commitReduction<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>,
+  commit: ProjectionSourceCommit,
+  reduction: Extract<ProjectionReductionResult<TState>, { status: 'planned' }>,
+  attempt: number
+): Promise<AttemptResult<TState>> {
+  try {
+    const result = await options.store.commitProjectionSourceCommit(reduction.request);
+    if (result.status === 'committed') {
+      const outcome = result.commitSequence === commit.commitSequence
+        ? { status: 'committed' as const, attempts: attempt }
+        : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
+      return { kind: 'done', outcome };
+    }
+    if (!result.retryable) return { kind: 'done', outcome: failed('terminal', result.reason, attempt) };
+    return result.category === 'conflict'
+      ? { kind: 'conflict', reason: result.reason }
+      : { kind: 'done', outcome: failed(result.category, result.reason, attempt) };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'commit outcome unknown';
+    return { kind: 'done', outcome: failed('ambiguous', reason, attempt) };
+  }
+}
+
+async function executeAttempt<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>,
+  commit: ProjectionSourceCommit,
+  targets: ReadonlySet<string>,
+  links: readonly { aggregateType: string; aggregateId: string }[],
+  attempt: number
+): Promise<AttemptResult<TState>> {
+  const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
+  return options.lanes.run(keys, async () => {
+    let snapshot: ProjectionSourceCommitSnapshot<TState>;
+    try {
+      snapshot = await loadAttempt(options, commit, [...targets].sort(), links);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'snapshot load failed';
+      return { kind: 'done', outcome: failed('ambiguous', reason, attempt) };
+    }
+    const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot);
+    if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
+    if (reduction.status === 'terminal') return { kind: 'done', outcome: failed('terminal', reduction.reason, attempt) };
+    if (reduction.status === 'deduplicated') {
+      return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
+    }
+    return commitReduction(options, commit, reduction, attempt);
+  });
+}
+
 export async function executeProjectionDefinition<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit
@@ -108,34 +163,7 @@ export async function executeProjectionDefinition<TState>(
   const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2;
   let conflicts = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
-    const outcome = await options.lanes.run(keys, async () => {
-      let snapshot: ProjectionSourceCommitSnapshot<TState>;
-      try {
-        snapshot = await loadAttempt(options, commit, [...targets].sort(), links);
-      } catch (error) {
-        return { kind: 'done' as const, outcome: failed('ambiguous', error instanceof Error ? error.message : 'snapshot load failed', attempt) };
-      }
-      const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot);
-      if (reduction.status === 'needs_snapshot') return { kind: 'expand' as const, reduction };
-      if (reduction.status === 'terminal') return { kind: 'done' as const, outcome: failed('terminal', reduction.reason, attempt) };
-      if (reduction.status === 'deduplicated') return { kind: 'done' as const, outcome: { status: 'deduplicated' as const, attempts: attempt } };
-      try {
-        const result = await options.store.commitProjectionSourceCommit(reduction.request);
-        if (result.status === 'committed') {
-          const outcome = result.commitSequence === commit.commitSequence
-            ? { status: 'committed' as const, attempts: attempt }
-            : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
-          return { kind: 'done' as const, outcome };
-        }
-        if (!result.retryable) return { kind: 'done' as const, outcome: failed('terminal', result.reason, attempt) };
-        return result.category === 'conflict'
-          ? { kind: 'conflict' as const, reason: result.reason }
-          : { kind: 'done' as const, outcome: failed(result.category, result.reason, attempt) };
-      } catch (error) {
-        return { kind: 'done' as const, outcome: failed('ambiguous', error instanceof Error ? error.message : 'commit outcome unknown', attempt) };
-      }
-    });
+    const outcome = await executeAttempt(options, commit, targets, links, attempt);
     if (outcome.kind === 'done') return outcome.outcome;
     if (outcome.kind === 'expand') {
       for (const target of outcome.reduction.targetIds) targets.add(target);
