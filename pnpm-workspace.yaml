@@ -2,3 +2,5 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: true
+overrides:
+  mongodb: 6.18.0

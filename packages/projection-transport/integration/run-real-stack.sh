@@ -18,6 +18,9 @@ available_port() {
 
 MONGO_PORT="${REDEMEINE_TRANSPORT_MONGO_PORT:-$(available_port)}"
 RABBIT_PORT="${REDEMEINE_TRANSPORT_RABBIT_PORT:-$(available_port)}"
+GIT_SHA="$(git rev-parse HEAD)"
+EVIDENCE_PATH="/tmp/redemeine-zyfy4-evidence-${GIT_SHA}-$RANDOM.json"
+RECEIPT_PATH="${REDEMEINE_ZYFY4_RECEIPT_PATH:-/tmp/redemeine-zyfy4-${GIT_SHA}.json}"
 
 cleanup() {
   docker rm -f "$MONGO_CONTAINER" "$RABBIT_CONTAINER" >/dev/null 2>&1 || true
@@ -62,5 +65,11 @@ RABBIT_DIGEST="$(docker image inspect "$RABBIT_IMAGE" --format '{{index .RepoDig
 REDEMEINE_MONGO_URI="mongodb://localhost:${MONGO_PORT}/?replicaSet=rs0" \
 REDEMEINE_RABBIT_URI="amqp://localhost:${RABBIT_PORT}" \
 REDEMEINE_MONGO_DIGEST="$MONGO_DIGEST" REDEMEINE_RABBIT_DIGEST="$RABBIT_DIGEST" \
+REDEMEINE_EVIDENCE_PATH="$EVIDENCE_PATH" REDEMEINE_GIT_SHA="$GIT_SHA" \
 pnpm exec tsx integration/realStack.ts
-echo "container_cleanup=$MONGO_CONTAINER,$RABBIT_CONTAINER"
+
+docker rm -f "$MONGO_CONTAINER" "$RABBIT_CONTAINER" >/dev/null
+trap - EXIT
+REDEMEINE_EVIDENCE_PATH="$EVIDENCE_PATH" REDEMEINE_RECEIPT_PATH="$RECEIPT_PATH" \
+REDEMEINE_MONGO_CONTAINER="$MONGO_CONTAINER" REDEMEINE_RABBIT_CONTAINER="$RABBIT_CONTAINER" \
+pnpm exec tsx integration/finalizeReceipt.ts
