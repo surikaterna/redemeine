@@ -44,6 +44,13 @@ export function determineBatchMode(
 
 type StoreFailureLike = { kind?: unknown; reason?: unknown; retryable?: unknown };
 
+function normalizeStoreFailureReason(failure: ProjectionWorkerStoreFailure): string {
+  if (failure.reason && failure.reason.length > 0) return failure.reason;
+  if (failure.kind === 'conflict') return 'store-conflict';
+  if (failure.kind === 'transient') return 'store-transient-failure';
+  return 'store-terminal-failure';
+}
+
 function classifyStoreFailure(error: unknown): ProjectionWorkerStoreFailure | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   const failure = error as StoreFailureLike;
@@ -64,6 +71,6 @@ export function decideStoreFailureForCommit(
   const failure = classifyStoreFailure(error);
   if (!failure) return undefined;
   if (failure.kind !== 'terminal') evictStateCacheTargets(stateCache, commit);
-  const reason = failure.reason ?? `store-${failure.kind}-failure`;
+  const reason = normalizeStoreFailureReason(failure);
   return { status: 'nack', retryable: failure.kind !== 'terminal', reason };
 }
