@@ -45,6 +45,13 @@ export interface ProjectionGenerationCollections {
   progress: string;
   migrationReceipts: string;
 }
+interface MigrationPreflightRecords {
+  oldGeneration: ProjectionGenerationRecord | ProjectionActiveGenerationRecord | null;
+  newGeneration: ProjectionGenerationRecord | ProjectionActiveGenerationRecord | null;
+  active: ProjectionGenerationRecord | ProjectionActiveGenerationRecord | null;
+  oldBinding: ProjectionTransportDocument | null;
+  newBinding: ProjectionTransportDocument | null;
+}
 
 export class MongoProjectionGenerationResolver {
   constructor(private readonly control: Collection<ProjectionGenerationRecord | ProjectionActiveGenerationRecord>) {}
@@ -122,7 +129,16 @@ export class MongoProjectionMigrationPreflightPort implements ProjectionMigratio
     private readonly collections: ProjectionGenerationCollections
   ) {}
   async inspect(manifest: ProjectionMigrationManifest, mode: 'preflight' | 'identity' = 'preflight'): Promise<readonly string[]> {
-    const issues: string[] = [];
+    const records = await this.readRecords(manifest);
+    const issues = [
+      ...this.inspectGenerations(manifest, records),
+      ...this.inspectPointer(manifest, records.active),
+      ...this.inspectBindings(manifest, records)
+    ];
+    if (mode === 'preflight') issues.push(...(await this.inspectFreshness()));
+    return issues;
+  }
+  private async readRecords(manifest: ProjectionMigrationManifest): Promise<MigrationPreflightRecords> {
     const [oldGeneration, newGeneration, active, oldBinding, newBinding] = await Promise.all([
       this.control.findOne({ _id: generationId(manifest.projectionName, manifest.oldGeneration), kind: 'generation' }),
       this.control.findOne({ _id: generationId(manifest.projectionName, manifest.newGeneration), kind: 'generation' }),
@@ -130,6 +146,11 @@ export class MongoProjectionMigrationPreflightPort implements ProjectionMigratio
       this.transport.findOne({ _id: `binding:${manifest.oldRegistry.queueId}`, kind: 'binding' }),
       this.transport.findOne({ _id: `binding:${manifest.newRegistry.queueId}`, kind: 'binding' })
     ]);
+    return { oldGeneration, newGeneration, active, oldBinding, newBinding };
+  }
+  private inspectGenerations(manifest: ProjectionMigrationManifest, records: MigrationPreflightRecords): readonly string[] {
+    const issues: string[] = [];
+    const { oldGeneration, newGeneration } = records;
     if (
       !isGeneration(oldGeneration) ||
       oldGeneration._id !== generationId(manifest.projectionName, manifest.oldGeneration) ||
@@ -146,11 +167,14 @@ export class MongoProjectionMigrationPreflightPort implements ProjectionMigratio
       manifest: manifest.newRegistry,
       collections: this.collections,
       strategies: manifest.destinationStrategies
-    };
+    } satisfies ProjectionGenerationRecord;
     if (!canonicalEqual(newGeneration, expectedNewGeneration)) issues.push('trustedNewGenerationMismatch');
     if (isGeneration(oldGeneration) && !projectionGenerationCollectionsAreIsolated(oldGeneration.collections, this.collections))
       issues.push('generationCollectionsNotIsolated');
-    const expectedActive = {
+    return issues;
+  }
+  private inspectPointer(manifest: ProjectionMigrationManifest, active: MigrationPreflightRecords['active']): readonly string[] {
+    const expectedActive: ProjectionActiveGenerationRecord = {
       _id: activeId(manifest.projectionName),
       kind: 'active',
       projectionName: manifest.projectionName,
@@ -159,20 +183,26 @@ export class MongoProjectionMigrationPreflightPort implements ProjectionMigratio
       manifestDigest: manifest.oldRegistry.manifestId,
       revision: 0
     };
-    const expectedActivated = {
+    const expectedActivated: ProjectionActiveGenerationRecord = {
       ...expectedActive,
       generation: manifest.newGeneration,
       queueId: manifest.newRegistry.queueId,
       manifestDigest: manifest.newRegistry.manifestId,
       revision: 1
     };
-    if (!canonicalEqual(active, expectedActive) && !canonicalEqual(active, expectedActivated)) issues.push('activeGenerationMismatch');
-    if (!bindingMatches(oldBinding, manifest.oldRegistry)) issues.push('trustedOldQueueBindingMismatch');
-    if (newBinding && !bindingMatches(newBinding, manifest.newRegistry)) issues.push('trustedNewQueueBindingMismatch');
-    if (mode === 'preflight')
-      for (const name of Object.values(this.collections)) {
-        if ((await this.database.collection<StringDocument>(name).findOne({})) !== null) issues.push(`freshCollectionRequired:${name}`);
-      }
+    return canonicalEqual(active, expectedActive) || canonicalEqual(active, expectedActivated) ? [] : ['activeGenerationMismatch'];
+  }
+  private inspectBindings(manifest: ProjectionMigrationManifest, records: MigrationPreflightRecords): readonly string[] {
+    const issues: string[] = [];
+    if (!bindingMatches(records.oldBinding, manifest.oldRegistry)) issues.push('trustedOldQueueBindingMismatch');
+    if (records.newBinding && !bindingMatches(records.newBinding, manifest.newRegistry)) issues.push('trustedNewQueueBindingMismatch');
+    return issues;
+  }
+  private async inspectFreshness(): Promise<readonly string[]> {
+    const issues: string[] = [];
+    for (const name of Object.values(this.collections)) {
+      if ((await this.database.collection<StringDocument>(name).findOne({})) !== null) issues.push(`freshCollectionRequired:${name}`);
+    }
     return issues;
   }
 }
