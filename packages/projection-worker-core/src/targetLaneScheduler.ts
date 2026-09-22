@@ -2,8 +2,15 @@ type Lane = { tail: Promise<void>; pending: number };
 type Reservation = { key: string; lane: Lane; previous: Promise<void>; release: () => void };
 
 export interface ProjectionLaneScheduler {
-  readonly size: number;
   run<T>(keys: readonly string[], operation: () => Promise<T>): Promise<T>;
+}
+
+const schedulerLanes = new WeakMap<ProjectionLaneScheduler, ReadonlyMap<string, Lane>>();
+
+export function observeProjectionLaneCountForTest(scheduler: ProjectionLaneScheduler): number {
+  const lanes = schedulerLanes.get(scheduler);
+  if (!lanes) throw new Error('Unknown projection lane scheduler');
+  return lanes.size;
 }
 
 export function createProjectionLaneScheduler(): ProjectionLaneScheduler {
@@ -37,10 +44,7 @@ export function createProjectionLaneScheduler(): ProjectionLaneScheduler {
     }
   };
 
-  return {
-    get size(): number {
-      return lanes.size;
-    },
+  const scheduler: ProjectionLaneScheduler = {
     run<T>(keys: readonly string[], operation: () => Promise<T>): Promise<T> {
       const canonicalKeys = [...new Set(keys)].sort();
       const reservations = canonicalKeys.map(reserve);
@@ -49,4 +53,6 @@ export function createProjectionLaneScheduler(): ProjectionLaneScheduler {
         .finally(() => release(reservations));
     }
   };
+  schedulerLanes.set(scheduler, lanes);
+  return scheduler;
 }
