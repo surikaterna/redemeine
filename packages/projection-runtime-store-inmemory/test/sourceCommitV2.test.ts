@@ -5,6 +5,8 @@ defineProjectionSourceCommitStoreConformance('in-memory', () => new InMemoryProj
 
 test('warning callbacks are rate limited and best effort', async () => {
   let calls = 0;
+  const finalProgress = { AAAAAAAAAAAAAAAAAAAAAA: 0 };
+  const metadataBytes = new TextEncoder().encode(JSON.stringify(finalProgress)).byteLength;
   const store = new InMemoryProjectionStore<{ value: number }>({
     onDedupeWarning: () => {
       calls += 1;
@@ -26,10 +28,21 @@ test('warning callbacks are rate limited and best effort', async () => {
     stagedLinks: [],
     progress: {
       strategy: 'in_document' as const,
-      warnings: { warnAtSourceCount: 0, warnAtMetadataBytes: 0 },
-      targets: [{ targetDocumentId: 'one', expected: {}, final: { AAAAAAAAAAAAAAAAAAAAAA: 0 } }]
+      warnings: { warnAtSourceCount: 0, warnAtMetadataBytes: metadataBytes - 1 },
+      targets: [{ targetDocumentId: 'one', expected: {}, final: finalProgress }]
     }
   };
   expect((await store.commitProjectionSourceCommit(request)).status).toBe('committed');
+  expect(calls).toBe(2);
+  const second = {
+    ...request,
+    commit: { ...request.commit, commitSequence: 7 },
+    finalDocuments: [{ targetDocumentId: 'one', expectedRevision: 1, finalDocument: { value: 2 } }],
+    progress: {
+      ...request.progress,
+      targets: [{ targetDocumentId: 'one', expected: finalProgress, final: { ...finalProgress, AAAAAAAAAAAAAAAAAAAAAg: 7 } }]
+    }
+  };
+  expect((await store.commitProjectionSourceCommit(second)).status).toBe('committed');
   expect(calls).toBe(2);
 });
