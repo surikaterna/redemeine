@@ -1,4 +1,11 @@
 export type { Checkpoint, ProjectionEvent, EventBatch, Cursor } from './types';
+export type {
+  ProjectionDedupeWarningPolicy,
+  ProjectionInDocumentDeduplication,
+  ProjectionOwnRecordDeduplication,
+  ProjectionNoDeduplication,
+  ProjectionDeduplicationStrategy
+} from './deduplication';
 export {
   createProjection,
   inherit
@@ -19,6 +26,8 @@ export type {
   JoinStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder,
+  ProjectionCommitDefinition,
+  ProjectionCommitBuilder,
   ProjectionHooks
 } from './createProjection';
 export {

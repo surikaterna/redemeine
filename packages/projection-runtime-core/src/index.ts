@@ -7,6 +7,13 @@ export type {
   ProjectionWarning
 } from './types';
 export type {
+  ProjectionDedupeWarningPolicy,
+  ProjectionInDocumentDeduplication,
+  ProjectionOwnRecordDeduplication,
+  ProjectionNoDeduplication,
+  ProjectionDeduplicationStrategy
+} from './projectionDeduplication';
+export type {
   IProjectionStore,
   ProjectionAtomicWrite,
   ProjectionDocumentWrite,
@@ -33,6 +40,8 @@ export type {
   ReverseSubscribeStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder,
+  ProjectionCommitDefinition,
+  ProjectionCommitBuilder,
   ProjectionHooks
 } from './createProjection';
 export { ProjectionDaemon } from './ProjectionDaemon';

@@ -6,6 +6,7 @@ import {
   defaultIdentity
 } from './inherit';
 import type { InheritToken, InheritExtended } from './inherit';
+import type { ProjectionDeduplicationStrategy } from './deduplication';
 
 export { inherit } from './inherit';
 export type { InheritToken, InheritExtended } from './inherit';
@@ -176,6 +177,13 @@ export interface ProjectionDefinition<TState = unknown> {
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
   hooks?: ProjectionHooks<TState>;
+  /** Required by commit-native runtimes. Omission is retained for legacy definitions only. */
+  deduplication?: ProjectionDeduplicationStrategy;
+}
+
+export interface ProjectionCommitDefinition<TState = unknown>
+  extends Omit<ProjectionDefinition<TState>, 'deduplication'> {
+  deduplication: ProjectionDeduplicationStrategy;
 }
 
 // --- Builder interface ---
@@ -202,7 +210,14 @@ export interface ProjectionBuilder<TState> {
 
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
 
+  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+
   build(): ProjectionDefinition<TState>;
+}
+
+export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
+  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+  buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }
 
 // --- Builder implementation ---
@@ -214,6 +229,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
+  private _deduplication: ProjectionDeduplicationStrategy | undefined;
 
   constructor(name: string, initialState?: (id: string) => TState) {
     this._name = name;
@@ -337,6 +353,22 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState> {
+    if (strategy.strategy === 'none' && strategy.reason.trim().length === 0) {
+      throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
+    }
+    this._deduplication = strategy;
+    return this;
+  }
+
+  buildCommitDefinition(): ProjectionCommitDefinition<TState> {
+    const definition = this.build();
+    if (!definition.deduplication) {
+      throw new Error(`Projection '${this._name}' requires an explicit deduplication strategy.`);
+    }
+    return definition as ProjectionCommitDefinition<TState>;
+  }
+
   build(): ProjectionDefinition<TState> {
     if (!this._fromStream) {
       throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
@@ -356,7 +388,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       initialState: this._initialState,
       identity: this._identity,
       subscriptions: [],
-      hooks: this._hooks
+      hooks: this._hooks,
+      ...(this._deduplication ? { deduplication: this._deduplication } : {})
     };
   }
 }
