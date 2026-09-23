@@ -6,7 +6,7 @@ import type {
   ProjectionStoreCommitAtomicManyRequest
 } from '../contracts';
 import { assertWritePrecondition, createInvalidRequestFailure, toWriteFailure } from '../storeFailures';
-import type { ProjectionDocumentRecord } from '../types';
+import type { MongoCollectionLike, ProjectionDedupeRecord, ProjectionDocumentRecord } from '../types';
 import { withSession } from './withSession';
 
 const cloneCheckpoint = (checkpoint: Checkpoint): Checkpoint => ({
@@ -26,10 +26,7 @@ const chooseHigherWatermark = (current: Checkpoint | null, next: Checkpoint): Ch
   return current;
 };
 
-const toRejected = (
-  failure: ReturnType<typeof createInvalidRequestFailure>,
-  failedAtIndex: number
-): ProjectionStoreAtomicManyRejectedResult => ({
+const toRejected = (failure: ReturnType<typeof createInvalidRequestFailure>, failedAtIndex: number): ProjectionStoreAtomicManyRejectedResult => ({
   status: 'rejected',
   highestWatermark: null,
   failedAtIndex,
@@ -38,9 +35,7 @@ const toRejected = (
   committedCount: 0
 });
 
-const validateRequest = <TState>(
-  request: ProjectionStoreCommitAtomicManyRequest<TState>
-): ProjectionStoreAtomicManyRejectedResult | null => {
+const validateRequest = <TState>(request: ProjectionStoreCommitAtomicManyRequest<TState>): ProjectionStoreAtomicManyRejectedResult | null => {
   if (request.mode !== 'atomic-all') {
     return toRejected(createInvalidRequestFailure(`unsupported mode: ${request.mode}`), 0);
   }
@@ -52,16 +47,12 @@ const validateRequest = <TState>(
   return null;
 };
 
-const validateDuplicateDocuments = <TState>(
-  request: ProjectionStoreCommitAtomicManyRequest<TState>
-): ProjectionStoreAtomicManyRejectedResult | null => {
+const validateDuplicateDocuments = <TState>(request: ProjectionStoreCommitAtomicManyRequest<TState>): ProjectionStoreAtomicManyRejectedResult | null => {
   const seen = new Set<string>();
   for (let index = 0; index < request.writes.length; index += 1) {
     for (const document of request.writes[index]!.documents) {
       if (seen.has(document.documentId)) {
-        const failure = createInvalidRequestFailure(
-          `duplicate document write in atomic-all batch: documentId='${document.documentId}'`
-        );
+        const failure = createInvalidRequestFailure(`duplicate document write in atomic-all batch: documentId='${document.documentId}'`);
         return toRejected(failure, index);
       }
 
@@ -81,8 +72,8 @@ type Watermarks = {
 type CommitAtomicManyDependencies<TState> = {
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>;
   request: ProjectionStoreCommitAtomicManyRequest<TState>;
-  collection: { findOne: (filter: { _id: string }, options?: { session: ClientSession }) => Promise<{ checkpoint?: Checkpoint } | null>; bulkWrite: (...args: unknown[]) => Promise<unknown> };
-  dedupeCollection: { bulkWrite: (...args: unknown[]) => Promise<unknown> };
+  collection: Pick<MongoCollectionLike<ProjectionDocumentRecord<TState>>, 'findOne' | 'bulkWrite'>;
+  dedupeCollection: Pick<MongoCollectionLike<ProjectionDedupeRecord>, 'bulkWrite'>;
   now: () => string;
   buildDocumentWriteOperation: (
     write: ProjectionStoreCommitAtomicManyRequest<TState>['writes'][number]['documents'][number]
@@ -141,9 +132,7 @@ const executeWrites = async <TState>(deps: CommitAtomicManyDependencies<TState>,
   });
 };
 
-export const commitAtomicMany = async <TState>(
-  deps: CommitAtomicManyDependencies<TState>
-): Promise<ProjectionStoreAtomicManyResult> => {
+export const commitAtomicMany = async <TState>(deps: CommitAtomicManyDependencies<TState>): Promise<ProjectionStoreAtomicManyResult> => {
   const invalidRequest = validateRequest(deps.request) ?? validateDuplicateDocuments(deps.request);
   if (invalidRequest) {
     return invalidRequest;
