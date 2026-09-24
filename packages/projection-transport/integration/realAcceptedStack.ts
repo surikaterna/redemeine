@@ -128,17 +128,25 @@ async function run(): Promise<void> {
   await nonzero.worker.stop();
 
   const missing = createWorker('missing_queue', -1);
-  const missingChannel = await rabbit.createConfirmChannel();
+  const missingRabbit = await connect(rabbitUri);
+  missingRabbit.on('error', () => undefined);
+  const missingChannel = await missingRabbit.createConfirmChannel();
+  missingChannel.on('error', () => undefined);
   let missingRejected = false;
   try { await missing.worker.start(adaptChannel(missingChannel)); } catch { missingRejected = true; }
   assert(missingRejected, 'Missing Rabbit queue did not fail before consume');
+  await missingRabbit.close().catch(() => undefined);
   const wrong = createWorker('wrong_topology', -1);
   await channel.assertQueue(wrong.queue, { durable: true, deadLetterExchange: 'wrong-dlx' });
   queueNames.push(wrong.queue);
-  const wrongChannel = await rabbit.createConfirmChannel();
+  const wrongRabbit = await connect(rabbitUri);
+  wrongRabbit.on('error', () => undefined);
+  const wrongChannel = await wrongRabbit.createConfirmChannel();
+  wrongChannel.on('error', () => undefined);
   let incompatibleRejected = false;
   try { await wrong.worker.start(adaptChannel(wrongChannel)); } catch { incompatibleRejected = true; }
   assert(incompatibleRejected, 'Incompatible queue/DLX topology did not fail');
+  await wrongRabbit.close().catch(() => undefined);
   assert(settlements.length === 1, 'Negative topology checks settled a delivery');
   const invalidBirth = createWorker('invalid_birth', -1);
   let birthRejected = false;
