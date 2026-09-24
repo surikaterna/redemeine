@@ -7,6 +7,8 @@ export interface ProjectionRegistryDefinitionManifest {
   readonly generation: string;
   readonly definitionHash: ProjectionSha256Digest;
   readonly sourceSelectors: readonly string[];
+  /** Required for joined definitions; bound as part of the immutable manifest. */
+  readonly joined?: true;
 }
 
 export interface ProjectionRegistryManifestIdentity {
@@ -129,6 +131,7 @@ export function validateProjectionQueueRegistryManifest(candidate: unknown): rea
     if (!isNonempty(definition.projectionName)) issues.push(`definitions[${index}].projectionName`);
     if (!isNonempty(definition.generation)) issues.push(`definitions[${index}].generation`);
     if (!isProjectionSha256Digest(definition.definitionHash)) issues.push(`definitions[${index}].definitionHash`);
+    if (definition.joined !== undefined && definition.joined !== true) issues.push(`definitions[${index}].joined`);
     issues.push(...validateSourceSelectors(definition.sourceSelectors, index));
     const scope = `${String(definition.projectionName)}\u0000${String(definition.generation)}`;
     if (definitionScopes.has(scope)) issues.push(`definitions[${index}].duplicate`);

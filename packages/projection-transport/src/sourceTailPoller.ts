@@ -47,6 +47,12 @@ export class SourceTailPoller {
 
   isHealthy(): boolean { return this.healthy && !this.stopping; }
 
+  async verifyCutover(): Promise<void> {
+    for (const sourceId of this.options.sourceIds) {
+      await this.options.transport.verifyJoinedCutover(this.options.queueId, sourceId);
+    }
+  }
+
   async resolveNotification(notification: ProjectionSourceCommit): Promise<{
     status: 'authoritative' | 'accepted_baseline'; commit: ProjectionSourceCommit;
   }> {
@@ -94,6 +100,7 @@ export class SourceTailPoller {
 
   private async runBootstrap(): Promise<void> {
     try {
+      await this.verifyCutover();
       await this.options.reader.initialize();
       await this.options.transport.initialize();
       let result: SourceTailPass = 'continuation';

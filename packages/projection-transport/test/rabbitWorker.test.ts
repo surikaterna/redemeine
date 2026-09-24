@@ -68,7 +68,7 @@ function workerOptions(source: ProjectionCommitCoordinator, events: RabbitSettle
     queue: 'projection-direct', deadLetterExchange: 'projection-dlx', deadLetterRoutingKey: 'projection.failed',
     prefetch: 4, maxMessageBytes: 64_000, retryBackoffMs: 1_000, now: () => 10_000, coordinator: source,
     initialize: jest.fn(async () => undefined),
-    sourceTail: { bootstrap: jest.fn(async () => undefined), start: jest.fn(), stop: jest.fn(async () => undefined),
+    sourceTail: { verifyCutover: jest.fn(async () => undefined), bootstrap: jest.fn(async () => undefined), start: jest.fn(), stop: jest.fn(async () => undefined),
       isHealthy: () => true, resolveNotification: jest.fn(async (commit: ProjectionSourceCommit) => ({ status: 'authoritative', commit })) } as unknown as SourceTailPoller,
     scheduleRetry: jest.fn(async () => ({ durable: true as const, notBeforeEpochMs: 11_000 })),
     observeSettlement: jest.fn(async (event: RabbitSettlementEvent) => { events.push(event); })

@@ -38,6 +38,8 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     if (!manifest || manifest.projectionName !== entry.definition.name || manifest.generation !== entry.generation) {
       throw new Error('Runtime registry order and scopes must exactly match the immutable manifest.');
     }
+    const joined = (entry.definition.joinStreams?.length ?? 0) > 0 || (entry.definition.reverseSubscribeStreams?.length ?? 0) > 0;
+    if (joined !== (manifest.joined === true)) throw new Error('Joined definition must be declared in the immutable manifest.');
   }
 }
 

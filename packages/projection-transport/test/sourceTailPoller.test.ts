@@ -21,7 +21,7 @@ test.each([-1, 0, 4])('configured source B=%s drains without any Rabbit arrival,
   const transport = { initialize: async () => undefined,
     readQueueBinding: async () => ({ queueId: 'orders', manifestId: 'manifest' }),
     probeRegisteredSource: async () => ({ record, highWatermark: high }),
-    loadCoveredThrough: async () => covered } as unknown as MongoProjectionTransportStore;
+    loadCoveredThrough: async () => covered, verifyJoinedCutover: async () => undefined } as unknown as MongoProjectionTransportStore;
   const reader = { initialize: async () => undefined, capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
     readCompleteRange: async (request: { afterSequence: number | null; throughSequence: number; maxCommits: number }) => {
       const next = (request.afterSequence ?? -1) + 1;
@@ -50,7 +50,7 @@ test('rejects unknown source and indexed retention failure rather than pretendin
   const record = { lastAcceptedSequence: 0, manifestId: 'manifest', queueBindingId: 'orders', sourceId } as AcceptedBaseline;
   const transport = { initialize: async () => undefined, probeRegisteredSource: async () => ({ record, highWatermark: 2 }),
     readQueueBinding: async () => ({ queueId: 'orders', manifestId: 'manifest' }),
-    loadCoveredThrough: async () => null } as unknown as MongoProjectionTransportStore;
+    loadCoveredThrough: async () => null, verifyJoinedCutover: async () => undefined } as unknown as MongoProjectionTransportStore;
   const reader = { initialize: async () => undefined, readCompleteRange: async (request: { afterSequence: number | null }) =>
     ({ status: 'incomplete', reason: 'history_unavailable', details: 'missing 1', continuationAfterSequence: request.afterSequence })
   } as TapewormMongoRangeReader;
@@ -132,7 +132,8 @@ test.each(['bootstrap', 'page'] as const)('stop joins in-flight %s without dispa
   const failures: string[] = [];
   const record = { lastAcceptedSequence: -1, manifestId: 'manifest', queueBindingId: 'orders', sourceId } as AcceptedBaseline;
   const transport = { initialize: async () => undefined, readQueueBinding: async () => ({ queueId: 'orders', manifestId: 'manifest' }),
-    probeRegisteredSource: async () => ({ record, highWatermark: 0 }), loadCoveredThrough: async () => null } as unknown as MongoProjectionTransportStore;
+    probeRegisteredSource: async () => ({ record, highWatermark: 0 }), loadCoveredThrough: async () => null,
+    verifyJoinedCutover: async () => undefined } as unknown as MongoProjectionTransportStore;
   const reader = { initialize: async () => { if (phase === 'bootstrap') { entered(); await gate; } },
     readCompleteRange: async () => { if (phase === 'page') { entered(); await gate; }
       return { status: 'complete', commits: [{ commit: commit(0), encodedByteLength: 100 }],
@@ -158,7 +159,8 @@ test('bounded page continuation is paced, successful and never reported as a fai
   const record = { lastAcceptedSequence: -1, manifestId: 'manifest', queueBindingId: 'orders', sourceId } as AcceptedBaseline;
   let covered: number | null = null;
   const transport = { initialize: async () => undefined, readQueueBinding: async () => ({ queueId: 'orders', manifestId: 'manifest' }),
-    probeRegisteredSource: async () => ({ record, highWatermark: 1 }), loadCoveredThrough: async () => covered } as unknown as MongoProjectionTransportStore;
+    probeRegisteredSource: async () => ({ record, highWatermark: 1 }), loadCoveredThrough: async () => covered,
+    verifyJoinedCutover: async () => undefined } as unknown as MongoProjectionTransportStore;
   const reader = { initialize: async () => undefined, readCompleteRange: async (request: { afterSequence: number | null }) => {
     const sequence = (request.afterSequence ?? -1) + 1;
     return { status: 'complete', commits: [{ commit: commit(sequence), encodedByteLength: 100 }],

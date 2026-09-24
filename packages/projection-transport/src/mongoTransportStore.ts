@@ -17,6 +17,7 @@ import {
 import type { ClientSession, Collection, Document } from 'mongodb';
 import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
 import type { TapewormMongoRangeReader } from './tapewormMongoRangeReader';
+import { inventoryDigest, validateInventories, verifyInitialLinks, type JoinedInventory } from './joinedCutover';
 
 export interface ProjectionTransportBindingDocument extends Document {
   _id: string;
@@ -53,6 +54,15 @@ export interface ProjectionTransportProbeDocument extends Document {
   indexName: string;
 }
 
+export interface ProjectionTransportJoinedAdoptionDocument extends Document {
+  _id: string;
+  kind: 'joined_adoption';
+  queueBindingId: string;
+  manifestId: string;
+  registryGeneration: string;
+  digests: readonly string[];
+}
+
 export interface AcceptedBaselineReadiness {
   readonly reader: TapewormMongoRangeReader;
 }
@@ -63,10 +73,11 @@ export interface MongoProjectionTransportStoreOptions {
   readonly manifest: ProjectionQueueRegistryManifest;
   readonly now?: () => string;
   readonly cutoverReadiness?: AcceptedBaselineReadiness;
+  readonly joinedInventories?: readonly JoinedInventory[];
 }
 
 export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument
-  | ProjectionTransportBaselineDocument | ProjectionTransportProbeDocument;
+  | ProjectionTransportBaselineDocument | ProjectionTransportProbeDocument | ProjectionTransportJoinedAdoptionDocument;
 
 const BINDING_INDEX = 'projection_transport_queue_binding_unique';
 const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
@@ -184,6 +195,34 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     return row.record;
   }
 
+  async verifyJoinedCutover(queueId: string, sourceId: string): Promise<void> {
+    await this.initialize();
+    if (queueId !== this.options.manifest.queueId) throw new Error('Joined cutover queue binding mismatch.');
+    const baseline = await this.readAcceptedBaseline(queueId, sourceId);
+    if (!baseline) throw new Error('Missing accepted baseline before joined cutover.');
+    const binding = await this.readBindingDocument(queueId);
+    if (!binding || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Joined registry binding changed.');
+    const items = this.options.joinedInventories ?? [];
+    validateInventories(this.options.manifest, items);
+    if (items.length === 0) return;
+    const _id = `joined_adoption:${queueId}`;
+    const digests = items.map((item) => inventoryDigest(this.options.manifest, item));
+    const expected: ProjectionTransportJoinedAdoptionDocument = { _id, kind: 'joined_adoption', queueBindingId: queueId,
+      manifestId: this.options.manifest.manifestId, registryGeneration: this.options.manifest.registryGeneration, digests };
+    const prior = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
+    if (!prior) {
+      for (const item of items) await verifyInitialLinks(item);
+      await this.options.collection.updateOne({ _id }, { $setOnInsert: expected },
+        { upsert: true, writeConcern: { w: 'majority' } });
+    }
+    const adopted = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
+    if (!adopted || adopted.kind !== 'joined_adoption' || adopted.queueBindingId !== queueId
+      || adopted.manifestId !== expected.manifestId || adopted.registryGeneration !== expected.registryGeneration
+      || JSON.stringify(adopted.digests) !== JSON.stringify(digests)) {
+      throw new Error('Joined cutover adoption conflict or unknown insert outcome.');
+    }
+  }
+
   async admitForDispatch(
     commit: ProjectionSourceCommit,
     queueBindingId: string
@@ -193,6 +232,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
+    await this.verifyJoinedCutover(queueBindingId, commit.streamId);
     await this.probeRegisteredSource(queueBindingId, commit.streamId, 'not_checked');
     const startAnchor = baseline.startAnchor;
     const id = coverageId(queueBindingId, commit.streamId);

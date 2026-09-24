@@ -111,6 +111,8 @@ export class ProjectionRabbitWorker {
   private async begin(channel: ProjectionRabbitChannel, epoch: number): Promise<void> {
     await this.options.initialize();
     this.assertStarting(epoch);
+    await this.options.sourceTail.verifyCutover();
+    this.assertStarting(epoch);
     await channel.checkQueue(this.options.queue);
     this.assertStarting(epoch);
     await channel.assertExchange(

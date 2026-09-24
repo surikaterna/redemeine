@@ -45,6 +45,7 @@ export function assertAcceptedBaseline(record: AcceptedBaseline, manifest: Proje
     if (!definition || scope.projectionName !== definition.projectionName || scope.generation !== definition.generation
       || !['in_document', 'own_record', 'none'].includes(scope.strategy)
       || typeof scope.stableSingleTarget !== 'boolean'
+      || (definition.joined === true && scope.strategy === 'in_document')
       || (scope.strategy === 'in_document' && !scope.stableSingleTarget)) {
       throw new Error('Invalid or unsupported immutable cutover strategy scope.');
     }
