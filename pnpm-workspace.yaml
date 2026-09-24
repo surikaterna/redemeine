@@ -6,6 +6,7 @@ allowBuilds:
   core-js-pure: false
   esbuild: true
 overrides:
+  mongodb: 6.18.0
   # Docusaurus 3.9.2 uses webpackbar 6.0.1, a ProgressPlugin subclass whose
   # options include name/color/reporters/reporter; webpack 5.111 rejects them.
   # Pin the verified 5.105.4 until the upstream plugin supports that validation.

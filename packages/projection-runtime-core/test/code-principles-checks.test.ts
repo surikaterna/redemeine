@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from '@jest/globals';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { afterEach, describe, expect, test } from '@jest/globals';
 import { runCodePrinciplesChecks } from '../../../bin/code-principles-checks';
 
 function createTempRepoRoot(): string {
@@ -56,24 +56,63 @@ describe('code principles checks', () => {
     expect(result.scannedFiles).toEqual(['packages/projection-runtime-core/src/ok.ts']);
   });
 
-  test('reports default export and explicit any violations', () => {
+  test('scans projection source by default while excluding tests, declarations, and generated paths', () => {
+    const repoRoot = createTempRepoRoot();
+    tempRoots.push(repoRoot);
+
+    writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
+    writeFile(repoRoot, 'packages/projection/src/public.ts', 'export const value = 1;\n');
+    writeFile(repoRoot, 'packages/projection/src/public.test.ts', 'const unsafe: any = 1;\n');
+    writeFile(repoRoot, 'packages/projection/src/generated.d.ts', 'declare const unsafe: any;\n');
+    writeFile(repoRoot, 'packages/projection/src/model.generated.ts', 'const unsafe: any = 1;\n');
+    writeFile(repoRoot, 'packages/projection/src/generated/model.ts', 'const unsafe: any = 1;\n');
+
+    const result = runCodePrinciplesChecks({ repoRoot });
+
+    expect(result.violations).toEqual([]);
+    expect(result.scannedFiles).toContain('packages/projection/src/public.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/public.test.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/generated.d.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/model.generated.ts');
+    expect(result.scannedFiles).not.toContain('packages/projection/src/generated/model.ts');
+  });
+
+  test('reports default export and every nested explicit any syntax node', () => {
     const repoRoot = createTempRepoRoot();
     tempRoots.push(repoRoot);
 
     writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
     writeFile(
       repoRoot,
-      'packages/projection-runtime-core/src/bad.ts',
-      'const value: any = 42;\nexport default value;\n'
+      'packages/projection/src/bad.ts',
+      'const one: Record<string, any> = {};\nconst two: string | any = "";\nconst three: any [] = [];\nconst four = one as any;\ntype Five = Promise<any>;\nexport default four;\n'
     );
 
-    const result = runCodePrinciplesChecks({
-      repoRoot,
-      sourceRoots: ['packages/projection-runtime-core/src']
-    });
+    const result = runCodePrinciplesChecks({ repoRoot });
 
-    expect(result.violations).toContain('packages/projection-runtime-core/src/bad.ts: default export is not allowed.');
-    expect(result.violations).toContain("packages/projection-runtime-core/src/bad.ts: explicit 'any' is not allowed.");
+    expect(result.violations).toContain('packages/projection/src/bad.ts: default export is not allowed.');
+    expect(result.violations).toContain("packages/projection/src/bad.ts: explicit 'any' is not allowed (5 at 1:27, 2:21, 3:14, 4:21, 5:21).");
+  });
+
+  test('ignores any text in comments and strings', () => {
+    const repoRoot = createTempRepoRoot();
+    tempRoots.push(repoRoot);
+
+    writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
+    writeFile(repoRoot, 'packages/projection/src/text.ts', '// value: any\nexport const text = "as any Record<string, any>";\n');
+
+    expect(runCodePrinciplesChecks({ repoRoot }).violations).toEqual([]);
+  });
+
+  test('reports malformed production TypeScript fail closed', () => {
+    const repoRoot = createTempRepoRoot();
+    tempRoots.push(repoRoot);
+
+    writeFile(repoRoot, 'docs/code-principles.md', '# Code Principles\n');
+    writeFile(repoRoot, 'packages/projection/src/malformed.ts', 'export const value = {;\n');
+
+    const result = runCodePrinciplesChecks({ repoRoot });
+    expect(result.violations.some((violation) => violation.includes('TypeScript parse error'))).toBe(true);
   });
 
   test('reports file length violations over configured maximum', () => {

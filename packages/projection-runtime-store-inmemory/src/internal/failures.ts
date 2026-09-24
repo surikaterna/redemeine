@@ -21,7 +21,7 @@ const createConflictFailure = (message: string): ProjectionStoreWriteFailure => 
 
 const assertRevision = (documentId: string, current: StoredDocument<unknown> | undefined, precondition: ProjectionStoreWritePrecondition): void => {
   if (!Object.prototype.hasOwnProperty.call(precondition, 'expectedRevision')) return;
-  const actual = current?.checkpoint.sequence ?? null;
+  const actual = current?.checkpoint?.sequence ?? null;
   const expected = precondition.expectedRevision ?? null;
   if (actual === expected) return;
   throw new ProjectionStoreAtomicManyError(

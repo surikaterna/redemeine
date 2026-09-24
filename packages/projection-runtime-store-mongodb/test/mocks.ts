@@ -12,7 +12,7 @@ import type {
   MongoCollectionLike,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
-  ProjectionLinkRecord
+  ProjectionLinkRecord,
 } from '../src';
 
 type AnyRecord = Record<string, unknown>;
@@ -306,8 +306,13 @@ const matches = <TDocument extends AnyRecord>(
       continue;
     }
 
-    if (getByPath(doc, key) !== filter[key]) {
-      if (!deepEqual(getByPath(doc, key), filter[key])) {
+    const expected = filter[key];
+    if (isRecord(expected) && typeof expected.$exists === 'boolean') {
+      if ((getByPath(doc, key) !== undefined) !== expected.$exists) return false;
+      continue;
+    }
+    if (getByPath(doc, key) !== expected) {
+      if (!deepEqual(getByPath(doc, key), expected)) {
         return false;
       }
     }
@@ -325,8 +330,12 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
 {
   private static readonly allCollections = new Set<InMemoryMongoCollection<{ _id: string }>>();
   private readonly records = new Map<string, TDocument>();
+  private readonly indexes = new Map<string, Record<string, unknown>>([
+    ['_id_', { name: '_id_', key: { _id: 1 }, unique: true }]
+  ]);
   readonly operationLog: Array<{ op: 'bulkWrite' | 'updateOne' | 'deleteOne' | 'deleteMany' | 'findOne'; detail?: unknown }> = [];
   readonly sessionLog: Array<{ method: string; session: unknown }> = [];
+  private updateFailure: { id: string; error: Error } | undefined;
 
   constructor() {
     InMemoryMongoCollection.allCollections.add(this as unknown as InMemoryMongoCollection<{ _id: string }>);
@@ -381,6 +390,11 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
   ): Promise<unknown> {
     this.operationLog.push({ op: 'updateOne', detail: { filter, update } });
     this.sessionLog.push({ method: 'updateOne', session: options?.session });
+    if (filter._id === this.updateFailure?.id) {
+      const error = this.updateFailure.error;
+      this.updateFailure = undefined;
+      throw error;
+    }
     const current = await this.findOne(filter);
 
     if (!current && !options?.upsert) {
@@ -523,6 +537,22 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     return { deletedCount: deleted };
   }
 
+  async createIndex(
+    keys: Record<string, 1 | -1>,
+    options: { name: string; unique: boolean; partialFilterExpression?: Record<string, unknown> }
+  ): Promise<string> {
+    this.indexes.set(options.name, { name: options.name, key: keys, ...options });
+    return options.name;
+  }
+
+  listIndexes(): { toArray(): Promise<Array<Record<string, unknown>>> } {
+    return { toArray: async () => Array.from(this.indexes.values()) };
+  }
+
+  failNextUpdateForId(id: string, error: Error): void {
+    this.updateFailure = { id, error };
+  }
+
   snapshot(): TDocument[] {
     return Array.from(this.records.values());
   }
@@ -539,16 +569,19 @@ export const createProjectionDedupeCollection = (): InMemoryMongoCollection<Proj
 
 type FakeMongoClientOptions = {
   failWithTransactionError?: Error & { code?: number; name?: string };
+  unknownAfterCommitOnTransaction?: number;
 };
 
 class FakeClientSession {
-  constructor(private readonly options?: FakeMongoClientOptions) {}
+  readonly transactionOptionsLog: Array<TransactionOptions | undefined> = [];
+
+  constructor(private readonly options?: FakeMongoClientOptions, private readonly transactionNumber = 0) {}
 
   async withTransaction<T>(
     work: (session: ClientSession) => Promise<T>,
     transactionOptions?: TransactionOptions
   ): Promise<T> {
-    void transactionOptions;
+    this.transactionOptionsLog.push(transactionOptions);
     if (this.options?.failWithTransactionError) {
       throw this.options.failWithTransactionError;
     }
@@ -556,8 +589,16 @@ class FakeClientSession {
     const snapshots = InMemoryMongoCollection.captureAllSnapshots();
 
     try {
-      return await work(this as ClientSession);
+      const result = await work(this as ClientSession);
+      if (this.options?.unknownAfterCommitOnTransaction === this.transactionNumber) {
+        const error = new Error('unknown commit result') as Error & { hasErrorLabel(label: string): boolean };
+        error.hasErrorLabel = (label) => label === 'UnknownTransactionCommitResult';
+        throw error;
+      }
+      return result;
     } catch (error) {
+      const labelled = error as { hasErrorLabel?: (label: string) => boolean };
+      if (labelled.hasErrorLabel?.('UnknownTransactionCommitResult') === true) throw error;
       for (const snapshot of snapshots) {
         snapshot.collection.restoreSnapshotForTransaction(snapshot.records);
       }
@@ -570,11 +611,13 @@ class FakeClientSession {
 
 export class FakeMongoClient {
   readonly sessions: FakeClientSession[] = [];
+  private transactionNumber = 0;
 
   constructor(private readonly options?: FakeMongoClientOptions) {}
 
   startSession(): ClientSession {
-    const session = new FakeClientSession(this.options);
+    this.transactionNumber += 1;
+    const session = new FakeClientSession(this.options, this.transactionNumber);
     this.sessions.push(session);
     return session as ClientSession;
   }

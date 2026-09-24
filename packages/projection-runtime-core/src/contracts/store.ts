@@ -101,6 +101,7 @@ export interface ProjectionStoreAtomicWrite<TState = unknown> {
   dedupe: ProjectionStoreDedupeWrite;
 }
 
+/** @deprecated Use CommitProjectionSourceCommitRequest for commit-native processing. */
 export interface ProjectionStoreCommitAtomicManyRequest<TState = unknown> {
   mode: 'atomic-all';
   /**
@@ -110,6 +111,7 @@ export interface ProjectionStoreCommitAtomicManyRequest<TState = unknown> {
   writes: ReadonlyArray<ProjectionStoreAtomicWrite<TState>>;
 }
 
+/** @deprecated Use ProjectionSourceCommitStorePort for commit-native processing. */
 export interface ProjectionStoreContract<TState = unknown> {
   commitAtomicMany(
     request: ProjectionStoreCommitAtomicManyRequest<TState>

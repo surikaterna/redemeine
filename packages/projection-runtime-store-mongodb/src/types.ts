@@ -1,25 +1,37 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
+import type { ProjectionUuidBase64Url22 } from '@redemeine/projection-runtime-core';
 import type { Checkpoint } from './contracts';
 
 export interface ProjectionDocumentRecord<TState = unknown> {
   _id: string;
   state: TState;
-  checkpoint: Checkpoint;
+  checkpoint?: Checkpoint;
   updatedAt: string;
+  v2Revision?: number;
+  sourceProgress?: Readonly<Record<ProjectionUuidBase64Url22, number>>;
+  v2LegacyCheckpoint?: Checkpoint | null;
+  v2LegacyCheckpointPresent?: boolean;
+  v2ObservedUpdatedAt?: string;
 }
 
 export interface ProjectionLinkRecord {
   _id: string;
   aggregateType: string;
   aggregateId: string;
-  targetDocId: string;
+  targetDocId: string | null;
   createdAt: string;
+  v2Revision?: number;
 }
 
 export interface ProjectionDedupeRecord {
   _id: string;
   checkpoint: Checkpoint;
   updatedAt: string;
+  projectionName?: string;
+  projectionGeneration?: string;
+  sourceId?: string;
+  commitSequence?: number;
+  acceptedBaselineSequence?: number;
 }
 
 export interface MongoCollectionLike<TDocument extends Document = Document> {
@@ -32,6 +44,11 @@ export interface MongoCollectionLike<TDocument extends Document = Document> {
   bulkWrite(operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>, options?: Pick<BulkWriteOptions, 'ordered' | 'session'>): Promise<unknown>;
   deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
   deleteMany(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;
+  createIndex(
+    keys: Record<string, 1 | -1>,
+    options: { name: string; unique: boolean; partialFilterExpression?: Record<string, unknown> }
+  ): Promise<string>;
+  listIndexes(): { toArray(): Promise<Array<Record<string, unknown>>> };
 }
 
 export type MongoClientLike = Pick<MongoClient, 'startSession'>;
@@ -45,6 +62,22 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   now?: () => string;
   patchPlanTelemetry?: (event: MongoPatchPlanTelemetryEvent) => void;
   patchPlanCacheMaxEntries?: number;
+  onDedupeWarning?: (warning: MongoProjectionDedupeWarning) => void;
+  onSourceCommitReconciliation?: (event: MongoSourceCommitReconciliation) => void;
+}
+
+export interface MongoSourceCommitReconciliation {
+  strategy: 'in_document' | 'own_record' | 'none';
+  outcome: 'committed' | 'ambiguous';
+}
+
+export interface MongoProjectionDedupeWarning {
+  projectionName: string;
+  projectionGeneration: string;
+  targetDocumentId: string;
+  kind: 'source_count' | 'metadata_bytes';
+  observed: number;
+  threshold: number;
 }
 
 export interface MongoProjectionLinkStoreOptions {

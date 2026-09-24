@@ -1,224 +1,58 @@
+import type { ProjectionDeduplicationStrategy } from './deduplication';
+import { defaultIdentity, inherit, isInheritEntry, isInheritExtended } from './inherit';
+import type {
+  AggregateStateOf,
+  InheritableHandlersForAggregate,
+  JoinStreamDefinition,
+  MirrorableAggregateConstraint,
+  MirrorableAggregateSource,
+  ProjectionAggregateSource,
+  ProjectionBuilder,
+  ProjectionCommitBuilder,
+  ProjectionCommitDefinition,
+  ProjectionContext,
+  ProjectionDefinition,
+  ProjectionHandler,
+  ProjectionHandlersForAggregate,
+  ProjectionHooks,
+  ProjectionStreamDefinition
+} from './projectionTypes';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
-import {
-  inherit,
-  isInheritEntry,
-  isInheritExtended,
-  defaultIdentity
-} from './inherit';
-import type { InheritToken, InheritExtended } from './inherit';
 
+export type { InheritExtended, InheritToken } from './inherit';
 export { inherit } from './inherit';
-export type { InheritToken, InheritExtended } from './inherit';
-
-/** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
-export interface ProjectionHooks<TState> {
-  /** Runs after every event handler — receives mutable state and the raw event */
-  afterEach?: (state: TState, event: BaseProjectionEvent) => void;
-}
-
-/**
- * Event shape passed to projection handlers with narrowed payload type.
- */
-type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'payload' | 'type'> & {
-  payload: TPayload;
-  type: TType;
-};
-
-type AnyProjector = (...args: any[]) => unknown;
-
-type ProjectorPayload<TProjector> =
-  TProjector extends (state: any, event: infer TEvent, ...args: any[]) => unknown
-    ? TEvent extends { payload: infer TPayload }
-      ? TPayload
-      : unknown
-    : unknown;
-
-type EventProjectorsOf<TAggregate> =
-  TAggregate extends { pure: { eventProjectors: infer TProjectors } }
-    ? TProjectors extends Record<string, AnyProjector>
-      ? TProjectors
-      : never
-    : never;
-
-type ProjectionAggregateSource = {
-  aggregateType: string;
-  pure: {
-    eventProjectors: Record<string, unknown>;
-  };
-};
-
-/** Extended source required for mirror — provides draft mutation and initial state */
-export type MirrorableAggregateSource = ProjectionAggregateSource & {
-  initialState: unknown;
-  applyToDraft: (draft: any, event: any) => void;
-};
-
-/** Extract the state type from an aggregate that exposes initialState */
-export type AggregateStateOf<T> = T extends { initialState: infer S } ? S : never;
-
-/**
- * Extract aggregate event payload map from real `createAggregate(...).build()` outputs.
- * Falls back to explicit AggregateDefinition generic payloads for compatibility.
- */
-export type AggregateEventPayloadMap<TAggregate> =
-  [EventProjectorsOf<TAggregate>] extends [never]
-    ? TAggregate extends AggregateDefinition<unknown, infer TPayloads>
-      ? TPayloads
-      : Record<string, unknown>
-    : {
-      [K in keyof EventProjectorsOf<TAggregate> & string]: ProjectorPayload<EventProjectorsOf<TAggregate>[K]>;
-    };
-
-/**
- * Event keys for an aggregate derived from event payload map.
- */
-export type AggregateEventKeys<TAggregate> = keyof AggregateEventPayloadMap<TAggregate> & string;
-
-/**
- * Payload type for a specific aggregate event key.
- */
-export type AggregateEventPayloadByKey<
-  TAggregate,
-  TEventKey extends AggregateEventKeys<TAggregate>
-> = AggregateEventPayloadMap<TAggregate>[TEventKey];
-
-type AggregateTypeOf<TAggregate> =
-  TAggregate extends { aggregateType: infer TAggregateType extends string }
-    ? TAggregateType
-    : string;
-
-type CanonicalEventTypeByKey<TAggregate, TEventKey extends string> =
-  `${AggregateTypeOf<TAggregate>}.${TEventKey}.event`;
-
-type HandlerEventTypeByKey<TAggregate, TEventKey extends string> =
-  TEventKey | CanonicalEventTypeByKey<TAggregate, TEventKey>;
-
-/**
- * Aggregate definition interface - defines an aggregate that can be used in projections
- */
-export interface AggregateDefinition<TState, TPayloads extends Record<string, unknown>> {
-  aggregateType: string;
-  initialState: TState;
-  pure: {
-    eventProjectors: Record<string, Function>;
-  };
-  metadata?: {
-    commands?: Record<string, unknown>;
-    events?: Record<string, unknown>;
-  };
-}
-
-/**
- * Context passed to projection handlers
- */
-export interface ProjectionContext {
-  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
-  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
-}
-
-/**
- * Handler function for processing events in a projection
- */
-export type ProjectionHandler<TState, TEvent extends BaseProjectionEvent = BaseProjectionEvent> = (
-  state: TState,
-  event: TEvent,
-  context: ProjectionContext
-) => void;
-
-/**
- * Projection handlers map - keyed by event type
- */
-export type ProjectionHandlers<TState, TPayloads extends Record<string, unknown>> = {
-  [K in keyof TPayloads & string]?: ProjectionHandler<
-    TState,
-    HandlerEvent<
-      NonNullable<TPayloads[K]>,
-      HandlerEventTypeByKey<unknown, K>
-    >
-  >;
-};
-
-/** Constructs the narrowed event type for a specific aggregate event key */
-type AggregateHandlerEvent<TAggregate, K extends AggregateEventKeys<TAggregate>> =
-  HandlerEvent<
-    NonNullable<AggregateEventPayloadByKey<TAggregate, K>>,
-    HandlerEventTypeByKey<TAggregate, K>
-  >;
-
-type ProjectionHandlersForAggregate<TState, TAggregate> = {
-  [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>;
-};
-
-type InheritableHandlersForAggregate<TState, TAggregate> = {
-  [K in AggregateEventKeys<TAggregate>]?:
-    | ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>
-    | InheritToken
-    | InheritExtended<TState, AggregateHandlerEvent<TAggregate, K>>;
-};
-
-// --- Stream / definition types ---
-
-export interface ProjectionStreamDefinition<TState> {
-  aggregate: { aggregateType: string };
-  handlers: Record<string, ProjectionHandler<TState>>;
-}
-
-export interface JoinStreamDefinition<TState> {
-  aggregate: { aggregateType: string };
-  handlers: Record<string, ProjectionHandler<TState>>;
-}
-
-export interface ProjectionDefinition<TState = unknown> {
-  name: string;
-  fromStream: ProjectionStreamDefinition<TState>;
-  joinStreams?: JoinStreamDefinition<TState>[];
-  initialState: (documentId: string) => TState;
-  identity: (event: BaseProjectionEvent) => string | readonly string[];
-  subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
-  hooks?: ProjectionHooks<TState>;
-}
-
-// --- Builder interface ---
-
-export interface ProjectionBuilder<TState> {
-  initialState(fn: (id: string) => TState): ProjectionBuilder<TState>;
-
-  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState>;
-
-  from<TAggregate extends ProjectionAggregateSource>(
-    aggregate: TAggregate,
-    handlers: InheritableHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
-
-  join<TAggregate extends { aggregateType: string }>(
-    aggregate: TAggregate,
-    handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
-
-  mirror<TAggregate extends MirrorableAggregateSource>(
-    aggregate: TAggregate,
-    handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
-  ): ProjectionBuilder<AggregateStateOf<TAggregate>>;
-
-  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
-
-  build(): ProjectionDefinition<TState>;
-}
-
-// --- Builder implementation ---
+export type {
+  AggregateDefinition,
+  AggregateEventKeys,
+  AggregateEventPayloadByKey,
+  AggregateEventPayloadMap,
+  AggregateStateOf,
+  JoinStreamDefinition,
+  MirrorableAggregateSource,
+  ProjectionBuilder,
+  ProjectionCommitBuilder,
+  ProjectionCommitDefinition,
+  ProjectionContext,
+  ProjectionDefinition,
+  ProjectionHandler,
+  ProjectionHandlers,
+  ProjectionHooks,
+  ProjectionStreamDefinition
+} from './projectionTypes';
 
 class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
-  private _name: string;
   private _initialState: ((id: string) => TState) | undefined;
-  private _identity: (event: BaseProjectionEvent) => string | readonly string[];
+  private _identity: (event: BaseProjectionEvent) => string | readonly string[] = defaultIdentity;
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
+  private _deduplication: ProjectionDeduplicationStrategy | undefined;
 
-  constructor(name: string, initialState?: (id: string) => TState) {
-    this._name = name;
+  constructor(
+    private _name: string,
+    initialState?: (id: string) => TState
+  ) {
     this._initialState = initialState;
-    this._identity = defaultIdentity;
   }
 
   initialState(fn: (id: string) => TState): ProjectionBuilder<TState> {
@@ -231,85 +65,64 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
-  private _resolveHandlers(
+  private _resolveHandlers<THandlerState>(
     aggregate: ProjectionAggregateSource,
     handlers: Record<string, unknown>
-  ): Record<string, ProjectionHandler<TState>> {
-    const resolved: Record<string, ProjectionHandler<TState>> = {};
-    const mirrorable = aggregate as unknown as MirrorableAggregateSource;
+  ): Record<string, ProjectionHandler<THandlerState>> {
+    const resolved: Record<string, ProjectionHandler<THandlerState>> = {};
 
     for (const [key, value] of Object.entries(handlers)) {
       if (!value) continue;
-
       if (isInheritExtended(value)) {
-        if (!mirrorable.applyToDraft) {
-          throw new Error(
-            `Projection '${this._name}': inherit requires an aggregate with applyToDraft.`
-          );
-        }
-        const afterFn = value.after;
-        resolved[key] = ((draft: any, event: any, context: any) => {
-          mirrorable.applyToDraft(draft, event);
-          afterFn(draft, event, context);
-        }) as ProjectionHandler<TState>;
+        this._assertMirrorable(aggregate);
+        const after = value.after;
+        resolved[key] = (draft, event, context) => {
+          aggregate.applyToDraft(draft, event);
+          after(draft, event, context);
+        };
       } else if (isInheritEntry(value)) {
-        if (!mirrorable.applyToDraft) {
-          throw new Error(
-            `Projection '${this._name}': inherit requires an aggregate with applyToDraft.`
-          );
-        }
-        resolved[key] = ((draft: any, event: any) => {
-          mirrorable.applyToDraft(draft, event);
-        }) as ProjectionHandler<TState>;
+        this._assertMirrorable(aggregate);
+        resolved[key] = (draft, event) => aggregate.applyToDraft(draft, event);
       } else {
-        resolved[key] = value as ProjectionHandler<TState>;
+        resolved[key] = value as ProjectionHandler<THandlerState>;
       }
     }
-
     return resolved;
+  }
+
+  private _assertMirrorable<THandlerState>(
+    aggregate: ProjectionAggregateSource
+  ): asserts aggregate is MirrorableAggregateSource<THandlerState, BaseProjectionEvent> {
+    if (!('applyToDraft' in aggregate) || typeof aggregate.applyToDraft !== 'function') {
+      throw new Error(`Projection '${this._name}': inherit requires an aggregate with applyToDraft.`);
+    }
   }
 
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
-    handlers: any
+    handlers: InheritableHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
-    const handlersMap = this._resolveHandlers(aggregate, handlers);
-
-    this._fromStream = {
-      aggregate,
-      handlers: handlersMap
-    };
-
+    this._fromStream = { aggregate, handlers: this._resolveHandlers<TState>(aggregate, handlers) };
     return this;
   }
 
-  mirror<TAggregate extends MirrorableAggregateSource>(
+  mirror<TAggregate extends MirrorableAggregateConstraint>(
     aggregate: TAggregate,
-    handlers?: any
+    handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>> {
-    const allKeys = Object.keys(aggregate.pure.eventProjectors);
-    const explicit = handlers ? { ...handlers } : {};
-
-    // Default unlisted keys to inherit
-    for (const key of allKeys) {
-      if (!(key in explicit)) {
-        explicit[key] = inherit;
-      }
+    const explicit: Record<string, unknown> = handlers ? { ...handlers } : {};
+    for (const key of Object.keys(aggregate.pure.eventProjectors)) {
+      if (!(key in explicit)) explicit[key] = inherit;
     }
-
-    const resolved = this._resolveHandlers(aggregate, explicit);
-
-    this._fromStream = {
+    const builder = this as ProjectionBuilderImpl<AggregateStateOf<TAggregate>>;
+    builder._fromStream = {
       aggregate,
-      handlers: resolved as any
+      handlers: this._resolveHandlers<AggregateStateOf<TAggregate>>(aggregate, explicit)
     };
-
-    if (!this._initialState) {
-      this._initialState = ((_id: string) =>
-        structuredClone(aggregate.initialState)) as any;
+    if (!builder._initialState) {
+      builder._initialState = () => structuredClone(aggregate.initialState) as AggregateStateOf<TAggregate>;
     }
-
-    return this as unknown as ProjectionBuilder<AggregateStateOf<TAggregate>>;
+    return builder;
   }
 
   join<TAggregate extends { aggregateType: string }>(
@@ -317,18 +130,10 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState> {
     const handlersMap: Record<string, ProjectionHandler<TState>> = {};
-
     for (const [key, handler] of Object.entries(handlers)) {
-      if (handler) {
-        handlersMap[key as string] = handler as ProjectionHandler<TState>;
-      }
+      if (handler) handlersMap[key] = handler as ProjectionHandler<TState>;
     }
-
-    this._joinStreams.push({
-      aggregate,
-      handlers: handlersMap
-    });
-
+    this._joinStreams.push({ aggregate, handlers: handlersMap });
     return this;
   }
 
@@ -337,18 +142,29 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState> {
+    if (strategy.strategy === 'none' && strategy.reason.trim().length === 0) {
+      throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
+    }
+    this._deduplication = strategy;
+    return this;
+  }
+
+  buildCommitDefinition(): ProjectionCommitDefinition<TState> {
+    const definition = this.build();
+    if (!definition.deduplication) {
+      throw new Error(`Projection '${this._name}' requires an explicit deduplication strategy.`);
+    }
+    return definition as ProjectionCommitDefinition<TState>;
+  }
+
   build(): ProjectionDefinition<TState> {
     if (!this._fromStream) {
       throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
     }
-
     if (!this._initialState) {
-      throw new Error(
-        `Projection '${this._name}' requires an initial state. ` +
-        `Use .mirror() or createProjection(name, fn) to provide one.`
-      );
+      throw new Error(`Projection '${this._name}' requires an initial state. ` + `Use .mirror() or createProjection(name, fn) to provide one.`);
     }
-
     return {
       name: this._name,
       fromStream: this._fromStream,
@@ -356,21 +172,14 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       initialState: this._initialState,
       identity: this._identity,
       subscriptions: [],
-      hooks: this._hooks
+      hooks: this._hooks,
+      ...(this._deduplication ? { deduplication: this._deduplication } : {})
     };
   }
 }
 
-// --- Factory function ---
-
-export function createProjection<TState>(
-  name: string,
-  initialState: (id: string) => TState
-): ProjectionBuilder<TState>;
+export function createProjection<TState>(name: string, initialState: (id: string) => TState): ProjectionBuilder<TState>;
 export function createProjection(name: string): ProjectionBuilder<unknown>;
-export function createProjection<TState = unknown>(
-  name: string,
-  initialState?: (id: string) => TState
-): ProjectionBuilder<TState> {
+export function createProjection<TState = unknown>(name: string, initialState?: (id: string) => TState): ProjectionBuilder<TState> {
   return new ProjectionBuilderImpl(name, initialState);
 }

@@ -788,6 +788,35 @@ describe('createProjection .mirror() builder', () => {
 
 describe('createProjection inherit token', () => {
 
+  function createReceiverAwareAggregate() {
+    return {
+      aggregateType: 'receiver-aware' as const,
+      factor: 3,
+      pure: { eventProjectors: { multiplied: (_state: { count: number }, _event: { payload: { amount: number } }) => {} } },
+      applyToDraft(this: { factor: number }, draft: { count: number }, event: { payload: { amount: number } }) {
+        draft.count += this.factor * event.payload.amount;
+      }
+    };
+  }
+
+  test.each([
+    ['inherit', inherit, 6],
+    ['inherit.extend', inherit.extend((state: { count: number }) => { state.count += 1; }), 7]
+  ])('%s preserves the applyToDraft receiver', (_name, handler, expected) => {
+    const aggregate = createReceiverAwareAggregate();
+    const projection = createProjection('receiver-aware', () => ({ count: 0 }))
+      .from(aggregate, { multiplied: handler })
+      .build();
+    const state = { count: 0 };
+
+    projection.fromStream.handlers.multiplied(state, {
+      type: 'receiver-aware.multiplied.event', payload: { amount: 2 }, aggregateType: 'receiver-aware',
+      aggregateId: 'one', sequence: 1, timestamp: '2024-01-01T00:00:00Z'
+    }, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
+
+    expect(state.count).toBe(expected);
+  });
+
   test('inherit delegates to aggregate applyToDraft', () => {
     const projection = createProjection<InvoiceState>('invoice-view', () => ({
       id: '', amount: 0, status: 'pending' as const

@@ -25,10 +25,13 @@ export type {
   MongoPatchPlanTelemetryEvent,
   MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
+  MongoProjectionDedupeWarning,
+  MongoSourceCommitReconciliation,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
   ProjectionLinkRecord
 } from './types';
+export { OWN_PROGRESS_INDEX } from './store/sourceCommitReadiness';
 
 export { MongoProjectionStore } from './MongoProjectionStore';
 export { MongoProjectionLinkStore, toLinkId } from './MongoProjectionLinkStore';

@@ -2,8 +2,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const ts = require('typescript');
 
 const DEFAULT_SOURCE_ROOTS = [
+  'packages/projection/src',
   'packages/projection-runtime-core/src',
   'packages/projection-runtime-store-inmemory/src',
   'packages/projection-runtime-store-mongodb/src'
@@ -12,10 +14,7 @@ const DEFAULT_SOURCE_ROOTS = [
 const DEFAULT_RULES = {
   requiredDocsPath: 'docs/code-principles.md',
   maxTsLines: 350,
-  lineCountExemptions: new Set([
-    'packages/projection-runtime-core/src/ProjectionDaemon.ts',
-    'packages/projection-runtime-core/src/createProjection.ts'
-  ])
+  lineCountExemptions: new Set(['packages/projection-runtime-core/src/ProjectionDaemon.ts', 'packages/projection-runtime-core/src/createProjection.ts'])
 };
 
 function normalize(filePath) {
@@ -27,11 +26,14 @@ function toAbsolute(repoRoot, relativePath) {
 }
 
 function isProductionTsFile(filePath) {
-  if (!filePath.endsWith('.ts') || filePath.endsWith('.d.ts')) {
+  const normalizedPath = normalize(filePath);
+  if (!normalizedPath.endsWith('.ts') || normalizedPath.endsWith('.d.ts') || normalizedPath.endsWith('.generated.ts')) {
     return false;
   }
 
-  return !filePath.endsWith('.test.ts') && !filePath.endsWith('.spec.ts');
+  const pathSegments = normalizedPath.split('/');
+  const isGenerated = pathSegments.includes('generated') || pathSegments.includes('__generated__');
+  return !isGenerated && !normalizedPath.endsWith('.test.ts') && !normalizedPath.endsWith('.spec.ts');
 }
 
 function walkDirectory(dirPath) {
@@ -77,11 +79,27 @@ function checkDefaultExport(relativePath, sourceText, violations) {
   }
 }
 
-function checkExplicitAny(relativePath, sourceText, violations) {
-  const explicitAnyPattern = /(:\s*any\b)|(\bas\s+any\b)|(\bArray\s*<\s*any\s*>\b)|(<\s*any\s*>)/m;
-  if (explicitAnyPattern.test(sourceText)) {
-    violations.push(`${relativePath}: explicit 'any' is not allowed.`);
+function parseTypeScript(relativePath, sourceText, violations) {
+  const sourceFile = ts.createSourceFile(relativePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  for (const diagnostic of sourceFile.parseDiagnostics) {
+    const position = diagnostic.start === undefined ? null : sourceFile.getLineAndCharacterOfPosition(diagnostic.start);
+    const location = position ? `:${position.line + 1}:${position.character + 1}` : '';
+    violations.push(`${relativePath}${location}: TypeScript parse error: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`);
   }
+  return sourceFile;
+}
+
+function checkExplicitAny(relativePath, sourceFile, violations) {
+  const locations = [];
+  function visit(node) {
+    if (node.kind === ts.SyntaxKind.AnyKeyword) {
+      const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+      locations.push(`${position.line + 1}:${position.character + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  if (locations.length > 0) violations.push(`${relativePath}: explicit 'any' is not allowed (${locations.length} at ${locations.join(', ')}).`);
 }
 
 function checkFileLength(relativePath, sourceText, rules, violations) {
@@ -90,9 +108,7 @@ function checkFileLength(relativePath, sourceText, rules, violations) {
     return;
   }
 
-  violations.push(
-    `${relativePath}: ${lineCount} lines exceeds maximum ${rules.maxTsLines} lines for production TypeScript files.`
-  );
+  violations.push(`${relativePath}: ${lineCount} lines exceeds maximum ${rules.maxTsLines} lines for production TypeScript files.`);
 }
 
 function checkRequiredDocs(repoRoot, rules, violations) {
@@ -109,9 +125,7 @@ function runCodePrinciplesChecks(options = {}) {
     ...DEFAULT_RULES,
     ...(options.rules ?? {}),
     lineCountExemptions: new Set(
-      options.rules?.lineCountExemptions
-        ? Array.from(options.rules.lineCountExemptions)
-        : Array.from(DEFAULT_RULES.lineCountExemptions)
+      options.rules?.lineCountExemptions ? Array.from(options.rules.lineCountExemptions) : Array.from(DEFAULT_RULES.lineCountExemptions)
     )
   };
 
@@ -122,8 +136,9 @@ function runCodePrinciplesChecks(options = {}) {
   for (const relativePath of files) {
     const absolutePath = toAbsolute(repoRoot, relativePath);
     const sourceText = fs.readFileSync(absolutePath, 'utf8');
+    const sourceFile = parseTypeScript(relativePath, sourceText, violations);
     checkDefaultExport(relativePath, sourceText, violations);
-    checkExplicitAny(relativePath, sourceText, violations);
+    checkExplicitAny(relativePath, sourceFile, violations);
     checkFileLength(relativePath, sourceText, rules, violations);
   }
 
