@@ -58,7 +58,7 @@ if docker inspect "$mongo" >/dev/null 2>&1 || docker inspect "$rabbit" >/dev/nul
   printf 'Focused containers were not removed\n' >&2
   exit 1
 fi
-node -e 'const fs=require("fs");const evidence=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(evidence.gitSha!==process.argv[3]||evidence.mongoUsersAndDatabaseCleaned!==true||evidence.queuesAndExchangesDeleted!==true||!Array.isArray(evidence.cases)||evidence.cases.length<20)throw Error("Incomplete focused evidence");fs.writeFileSync(process.argv[2],JSON.stringify({...evidence,containersRemoved:true}),{flag:"wx"});' "$evidence" "$receipt" "$sha"
+pnpm exec tsx integration/finalizeJoinedReceipt.ts "$evidence" "$receipt" "$sha"
 rm -f "$evidence"
 trap - EXIT
 printf 'Focused receipt: %s\n' "$receipt"
