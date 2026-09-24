@@ -2,14 +2,14 @@
 
 ## Metadata and decision status
 
-- Issue: **redemeine-qddj**; stage: **repository review**. The standalone content and focused amendments were independently audited; this repository copy is awaiting its own Auditor verification and is not runtime certification.
+- Issue: **redemeine-qddj**; draft PR #109, documentation-only repository review. Prior standalone audits do not verify this revision or certify the runtime.
 - Amendment 2026-09-17: **redemeine-ihn0 — policy_amendment_verified**. Independent Auditor approved the availability-policy amendment. Its implementation later merged into Tapeworm `develop`; no release or deployment is claimed.
-- Prepared: 2026-09-16; baseline: `27df603cfbb7ad4cfac507646faeeb21c3b65139`.
+- Prepared: 2026-09-16; historical source baseline: `27df603cfbb7ad4cfac507646faeeb21c3b65139`. Status reconciled 2026-09-24 against Redemeine main `6d2fbc3` (after PR #113); historical source permalinks below intentionally remain pinned.
 - Repository: https://github.com/surikaterna/redemeine ; baseline HEAD was checked locally.
 - Sibling source evidence: historical baseline `5deefee89b22fbfb6d79fe6be145b47ae756d396`; merged Tapeworm `develop` state `bc9ec5e41c0d9305365eb2d879add92de57a3539` (PRs 42, 43 and 44).
 - Status: **proposed architecture, not implemented, benchmarked, or production-certified**.
 - Artifact source: `/tmp/opencode/saga-production-plan.md`; the audited standalone content is now placed at `docs/architecture/saga-production-plan.md` for repository review.
-- **redemeine-70xi** verified the safe redirected worktree unblock; it remains `verified` for Diplomat closure rather than being treated as a runtime-delivery issue.
+- **redemeine-70xi** resolved the redirected worktree unblock and is closed; it is not a runtime-delivery issue.
 - This placement changes documentation only. It makes no runtime implementation, package release, deployment, publication or capacity claim.
 - Evidence combines the supplied authoritative investigation, targeted source inspection, and live Beads history.
 - Source permalinks below pin full SHAs; historical issue decisions are distinct from code present on main and merged sibling evidence.
@@ -31,6 +31,16 @@
 13. [Dependency-ordered delivery plan](#13-dependency-ordered-delivery-plan)
 14. [Validation, rollout, and handoff](#14-validation-rollout-and-handoff)
 
+### Status boundary for this review (2026-09-24)
+
+| Evidence level | What can be said | What cannot be inferred |
+| --- | --- | --- |
+| **CURRENT MAIN** `6d2fbc3` (PR #113 merged) | Saga DSL/reference bridge and projection changes are present; the projection transport/store work is not a production saga engine. | PR #111 saga turns, durable saga intents, an executor or deployed saga service are **not** on main. |
+| **AUDITED DRAFT PR #111** `b8d474c` on `feature/saga-state-turns-ras4` | Separate unmerged state-turn work provides deterministic route/turn identities, single-commit state replay/reconciliation, a Tapeworm-backed turn repository and Rabbit worker that ACKs after `processEvent` settles. Initial start constructs `initialState` and lifecycle/source facts; existing `on` handlers can update state but reject emitted intents. | The initial turn does **not** run the DSL `start` handler or capture its emitted intents; the slice does not perform the full lifecycle. Audit of a draft is not a merge, release or deployment. |
+| **PROPOSED** follow-ups | `redemeine-vpwm`: full start/atomic-intent lifecycle; `redemeine-fyp3`: single-node image/packaging; `redemeine-1tad`: typed executor/consumer conformance; `redemeine-ras4` / `redemeine-cl5l`: turn/storage qualification; `redemeine-e47.5`: optional earlier durable-inbox admission. These are ownership pointers, not proof of issue completion or executable APIs. | Do not claim lifecycle start, execution, timers, callbacks, terminal completion, image publication or production qualification from this document. |
+
+The discussed Docker/Jenkins image path is **build/test only**: no registry push or deploy. No saga throughput or capacity has been measured. PR #109 does not certify a release. The status table describes the distinct branches and does not replace the historical evidence register.
+
 ## 1. Executive answers
 
 ### Availability-policy supersession — 2026-09-17, redemeine-ihn0
@@ -43,7 +53,7 @@ The linked quarantine, collation, availability-policy and CDC recovery work is m
 
 ### Required two-stage contract
 
-**Yes: decide and atomically record the work first; a second process executes committed intents and durably records their outcomes.** This is the proposed contract, not current runtime behavior.
+**Yes: decide and atomically record the work first; a second process executes committed intents and durably records their outcomes.** This is the proposed full-lifecycle contract, not main behavior or PR #111's state-only initial turn.
 1. **Process A — decide:** load a durable source trigger and authoritative saga state; evaluate a deterministic handler with captured time/random inputs and no external effects (Immer-style local mutation is fine).
 2. **One authoritative atomic commit:** consumed-trigger marker/checkpoint + saga progress/event facts + full executable serializable intents + relevant timer mutations, conditional on expected version and commit-time ownership fence. A checkpoint cannot skip unconsumed triggers.
 3. **ACK distinction:** the logical trigger ACK is that transactional consumed marker; RabbitMQ ACK is a separate transport operation after commit, never part of the Mongo transaction. Earlier ACK after durable inbox persistence is admission only, requires a guaranteed recovery loop, and does not mean the turn was evaluated/consumed.
@@ -59,7 +69,7 @@ CDC is discovery/publication plumbing, not a replacement for Process B. **redeme
 It combines saga handler execution, lifecycle aggregate bookkeeping, in-memory reference adapters, a separate inbound router, scheduling policy evaluation, and audit/read contracts.
 The declarative DSL is primarily in `@redemeine/saga`; storage durability, broker transport, and worker ownership are not supplied by the reference bridge.
 
-**Can a simpler runtime become production-grade?** Yes, conditionally: start with one active owner, durable inboxes, an atomic authoritative turn, recoverable CDC publication, bounded workers, and idempotent effects.
+**Can a simpler runtime become production-grade?** Yes, conditionally: start with one active owner, an atomic authoritative turn, recoverable CDC publication, bounded workers, and idempotent effects. A separate durable ingress inbox is optional if broker ACK waits for the committed turn; if early ACK is chosen, durable admission and restart-safe draining are required (e47.5).
 Simplicity should reduce deployment and ownership complexity, not remove durability or recovery semantics.
 The same owner can advance many independent saga keys concurrently while each key remains serialized.
 
@@ -142,11 +152,11 @@ Checked-in manifests identify core **0.6.0**, Mongo store **3.1.0**, and dispatc
 - **redemeine-1ps**, closed: removed `outbox_primary`, dispatcher, and outbox-specific hooks in the old hwj branch; direction is CDC → DB → relay → MQ → saga/aggregate/projection inbox.
 - Its closure says merged into `feature/redemeine-hwj`; that is not evidence that the entire branch landed on current main.
 - **redemeine-e47.1**, closed: user-approved audit dropped PR27 carry-over; only README deferred-followup pointers were retained, not wholesale code/docs replay.
-- **redemeine-e47.5**, open: durable saga inbox, persist-before-ack, deterministic dedupe, replay-safe drains, restart resilience.
+- **redemeine-e47.5**, open: optional early-ACK durable saga admission/inbox, deterministic dedupe, replay-safe drains and restart resilience; direct manual ACK after a committed turn does not require an additional inbox by default.
 - **redemeine-e47.6**, open: OTel package/integration without stale outbox coupling; **e47.7**, open: trace-correlation continuity E2E.
 - **redemeine-e47.8**, open: canonical inspection hook envelope parity; it is **not** a documentation-blueprint issue.
-- **redemeine-qddj** owns this planning document; **redemeine-70xi** verified the redirected repository worktree used for placement.
-- Open follow-ups: **redemeine-ras4** owns atomic-turn/ownership/reconciliation qualification and **redemeine-1tad** owns strongly typed executors and shared-engine test conformance. **redemeine-gqxm** retains CDC traceability; its transport work is now merged through the 4tud delivery stack, without implying saga integration or release.
+- **redemeine-qddj** owns this planning document; **redemeine-70xi** closed after verifying the redirected repository worktree used for placement.
+- Follow-up map: **redemeine-vpwm** full start/emitted-intent lifecycle (proposed), **redemeine-fyp3** single-node build/test image (proposed), **redemeine-ras4** atomic-turn/ownership/reconciliation qualification, **redemeine-cl5l** related storage qualification (proposed), **redemeine-1tad** typed executors/shared-engine conformance; **redemeine-gqxm** retains CDC traceability. The named proposed tracks are not asserted to be present in the current shared Beads DB. Transport work merged through 4tud does not imply saga integration or release.
 
 S16's old outbox TODO is evidence of an unsafe inline-hook boundary, not authorization to restore a removed architecture.
 This plan requires atomic complete intent capture and a CDC-aligned publication responsibility, not the old `outbox_primary` polling implementation.
@@ -233,7 +243,8 @@ Domain/source changes -- CDC --> authoritative durable DB/event history
                                       v
                               RabbitMQ durable queues
                                       |
-                              durable inbound inbox <--- callbacks / timer occurrences
+                       broker delivery / optional durable admission
+                                    ^ callbacks / timer occurrences
                                       |
                        single active owner / bounded keyed executor
                                       |
@@ -259,7 +270,7 @@ Use OCC even before horizontal scaling; deployment overlap and restart races can
 If failover/leases exist, stale ownership must be rejected at commit by a conflicting conditional write, not merely by a prior lease read.
 Fencing cannot revoke an external request already in flight; effect destinations still need idempotency or reconciliation.
 
-The target guarantee is at-least-once delivery while a valid primary resume position is retained, plus replay-safe logical input processing within declared dedupe retention; expired-history UUID fallback carries the user-accepted discovery-omission exception in section 7.
+The target guarantee is at-least-once delivery while a valid primary resume position is retained, plus replay-safe logical input processing within declared dedupe retention; expired-history UUID fallback carries the user-accepted discovery-omission exception in section 7. Default ingress uses manual broker ACK after the committed turn; an optional early-ACK inbox is a separate e47.5 design, not a prerequisite for that default.
 Exactly-once external effects are not promised; effectively-once business behavior requires destination cooperation and stable identities.
 One owner trades availability and peak aggregate throughput for fewer moving parts; state is durable even when processing pauses.
 
@@ -293,8 +304,8 @@ Disable/avoid these inline effect hooks for saga durability: the independent CDC
 ### Preferred conditional integration: Option B
 
 **Prefer one saga stream and ONE Tapeworm commit per turn**, containing consumed-trigger identity, progress/event facts, complete intents and timer facts in its `events[]`.
-Derive inbox disposition, pending-intent/timer indexes and audit views idempotently; they are not additional business-state authorities or assumed atomic multi-collection writes.
-Recheck authoritative consumed-trigger facts even if an inbox view lags; early transport ACK still requires the separate durable admission/recovery contract in e47.5.
+Derive consumed-input disposition, pending-intent/timer indexes and audit views idempotently; they are not additional business-state authorities or assumed atomic multi-collection writes.
+Recheck authoritative consumed-trigger facts even if an optional inbox view lags; early transport ACK still requires the separate durable admission/recovery contract in e47.5.
 Before accepting this option, **redemeine-ras4** must prove the following conditions:
 
 1. Enforce contiguous next-slot writes across every saga writer and await an index-readiness barrier, including concurrent partition opens.
@@ -329,7 +340,7 @@ These are **proposed logical records**, not current exported interfaces or requi
 
 | Record | Minimum contract |
 | --- | --- |
-| Input envelope / inbox | Tenant, saga type/version/id, stable message ID, source ID/sequence, kind, payload/schema version, received time, correlation/causation/trace, disposition |
+| Input envelope / optional early-ACK inbox | Tenant, saga type/version/id, stable message ID, source ID/sequence, kind, payload/schema version, received time, correlation/causation/trace, disposition; a separate inbox is only required when ACK precedes the authoritative turn |
 | Authoritative turn | Turn ID, input identity, expected/new stream version, owner epoch, state-changing events, complete emitted intent/timer facts, committed input disposition |
 | Durable intent | Intent/execution identity, originating turn and ordinal, named action/version, target, full serializable payload, interaction mode, callback tokens/data, policy snapshot |
 | Execution tracking | Stable logical execution ID, attempt number/ID, claim epoch/deadline, retry due time, accepted/business outcome distinction, durable response/error |
@@ -348,7 +359,7 @@ Bound payloads and validate schemas at ingress and executor boundaries; use dura
 ### Proposed turn sequence
 
 ```text
-receive --> validate --> persist inbox uniquely --> optional broker ACK
+receive --> validate --> [optional: persist inbox uniquely --> early broker ACK]
                            |
                     claim key / load authority
                            |
@@ -357,7 +368,7 @@ receive --> validate --> persist inbox uniquely --> optional broker ACK
              conditional atomic authoritative commit
         [events + disposition + full intents + timer facts]
                            |
-             release key; ACK if not already acknowledged
+              release key; default manual broker ACK after commit
                            |
                   independent CDC publication
 ```
@@ -442,9 +453,10 @@ The historical T10 baseline predates the merged dispatcher suites. redemeine-4tu
 
 | Failure window | Required recovery / invariant |
 | --- | --- |
-| Before inbox persistence | No ACK; broker redelivers |
-| Inbox commit succeeds, ACK lost | Unique message key returns existing durable input; safe ACK, no extra business turn |
-| ACK after inbox, worker dies before turn | Restart-safe worker finds pending input; no broker redelivery dependency |
+| Before authoritative turn (default), or before optional inbox persistence | No ACK; broker redelivers |
+| Turn commits, ACK lost (default) | Reconcile stable consumed-trigger identity; safe ACK on redelivery, no extra business turn |
+| Optional inbox commit succeeds, early ACK lost | Unique message key returns existing durable input; safe ACK, no extra business turn |
+| Optional early ACK after inbox, worker dies before turn | Restart-safe inbox worker finds pending input; no broker redelivery dependency |
 | Handler fails before commit | No effects escape; bounded retry or durable quarantine |
 | Turn commits, response/ACK lost | Authoritative input/turn identity proves completion; no new intents on replay |
 | State commit without complete intents | Forbidden design: atomic capture must prevent this unrecoverable loss window |
@@ -490,7 +502,7 @@ Default proposal is fail-closed rejection of unsupported legacy variants, especi
 
 ### Worked example: invoice command, not a current SDK recipe
 
-1. Receive `invoice.created` for tenant T, invoice I, source message M; durably dedupe M and route to the billing saga key.
+1. Receive `invoice.created` for tenant T, invoice I, source message M; commit consumed-M dedupe with the turn (or durably admit M under the optional early-ACK contract) and route to the billing saga key.
 2. The saga computes a transition to awaiting payment plus a command intent preserving the creator-produced `invoice.pay.command` type and a timeout timer fact; registry/schema versioning accompanies that identity.
 3. Commit the state-changing events, consumed-M disposition, full charge payload, callback tokens/data, and timer generation in one authoritative turn.
 4. Intent E receives a stable identity based on the committed turn/ordinal; a proposed payload carries invoice ID, amount in minor units, currency, and schema version.
@@ -498,7 +510,7 @@ Default proposal is fail-closed rejection of unsupported legacy variants, especi
 6. Billing's durable aggregate/command inbox dedupes E, validates business invariants and commits its own authoritative transition; provider work is separately durably captured if required.
 7. A registered payment executor uses E (or a persistently derived provider-operation key) as the provider idempotency key, not a new key for every network retry.
 8. Rabbit acceptance is recorded as delivery acceptance; the saga remains awaiting payment until a durable business outcome is delivered.
-9. A success/error outcome has its own stable callback ID and references E; persist it in the saga inbox before acknowledging the callback transport.
+9. A success/error outcome has its own stable callback ID and references E; commit its consumed identity with the callback turn before default transport ACK, or durably admit it before optional early ACK.
 10. The callback turn verifies execution/attempt eligibility, runs the named response/error handler, commits the terminal outcome, and cancels the matching timer generation.
 11. A timeout racing with success is resolved by the declared terminal policy; late success after timeout is audited and may launch a separate reconciliation/compensation workflow.
 12. An operator redrive retains the logical idempotency identity and records who/why; a deliberately new charge is a new authorized business operation, not a hidden retry.
@@ -570,7 +582,7 @@ Bound resident caches, audit buffers, pending promises, broker prefetch and exec
 | Routing | One active owner; bounded parallel independent keys | Stable keyed partitions and versioned routing map |
 | Ownership | Exclusive operational authority plus OCC; fence any failover | Durable lease/epoch, conditional commit fence, takeover/rebalance protocol |
 | State | Authoritative event history; bounded derived cache | Same authority; no node-local authoritative state |
-| Inbound work | Durable inbox and restart-safe drain | Partition claims, recovery scans, ordering and dedupe across owners |
+| Inbound work | Manual ACK after atomic consumed-input turn; optional durable early-ACK inbox/drain | Partition claims, recovery scans, ordering and dedupe across owners |
 | Timers/effects | Bounded durable worker loops | Shared claim protocol, stale claimant protection, globally stable occurrence/execution IDs |
 | Relay | Valid-resume recovery; explicit expired-history fallback risk | Feed/partition ownership, separate primary/scan/live-cutover progress and safe redistribution |
 | Fairness | Local admission plus downstream limits | Shared quotas or allocated budgets; local evaluator alone cannot enforce a global cap |
@@ -695,15 +707,18 @@ The same scenario must run on the memory adapter and real-stack conformance suit
 
 ## 13. Dependency-ordered delivery plan
 
-These are design phases, **not a duplicate status tracker or implementation claims**; the actual follow-ups ras4/gqxm/1tad now cover the newly identified work.
+These are design phases, **not a duplicate status tracker or implementation claims**; the proposed full lifecycle remains beyond the audited PR #111 state-only turn. The named follow-ups in the status table are pointers for future scoping, not completed deliveries.
 Reuse existing issue ownership without silently expanding e47.5/.6/.7/.8; role ownership below is proposed, not a new assignee declaration.
 
-| Actual follow-up | Planned dependency/scope boundary |
+| Follow-up ID / proposed track | Planned dependency/scope boundary |
 | --- | --- |
 | redemeine-ras4 | P0/P1/P2 and Process B ownership: one-commit atomicity, next-slot OCC, readiness, reconciliation, stream-local fences and bounded BSON; sibling changes require scoped authorization |
+| redemeine-cl5l | Proposed companion storage qualification; no merged saga-storage guarantee inferred |
+| redemeine-vpwm | Proposed full lifecycle: run start handler, atomically record complete serializable emitted intents with consumed input and progress, then recoverable execution, timers, callbacks and terminal completion |
+| redemeine-fyp3 | Proposed single-node image build/test and packaging; Jenkins/Docker evidence must not be described as registry push or deployment |
 | redemeine-gqxm | P3 and P8: user-accepted scale/risk posture; resume-token-first, expiry-only indexed UUID fallback with historical omission warning, bounded preserved live handoff, independent poison/routing/cursor/ownership fixes |
 | redemeine-1tad | P7a/P1/P4/P7b: implement approved creator-produced canonical command type; prove overrides, uniqueness/version migration, typed executors/fixtures and all four testing tiers |
-| redemeine-e47.5 | Existing durable admission/inbox/drain responsibility; integrate with ras4 atomic consumption, do not redefine as all persistence/executor work |
+| redemeine-e47.5 | Optional early-ACK durable admission/inbox/drain; default manual ACK follows the turn, with no separate ingress inbox requirement |
 | redemeine-e47.6 / .7 / .8 | Existing OTel, trace continuity and inspection-envelope responsibilities unchanged |
 
 | Phase / proposed owner | Depends on | Scope and exit evidence |
@@ -711,7 +726,7 @@ Reuse existing issue ownership without silently expanding e47.5/.6/.7/.8; role o
 | P0: design/capability gate — Architect + storage owner | qddj revision audit; ras4/gqxm evidence | Approve conditional single-commit Option B, stream-local versus stronger fencing, durability/retention and CDC remediation; sibling code exists but is not qualified |
 | P7a: mandatory type-contract track — SDK/runtime Engineers | P0; 1tad; starts before contract freeze | Zero-any gates, canonical typed registry/routing and tier-1/tier-4 consumer fixtures; specify shared-engine conformance before P1/P2 freeze |
 | P1: durable contracts — Architect + Engineer | P0 + P7a type-contract gate | Versioned envelopes/IDs/intent DTOs, schema validators, conditional append/fence design, state reconstruction and migration rules; mandatory section 12 type gates |
-| P2: inbox and authoritative turn — Engineer; e47.5 + ras4 | P1 + P7a gate + qualified one-commit storage | Process A full atomic turn, distinct ACK, restart drain and bounded queues; tiers 2/3 prove readiness, OCC, dedupe, oversized rejection and ambiguous-result reconciliation |
+| P2: authoritative turn — Engineer; ras4/cl5l, then vpwm | P1 + P7a gate + qualified one-commit storage | PR #111 state-only draft is a partial precursor; full Process A must run start, capture complete emitted intents, consume input atomically and ACK after commit by default. e47.5 separately owns optional early-ACK inbox/drain. Tiers 2/3 prove readiness, OCC, dedupe, oversized rejection and ambiguous-result reconciliation |
 | P3: CDC relay and Rabbit adapter — integration Engineer; gqxm traceability | P1 + P2 capture contract | Integrate and requalify merged normal-resume, scale-bounded indexed fallback, known omission counterexample, live cutover, quarantine/routing and checkpoint behavior without exhaustive history scans |
 | P4: real effects and callback execution — integration/domain Engineers; 1tad + ras4 | P2; production delivery requires P3 | Shared typed executor registry, durable fenced claims, real invoice effect and atomic result/continuation; tiers 2/3 prove accepted-vs-done and uncertain-effect recovery |
 | P5: timers/retries/terminal policy — runtime Engineer | P2 + P4 execution identities | Generation/occurrence IDs, bounded catch-up, persisted attempts/deadlines, terminal race tests and cancellation recovery |
@@ -723,7 +738,7 @@ Reuse existing issue ownership without silently expanding e47.5/.6/.7/.8; role o
 Critical path is P0 → P7a type-contract gate → P1 → P2 → P3 → P4 → P5 → P8; P6 and P7b can progress alongside integration once their prerequisites hold.
 Every implementation phase must preserve section 12's mandatory zero-any/deep-inference gates; P7a is required before P1/P2 freeze and P7b is required for release, not optional polish.
 Storage/identity choices cannot be deferred until after broker adapter work: they determine dedupe, callback correlation and replay behavior.
-Minimal production MVP includes one active owner, actual durable stack, one real workflow, inbox/turn/CDC/effects, required timers/retries, basic inspection, runbooks and measured qualification.
+Minimal production MVP includes one active owner, actual durable stack, one real workflow, turn/CDC/effects, required timers/retries, basic inspection, runbooks and measured qualification. Add a separate ingress inbox only for optional early-ACK admission; downstream effect consumers still require durable dedupe/recovery.
 Defer elastic partition rebalancing, multi-region active-active, broad plugin catalogues, a rich operations UI and generic compensation automation until justified.
 Do not defer bounded queues, complete intent capture, idempotency, terminal race policy, security, recovery or basic observability merely to call the MVP small.
 
@@ -750,11 +765,11 @@ Exercise DLQ triage, ambiguous provider outcome reconciliation, CDC backfill, br
 
 ### Repository artifact validation and limits
 
-This repository document preserves the independently audited standalone artifact and applies only administrative/source-truth refreshes for placement and merged Tapeworm reality.
+This repository document preserves the independently audited historical evidence and updates its status boundaries for main after PR #113, unmerged PR #111 and proposed lifecycle/image work; this revision still requires its own audit.
 Baseline/remote and live issue records were inspected; pinned current Tapeworm paths at `bc9ec5e41c0d9305365eb2d879add92de57a3539` were checked after the semantic source layout change.
 Full-SHA links identify source evidence. T1–T11 remain deliberately pinned historical-baseline references; T12–T15 identify merged behavior and do not imply package release or deployment.
 Code-principles self-check: cohesive planning-only file; correctness evidence and uncertainty explicit; no production functions changed; source size/nesting rules are not applicable to this requested long-form document.
-Checklist disposition: correctness/scope/cohesion and documentation-focused checks pass; code comments, function size and nesting are not applicable. The repository principles gate still reports pre-existing production-source violations outside this documentation scope.
+Checklist disposition: correctness/scope/cohesion and documentation-focused checks are required; code comments, function size and nesting are not applicable. The previously reported baseline principles findings (redemeine-jdbn) no longer fail the gate on current main after PR #113; the Bead itself still shows open and its closure is outside qddj scope.
 Risk-based validation here is source/history reconciliation and artifact review; runtime risk-based test additions are specified in the plan, not implemented.
 No approved code exception is introduced; section 7 records the user-approved recovery-risk exception, not relaxed atomicity/type safety. The long-form architecture document may exceed production-source size limits; no production source file does.
 
@@ -762,6 +777,6 @@ No approved code exception is introduced; section 7 records the user-approved re
 
 Independent audits passed the standalone content and its focused scale/recovery and availability amendments. That history is not a claim that this repository version has already passed Auditor review.
 The 2026-09-16 accepted bounded indexed fallback and residual historical late/lower-UUID omission after expiry remain unchanged, including preserved live handoff, truthful metrics and test/release gates. Merged transport remediation does not implement the proposed saga engine.
-Open decisions remain registry uniqueness/version migration, optional aggregate-type field, legacy rejection, fencing strength, fallback batch/lookback/live-preservation configuration, durability/retention/SLOs and real-stack qualification; canonical naming and the stated recovery-risk acceptance are not open.
-Engineer placement sets qddj to **implemented** only after repository validation; Auditor then owns verification. redemeine-70xi is the verified worktree unblock and remains for Diplomat closure.
+Open decisions remain registry uniqueness/version migration, optional aggregate-type field, legacy rejection, fencing strength, fallback batch/lookback/live-preservation configuration, durability/retention/SLOs and real-stack qualification; canonical naming and the stated recovery-risk acceptance are not open. PR #111 is an audited draft, not on main and not the full start/intents/execution/timer/completion lifecycle; vpwm/fyp3 remain proposals. Docker/Jenkins image evidence here means build/test only.
+Engineer sets qddj to **implemented** only after repository validation; Auditor then owns verification. redemeine-70xi is closed, not a pending saga deliverable.
 No main-branch edit, sibling code change, release, deployment, publication or runtime implementation is authorized or claimed here.
