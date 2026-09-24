@@ -43,6 +43,7 @@
     "test": "pnpm run test:turbo",
     "test:turbo": "turbo run test --continue",
     "test:legacy": "pnpm exec jest",
+    "test:saga-real-stack": "pnpm --filter @redemeine/saga-worker-rabbitmq test:integration:real",
     "test:watch": "jest --watchAll",
     "typecheck": "pnpm run typecheck:turbo",
     "typecheck:turbo": "turbo run typecheck --continue",
