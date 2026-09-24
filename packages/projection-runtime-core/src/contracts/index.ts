@@ -120,6 +120,78 @@ export type {
   ProjectionGenerationRollbackContract,
   ProjectionGenerationSwitchContract
 } from './rebuild';
+export type {
+  ProjectionJsonPrimitive,
+  ProjectionJsonValue,
+  ProjectionJsonObject,
+  ProjectionSourceCheckpoint,
+  ProjectionSourceEvent,
+  ProjectionSourceCommit,
+  ProjectionSourceCommitValidationSuccess,
+  ProjectionSourceCommitValidationFailure,
+  ProjectionSourceCommitValidationResult
+} from './sourceCommit';
+export {
+  isCanonicalProjectionUuid,
+  isProjectionJsonValue,
+  validateProjectionSourceCommit
+} from './sourceCommit';
+export type { ProjectionUuidBase64Url22 } from './uuidCodec';
+export {
+  isProjectionUuidBase64Url22,
+  projectionUuidToBase64Url22,
+  projectionBase64Url22ToUuid
+} from './uuidCodec';
+export type {
+  ProjectionSourceCoverage,
+  ProjectionSourceDispatchAdmission,
+  ProjectionCutoverStrategyScope,
+  ProjectionSourceCoverageAdvance,
+  ProjectionSourceOrderPort,
+  ProjectionCompleteCommitRangeCapability,
+  ProjectionCompleteCommitRangeRequest,
+  ProjectionEncodedSourceCommit,
+  ProjectionCompleteCommitRange,
+  ProjectionIncompleteCommitRange,
+  ProjectionOversizedCommitRange,
+  ProjectionCompleteCommitRangeResult,
+  ProjectionCompleteCommitRangeReader,
+  ProjectionCompleteCommitRangeValidation
+} from './sourceOrder';
+export { isCompleteCommitRangeCapability, validateCompleteCommitRange } from './sourceOrder';
+export type {
+  ProjectionSha256Digest,
+  ProjectionRegistryDefinitionManifest,
+  ProjectionRegistryManifestIdentity,
+  ProjectionQueueRegistryManifest,
+  ProjectionQueueRegistryBinding,
+  ProjectionQueueRegistryBindResult,
+  ProjectionQueueRegistryBindingPort
+} from './registry';
+export {
+  hasMatchingProjectionRegistryIdentity,
+  isProjectionSha256Digest,
+  validateProjectionQueueRegistryManifest
+} from './registry';
+export type {
+  ProjectionSourceCommitDocument,
+  ProjectionSourceCommitLink,
+  ProjectionInDocumentTargetProgress,
+  ProjectionInDocumentCommitProgress,
+  ProjectionOwnRecordCommitProgress,
+  ProjectionNoCommitProgress,
+  ProjectionSourceCommitProgress,
+  CommitProjectionSourceCommitRequest,
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRejected,
+  CommitProjectionSourceCommitResult,
+  LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionSourceCommitSnapshot,
+  ProjectionSourceCommitSnapshotTarget,
+  ProjectionSourceCommitSnapshotLink,
+  ProjectionSourceCommitStorePort
+} from './sourceCommitStore';
+export { validateCommitProjectionSourceCommitRelationships } from './sourceCommitStore';
 export {
   evaluateCutoverReadiness,
   transitionToCutover,

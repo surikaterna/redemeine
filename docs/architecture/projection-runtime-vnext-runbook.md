@@ -4,6 +4,8 @@ This runbook is the operational source of truth for Projection Runtime v3 rollou
 
 Related references:
 
+- [Joined projection manual cutover (redemeine-zz6h)](/docs/architecture/joined-projection-cutover)
+
 - [Projection Runtime v3 Contracts and Invariants](/docs/architecture/projection-runtime-v3-contracts-and-invariants)
 - [Projection Runtime v3 Crash/Chaos Safety Matrix](/docs/architecture/projection-runtime-v3-crash-chaos-safety-matrix)
 

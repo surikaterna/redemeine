@@ -39,7 +39,8 @@
   "dependencies": {
     "@redemeine/projection-runtime-core": "workspace:*",
     "@redemeine/projection-router-core": "workspace:*",
-    "@redemeine/projection": "workspace:*"
+    "@redemeine/projection": "workspace:*",
+    "immer": "^10.2.0"
   },
   "devDependencies": {
     "tsup": "^8.4.0",

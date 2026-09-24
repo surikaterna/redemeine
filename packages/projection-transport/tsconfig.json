@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@redemeine/projection-runtime-core": ["../projection-runtime-core/src/index.ts"],
+      "@redemeine/projection-runtime-store-mongodb": ["../projection-runtime-store-mongodb/src/index.ts"],
+      "@redemeine/projection-worker-core": ["../projection-worker-core/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

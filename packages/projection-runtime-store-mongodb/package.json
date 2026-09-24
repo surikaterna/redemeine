@@ -31,8 +31,9 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.integration.json --noEmit",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-runtime-store-mongodb/test",
+    "test:real-mongo": "bash integration/run-real-replica-set.sh",
     "lint": "tsc --noEmit"
   },
   "private": true,

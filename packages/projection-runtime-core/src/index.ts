@@ -7,6 +7,13 @@ export type {
   ProjectionWarning
 } from './types';
 export type {
+  ProjectionDedupeWarningPolicy,
+  ProjectionInDocumentDeduplication,
+  ProjectionOwnRecordDeduplication,
+  ProjectionNoDeduplication,
+  ProjectionDeduplicationStrategy
+} from './projectionDeduplication';
+export type {
   IProjectionStore,
   ProjectionAtomicWrite,
   ProjectionDocumentWrite,
@@ -33,6 +40,8 @@ export type {
   ReverseSubscribeStreamDefinition,
   ProjectionDefinition,
   ProjectionBuilder,
+  ProjectionCommitDefinition,
+  ProjectionCommitBuilder,
   ProjectionHooks
 } from './createProjection';
 export { ProjectionDaemon } from './ProjectionDaemon';
@@ -131,7 +140,54 @@ export type {
   ProjectionRollbackRequest,
   ProjectionGenerationCutoverContract,
   ProjectionGenerationRollbackContract,
-  ProjectionGenerationSwitchContract
+  ProjectionGenerationSwitchContract,
+  ProjectionJsonPrimitive,
+  ProjectionJsonValue,
+  ProjectionJsonObject,
+  ProjectionSourceCheckpoint,
+  ProjectionSourceEvent,
+  ProjectionSourceCommit,
+  ProjectionSourceCommitValidationSuccess,
+  ProjectionSourceCommitValidationFailure,
+  ProjectionSourceCommitValidationResult,
+  ProjectionUuidBase64Url22,
+  ProjectionSourceCoverage,
+  ProjectionSourceDispatchAdmission,
+  ProjectionCutoverStrategyScope,
+  ProjectionSourceCoverageAdvance,
+  ProjectionSourceOrderPort,
+  ProjectionCompleteCommitRangeCapability,
+  ProjectionCompleteCommitRangeRequest,
+  ProjectionEncodedSourceCommit,
+  ProjectionCompleteCommitRange,
+  ProjectionIncompleteCommitRange,
+  ProjectionOversizedCommitRange,
+  ProjectionCompleteCommitRangeResult,
+  ProjectionCompleteCommitRangeReader,
+  ProjectionCompleteCommitRangeValidation,
+  ProjectionSha256Digest,
+  ProjectionRegistryDefinitionManifest,
+  ProjectionRegistryManifestIdentity,
+  ProjectionQueueRegistryManifest,
+  ProjectionQueueRegistryBinding,
+  ProjectionQueueRegistryBindResult,
+  ProjectionQueueRegistryBindingPort,
+  ProjectionSourceCommitDocument,
+  ProjectionSourceCommitLink,
+  ProjectionInDocumentTargetProgress,
+  ProjectionInDocumentCommitProgress,
+  ProjectionOwnRecordCommitProgress,
+  ProjectionNoCommitProgress,
+  ProjectionSourceCommitProgress,
+  CommitProjectionSourceCommitRequest,
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRejected,
+  CommitProjectionSourceCommitResult,
+  LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionSourceCommitSnapshot,
+  ProjectionSourceCommitSnapshotTarget,
+  ProjectionSourceCommitSnapshotLink,
+  ProjectionSourceCommitStorePort
 } from './contracts';
 export {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
@@ -142,5 +198,17 @@ export {
   evaluateProjectionDedupeRetention,
   evaluateCutoverReadiness,
   transitionToCutover,
-  transitionToRollback
+  transitionToRollback,
+  isCanonicalProjectionUuid,
+  isProjectionJsonValue,
+  validateProjectionSourceCommit,
+  isProjectionUuidBase64Url22,
+  projectionUuidToBase64Url22,
+  projectionBase64Url22ToUuid,
+  isCompleteCommitRangeCapability,
+  validateCompleteCommitRange,
+  hasMatchingProjectionRegistryIdentity,
+  isProjectionSha256Digest,
+  validateProjectionQueueRegistryManifest,
+  validateCommitProjectionSourceCommitRelationships
 } from './contracts';
