@@ -23,7 +23,7 @@ can be checked. A seq0 commit or a queue delivery alone is not such evidence.
 `installAcceptedBaseline` persists a per-(queue, UUID) v2 immutable majority-acknowledged row;
 v1 rows are rejected because their caller-declared tail readiness did not prove source availability.
 The unique non-TTL Tapeworm index supports an exact-B lookup (B>=0) and a descending per-source
-high-watermark query H. H=-1 is genuine empty history only for B=-1. Missing B, H<B, malformed
+high-watermark query H. H=-1 is genuine empty history only for B=-1. Missing B, `H<B`, malformed
 boundaries and gaps reject. Observed H and index identity are persisted separately as diagnostic
 readiness, not a promise of future publication.
 
