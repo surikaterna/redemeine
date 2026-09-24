@@ -90,8 +90,9 @@ export const runOwnCardinalityCases = async (
       ...measured,
       bsonBytes: setup.bsonBytesPerRecord,
       databaseOperations: observer.snapshot(),
+      logicalOperations: config.samples,
       fenceOperations: 0,
-      coverageOperations: config.samples,
+      coverageOperations: 0,
       warnings: 0,
       setup: {
         seedDurationMs: Number(setup.durationMs.toFixed(3)),

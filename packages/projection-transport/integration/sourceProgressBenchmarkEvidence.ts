@@ -19,7 +19,8 @@ export const writeBenchmarkEvidence = async (parameters: BenchmarkParameters, re
     envelope: {
       automaticSpill: false,
       inline: 'physically bounded by MongoDB BSON/document capacity; 1000/1001 are warning-envelope measurements',
-      ownRecord: 'separate scalar rows; 10000/100000 setup is measured in bounded batches'
+      ownRecord: 'separate scalar rows; 10000/100000 setup is measured in bounded batches',
+      transportCoverage: 'standalone synthetic order-port CAS after one accepted B=-1 record on a genuinely empty indexed source; not source-backed commit delivery'
     },
     results,
     databaseCleanupVerified: true

@@ -1,4 +1,4 @@
-import type { CommitProjectionSourceCommitRequest, ProjectionSourceCommitStorePort, ProjectionUuidBase64Url22 } from '@redemeine/projection-runtime-core';
+import type { CommitProjectionSourceCommitRequest, ProjectionSourceCommitStorePort } from '@redemeine/projection-runtime-core';
 import {
   MongoProjectionStore,
   type ProjectionDedupeRecord,
@@ -7,8 +7,7 @@ import {
 } from '@redemeine/projection-runtime-store-mongodb';
 import { BSON, type Collection, type Db, MongoClient } from 'mongodb';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src/index';
-import { MongoProjectionTransportStore } from '../src';
-import { SOURCE_ID, stackManifest } from './realStackFixtures';
+import { runCoverageCase } from './sourceProgressCoverageBenchmark';
 import { writeBenchmarkEvidence } from './sourceProgressBenchmarkEvidence';
 import { inlineProgress, request, sourceUuid } from './sourceProgressBenchmarkRequests';
 import { MemoryObserver, MongoOperationObserver, summarizeLatency, timed } from './sourceProgressBenchmarkSupport';
@@ -122,8 +121,9 @@ const runEventCases = async (options: AdapterCaseOptions): Promise<BenchmarkResu
         parameters: { eventCount },
         bsonBytes: 0,
         databaseOperations: options.operationCounts(),
+        logicalOperations: options.config.samples,
         fenceOperations: options.config.samples,
-        coverageOperations: options.config.samples,
+        coverageOperations: 0,
         warnings: warnings.count
       })
     );
@@ -144,8 +144,9 @@ const runInlineCases = async (options: AdapterCaseOptions): Promise<BenchmarkRes
         parameters: { sourceCount },
         bsonBytes: BSON.calculateObjectSize({ sourceProgress: scenario.progress }),
         databaseOperations: options.operationCounts(),
+        logicalOperations: options.config.samples,
         fenceOperations: options.config.samples,
-        coverageOperations: options.config.samples,
+        coverageOperations: 0,
         warnings: warnings.count
       })
     );
@@ -168,6 +169,7 @@ const runNoneCase = async (options: AdapterCaseOptions): Promise<BenchmarkResult
     parameters: {},
     bsonBytes: 0,
     databaseOperations: operations,
+    logicalOperations: options.config.samples,
     fenceOperations: 0,
     coverageOperations: 0,
     warnings: 0
@@ -179,44 +181,6 @@ const runAdapterCases = async (options: AdapterCaseOptions): Promise<BenchmarkRe
   const inline = await runInlineCases(options);
   const none = await runNoneCase(options);
   return [...events, ...inline, none];
-};
-
-const runCoverageCase = async (client: MongoClient, databaseName: string, observer: MongoOperationObserver, samples: number): Promise<BenchmarkResult> => {
-  const store = new MongoProjectionTransportStore({
-    collection: client.db(databaseName).collection('coverage'),
-    mongoClient: client,
-    manifest: stackManifest('benchmark-coverage')
-  });
-  await store.admitForDispatch({ ...request('coverage', SOURCE_ID, 0, 1, null, null, { strategy: 'none' }).commit }, 'benchmark-coverage');
-  observer.reset();
-  const memory = new MemoryObserver();
-  const latencies: number[] = [];
-  for (let sequence = 0; sequence < samples; sequence += 1) {
-    latencies.push(
-      await timed(async () => {
-        await store.advanceCoverage({
-          queueBindingId: 'benchmark-coverage',
-          sourceId: SOURCE_ID,
-          expectedSequence: sequence === 0 ? null : sequence - 1,
-          sequence
-        });
-      })
-    );
-    memory.sample();
-  }
-  return result(
-    'mongodb',
-    'transport_coverage',
-    { latencies, memory },
-    {
-      parameters: {},
-      bsonBytes: BSON.calculateObjectSize({ sourceId: SOURCE_ID, sequence: samples - 1 }),
-      databaseOperations: observer.snapshot(),
-      fenceOperations: samples,
-      coverageOperations: samples,
-      warnings: 0
-    }
-  );
 };
 
 interface BenchmarkContext {
@@ -284,7 +248,7 @@ const runAllCases = async (context: BenchmarkContext, config: BenchmarkParameter
     resetOperations: () => context.observer.reset()
   });
   const own = await runOwnCardinalityCases(context.mongoStore, context.db, context.observer, config);
-  const coverage = await runCoverageCase(context.client, context.databaseName, context.observer, config.samples);
+  const coverage = await runCoverageCase(context.client, context.db, context.observer, config.samples);
   return [...inMemory, ...mongo, ...own, coverage];
 };
 

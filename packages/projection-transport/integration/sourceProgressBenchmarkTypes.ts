@@ -27,9 +27,13 @@ export interface BenchmarkResult {
   memory: MemorySummary;
   bsonBytes: number;
   databaseOperations: OperationCounts | 'not_applicable';
+  /** Requests actually submitted to the measured adapter. */
+  logicalOperations: number;
   fenceOperations: number;
+  /** Successful calls to the transport order port, never inferred from commit requests. */
   coverageOperations: number;
   warnings: number;
+  setup?: Record<string, number | string>;
 }
 
 export interface BenchmarkParameters {
