@@ -65,7 +65,6 @@
     "check:projection-contract-consumer": "node ./bin/check-projection-contract-consumer.js",
     "test:projection-mongo-real": "pnpm --dir packages/projection-runtime-store-mongodb run test:real-mongo",
     "test:projection-real-stack": "pnpm --dir packages/projection-transport run test:real-stack",
-    "test:projection-migration-real": "pnpm --dir packages/projection-transport run test:real-migration",
     "test:projection-consumer-types": "pnpm run check:projection-contract-consumer",
     "bench:projection-source-progress": "pnpm --dir packages/projection-transport run bench:source-progress",
     "verify:workspace": "pnpm exec turbo run typecheck build test --continue"

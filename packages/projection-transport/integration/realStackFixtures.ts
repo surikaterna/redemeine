@@ -3,13 +3,13 @@ import type { Channel, ConsumeMessage } from 'amqplib';
 import type { IBaseEvent, ICommit } from 'tapeworm';
 import type { ProjectionRabbitChannel, RabbitDelivery } from '../src';
 import {
-  normalizeProjectionMigrationDefinitions,
+  normalizeProjectionRegistryDefinitions,
   projectionDefinitionRegistryDigest,
-  projectionMigrationDefinitionHash,
-  projectionMigrationRuntimeConfigurationDigest,
+  projectionDefinitionHash,
+  projectionRuntimeConfigurationDigest,
   projectionQueueRegistryDigest
 } from '../src';
-import { identityConfigurations, runtimeDefinitions } from './migrationRuntimeDefinitions';
+import { identityConfigurations, runtimeDefinitions } from './realStackDefinitions';
 
 export const SOURCE_ID = '11111111-1111-4111-8111-111111111111';
 export const PARTITION_ID = 'orders';
@@ -66,11 +66,11 @@ export function stackManifest(
   sourceStartAnchors: Readonly<Record<string, number>> = { [SOURCE_ID]: 0 },
   artifactDigest: `sha256:${string}` = HASH
 ): ProjectionQueueRegistryManifest {
-  const configurations = normalizeProjectionMigrationDefinitions(runtimeDefinitions(generation), identityConfigurations);
+  const configurations = normalizeProjectionRegistryDefinitions(runtimeDefinitions(generation), identityConfigurations);
   const definitions = configurations.map((configuration) => ({
     projectionName: configuration.projectionName,
     generation,
-    definitionHash: projectionMigrationDefinitionHash(configuration, artifactDigest),
+    definitionHash: projectionDefinitionHash(configuration, artifactDigest),
     sourceSelectors: [configuration.from.aggregateType]
   }));
   const payload = {
@@ -80,7 +80,7 @@ export function stackManifest(
     identity: {
       version: 1 as const,
       normalizedDefinitionRegistryDigest: projectionDefinitionRegistryDigest(definitions),
-      normalizedRuntimeConfigurationDigest: projectionMigrationRuntimeConfigurationDigest(configurations),
+      normalizedRuntimeConfigurationDigest: projectionRuntimeConfigurationDigest(configurations),
       executableCodeArtifactDigest: artifactDigest
     },
     definitions,

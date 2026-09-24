@@ -45,23 +45,3 @@ export const identityConfigurations = [
   { mode: 'prefixedAggregateId', prefix: 'Q' },
   { mode: 'prefixedAggregateId', prefix: 'O' }
 ] as const;
-
-export function deploymentDefinitions(generation: string) {
-  return runtimeDefinitions(generation).map((entry, index) => ({
-    projectionName: entry.definition.name,
-    generation,
-    from: {
-      aggregateType: entry.definition.fromStream.aggregate.aggregateType,
-      aggregateKeys: ['aggregateType', 'initialState', 'pure'],
-      aggregatePureKeys: ['eventProjectors'],
-      aggregateEventProjectorKeys: [],
-      handlerKeys: Object.keys(entry.definition.fromStream.handlers).sort()
-    },
-    joins: [],
-    reverseSubscriptions: [],
-    subscriptions: [],
-    deduplication: entry.definition.deduplication,
-    hookKeys: [],
-    identityConfiguration: identityConfigurations[index]
-  }));
-}

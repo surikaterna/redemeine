@@ -1,63 +1,11 @@
-export { ProjectionMigrationStreamingDigest, projectionMigrationDigest, projectionMigrationManifestPayload } from './migration/digest';
-export { ProjectionMigrationEngine } from './migration/engine';
-export { MongoProjectionMigrationActivationPort, type ProjectionMigrationActivationHooks } from './migration/mongoActivation';
 export {
-  MongoProjectionGenerationResolver,
-  MongoProjectionMigrationPreflightPort,
-  MongoProjectionMigrationSnapshotPort,
-  MongoProjectionMigrationStatePort,
-  type ProjectionActiveGenerationRecord,
-  type ProjectionGenerationCollections,
-  type ProjectionGenerationRecord,
-  type ProjectionMigrationJournalDocument,
-  type ProjectionMigrationStateDocument,
-  projectionGenerationCollectionsAreIsolated
-} from './migration/mongoPorts';
-export {
-  assertExactJournal,
-  replayProjectionMigrationRanges,
-  scanProjectionMigrationRange,
-  verifyProjectionMigrationSources
-} from './migration/replay';
-export {
-  inspectProjectionMigrationRuntimeArtifact,
-  loadProjectionMigrationRuntimeArtifact,
-  type ProjectionMigrationRuntimeArtifact
-} from './migration/runtimeArtifact';
-export {
-  assertRuntimeMatchesManifest,
-  normalizeProjectionMigrationDefinitions,
-  type ProjectionMigrationDeploymentDefinition,
-  type ProjectionMigrationRuntimeModule,
-  parseProjectionMigrationRuntimeModule,
+  normalizeProjectionRegistryDefinitions,
+  type ProjectionDeploymentDefinition,
   projectionDefinitionRegistryDigest,
-  projectionMigrationDefinitionHash,
-  projectionMigrationRuntimeConfigurationDigest,
+  projectionDefinitionHash,
+  projectionRuntimeConfigurationDigest,
   projectionQueueRegistryDigest
-} from './migration/runtimeIdentity';
-export type {
-  ProjectionMigrationActivationPort,
-  ProjectionMigrationManifest,
-  ProjectionMigrationPhase,
-  ProjectionMigrationRangeJournal,
-  ProjectionMigrationReceipt,
-  ProjectionMigrationReplayPort,
-  ProjectionMigrationSnapshot,
-  ProjectionMigrationSnapshotPort,
-  ProjectionMigrationSourceRange,
-  ProjectionMigrationState,
-  ProjectionMigrationStatePort,
-  ProjectionMigrationStrategy,
-  ProjectionMigrationTrustedPreflightPort
-} from './migration/types';
-export {
-  PROJECTION_MIGRATION_MAX_MANIFEST_BYTES,
-  PROJECTION_MIGRATION_MAX_RANGES,
-  parseProjectionMigrationManifest,
-  projectionMigrationRangeKey,
-  projectionMigrationSourceDescriptorDigest,
-  validateProjectionMigrationManifest
-} from './migration/validate';
+} from './registryIdentity';
 export {
   MongoProjectionTransportStore,
   type AcceptedBaselineReadiness,
