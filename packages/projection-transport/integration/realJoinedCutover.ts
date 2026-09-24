@@ -250,6 +250,10 @@ async function run(): Promise<void> {
     }
     await rabbit?.close();
     await Promise.all([auth.operator.close(), auth.worker.close(), auth.secondWorker.close()]);
+    await adminDb.command({ dropUser: 'zz6h-worker' });
+    await adminDb.command({ dropUser: 'zz6h-operator' });
+    await adminDb.command({ dropRole: 'zz6h-worker' });
+    await adminDb.command({ dropRole: 'zz6h-approval-provisioner' });
     await adminDb.dropDatabase();
     const users = await adminDb.command({ usersInfo: 1 });
     assert(Array.isArray(users.users) && users.users.length === 0, 'Fixture Mongo users were not cleaned up');
