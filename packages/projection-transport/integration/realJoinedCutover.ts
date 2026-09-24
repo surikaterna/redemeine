@@ -110,6 +110,9 @@ async function run(): Promise<void> {
       if (channel) await rabbitGate(channel, queueId, transport, async () => {
         throw Error('Rejected cutover dispatched a joined event');
       }, true);
+      assert(await transportCollection.findOne({ _id: `coverage:${queueId}:${sourceId}` }) === null
+        && await db.collection(`${projectionName}_dedupe`).countDocuments({}) === 0,
+      'Rabbit rejection wrote coverage or own-record progress');
       assert(await db.collection(`${projectionName}_dedupe`).countDocuments({}) === 0,
         'Omission wrote own-record progress');
       const scopedId = [projectionName, 'g1', 'Order', 'one'].join('\u0000');
