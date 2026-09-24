@@ -10,6 +10,7 @@ import { createTapewormMongoCompleteCommitRangeReader, MongoProjectionTransportS
   type AcceptedBaseline, type TapewormMongoRangeReader } from '../src';
 import { adaptChannel, PARTITION_ID, SOURCE_ID, stackDefinitions, stackManifest,
   tapewormCommit, type StackEvent, type StackState } from './realStackFixtures';
+import { runJoinedAcceptedScenario, type JoinedScenarioEvidence } from './realJoinedAcceptedScenario';
 
 function required(key: string): string {
   const value = process.env[key];
@@ -188,7 +189,7 @@ async function resourceAbsent(kind: 'queue' | 'exchange', name: string): Promise
   }
 }
 
-async function finish(ctx: StackContext, queue: string): Promise<void> {
+async function finish(ctx: StackContext, queue: string, joined: JoinedScenarioEvidence): Promise<void> {
   const probe = await ctx.db.collection<ProjectionTransportDocument>('empty_transport')
     .findOne({ _id: `probe:${queue}:${SOURCE_ID}` });
   assert(probe?.kind === 'source_probe' && probe.observedHighWatermark === 3, 'Probe evidence missing');
@@ -209,7 +210,7 @@ async function finish(ctx: StackContext, queue: string): Promise<void> {
   }
   await ctx.channel.close(); await ctx.rabbit.close(); await ctx.mongo.close();
   await writeFile(required('REDEMEINE_EVIDENCE_PATH'), JSON.stringify({ gitSha: required('REDEMEINE_GIT_SHA'),
-    databaseName, versions, queues: ctx.queues, indexName, probe, failures: ctx.failures, settlements: ctx.settlements,
+    databaseName, versions, queues: ctx.queues, indexName, probe, failures: ctx.failures, settlements: ctx.settlements, joined,
     missingRejected: true, incompatibleRejected: true, birthRejected: true, missingBoundaryRejected: true,
     gapStatus: 'incomplete', counts: { unnotifiedFirst: 2, duplicateNone: 4, nonzeroBootstrap: 2, restartCoverage: 3 },
     sourceProbeMethod: ctx.reader.getQueryObservation().sourceProbeMethod, logicalCleanupVerified: true }), { flag: 'wx' });
@@ -229,10 +230,11 @@ async function run(): Promise<void> {
   const ctx: StackContext = { mongo, rabbit, channel, db, partition, source, reader, queues: [], failures: [], settlements: [] };
   await firstAndLaterUnnotified(ctx);
   const queue = await laterBootstrapAndRestart(ctx);
+  const joined = await runJoinedAcceptedScenario(ctx);
   await rejectTopology(ctx, 'missing_queue', false);
   await rejectTopology(ctx, 'wrong_topology', true);
   await rejectBadHistory(ctx);
-  await finish(ctx, queue);
+  await finish(ctx, queue, joined);
 }
 
 await run();
