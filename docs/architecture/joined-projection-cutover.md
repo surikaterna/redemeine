@@ -10,7 +10,7 @@ The immutable manifest must declare `joined: true` on every definition with join
 
 ## Inventory and seed (run with mongosh against the dedicated collections)
 
-Run the following in `mongosh` with operator credentials and reviewed explicit values. Replace the example list with the **entire finite inventory**, preserving its order. Use the actual physical `db.getName()` and collection names. The count bound includes both legacy and scoped rows. Do not manufacture missing legacy links or target documents. Approval is installed only after all seeds and reconciliation succeed.
+Run the following in `mongosh` with operator credentials (read/insert/update on the dedicated link collection, read on documents, **read/insert only** on approvals) and reviewed explicit values. Worker credentials need read on approvals and only the required read/write/index/transaction permissions on the dedicated transport/link/document/progress collections, never approval write rights. Replace the example list with the **entire finite inventory**, preserving its order. Use the actual physical `db.getName()` and collection names. The count bound includes both legacy and scoped rows. Do not manufacture missing legacy links or target documents. Approval is installed only after all seeds and reconciliation succeed.
 
 ```javascript
 const projectionName = 'orders';
@@ -71,7 +71,10 @@ const base = { _id: `joined_approval:${queueId}`, kind: 'joined_approval', queue
 const digest = 'sha256:' + require('crypto').createHash('sha256').update(JSON.stringify(base)).digest('hex');
 const approval = { ...base, digest };
 if (prior && !equal(prior, approval)) throw Error('conflicting write-once approval');
-approvals.updateOne({ _id: base._id }, { $setOnInsert: approval }, { upsert: true, writeConcern: { w: 'majority' } });
+if (!prior) {
+  try { approvals.insertOne(approval, { writeConcern: { w: 'majority' } }); }
+  catch (error) { if (error.code !== 11000) throw error; } // another provisioning attempt must read back equal
+}
 if (!equal(approvals.findOne({ _id: base._id }), approval)) throw Error('approval insert conflict');
 printjson({ approvalId: base._id, digest, rows: rows.length, targetCount: new Set(inventory.map(x => x.targetDocId)).size });
 ```
