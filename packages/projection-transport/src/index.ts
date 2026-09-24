@@ -60,11 +60,14 @@ export {
 } from './migration/validate';
 export {
   MongoProjectionTransportStore,
+  type AcceptedBaselineReadiness,
   type MongoProjectionTransportStoreOptions,
+  type ProjectionTransportBaselineDocument,
   type ProjectionTransportBindingDocument,
   type ProjectionTransportCoverageDocument,
   type ProjectionTransportDocument
 } from './mongoTransportStore';
+export { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
 export {
   type ProjectionRabbitChannel,
   type ProjectionRabbitRetryReceipt,

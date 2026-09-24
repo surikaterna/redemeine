@@ -153,6 +153,7 @@ export type {
   ProjectionUuidBase64Url22,
   ProjectionSourceCoverage,
   ProjectionSourceDispatchAdmission,
+  ProjectionCutoverStrategyScope,
   ProjectionSourceCoverageAdvance,
   ProjectionSourceOrderPort,
   ProjectionCompleteCommitRangeCapability,

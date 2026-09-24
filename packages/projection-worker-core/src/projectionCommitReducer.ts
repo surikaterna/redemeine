@@ -18,7 +18,7 @@ export type ProjectionReductionResult<TState> =
   | { status: 'terminal'; reason: string };
 
 interface ReductionState<TState> {
-  documents: Map<string, { state: TState; revision: number | null }>;
+  documents: Map<string, { state: TState; revision: number | null; legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'] }>;
   touched: Set<string>;
   links: Map<string, RoutingLinkState>;
   stagedLinks: Map<string, ProjectionSourceCommitLink>;
@@ -47,7 +47,7 @@ function getDocument<TState>(
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   reduction: ReductionState<TState>,
   targetId: string
-): { state: TState; revision: number | null } | null {
+): { state: TState; revision: number | null; legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'] } | null {
   const existing = reduction.documents.get(targetId);
   if (existing) return existing;
   const target = snapshot.targets.find((candidate) => candidate.targetDocumentId === targetId);
@@ -57,7 +57,8 @@ function getDocument<TState>(
   }
   const document = {
     state: target.state === null ? definition.initialState(targetId) : clone(target.state),
-    revision: target.revision
+    revision: target.revision,
+    ...(target.legacyOriginal ? { legacyOriginal: target.legacyOriginal } : {})
   };
   reduction.documents.set(targetId, document);
   return document;
@@ -111,14 +112,16 @@ function createProgress<TState>(
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   targetIds: readonly string[],
-  sourceKey: ProjectionUuidBase64Url22
+  sourceKey: ProjectionUuidBase64Url22,
+  baselineSequence?: number
 ): CommitProjectionSourceCommitRequest<TState>['progress'] {
   const strategy = definition.deduplication;
   if (strategy.strategy === 'none') return { strategy: 'none' };
   if (strategy.strategy === 'own_record') {
     return {
       strategy: 'own_record',
-      source: { sourceId: commit.streamId, expectedSequence: snapshot.ownRecordSequence, finalSequence: commit.commitSequence },
+      source: { sourceId: commit.streamId, expectedSequence: snapshot.ownRecordSequence, finalSequence: commit.commitSequence,
+        ...(snapshot.ownRecordSequence === null && baselineSequence !== undefined ? { baselineSequence } : {}) },
       ...(strategy.warnings ? { warnings: strategy.warnings } : {})
     };
   }
@@ -183,18 +186,20 @@ function createRequest<TState>(
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   reduction: ReductionState<TState>,
-  sourceKey: ProjectionUuidBase64Url22
+  sourceKey: ProjectionUuidBase64Url22,
+  baselineSequence?: number
 ): CommitProjectionSourceCommitRequest<TState> {
   const targetIds = [...reduction.touched].sort();
   const finalDocuments = targetIds.map((targetDocumentId) => {
     const document = reduction.documents.get(targetDocumentId);
     if (!document) throw new Error(`Missing reduced document ${targetDocumentId}.`);
-    return { targetDocumentId, expectedRevision: document.revision, finalDocument: document.state };
+    return { targetDocumentId, expectedRevision: document.revision, finalDocument: document.state,
+      ...(document.legacyOriginal ? { legacyOriginal: document.legacyOriginal } : {}) };
   });
   return {
     version: 1, mode: 'atomic-all', projectionName: definition.name, projectionGeneration: generation,
     commit, finalDocuments, stagedLinks: [...reduction.stagedLinks.values()],
-    progress: createProgress(definition, commit, snapshot, targetIds, sourceKey)
+    progress: createProgress(definition, commit, snapshot, targetIds, sourceKey, baselineSequence)
   };
 }
 
@@ -212,7 +217,8 @@ export function reduceProjectionSourceCommit<TState>(
   definition: ProjectionCommitDefinition<TState>,
   generation: string,
   commit: ProjectionSourceCommit,
-  snapshot: ProjectionSourceCommitSnapshot<TState>
+  snapshot: ProjectionSourceCommitSnapshot<TState>,
+  baselineSequence?: number
 ): ProjectionReductionResult<TState> {
   if (definition.deduplication.strategy === 'own_record'
     && snapshot.ownRecordSequence !== null
@@ -232,7 +238,7 @@ export function reduceProjectionSourceCommit<TState>(
   if (missing) return missing;
   try {
     if (allResolvedTargetsDeduplicated(definition, commit, reduction)) return { status: 'deduplicated' };
-    return { status: 'planned', request: createRequest(definition, generation, commit, snapshot, reduction, sourceKey) };
+    return { status: 'planned', request: createRequest(definition, generation, commit, snapshot, reduction, sourceKey, baselineSequence) };
   } catch (error) {
     return { status: 'terminal', reason: error instanceof Error ? error.message : 'projection plan failed' };
   }

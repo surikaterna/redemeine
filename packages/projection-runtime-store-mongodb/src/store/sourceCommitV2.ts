@@ -51,11 +51,21 @@ const readDocuments = async <TState>(
   session?: ClientSession
 ): Promise<ProjectionSourceCommitSnapshot<TState>['targets']> => Promise.all(request.targetDocumentIds.map(async (targetDocumentId) => {
   const row = await options.collection.findOne({ _id: targetDocumentId }, session ? { session } : undefined);
+  if (row?.v2ObservedUpdatedAt !== undefined && (row.updatedAt !== row.v2ObservedUpdatedAt
+    || ('checkpoint' in row) !== row.v2LegacyCheckpointPresent
+    || JSON.stringify(row.checkpoint ?? null) !== JSON.stringify(row.v2LegacyCheckpoint ?? null))) {
+    throw new Error(`Detected legacy writer after first touch: ${targetDocumentId}`);
+  }
   return {
     targetDocumentId,
     revision: row?.v2Revision ?? null,
     state: row?.state ?? null,
-    sourceProgress: row?.sourceProgress ?? {}
+    sourceProgress: row?.sourceProgress ?? {},
+    ...(row && row.v2Revision === undefined ? { legacyOriginal: {
+      state: row.state,
+      ...('updatedAt' in row ? { updatedAt: row.updatedAt } : {}),
+      ...('checkpoint' in row ? { checkpoint: row.checkpoint } : {})
+    } } : {})
   };
 }));
 
@@ -90,8 +100,12 @@ const validateSnapshot = <TState>(
 ): string | null => {
   const documents = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
   for (const document of request.finalDocuments) {
-    if (documents.get(document.targetDocumentId)?.revision !== document.expectedRevision) {
+    const observed = documents.get(document.targetDocumentId);
+    if (observed?.revision !== document.expectedRevision) {
       return `document revision conflict for ${document.targetDocumentId}`;
+    }
+    if (document.legacyOriginal && JSON.stringify(observed?.legacyOriginal) !== JSON.stringify(document.legacyOriginal)) {
+      return `legacy document changed before first touch: ${document.targetDocumentId}`;
     }
   }
   for (let index = 0; index < request.stagedLinks.length; index += 1) {
@@ -132,19 +146,39 @@ const writeDocuments = async <TState>(
     : new Map<string, Readonly<Record<ProjectionUuidBase64Url22, number>>>();
   for (const document of request.finalDocuments) {
     const revision = (document.expectedRevision ?? 0) + 1;
+    const updatedAt = options.now?.() ?? new Date().toISOString();
     const $set: Partial<ProjectionDocumentRecord<TState>> = {
       state: document.finalDocument,
-      updatedAt: options.now?.() ?? new Date().toISOString(),
+      updatedAt,
       v2Revision: revision
     };
+    if (document.legacyOriginal) {
+      $set.v2LegacyCheckpoint = (document.legacyOriginal.checkpoint ?? null) as NonNullable<ProjectionDocumentRecord<TState>['checkpoint']> | null;
+      $set.v2LegacyCheckpointPresent = 'checkpoint' in document.legacyOriginal;
+      $set.v2ObservedUpdatedAt = updatedAt;
+    }
     const sourceProgress = progress.get(document.targetDocumentId);
     if (sourceProgress !== undefined) $set.sourceProgress = sourceProgress;
+    const filter = revisionFilter(document.targetDocumentId, document.expectedRevision);
+    if (document.expectedRevision === null && document.legacyOriginal) {
+      filter.state = document.legacyOriginal.state;
+      filter.updatedAt = 'updatedAt' in document.legacyOriginal ? document.legacyOriginal.updatedAt : { $exists: false };
+      filter.checkpoint = 'checkpoint' in document.legacyOriginal ? document.legacyOriginal.checkpoint : { $exists: false };
+    }
+    if (document.expectedRevision !== null) {
+      const observed = await options.collection.findOne({ _id: document.targetDocumentId }, { session });
+      if (observed?.v2ObservedUpdatedAt !== undefined) {
+        filter.updatedAt = observed.v2ObservedUpdatedAt;
+        filter.checkpoint = observed.v2LegacyCheckpointPresent ? observed.v2LegacyCheckpoint : { $exists: false };
+        $set.v2ObservedUpdatedAt = updatedAt;
+      }
+    }
     const result = await options.collection.updateOne(
-      revisionFilter(document.targetDocumentId, document.expectedRevision),
+      filter,
       { $set },
-      { upsert: document.expectedRevision === null, session }
+      { upsert: document.expectedRevision === null && !document.legacyOriginal, session }
     );
-    if (!didWrite(result)) throw new Error(`projection-v2-occ:document:${document.targetDocumentId}`);
+    if (!didWrite(result)) throw new Error(`${document.legacyOriginal || $set.v2ObservedUpdatedAt ? 'projection-v2-stale-legacy' : 'projection-v2-occ'}:document:${document.targetDocumentId}`);
     revisions[document.targetDocumentId] = revision;
   }
   return revisions;
@@ -195,7 +229,10 @@ const writeOwnProgress = async <TState>(
     commitSequence: source.finalSequence,
     updatedAt: options.now?.() ?? new Date().toISOString()
   };
-  const result = await options.dedupeCollection.updateOne(filter, { $set: record }, { upsert: source.expectedSequence === null, session });
+  const seed = source.expectedSequence === null && source.baselineSequence !== undefined
+    ? { $setOnInsert: { acceptedBaselineSequence: source.baselineSequence } } : {};
+  const result = await options.dedupeCollection.updateOne(filter, { $set: record, ...seed },
+    { upsert: source.expectedSequence === null, session });
   if (!didWrite(result)) throw new Error('projection-v2-occ:own-record');
 };
 
@@ -212,6 +249,20 @@ const writeMigrationReceipt = async <TState>(request: CommitProjectionSourceComm
   if (!didWrite(result)) throw new Error('projection-v2-occ:migration-receipt');
 };
 
+const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitRequest<TState>): LoadProjectionSourceCommitSnapshotRequest => ({
+  projectionName: request.projectionName,
+  projectionGeneration: request.projectionGeneration,
+  targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
+  links: request.stagedLinks.map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
+  progressStrategy: request.progress.strategy,
+  ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
+});
+
+const lacksLegacyOriginal = <TState>(request: CommitProjectionSourceCommitRequest<TState>,
+  snapshot: ProjectionSourceCommitSnapshot<TState>): boolean => request.finalDocuments.some((document) =>
+    document.expectedRevision === null && !document.legacyOriginal
+    && snapshot.targets.some((target) => target.targetDocumentId === document.targetDocumentId && target.legacyOriginal));
+
 export const commitMongoV2 = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
@@ -223,17 +274,15 @@ export const commitMongoV2 = async <TState>(
   }
   try {
     return await execute(async (session) => {
-      const snapshotRequest: LoadProjectionSourceCommitSnapshotRequest = {
-        projectionName: request.projectionName,
-        projectionGeneration: request.projectionGeneration,
-        targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
-        links: request.stagedLinks.map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
-        progressStrategy: request.progress.strategy,
-        ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
-      };
-      const snapshot = await loadMongoV2Snapshot(snapshotRequest, options, session);
+      const snapshot = await loadMongoV2Snapshot(snapshotForCommit(request), options, session);
+      if (lacksLegacyOriginal(request, snapshot)) {
+        return { version: 1, status: 'rejected', category: 'terminal', retryable: false,
+          reason: 'Legacy document first touch requires original state CAS.' };
+      }
       const failure = validateSnapshot(request, snapshot) ?? await validateMigrationReceipt(request, options, session);
-      if (failure) return conflict(failure);
+      if (failure) return failure.startsWith('legacy document changed')
+        ? { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: failure }
+        : conflict(failure);
       const documentRevisions = await writeDocuments(request, options, session);
       const linkRevisions = await writeLinks(request, options, session);
       await writeOwnProgress(request, options, session);
@@ -241,6 +290,16 @@ export const commitMongoV2 = async <TState>(
       return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
     });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Detected legacy writer after first touch:')) {
+      return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: error.message };
+    }
+    if (request.finalDocuments.some((document) => document.legacyOriginal) && error instanceof Error) {
+      return { version: 1, status: 'rejected', category: 'terminal', retryable: false,
+        reason: `First-touch transaction outcome requires operator inspection: ${error.message}` };
+    }
+    if (error instanceof Error && error.message.startsWith('projection-v2-stale-legacy:')) {
+      return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: error.message };
+    }
     if (error instanceof Error && error.message.startsWith('projection-v2-occ:')) return conflict(error.message);
     if (isMongoPhysicalCapacityError(error)) {
       return {

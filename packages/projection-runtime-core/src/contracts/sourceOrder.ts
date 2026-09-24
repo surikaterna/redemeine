@@ -12,6 +12,17 @@ export interface ProjectionSourceDispatchAdmission {
   /** Coverage is observational ordering metadata and can never suppress dispatch. */
   dispatch: true;
   coverage: ProjectionSourceCoverage;
+  /** Immutable accepted-state boundary shared by ordering and definition dispatch. */
+  startAnchor: number;
+  strategyScope: readonly ProjectionCutoverStrategyScope[];
+}
+
+export interface ProjectionCutoverStrategyScope {
+  readonly projectionName: string;
+  readonly generation: string;
+  readonly strategy: 'in_document' | 'own_record' | 'none';
+  /** Operator-declared immutable one-source/one-target direct routing; required for legacy in-document adoption. */
+  readonly stableSingleTarget: boolean;
 }
 
 export interface ProjectionSourceCoverageAdvance {

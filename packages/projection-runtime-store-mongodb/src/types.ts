@@ -9,6 +9,9 @@ export interface ProjectionDocumentRecord<TState = unknown> {
   updatedAt: string;
   v2Revision?: number;
   sourceProgress?: Readonly<Record<ProjectionUuidBase64Url22, number>>;
+  v2LegacyCheckpoint?: Checkpoint | null;
+  v2LegacyCheckpointPresent?: boolean;
+  v2ObservedUpdatedAt?: string;
 }
 
 export interface ProjectionLinkRecord {
@@ -28,6 +31,7 @@ export interface ProjectionDedupeRecord {
   projectionGeneration?: string;
   sourceId?: string;
   commitSequence?: number;
+  acceptedBaselineSequence?: number;
 }
 
 export interface ProjectionMigrationReceiptRecord {

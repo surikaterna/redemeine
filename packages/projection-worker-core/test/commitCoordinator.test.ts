@@ -164,6 +164,8 @@ function orderPort(): ProjectionSourceOrderPort & { advances: number[] } {
     async admitForDispatch(sourceCommit, queueBindingId) {
       return {
         dispatch: true,
+        startAnchor: 0,
+        strategyScope: [],
         coverage: { queueBindingId, sourceId: sourceCommit.streamId, sequence: coverage.get(sourceCommit.streamId) ?? null }
       };
     },
@@ -203,7 +205,15 @@ function coordinator(
   return createProjectionCommitCoordinator({
     queueBindingId: 'orders', manifest: manifest(definitions.map((item) => item.name), anchors),
     definitions: definitions.map((item) => ({ generation: 'g1', definition: item })),
-    store, sourceOrder: order, rangeReader: reader, maxCommits: 2, maxBytes: 1_000, maxConflictRetries: 2
+    store, sourceOrder: {
+      ...order,
+      async admitForDispatch(sourceCommit, queueId) {
+        const admission = await order.admitForDispatch(sourceCommit, queueId);
+        return { ...admission, startAnchor: anchors[sourceCommit.streamId] ?? admission.startAnchor,
+          strategyScope: definitions.map((entry) => ({ projectionName: entry.name, generation: 'g1',
+            strategy: entry.deduplication.strategy, stableSingleTarget: true })) };
+      }
+    }, rangeReader: reader, maxCommits: 2, maxBytes: 1_000, maxConflictRetries: 2
   });
 }
 
@@ -377,6 +387,69 @@ describe('complete projection commit reducer', () => {
 });
 
 describe('source ordering and scheduling', () => {
+  test.each([{ b: -1, first: 0 }, { b: 0, first: 1 }, { b: 4, first: 5 }])(
+    'accepted B=$b begins at $first without replaying old commits', async ({ b, first }) => {
+      const own = new MemoryCommitStore();
+      const inline = new MemoryCommitStore();
+      const none = new MemoryCommitStore();
+      const anchors = { [SOURCE_A]: first };
+      const ownRuntime = coordinator([definition('own', { strategy: 'own_record' })], own, orderPort(), rangeReader(), anchors);
+      const inlineRuntime = coordinator([definition('inline', { strategy: 'in_document' })], inline, orderPort(), rangeReader(), anchors);
+      const noneRuntime = coordinator([definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' })],
+        none, orderPort(), rangeReader(), anchors);
+      if (b >= 0) {
+        expect((await ownRuntime.process(commit(b))).status).toBe('completed');
+        expect((await inlineRuntime.process(commit(b))).status).toBe('completed');
+        expect((await noneRuntime.process(commit(b))).status).toBe('completed');
+      }
+      expect(own.requests).toHaveLength(0);
+      expect(inline.requests).toHaveLength(0);
+      expect(none.requests).toHaveLength(b >= 0 ? 1 : 0);
+      expect((await ownRuntime.process(commit(first))).status).toBe('completed');
+      expect((await inlineRuntime.process(commit(first))).status).toBe('completed');
+      expect((await noneRuntime.process(commit(first))).status).toBe('completed');
+      expect(own.requests[0]?.progress).toMatchObject({ strategy: 'own_record', source: { expectedSequence: null,
+        baselineSequence: b, finalSequence: first } });
+      expect(inline.requests[0]?.progress.strategy).toBe('in_document');
+      await ownRuntime.process(commit(first));
+      await inlineRuntime.process(commit(first));
+      await noneRuntime.process(commit(first));
+      expect(own.requests).toHaveLength(1);
+      expect(inline.requests).toHaveLength(1);
+      expect(none.requests).toHaveLength(b >= 0 ? 3 : 2);
+    }
+  );
+
+  test('missing or mismatched cutover anchor rejects without store writes', async () => {
+    const store = new MemoryCommitStore();
+    const missing = orderPort();
+    missing.admitForDispatch = async (sourceCommit, queueBindingId) => ({ dispatch: true,
+      coverage: { queueBindingId, sourceId: sourceCommit.streamId, sequence: null },
+      startAnchor: Number.NaN, strategyScope: [{ projectionName: 'own', generation: 'g1', strategy: 'own_record', stableSingleTarget: false }] });
+    const runtime = coordinator([definition('own', { strategy: 'own_record' })], store, missing);
+    expect((await runtime.process(commit(0))).status).toBe('terminal');
+    expect(store.loads).toHaveLength(0);
+  });
+
+  test('own-record no-target first turn persists the post-baseline sequence', async () => {
+    const store = new MemoryCommitStore();
+    const noTarget = definition('own', { strategy: 'own_record' });
+    noTarget.identity = () => [];
+    const runtime = coordinator([noTarget], store, orderPort(), rangeReader(), { [SOURCE_A]: 8 });
+    expect((await runtime.process(commit(8))).status).toBe('completed');
+    expect(store.requests[0]).toMatchObject({ finalDocuments: [],
+      progress: { strategy: 'own_record', source: { expectedSequence: null, baselineSequence: 7, finalSequence: 8 } } });
+  });
+
+  test('accepted in-document scope rejects fanout before a projection write', async () => {
+    const store = new MemoryCommitStore();
+    const fanout = definition('inline', { strategy: 'in_document' });
+    fanout.identity = () => ['A', 'B'];
+    const runtime = coordinator([fanout], store);
+    expect((await runtime.process(commit(0))).status).toBe('terminal');
+    expect(store.requests).toHaveLength(0);
+  });
+
   test('recovers bounded gaps ascending and dispatches covered redeliveries', async () => {
     const store = new MemoryCommitStore();
     const order = orderPort();

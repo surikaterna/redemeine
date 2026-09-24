@@ -17,6 +17,8 @@ export interface ProjectionDefinitionExecutorOptions<TState> {
   lanes: ProjectionLaneScheduler;
   maxConflictRetries: number;
   migrationReceipt?: ProjectionMigrationCommitReceipt;
+  stableSingleTarget?: boolean;
+  baselineSequence?: number;
 }
 
 function laneKey(name: string, generation: string, targetId: string): string {
@@ -130,13 +132,17 @@ async function executeAttempt<TState>(
       snapshot = await loadAttempt(options, commit, [...targets].sort(), links);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'snapshot load failed';
-      return { kind: 'done', outcome: failed('ambiguous', reason, attempt) };
+      return { kind: 'done', outcome: failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
     }
-    const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot);
+    const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence);
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
     if (reduction.status === 'terminal') return { kind: 'done', outcome: failed('terminal', reduction.reason, attempt) };
     if (reduction.status === 'deduplicated') {
       return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
+    }
+    if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
+      || reduction.request.stagedLinks.length > 0)) {
+      return { kind: 'done', outcome: failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
     }
     return commitReduction(options, commit, reduction, attempt);
   });

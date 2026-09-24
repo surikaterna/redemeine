@@ -224,3 +224,33 @@ test('reconciles none migration replay from its atomic receipt after unknown com
   expect(result.status).toBe('committed');
   expect(receipts.snapshot()).toHaveLength(1);
 });
+
+test.each(['in_document', 'none'] as const)('first-touch %s CASes legacy state/checkpoint before v2 progress or state write', async (strategy) => {
+  const documents = createProjectionDocumentCollection<{ value: number }>();
+  const store = new MongoProjectionStore({ collection: documents, linkCollection: createProjectionLinkCollection(),
+    dedupeCollection: createProjectionDedupeCollection(), mongoClient: createFakeMongoClient() });
+  const checkpoint = { sequence: 17 };
+  await documents.updateOne({ _id: 'first' }, { $set: { state: { value: 4 }, checkpoint, updatedAt: 'old' } }, { upsert: true });
+  const loaded = await store.loadProjectionSourceCommitSnapshot({ projectionName: 'capacity', projectionGeneration: 'v1',
+    targetDocumentIds: ['first'], links: [], progressStrategy: strategy });
+  expect(loaded.targets[0]).toMatchObject({ revision: null, state: { value: 4 }, legacyOriginal: { checkpoint, updatedAt: 'old' } });
+  const base = makeRequest();
+  const request: CommitProjectionSourceCommitRequest<{ value: number; padding?: string }> = { ...base, stagedLinks: [],
+    finalDocuments: [{ targetDocumentId: 'first', expectedRevision: null, finalDocument: { value: 5 },
+      legacyOriginal: loaded.targets[0]?.legacyOriginal }],
+    progress: strategy === 'none' ? { strategy: 'none' } : { strategy, targets: [{ targetDocumentId: 'first',
+      expected: {}, final: { [encodedSource]: 0 } }] } };
+  await documents.updateOne({ _id: 'first' }, { $set: { state: { value: 7 }, checkpoint: { sequence: 18 }, updatedAt: 'new' } });
+  expect(await store.commitProjectionSourceCommit(request)).toMatchObject({ status: 'rejected', category: 'terminal' });
+  expect(documents.snapshot()[0]).toMatchObject({ state: { value: 7 }, checkpoint: { sequence: 18 } });
+  expect(documents.snapshot()[0]?.v2Revision).toBeUndefined();
+  const refreshed = await store.loadProjectionSourceCommitSnapshot({ projectionName: 'capacity', projectionGeneration: 'v1',
+    targetDocumentIds: ['first'], links: [], progressStrategy: strategy });
+  const adopted = { ...request, finalDocuments: [{ ...request.finalDocuments[0]!, legacyOriginal: refreshed.targets[0]?.legacyOriginal }] };
+  expect((await store.commitProjectionSourceCommit(adopted)).status).toBe('committed');
+  expect(documents.snapshot()[0]).toMatchObject({ state: { value: 5 }, checkpoint: { sequence: 18 }, v2Revision: 1 });
+  if (strategy === 'none') expect(documents.snapshot()[0]?.sourceProgress).toBeUndefined();
+  await documents.updateOne({ _id: 'first' }, { $set: { state: { value: 99 }, updatedAt: 'legacy-wrote-again' } });
+  await expect(store.loadProjectionSourceCommitSnapshot({ projectionName: 'capacity', projectionGeneration: 'v1',
+    targetDocumentIds: ['first'], links: [], progressStrategy: strategy })).rejects.toThrow('Detected legacy writer');
+});

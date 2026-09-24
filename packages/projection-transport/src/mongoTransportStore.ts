@@ -15,6 +15,8 @@ import {
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
 import type { ClientSession, Collection, Document } from 'mongodb';
+import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
+import type { ProjectionCompleteCommitRangeReader } from '@redemeine/projection-runtime-core';
 
 export interface ProjectionTransportBindingDocument extends Document {
   _id: string;
@@ -33,17 +35,34 @@ export interface ProjectionTransportCoverageDocument extends Document {
   sequence: number | null;
 }
 
+export interface ProjectionTransportBaselineDocument extends Document {
+  _id: string;
+  kind: 'baseline';
+  record: AcceptedBaseline;
+}
+
+export interface AcceptedBaselineReadiness {
+  readonly reader: ProjectionCompleteCommitRangeReader & { initialize(): Promise<void> };
+  readonly maxBytes: number;
+  /** Must inspect the actual durable broker binding and retained tail, not merely an operator declaration. */
+  readonly verifyDurableQueueBinding: (queueId: string, reference: string) => Promise<boolean>;
+  /** Verify producer creation time, first-commit evidence and absence of a preexisting target/legacy writer. */
+  readonly verifyAuthoritativeSourceBirth: (sourceId: string, reference: string) => Promise<boolean>;
+}
+
 export interface MongoProjectionTransportStoreOptions {
   readonly collection: Collection<ProjectionTransportDocument>;
   readonly mongoClient: { startSession(): ClientSession };
   readonly manifest: ProjectionQueueRegistryManifest;
   readonly now?: () => string;
+  readonly cutoverReadiness?: AcceptedBaselineReadiness;
 }
 
-export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument;
+export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument | ProjectionTransportBaselineDocument;
 
 const BINDING_INDEX = 'projection_transport_queue_binding_unique';
 const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
+const BASELINE_INDEX = 'projection_transport_baseline_queue_source_unique';
 
 function sameManifest(left: ProjectionQueueRegistryManifest, right: ProjectionQueueRegistryManifest): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -51,6 +70,10 @@ function sameManifest(left: ProjectionQueueRegistryManifest, right: ProjectionQu
 
 function coverageId(queueBindingId: string, sourceId: string): string {
   return `coverage:${queueBindingId}:${sourceId}`;
+}
+
+function baselineId(queueBindingId: string, sourceId: string): string {
+  return `baseline:${queueBindingId}:${sourceId}`;
 }
 
 function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceCoverage {
@@ -87,7 +110,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     await this.options.collection.updateOne(
       { _id: `binding:${manifest.queueId}` },
       { $setOnInsert: { kind: 'binding', queueBindingId: manifest.queueId, manifest, binding } },
-      { upsert: true }
+      { upsert: true, writeConcern: { w: 'majority' } }
     );
     const existing = await this.readBindingDocument(manifest.queueId);
     if (existing && sameManifest(existing.manifest, manifest)) return { status: 'bound', binding: existing.binding };
@@ -99,6 +122,44 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     return (await this.readBindingDocument(queueId))?.binding ?? null;
   }
 
+  async installAcceptedBaseline(record: AcceptedBaseline, readiness: AcceptedBaselineReadiness): Promise<void> {
+    await this.initialize();
+    assertAcceptedBaseline(record, this.options.manifest);
+    if (!Number.isSafeInteger(readiness.maxBytes) || readiness.maxBytes <= 0) throw new Error('Invalid tail probe limit.');
+    await readiness.reader.initialize();
+    if (!await readiness.verifyDurableQueueBinding(record.queueBindingId, record.queueTailReadinessReference)) {
+      throw new Error('Durable queue/tail binding is not ready.');
+    }
+    if (record.kind === 'birth' && !await readiness.verifyAuthoritativeSourceBirth(record.sourceId, record.sourceBirthReference!)) {
+      throw new Error('Authoritative source birth or absent target proof is unavailable.');
+    }
+    await probeAcceptedTail(record, readiness.reader, readiness.maxBytes);
+    const _id = baselineId(record.queueBindingId, record.sourceId);
+    const prior = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
+    if (!prior && await this.readCoverage(coverageId(record.queueBindingId, record.sourceId))) {
+      throw new Error('Source coverage predates accepted-baseline registration.');
+    }
+    try {
+      await this.options.collection.updateOne({ _id }, { $setOnInsert: { kind: 'baseline', record } },
+        { upsert: true, writeConcern: { w: 'majority' } });
+    } catch (error) {
+      const row = await this.options.collection.findOne({ _id });
+      if (!row || row.kind !== 'baseline' || JSON.stringify(row.record) !== JSON.stringify(record)) throw error;
+    }
+    const row = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
+    if (!row || row.kind !== 'baseline' || JSON.stringify(row.record) !== JSON.stringify(record)) {
+      throw new Error('Immutable accepted-baseline cutover conflict or unknown insert outcome.');
+    }
+  }
+
+  async readAcceptedBaseline(queueId: string, sourceId: string): Promise<AcceptedBaseline | null> {
+    const row = await this.options.collection.findOne({ _id: baselineId(queueId, sourceId), kind: 'baseline' },
+      { readConcern: { level: 'majority' } });
+    if (!row || row.kind !== 'baseline') return null;
+    assertAcceptedBaseline(row.record, this.options.manifest);
+    return row.record;
+  }
+
   async admitForDispatch(
     commit: ProjectionSourceCommit,
     queueBindingId: string
@@ -106,7 +167,19 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
     await this.initialize();
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
-    const startAnchor = this.options.manifest.sourceStartAnchors[commit.streamId] ?? 0;
+    const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
+    if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
+    const readiness = this.options.cutoverReadiness;
+    if (!readiness) throw new Error('Cutover queue and source-tail readiness probe is required on admission.');
+    await readiness.reader.initialize();
+    if (!await readiness.verifyDurableQueueBinding(queueBindingId, baseline.queueTailReadinessReference)) {
+      throw new Error('Durable queue/tail binding is not ready on admission.');
+    }
+    if (baseline.kind === 'birth' && !await readiness.verifyAuthoritativeSourceBirth(commit.streamId, baseline.sourceBirthReference!)) {
+      throw new Error('Source birth evidence is unavailable on admission.');
+    }
+    await probeAcceptedTail(baseline, readiness.reader, readiness.maxBytes);
+    const startAnchor = baseline.startAnchor;
     const id = coverageId(queueBindingId, commit.streamId);
     await this.options.collection.updateOne(
       { _id: id },
@@ -115,7 +188,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     );
     const row = await this.readCoverage(id);
     if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
-    return { dispatch: true, coverage: toCoverage(row) };
+    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope };
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {
@@ -146,12 +219,15 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
       { kind: 1, queueBindingId: 1, sourceId: 1 },
       { name: COVERAGE_INDEX, unique: true, partialFilterExpression: { kind: 'coverage' } }
     );
+    await this.options.collection.createIndex({ kind: 1, 'record.queueBindingId': 1, 'record.sourceId': 1 },
+      { name: BASELINE_INDEX, unique: true, partialFilterExpression: { kind: 'baseline' } });
     const indexes = await this.options.collection.listIndexes().toArray();
     const expectedKeys: Readonly<Record<string, readonly string[]>> = {
       [BINDING_INDEX]: ['kind', 'queueBindingId'],
-      [COVERAGE_INDEX]: ['kind', 'queueBindingId', 'sourceId']
+      [COVERAGE_INDEX]: ['kind', 'queueBindingId', 'sourceId'],
+      [BASELINE_INDEX]: ['kind', 'record.queueBindingId', 'record.sourceId']
     };
-    for (const name of [BINDING_INDEX, COVERAGE_INDEX]) {
+    for (const name of [BINDING_INDEX, COVERAGE_INDEX, BASELINE_INDEX]) {
       const index = indexes.find((entry) => entry.name === name);
       const keys = index?.key && typeof index.key === 'object' ? Object.keys(index.key) : [];
       if (!index || index.unique !== true || 'expireAfterSeconds' in index || keys.join(',') !== expectedKeys[name]?.join(',')) {
@@ -193,7 +269,8 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   }
 
   private async readBindingDocument(queueId: string): Promise<ProjectionTransportBindingDocument | null> {
-    const row = await this.options.collection.findOne({ _id: `binding:${queueId}`, kind: 'binding' });
+    const row = await this.options.collection.findOne({ _id: `binding:${queueId}`, kind: 'binding' },
+      { readConcern: { level: 'majority' } });
     return row?.kind === 'binding' ? row : null;
   }
 }

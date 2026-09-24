@@ -23,6 +23,7 @@ export interface V2State {
   documentMetadata: Map<string, V2DocumentMetadata>;
   links: Map<string, V2Link>;
   ownProgress: Map<string, number>;
+  ownBaselines: Map<string, number>;
   migrationReceipts: Map<string, { manifestDigest: string; sequence: number }>;
 }
 
@@ -136,6 +137,7 @@ const cloneV2State = (current: V2State): V2State => ({
   documentMetadata: new Map(current.documentMetadata),
   links: new Map(current.links),
   ownProgress: new Map(current.ownProgress),
+  ownBaselines: new Map(current.ownBaselines),
   migrationReceipts: new Map(current.migrationReceipts)
 });
 
@@ -180,7 +182,9 @@ const applyLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>
 const applyProgress = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): void => {
   if (request.progress.strategy === 'own_record') {
     const source = request.progress.source;
-    state.ownProgress.set(ownKey(request.projectionName, request.projectionGeneration, source.sourceId), source.finalSequence);
+    const key = ownKey(request.projectionName, request.projectionGeneration, source.sourceId);
+    if (source.expectedSequence === null && source.baselineSequence !== undefined) state.ownBaselines.set(key, source.baselineSequence);
+    state.ownProgress.set(key, source.finalSequence);
   }
   if (request.migrationReceipt) {
     const receipt = request.migrationReceipt;

@@ -145,6 +145,7 @@ export {
 export type {
   ProjectionSourceCoverage,
   ProjectionSourceDispatchAdmission,
+  ProjectionCutoverStrategyScope,
   ProjectionSourceCoverageAdvance,
   ProjectionSourceOrderPort,
   ProjectionCompleteCommitRangeCapability,

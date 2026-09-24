@@ -29,7 +29,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
-  private v2: V2State = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), migrationReceipts: new Map() };
+  private v2: V2State = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map(), migrationReceipts: new Map() };
   private readonly emittedWarnings = new Set<string>();
 
   constructor(private readonly options: { onDedupeWarning?: (warning: ProjectionDedupeWarning) => void } = {}) {}
@@ -121,7 +121,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     this.documents.clear();
     this.links.clear();
     this.dedupe.clear();
-    this.v2 = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), migrationReceipts: new Map() };
+    this.v2 = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map(), migrationReceipts: new Map() };
     this.emittedWarnings.clear();
   }
 

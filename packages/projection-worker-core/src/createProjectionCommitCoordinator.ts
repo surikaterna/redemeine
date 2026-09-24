@@ -95,12 +95,18 @@ type GapResult =
   | { status: 'failed'; outcome: ProjectionCommitCoordinatorOutcome };
 
 async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: ProjectionSourceCommit,
-  migrationReceipt?: ProjectionMigrationCommitReceipt): Promise<{
+  migrationReceipt?: ProjectionMigrationCommitReceipt, startAnchor = 0,
+  strategyScope?: readonly { stableSingleTarget: boolean }[]): Promise<{
   outcome: ProjectionCommitCoordinatorOutcome;
   complete: boolean;
 }> {
   const results: ProjectionDefinitionCommitResult[] = [];
-  for (const entry of runtime.definitions) {
+  for (const [index, entry] of runtime.definitions.entries()) {
+    if (commit.commitSequence < startAnchor && entry.definition.deduplication.strategy !== 'none') {
+      results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation,
+        outcome: { status: 'deduplicated', attempts: 0 } });
+      continue;
+    }
     if (migrationReceipt) {
       if (!runtime.options.store.loadProjectionMigrationReceipt) {
         return { complete: false, outcome: failureOutcome('Store does not support atomic migration receipts.', [], results, true) };
@@ -120,6 +126,8 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
     const outcome = await executeProjectionDefinition({
       definition: entry.definition, generation: entry.generation, store: runtime.options.store,
       lanes: runtime.targetLanes, maxConflictRetries: runtime.maxConflictRetries,
+      stableSingleTarget: strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
+      ...(strategyScope ? { baselineSequence: startAnchor - 1 } : {}),
       ...(migrationReceipt ? { migrationReceipt } : {})
     }, commit);
     results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation, outcome });
@@ -192,7 +200,9 @@ async function processCandidates<TState>(
   sourceCommit: ProjectionSourceCommit,
   candidates: readonly ProjectionSourceCommit[],
   initialCoverage: number | null,
-  migrationReceipt?: ProjectionMigrationCommitReceipt
+  migrationReceipt?: ProjectionMigrationCommitReceipt,
+  startAnchor = 0,
+  strategyScope?: readonly { stableSingleTarget: boolean }[]
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   const processed: number[] = [];
   const allResults: ProjectionDefinitionCommitResult[] = [];
@@ -201,7 +211,7 @@ async function processCandidates<TState>(
     const candidateReceipt = migrationReceipt ? { ...migrationReceipt,
       expectedSequence: candidate.commitSequence === 0 ? null : candidate.commitSequence - 1,
       finalSequence: candidate.commitSequence } : undefined;
-    const dispatched = await dispatch(runtime, candidate, candidateReceipt);
+    const dispatched = await dispatch(runtime, candidate, candidateReceipt, startAnchor, strategyScope);
     allResults.push(...dispatched.outcome.definitions);
     if (!dispatched.complete) return { ...dispatched.outcome, processedSequences: processed, definitions: allResults };
     processed.push(candidate.commitSequence);
@@ -229,15 +239,30 @@ async function processInSourceLane<TState>(
     return failureOutcome('Source order port returned mismatched coverage.', [], [], true);
   }
   const coverage = admission.coverage.sequence;
-  const startAnchor = runtime.sourceStartAnchors[commit.streamId] ?? 0;
-  if (coverage === null && commit.commitSequence < startAnchor) {
-    return failureOutcome('Commit precedes immutable source start anchor.', [], [], true);
+  const startAnchor = admission.startAnchor;
+  if (admission.strategyScope.length !== runtime.definitions.length || admission.strategyScope.some((scope, index) => {
+    const entry = runtime.definitions[index];
+    return !entry || scope.projectionName !== entry.definition.name || scope.generation !== entry.generation
+      || scope.strategy !== entry.definition.deduplication.strategy
+      || (scope.strategy === 'in_document' && (!scope.stableSingleTarget
+        || !!entry.definition.joinStreams?.length || !!entry.definition.reverseSubscribeStreams?.length
+        || !!entry.definition.subscriptions.length));
+  })) return failureOutcome('Cutover strategy scope or direct-routing eligibility mismatch.', [], [], true);
+  if (!Number.isSafeInteger(startAnchor) || startAnchor < 0 ||
+    (runtime.sourceStartAnchors[commit.streamId] !== undefined && runtime.sourceStartAnchors[commit.streamId] !== startAnchor)) {
+    return failureOutcome('Missing or mismatched immutable source start anchor.', [], [], true);
+  }
+  if (commit.commitSequence < startAnchor) {
+    const dispatched = await dispatch(runtime, commit, migrationReceipt, startAnchor, admission.strategyScope);
+    return dispatched.complete
+      ? { status: 'completed', processedSequences: [], definitions: dispatched.outcome.definitions }
+      : dispatched.outcome;
   }
   const after = coverage ?? (startAnchor === 0 ? null : startAnchor - 1);
-  if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, migrationReceipt);
+  if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, migrationReceipt, startAnchor, admission.strategyScope);
   const recovered = await readGap(runtime, commit, after);
   if (recovered.status === 'failed') return recovered.outcome;
-  return processCandidates(runtime, commit, [...recovered.commits, commit], coverage, migrationReceipt);
+  return processCandidates(runtime, commit, [...recovered.commits, commit], coverage, migrationReceipt, startAnchor, admission.strategyScope);
 }
 
 function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TState>): CoordinatorRuntime<TState> {

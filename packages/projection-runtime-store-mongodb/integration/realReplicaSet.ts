@@ -1,4 +1,4 @@
-import { BSON, type ClientSession, type CommandFailedEvent, type CommandStartedEvent, MongoClient } from 'mongodb';
+import { BSON, type ClientSession, type Collection, type CommandFailedEvent, type CommandStartedEvent, MongoClient } from 'mongodb';
 import type {
   CommitProjectionSourceCommitRequest,
   ProjectionSourceCommitProgress,
@@ -57,6 +57,30 @@ const assert = (condition: boolean, message: string): void => {
   if (!condition) throw new Error(message);
 };
 
+const checkLegacyFirstTouch = async (
+  store: MongoProjectionStore<unknown>, documents: Collection<ProjectionDocumentRecord<unknown>>
+): Promise<void> => {
+  for (const [index, b] of [-1, 0, 7].entries()) {
+    const id = `legacy-${index}`;
+    await documents.insertOne({ _id: id, state: { value: 10 }, checkpoint: { sequence: 99 }, updatedAt: 'legacy' });
+    const load = () => store.loadProjectionSourceCommitSnapshot({ projectionName: 'legacy', projectionGeneration: 'v1',
+      targetDocumentIds: [id], links: [], progressStrategy: 'in_document' });
+    const initial = (await load()).targets[0];
+    assert(initial?.revision === null && !!initial.legacyOriginal, 'legacy snapshot not preserved');
+    const build = (original: typeof initial) => request('legacy', b + 1,
+      [{ targetDocumentId: id, expectedRevision: null, finalDocument: { value: 11 },
+        ...(original?.legacyOriginal ? { legacyOriginal: original.legacyOriginal } : {}) }],
+      { strategy: 'in_document', targets: [{ targetDocumentId: id, expected: {}, final: { [encodedSource]: b + 1 } }] });
+    await documents.updateOne({ _id: id }, { $set: { state: { value: 12 }, updatedAt: 'legacy-race' } });
+    const stale = await store.commitProjectionSourceCommit(build(initial));
+    assert(stale.status === 'rejected' && stale.category === 'terminal', 'stale legacy write was not rejected');
+    const adopted = await store.commitProjectionSourceCommit(build((await load()).targets[0]));
+    assert(adopted.status === 'committed', 'legacy first-touch CAS did not commit');
+    const saved = await documents.findOne({ _id: id });
+    assert(saved?.v2Revision === 1 && saved.sourceProgress?.[encodedSource] === b + 1, 'first-touch marker missing');
+  }
+};
+
 const run = async (): Promise<void> => {
   await client.connect();
   const db = client.db(databaseName);
@@ -66,6 +90,7 @@ const run = async (): Promise<void> => {
   const store = new MongoProjectionStore({ collection: documents, linkCollection: links, dedupeCollection: dedupe, mongoClient: client });
 
   await store.initializeProjectionSourceCommitStore();
+  await checkLegacyFirstTouch(store, documents);
   const ownIndex = (await dedupe.listIndexes().toArray()).find((index) => index.name === OWN_PROGRESS_INDEX);
   assert(ownIndex?.unique === true && ownIndex.expireAfterSeconds === undefined, 'own-record index readiness failed');
 
