@@ -58,7 +58,7 @@
     "docs:typedoc": "typedoc",
     "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
     "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt",
-    "docs:install": "pnpm --dir website install",
+    "docs:install": "pnpm install --frozen-lockfile",
     "docs:dev": "pnpm --dir website run start",
     "docs:build": "pnpm run docs:install && pnpm --dir website run build",
     "check:projection-runtime-boundaries": "node ./bin/check-projection-runtime-boundaries.js",
