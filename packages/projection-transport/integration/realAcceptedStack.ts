@@ -123,6 +123,7 @@ async function laterBootstrapAndRestart(ctx: StackContext): Promise<string> {
   await nonzero.transport.installAcceptedBaseline(nonzero.baseline);
   await nonzero.worker.start(adaptChannel(ctx.channel));
   assert(await nonzero.transport.loadCoveredThrough(nonzero.queue, SOURCE_ID) === 3, 'B=1 bootstrap did not drain H=3');
+  assert(ctx.failures.length === 0, 'Bounded B=1 bootstrap continuation was incorrectly reported as a failure');
   const restarted = createWorker(ctx, 'empty', -1);
   await restarted.worker.start(adaptChannel(ctx.channel));
   assert(await restarted.transport.loadCoveredThrough(restarted.queue, SOURCE_ID) === 3, 'Restart did not drain unnotified tail');
