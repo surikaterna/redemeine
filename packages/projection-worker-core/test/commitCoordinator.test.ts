@@ -200,12 +200,13 @@ function coordinator(
   store: ProjectionSourceCommitStorePort<State>,
   order = orderPort(),
   reader = rangeReader(),
-  anchors: Readonly<Record<string, number>> = {}
+  anchors: Readonly<Record<string, number>> = {},
+  migrationReplay = false
 ) {
   return createProjectionCommitCoordinator({
     queueBindingId: 'orders', manifest: manifest(definitions.map((item) => item.name), anchors),
     definitions: definitions.map((item) => ({ generation: 'g1', definition: item })),
-    store, sourceOrder: {
+    store, ...(migrationReplay ? { migrationReplay: true as const } : {}), sourceOrder: {
       ...order,
       async admitForDispatch(sourceCommit, queueId) {
         const admission = await order.admitForDispatch(sourceCommit, queueId);
@@ -431,6 +432,25 @@ describe('source ordering and scheduling', () => {
     expect(store.loads).toHaveLength(0);
   });
 
+  test('serving rejects migration receipt bypass and polled coverage never repeats none', async () => {
+    const store = new MemoryCommitStore();
+    const runtime = coordinator([definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'poll' })], store);
+    const receipt = { migrationId: 'old', manifestDigest: HASH, sourceId: SOURCE_A, expectedSequence: null, finalSequence: 0 };
+    expect(await runtime.process(commit(0), receipt)).toMatchObject({ status: 'terminal', reason: expect.stringContaining('forbidden') });
+    expect(store.requests).toHaveLength(0);
+    expect((await runtime.processPolled(commit(0))).status).toBe('completed');
+    expect((await runtime.processPolled(commit(0))).processedSequences).toEqual([]);
+    expect(store.requests).toHaveLength(1);
+    expect((await runtime.process(commit(0))).status).toBe('completed');
+    expect(store.requests).toHaveLength(2);
+  });
+
+  test('cannot opt an accepted-baseline order port into migration replay', () => {
+    const order = { ...orderPort(), acceptedBaseline: true as const };
+    expect(() => coordinator([definition('own', { strategy: 'own_record' })], new MemoryCommitStore(),
+      order, rangeReader(), {}, true)).toThrow('cannot use accepted-baseline');
+  });
+
   test('own-record no-target first turn persists the post-baseline sequence', async () => {
     const store = new MemoryCommitStore();
     const noTarget = definition('own', { strategy: 'own_record' });
@@ -620,7 +640,7 @@ describe('source ordering and scheduling', () => {
       definition('inline', { strategy: 'in_document' }),
       definition('own', { strategy: 'own_record' }),
       definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'migration receipt' })
-    ], store, order);
+    ], store, order, rangeReader(), {}, true);
     const sourceCommit = commit(0);
     const receipt = { migrationId: 'migration', manifestDigest: `sha256:${'a'.repeat(64)}` as const,
       sourceId: sourceCommit.streamId, expectedSequence: null, finalSequence: 0 };

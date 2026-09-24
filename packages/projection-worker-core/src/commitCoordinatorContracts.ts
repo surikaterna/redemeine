@@ -44,8 +44,11 @@ export interface ProjectionCommitCoordinatorOptions<TState = unknown> {
   readonly maxBytes: number;
   readonly maxGapPages?: number;
   readonly maxConflictRetries?: number;
+  /** Only the isolated migration CLI may set this; serving coordinators reject receipt bypass. */
+  readonly migrationReplay?: true;
 }
 
 export interface ProjectionCommitCoordinator {
   process(commit: ProjectionSourceCommit, migrationReceipt?: ProjectionMigrationCommitReceipt): Promise<ProjectionCommitCoordinatorOutcome>;
+  processPolled(commit: ProjectionSourceCommit): Promise<ProjectionCommitCoordinatorOutcome>;
 }

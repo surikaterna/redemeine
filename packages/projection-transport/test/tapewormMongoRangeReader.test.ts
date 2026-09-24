@@ -66,6 +66,30 @@ const request = {
 } as const;
 
 describe('Tapeworm Mongo complete range reader', () => {
+  it.each([-1, 0, 7])('uses the unique index for exact B=%s and descending source H', async (b) => {
+    const rows = b < 0 ? [] : [commit(b)];
+    const findOne = jest.fn(async () => rows[0] ?? null);
+    const next = jest.fn(async () => rows[0] ?? null);
+    const sort = jest.fn(() => ({ hint: (name: string) => {
+      expect(name).toBe(validIndex.name);
+      return { limit: (count: number) => { expect(count).toBe(1); return { next }; } };
+    } }));
+    const find = jest.fn(() => ({ sort }));
+    const mongo = { findOne, find, listIndexes: () => ({ toArray: async () => [validIndex] }) } as unknown as Collection<ICommit>;
+    const reader = createTapewormMongoCompleteCommitRangeReader({ collection: mongo, partitionId: PARTITION });
+    expect(await reader.probeSource(STREAM, b)).toBe(b);
+    expect(find).toHaveBeenCalledWith({ streamId: STREAM });
+    expect(sort).toHaveBeenCalledWith({ commitSequence: -1 });
+    if (b >= 0) expect(findOne).toHaveBeenCalledWith({ streamId: STREAM, commitSequence: b }, { hint: validIndex.name });
+    else expect(findOne).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails for missing accepted B even when a higher row exists', async () => {
+    const mongo = { findOne: async () => null, listIndexes: () => ({ toArray: async () => [validIndex] }) } as unknown as Collection<ICommit>;
+    const reader = createTapewormMongoCompleteCommitRangeReader({ collection: mongo, partitionId: PARTITION });
+    await expect(reader.probeSource(STREAM, 0)).rejects.toThrow('boundary B is missing');
+  });
   it('uses the exact indexed bounded cursor and returns whole multi-event commits', async () => {
     const source = collection([commit(0, 2), commit(1), commit(2)]);
     const reader = createTapewormMongoCompleteCommitRangeReader({ collection: source.value, partitionId: PARTITION });

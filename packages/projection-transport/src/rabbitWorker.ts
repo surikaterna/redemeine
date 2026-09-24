@@ -1,5 +1,6 @@
 import type { ProjectionCommitCoordinator, ProjectionCommitCoordinatorOutcome } from '@redemeine/projection-worker-core';
 import { decodeTapewormProjectionCommit } from './tapewormDecoder';
+import type { SourceTailPoller } from './sourceTailPoller';
 
 export interface RabbitDelivery {
   readonly content: Buffer;
@@ -8,6 +9,7 @@ export interface RabbitDelivery {
 }
 
 export interface ProjectionRabbitChannel {
+  checkQueue(queue: string): Promise<unknown>;
   assertExchange(exchange: string, type: string, options: {
     durable: true;
     arguments: Readonly<Record<string, unknown>>;
@@ -52,6 +54,7 @@ export interface ProjectionRabbitWorkerOptions {
   readonly retryBackoffMs: number;
   readonly coordinator: ProjectionCommitCoordinator;
   readonly initialize: () => Promise<void>;
+  readonly sourceTail: SourceTailPoller;
   /** Must durably arrange broker-side delayed redelivery before resolving. */
   readonly scheduleRetry: (
     message: RabbitDelivery,
@@ -64,6 +67,7 @@ export interface ProjectionRabbitWorkerOptions {
 }
 
 function validateOptions(options: ProjectionRabbitWorkerOptions): void {
+  if (!options.sourceTail) throw new Error('Indexed source-tail poller is required before Rabbit consumption.');
   if (!options.queue || !options.deadLetterExchange) throw new Error('Queue and dead-letter exchange are required.');
   if (!Number.isSafeInteger(options.prefetch) || options.prefetch <= 0) throw new Error('prefetch must be positive.');
   if (!Number.isSafeInteger(options.maxMessageBytes) || options.maxMessageBytes <= 0) throw new Error('maxMessageBytes must be positive.');
@@ -86,6 +90,7 @@ export class ProjectionRabbitWorker {
   async start(channel: ProjectionRabbitChannel): Promise<void> {
     if (this.channel) throw new Error('Projection Rabbit worker is already started.');
     await this.options.initialize();
+    await channel.checkQueue(this.options.queue);
     await channel.assertExchange(
       this.options.deadLetterExchange,
       this.options.deadLetterExchangeType ?? 'direct',
@@ -96,8 +101,12 @@ export class ProjectionRabbitWorker {
       deadLetterExchange: this.options.deadLetterExchange,
       ...(this.options.deadLetterRoutingKey ? { deadLetterRoutingKey: this.options.deadLetterRoutingKey } : {})
     });
+    await this.options.sourceTail.bootstrap();
     await channel.prefetch(this.options.prefetch);
-    const consumer = await channel.consume(this.options.queue, (message) => {
+    this.options.sourceTail.start();
+    let consumer;
+    try {
+      consumer = await channel.consume(this.options.queue, (message) => {
       if (message === null) {
         this.channel = undefined;
         this.consumerTag = undefined;
@@ -105,7 +114,11 @@ export class ProjectionRabbitWorker {
         return;
       }
       void this.handle(channel, message);
-    }, { noAck: false });
+      }, { noAck: false });
+    } catch (error) {
+      await this.options.sourceTail.stop();
+      throw error;
+    }
     this.channel = channel;
     this.consumerTag = consumer.consumerTag;
   }
@@ -116,11 +129,16 @@ export class ProjectionRabbitWorker {
     this.channel = undefined;
     this.consumerTag = undefined;
     if (channel && consumerTag) await channel.cancel(consumerTag);
+    await this.options.sourceTail.stop();
   }
 
   private async handle(channel: ProjectionRabbitChannel, message: RabbitDelivery): Promise<void> {
     if (this.attempted.has(message)) return;
     this.attempted.add(message);
+    if (!this.options.sourceTail.isHealthy()) {
+      await this.retry(channel, message, 'Indexed source tail is unavailable.');
+      return;
+    }
     if (message.content.byteLength > this.options.maxMessageBytes) {
       await this.nack(channel, message, 'permanent', 'Rabbit message exceeds maxMessageBytes.');
       return;
@@ -144,7 +162,9 @@ export class ProjectionRabbitWorker {
       await this.retry(channel, message, error instanceof Error ? error.message : 'Coordinator failed.');
       return;
     }
-    if (outcome.status === 'completed') await this.ack(channel, message);
+    if (outcome.status === 'completed' && !this.options.sourceTail.isHealthy()) {
+      await this.retry(channel, message, 'Indexed source tail became unavailable before ACK.');
+    } else if (outcome.status === 'completed') await this.ack(channel, message);
     else if (outcome.status === 'terminal') await this.nack(channel, message, 'permanent', outcome.reason);
     else await this.retry(channel, message, outcome.reason);
   }
@@ -196,6 +216,7 @@ export class ProjectionRabbitWorker {
 
   private async notifyCancellation(): Promise<void> {
     try {
+      await this.options.sourceTail.stop();
       await this.options.onConsumerCancelled?.();
     } catch {
       // The reconnect owner observes channel lifecycle independently.

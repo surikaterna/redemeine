@@ -80,6 +80,7 @@ function createEngine(
     definitions: options.runtime.module.migrationDefinitions,
     store,
     sourceOrder: unusedSourceOrder(),
+    migrationReplay: true,
     rangeReader: reader,
     maxCommits: 100,
     maxBytes: 8 * 1024 * 1024

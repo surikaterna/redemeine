@@ -33,6 +33,7 @@ export interface ProjectionSourceCoverageAdvance {
 }
 
 export interface ProjectionSourceOrderPort {
+  readonly acceptedBaseline?: true;
   admitForDispatch(commit: ProjectionSourceCommit, queueBindingId: string): Promise<ProjectionSourceDispatchAdmission>;
   advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage>;
 }

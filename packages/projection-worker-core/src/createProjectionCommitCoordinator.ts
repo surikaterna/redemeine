@@ -32,6 +32,9 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     throw new Error('maxConflictRetries must be a nonnegative safe integer.');
   }
   if (options.manifest.queueId !== options.queueBindingId) throw new Error('Registry manifest queue does not match queue binding.');
+  if (options.migrationReplay && options.sourceOrder.acceptedBaseline) {
+    throw new Error('Migration receipt replay cannot use accepted-baseline source admission.');
+  }
   if (options.manifest.definitions.length !== options.definitions.length) throw new Error('Runtime registry must exactly match the immutable manifest.');
   for (const [index, entry] of options.definitions.entries()) {
     const manifest = options.manifest.definitions[index];
@@ -226,7 +229,8 @@ async function processCandidates<TState>(
 async function processInSourceLane<TState>(
   runtime: CoordinatorRuntime<TState>,
   commit: ProjectionSourceCommit,
-  migrationReceipt?: ProjectionMigrationCommitReceipt
+  migrationReceipt?: ProjectionMigrationCommitReceipt,
+  pollOnly = false
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   let admission;
   try {
@@ -259,6 +263,9 @@ async function processInSourceLane<TState>(
       : dispatched.outcome;
   }
   const after = coverage ?? (startAnchor === 0 ? null : startAnchor - 1);
+  if (pollOnly && commit.commitSequence <= (after ?? -1)) {
+    return { status: 'completed', processedSequences: [], definitions: [] };
+  }
   if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, migrationReceipt, startAnchor, admission.strategyScope);
   const recovered = await readGap(runtime, commit, after);
   if (recovered.status === 'failed') return recovered.outcome;
@@ -305,9 +312,15 @@ export function createProjectionCommitCoordinator<TState = unknown>(
         return Promise.resolve(outcome);
       }
       if (migrationReceipt) {
+        if (!options.migrationReplay) return Promise.resolve(failureOutcome('Migration receipt bypass is forbidden in serving runtime.', [], [], true));
         return runtime.sourceLanes.run([commit.streamId], () => processMigrationCommit(runtime, commit, migrationReceipt));
       }
       return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit, migrationReceipt));
+    },
+    processPolled(commit) {
+      const validation = validateProjectionSourceCommit(commit);
+      if (!validation.valid) return Promise.resolve(failureOutcome('Invalid polled commit.', [], [], true));
+      return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit, undefined, true));
     }
   };
 }

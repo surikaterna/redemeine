@@ -16,7 +16,7 @@ import {
 } from '@redemeine/projection-runtime-core';
 import type { ClientSession, Collection, Document } from 'mongodb';
 import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
-import type { ProjectionCompleteCommitRangeReader } from '@redemeine/projection-runtime-core';
+import type { TapewormMongoRangeReader } from './tapewormMongoRangeReader';
 
 export interface ProjectionTransportBindingDocument extends Document {
   _id: string;
@@ -41,13 +41,20 @@ export interface ProjectionTransportBaselineDocument extends Document {
   record: AcceptedBaseline;
 }
 
+export interface ProjectionTransportProbeDocument extends Document {
+  _id: string;
+  kind: 'source_probe';
+  queueBindingId: string;
+  manifestId: string;
+  sourceId: string;
+  observedHighWatermark: number;
+  observedAt: string;
+  queueTopology: 'durable_queue_and_dlx_asserted' | 'not_checked';
+  indexName: string;
+}
+
 export interface AcceptedBaselineReadiness {
-  readonly reader: ProjectionCompleteCommitRangeReader & { initialize(): Promise<void> };
-  readonly maxBytes: number;
-  /** Must inspect the actual durable broker binding and retained tail, not merely an operator declaration. */
-  readonly verifyDurableQueueBinding: (queueId: string, reference: string) => Promise<boolean>;
-  /** Verify producer creation time, first-commit evidence and absence of a preexisting target/legacy writer. */
-  readonly verifyAuthoritativeSourceBirth: (sourceId: string, reference: string) => Promise<boolean>;
+  readonly reader: TapewormMongoRangeReader;
 }
 
 export interface MongoProjectionTransportStoreOptions {
@@ -58,7 +65,8 @@ export interface MongoProjectionTransportStoreOptions {
   readonly cutoverReadiness?: AcceptedBaselineReadiness;
 }
 
-export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument | ProjectionTransportBaselineDocument;
+export type ProjectionTransportDocument = ProjectionTransportBindingDocument | ProjectionTransportCoverageDocument
+  | ProjectionTransportBaselineDocument | ProjectionTransportProbeDocument;
 
 const BINDING_INDEX = 'projection_transport_queue_binding_unique';
 const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
@@ -81,6 +89,7 @@ function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceC
 }
 
 export class MongoProjectionTransportStore implements ProjectionSourceOrderPort, ProjectionQueueRegistryBindingPort {
+  readonly acceptedBaseline = true as const;
   private readiness: Promise<void> | undefined;
   private readonly now: () => string;
 
@@ -122,18 +131,13 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     return (await this.readBindingDocument(queueId))?.binding ?? null;
   }
 
-  async installAcceptedBaseline(record: AcceptedBaseline, readiness: AcceptedBaselineReadiness): Promise<void> {
+  async installAcceptedBaseline(record: AcceptedBaseline): Promise<void> {
     await this.initialize();
     assertAcceptedBaseline(record, this.options.manifest);
-    if (!Number.isSafeInteger(readiness.maxBytes) || readiness.maxBytes <= 0) throw new Error('Invalid tail probe limit.');
-    await readiness.reader.initialize();
-    if (!await readiness.verifyDurableQueueBinding(record.queueBindingId, record.queueTailReadinessReference)) {
-      throw new Error('Durable queue/tail binding is not ready.');
-    }
-    if (record.kind === 'birth' && !await readiness.verifyAuthoritativeSourceBirth(record.sourceId, record.sourceBirthReference!)) {
-      throw new Error('Authoritative source birth or absent target proof is unavailable.');
-    }
-    await probeAcceptedTail(record, readiness.reader, readiness.maxBytes);
+    const reader = this.options.cutoverReadiness?.reader;
+    if (!reader) throw new Error('Indexed source reader is required to install a baseline.');
+    await reader.initialize();
+    const highWatermark = await probeAcceptedTail(record, reader);
     const _id = baselineId(record.queueBindingId, record.sourceId);
     const prior = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
     if (!prior && await this.readCoverage(coverageId(record.queueBindingId, record.sourceId))) {
@@ -150,6 +154,27 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     if (!row || row.kind !== 'baseline' || JSON.stringify(row.record) !== JSON.stringify(record)) {
       throw new Error('Immutable accepted-baseline cutover conflict or unknown insert outcome.');
     }
+    await this.recordSourceProbe(record, highWatermark, 'not_checked');
+  }
+
+  async probeRegisteredSource(queueId: string, sourceId: string,
+    queueTopology: ProjectionTransportProbeDocument['queueTopology']): Promise<{ record: AcceptedBaseline; highWatermark: number }> {
+    await this.initialize();
+    const record = await this.readAcceptedBaseline(queueId, sourceId);
+    const reader = this.options.cutoverReadiness?.reader;
+    if (!record || !reader) throw new Error('Missing baseline or indexed source reader.');
+    await reader.initialize();
+    const highWatermark = await probeAcceptedTail(record, reader);
+    await this.recordSourceProbe(record, highWatermark, queueTopology);
+    return { record, highWatermark };
+  }
+
+  async loadCoveredThrough(queueId: string, sourceId: string): Promise<number | null> {
+    const record = await this.readAcceptedBaseline(queueId, sourceId);
+    if (!record) throw new Error('Unknown accepted source.');
+    const row = await this.readCoverage(coverageId(queueId, sourceId));
+    if (row && row.startAnchor !== record.startAnchor) throw new Error('Immutable source anchor conflict.');
+    return row?.sequence ?? null;
   }
 
   async readAcceptedBaseline(queueId: string, sourceId: string): Promise<AcceptedBaseline | null> {
@@ -169,16 +194,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
-    const readiness = this.options.cutoverReadiness;
-    if (!readiness) throw new Error('Cutover queue and source-tail readiness probe is required on admission.');
-    await readiness.reader.initialize();
-    if (!await readiness.verifyDurableQueueBinding(queueBindingId, baseline.queueTailReadinessReference)) {
-      throw new Error('Durable queue/tail binding is not ready on admission.');
-    }
-    if (baseline.kind === 'birth' && !await readiness.verifyAuthoritativeSourceBirth(commit.streamId, baseline.sourceBirthReference!)) {
-      throw new Error('Source birth evidence is unavailable on admission.');
-    }
-    await probeAcceptedTail(baseline, readiness.reader, readiness.maxBytes);
+    await this.probeRegisteredSource(queueBindingId, commit.streamId, 'not_checked');
     const startAnchor = baseline.startAnchor;
     const id = coverageId(queueBindingId, commit.streamId);
     await this.options.collection.updateOne(
@@ -266,6 +282,21 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   private async readCoverage(id: string): Promise<ProjectionTransportCoverageDocument | null> {
     const row = await this.options.collection.findOne({ _id: id, kind: 'coverage' });
     return row?.kind === 'coverage' ? row : null;
+  }
+
+  private async recordSourceProbe(record: AcceptedBaseline, highWatermark: number,
+    queueTopology: ProjectionTransportProbeDocument['queueTopology']): Promise<void> {
+    const indexName = this.options.cutoverReadiness?.reader.getIndexName();
+    if (!indexName) throw new Error('Indexed source reader was not initialized.');
+    const _id = `probe:${record.queueBindingId}:${record.sourceId}`;
+    const prior = await this.options.collection.findOne({ _id });
+    const lastCheckedTopology = queueTopology === 'not_checked' && prior?.kind === 'source_probe'
+      ? prior.queueTopology : queueTopology;
+    await this.options.collection.updateOne({ _id },
+      { $set: { kind: 'source_probe', queueBindingId: record.queueBindingId, manifestId: record.manifestId,
+        sourceId: record.sourceId, observedHighWatermark: highWatermark, observedAt: this.now(),
+        queueTopology: lastCheckedTopology, indexName } },
+      { upsert: true, writeConcern: { w: 'majority' } });
   }
 
   private async readBindingDocument(queueId: string): Promise<ProjectionTransportBindingDocument | null> {

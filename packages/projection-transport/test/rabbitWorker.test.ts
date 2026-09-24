@@ -6,6 +6,7 @@ import {
   type RabbitDelivery,
   type RabbitSettlementEvent
 } from '../src';
+import type { SourceTailPoller } from '../src/sourceTailPoller';
 
 const commitWire = {
   id: '22222222-2222-4222-8222-222222222222',
@@ -33,6 +34,7 @@ class FakeChannel implements ProjectionRabbitChannel {
   readonly nack = jest.fn<(message: RabbitDelivery, allUpTo: false, requeue: false) => void>();
   readonly cancel = jest.fn(async () => undefined);
   readonly assertExchange = jest.fn(async () => { this.lifecycle.push('exchange'); });
+  readonly checkQueue = jest.fn(async () => { this.lifecycle.push('checkQueue'); });
   readonly assertQueue = jest.fn(async () => { this.lifecycle.push('queue'); });
   readonly prefetch = jest.fn(async () => { this.lifecycle.push('prefetch'); });
   readonly consume = jest.fn(async (_queue: string, handler: (message: RabbitDelivery | null) => void) => {
@@ -51,7 +53,7 @@ const terminal: ProjectionCommitCoordinatorOutcome = { status: 'terminal', reaso
 const retryable: ProjectionCommitCoordinatorOutcome = { status: 'retryable', reason: 'bounded gap', processedSequences: [], definitions: [] };
 
 function coordinator(outcome: ProjectionCommitCoordinatorOutcome): ProjectionCommitCoordinator {
-  return { process: jest.fn(async () => outcome) };
+  return { process: jest.fn(async () => outcome), processPolled: jest.fn(async () => outcome) };
 }
 
 async function flush(): Promise<void> {
@@ -64,12 +66,36 @@ function workerOptions(source: ProjectionCommitCoordinator, events: RabbitSettle
     queue: 'projection-direct', deadLetterExchange: 'projection-dlx', deadLetterRoutingKey: 'projection.failed',
     prefetch: 4, maxMessageBytes: 64_000, retryBackoffMs: 1_000, now: () => 10_000, coordinator: source,
     initialize: jest.fn(async () => undefined),
+    sourceTail: { bootstrap: jest.fn(async () => undefined), start: jest.fn(), stop: jest.fn(async () => undefined),
+      isHealthy: () => true } as unknown as SourceTailPoller,
     scheduleRetry: jest.fn(async () => ({ durable: true as const, notBeforeEpochMs: 11_000 })),
     observeSettlement: jest.fn(async (event: RabbitSettlementEvent) => { events.push(event); })
   };
 }
 
 describe('ProjectionRabbitWorker', () => {
+  it('refuses a missing durable queue before tail bootstrap or consuming', async () => {
+    const channel = new FakeChannel();
+    channel.checkQueue.mockRejectedValueOnce(new Error('NOT_FOUND queue'));
+    const options = workerOptions(coordinator(completed));
+    await expect(new ProjectionRabbitWorker(options).start(channel)).rejects.toThrow('NOT_FOUND');
+    expect(options.sourceTail.bootstrap).not.toHaveBeenCalled();
+    expect(channel.consume).not.toHaveBeenCalled();
+  });
+
+  it('never ACKs when indexed polling becomes unhealthy', async () => {
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed));
+    const worker = new ProjectionRabbitWorker({ ...options,
+      sourceTail: { ...options.sourceTail, isHealthy: () => false } as SourceTailPoller });
+    await worker.start(channel);
+    channel.deliver(delivery());
+    await flush();
+    expect(options.coordinator.process).not.toHaveBeenCalled();
+    expect(channel.ack).not.toHaveBeenCalled();
+    expect(options.scheduleRetry).toHaveBeenCalled();
+    await worker.stop();
+  });
   it('asserts durable DLX/manual-ack lifecycle and ACKs exactly once after completion', async () => {
     const channel = new FakeChannel();
     const options = workerOptions(coordinator(completed));
@@ -83,7 +109,7 @@ describe('ProjectionRabbitWorker', () => {
     });
     expect(channel.prefetch).toHaveBeenCalledWith(4);
     expect(channel.consume).toHaveBeenCalledWith('projection-direct', expect.any(Function), { noAck: false });
-    expect(channel.lifecycle).toEqual(['exchange', 'queue', 'prefetch', 'consume']);
+    expect(channel.lifecycle).toEqual(['checkQueue', 'exchange', 'queue', 'prefetch', 'consume']);
     const message = delivery();
     channel.deliver(message);
     channel.deliver(message);

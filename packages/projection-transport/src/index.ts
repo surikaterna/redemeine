@@ -68,6 +68,7 @@ export {
   type ProjectionTransportDocument
 } from './mongoTransportStore';
 export { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
+export { SourceTailPoller, type SourceTailPollerOptions } from './sourceTailPoller';
 export {
   type ProjectionRabbitChannel,
   type ProjectionRabbitRetryReceipt,

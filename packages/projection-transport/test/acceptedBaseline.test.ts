@@ -1,4 +1,5 @@
-import type { ProjectionQueueRegistryManifest, ProjectionCompleteCommitRangeReader } from '@redemeine/projection-runtime-core';
+import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
+import type { TapewormMongoRangeReader } from '../src/tapewormMongoRangeReader';
 import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from '../src/acceptedBaseline';
 
 const sourceId = '00000000-0000-4000-8000-000000000001';
@@ -10,38 +11,32 @@ const manifest: ProjectionQueueRegistryManifest = { version: 1, manifestId: dige
   sourceStartAnchors: {} };
 
 function baseline(b: number): AcceptedBaseline {
-  return { version: 1, queueBindingId: 'queue', manifestId: digest, registryGeneration: 'g1', sourceId,
+  return { version: 2, queueBindingId: 'queue', manifestId: digest, registryGeneration: 'g1', sourceId,
     kind: 'existing', lastAcceptedSequence: b, startAnchor: b + 1, operator: 'operator',
     acceptedAt: '2026-09-24T00:00:00Z', acknowledgesUnverifiedHistoryAndCutoff: true,
     oldWriterStoppedBy: 'operator', oldWriterStoppedAt: '2026-09-24T00:00:00Z',
-    queueTailReadinessReference: 'rabbit-binding-and-tail', tailReadyThrough: b + 1,
+    queueTailReadinessReference: 'operator-source-tail-reference',
     strategyScope: [{ projectionName: 'own', generation: 'g1', strategy: 'own_record', stableSingleTarget: false }] };
 }
 
-test.each([-1, 0, 42])('accepted boundary B=%s probes only complete B+1', async (b) => {
+test.each([-1, 0, 42])('accepted boundary B=%s probes indexed H even when empty', async (b) => {
   const record = baseline(b);
   assertAcceptedBaseline(record, manifest);
   const reads: number[] = [];
-  const reader: ProjectionCompleteCommitRangeReader = { capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
-    async readCompleteRange(request) {
-      reads.push(request.afterSequence ?? -1);
-      return { status: 'complete', encodedByteLength: 100, hasMore: false, continuationAfterSequence: b + 1,
-        commits: [{ encodedByteLength: 100, commit: { streamId: sourceId,
-          commitId: '00000000-0000-4000-8000-000000000002', commitSequence: b + 1,
-          events: [{ eventId: '00000000-0000-4000-8000-000000000003', eventIndex: 0, streamVersion: b + 1,
-            aggregateType: 'A', aggregateId: 'a', type: 'Added', payload: {}, timestamp: '2026-09-24T00:00:00Z' }] } }] };
-    } };
-  await probeAcceptedTail(record, reader, 200);
+  const reader = { capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
+    async probeSource(source: string, sequence: number) { expect(source).toBe(sourceId); reads.push(sequence); return b; }
+  } as TapewormMongoRangeReader;
+  expect(await probeAcceptedTail(record, reader)).toBe(b);
   expect(reads).toEqual([b]);
-  await expect(probeAcceptedTail(record, { ...reader, async readCompleteRange(request) {
-    return { status: 'incomplete', reason: 'history_unavailable', details: 'missing', continuationAfterSequence: request.afterSequence };
-  } }, 200)).rejects.toThrow('Indexed complete source tail');
+  await expect(probeAcceptedTail(record, { ...reader, async probeSource() {
+    throw new Error('Accepted source boundary B is missing.');
+  } })).rejects.toThrow('Accepted source boundary');
 });
 
 test('rejects mismatched anchor, unsupported strategy scope and unproven birth', () => {
   expect(() => assertAcceptedBaseline({ ...baseline(0), startAnchor: 0 }, manifest)).toThrow();
   expect(() => assertAcceptedBaseline({ ...baseline(0), strategyScope: [] }, manifest)).toThrow();
-  expect(() => assertAcceptedBaseline({ ...baseline(-1), kind: 'birth' }, manifest)).toThrow('birth evidence');
+  expect(() => assertAcceptedBaseline({ ...baseline(-1), kind: 'birth' } as unknown as AcceptedBaseline, manifest)).toThrow('birth registration');
   expect(() => assertAcceptedBaseline({ ...baseline(0), strategyScope: [{ projectionName: 'own', generation: 'g1',
     strategy: 'in_document', stableSingleTarget: false }] }, manifest)).toThrow();
 });

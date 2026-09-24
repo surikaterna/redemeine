@@ -1,4 +1,5 @@
 import {
+  isCanonicalProjectionUuid,
   type ProjectionCompleteCommitRangeReader,
   type ProjectionCompleteCommitRangeRequest,
   type ProjectionCompleteCommitRangeResult,
@@ -17,6 +18,7 @@ export interface TapewormMongoRangeReaderOptions<TEvent extends IBaseEvent = Tap
 
 export interface TapewormMongoRangeReader extends ProjectionCompleteCommitRangeReader {
   initialize(): Promise<void>;
+  probeSource(sourceId: string, lastAcceptedSequence: number): Promise<number>;
   getIndexName(): string | null;
   getQueryObservation(): TapewormMongoRangeQueryObservation;
 }
@@ -25,6 +27,7 @@ export interface TapewormMongoRangeQueryObservation {
   readonly cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator';
   readonly maxReturnedDocuments: number;
   readonly maxReturnedBytes: number;
+  readonly sourceProbeMethod: 'findOne.hint + find.sort(-1).hint.limit(1)';
 }
 
 function hasExactKeys(index: IndexDescriptionInfo): boolean {
@@ -44,6 +47,7 @@ function isUsableRangeIndex(index: IndexDescriptionInfo): index is IndexDescript
     index.unique === true &&
     index.sparse !== true &&
     index.hidden !== true &&
+    index.expireAfterSeconds === undefined &&
     index.partialFilterExpression === undefined &&
     hasCompatibleCollation(index)
   );
@@ -103,11 +107,37 @@ export function createTapewormMongoCompleteCommitRangeReader<TEvent extends IBas
     }
     return result;
   };
+  const probeSource = async (sourceId: string, b: number): Promise<number> => {
+    await initialize();
+    if (!indexName || !isCanonicalProjectionUuid(sourceId) || !Number.isSafeInteger(b) || b < -1) {
+      throw new Error('Invalid indexed source boundary.');
+    }
+    const collection = options.collection;
+    if (b >= 0) {
+      const boundary = await collection.findOne({ streamId: sourceId, commitSequence: b }, { hint: indexName });
+      if (!boundary || typeof decodeRow(boundary, options.partitionId, sourceId, b, b) === 'string') {
+        throw new Error('Accepted source boundary B is missing or malformed.');
+      }
+    }
+    const highest = await collection.find({ streamId: sourceId }).sort({ commitSequence: -1 })
+      .hint(indexName).limit(1).next();
+    if (!highest) {
+      if (b !== -1) throw new Error('Accepted source boundary B is missing.');
+      return -1;
+    }
+    const h = highest.commitSequence;
+    if (!Number.isSafeInteger(h) || h < b || typeof decodeRow(highest, options.partitionId, sourceId, h, h) === 'string') {
+      throw new Error('Indexed source high watermark is malformed or precedes B.');
+    }
+    return h;
+  };
   return {
     capability: { completeCommitBoundaries: true, unslicedCommitEvents: true },
     initialize,
+    probeSource,
     getIndexName: () => indexName,
-    getQueryObservation: () => ({ cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator', maxReturnedDocuments, maxReturnedBytes }),
+    getQueryObservation: () => ({ cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator', maxReturnedDocuments, maxReturnedBytes,
+      sourceProbeMethod: 'findOne.hint + find.sort(-1).hint.limit(1)' }),
     readCompleteRange
   };
 }
