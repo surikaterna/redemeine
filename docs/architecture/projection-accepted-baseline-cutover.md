@@ -15,16 +15,27 @@ transactions compare the original legacy state, checkpoint and updatedAt; detect
 are rejected for operator inspection. Subsequent writes detect changed checkpoint/updatedAt
 when possible; unchanged or deliberately restored values cannot prove an old writer absent.
 
-Provision and inspect the durable Rabbit queue and publisher binding **before** the handoff;
-retain complete indexed Tapeworm source commits from B+1 without a snapshot-to-queue gap.
-Supply a read-only queue/tail binding probe and an indexed complete-commit reader to the
-transport store. An empty new stream needs a separately verified authoritative creation-time
-record, first-commit provenance and absence of an existing target/old writer; a UUID appearing
-in a delivery is not such evidence. No default zero anchor is installed on admission.
-`installAcceptedBaseline` persists a per-(queue, UUID) versioned, immutable majority-acknowledged
-row and refuses conflicting reinsertion. Persist readiness references and explicit strategy scope
-with B; verify the same queue and tail on each source admission/reconnect. A failing readiness
-probe stops processing without a projection write or ACK. No global source or document scan occurs.
+Configure a **finite explicit list of UUIDs**; no all-source enumeration or dynamic birth inference.
+An operator may explicitly accept B=-1 on an existing empty source with its historical risk.
+New-source birth registration is disabled until authoritative creation and absent-target evidence
+can be checked. A seq0 commit or a queue delivery alone is not such evidence.
+`installAcceptedBaseline` persists a per-(queue, UUID) v2 immutable majority-acknowledged row;
+v1 rows are rejected because their caller-declared tail readiness did not prove source availability.
+The unique non-TTL Tapeworm index supports an exact-B lookup (B>=0) and a descending per-source
+high-watermark query H. H=-1 is genuine empty history only for B=-1. Missing B, H<B, malformed
+boundaries and gaps reject. Observed H and index identity are persisted separately as diagnostic
+readiness, not a promise of future publication.
+
+Provision a durable named Rabbit queue and DLX; asserting them checks their actual topology, not
+the producer or its availability. Rabbit is a latency/redelivery optimization, **not** evidence
+that every commit was published. Before consume and again on reconnect, bounded complete indexed
+pages from B+1 through H pass through the normal coordinator with coverage advanced only after
+all definitions finish. A paced poll of the same configured sources continues during operation:
+new commits can be picked up even when no Rabbit notification arrives. Poll errors, expired
+history and incompatible queue topology stop healthy admission/ACK and require alert/recovery;
+retries are bounded and paced. A network outage longer than source retention may invalidate the
+guarantee. Conditional post-cutover delivery requires an accurate B, immutable retained complete
+source commits until consumed, continuing indexed polling and *actual* old-writer cessation.
 
 The first accepted commit is B+1 (B=-1 -> 0; B=0 -> 1). Gap catch-up reads only complete indexed
 commits from B+1 onward in bounded pages. Deliveries at or below B never bootstrap catch-up or
@@ -35,7 +46,7 @@ deployment assumptions; no joins, fanout or link mutation. For `own_record`, the
 transaction writes the final sequence for this source even if it has no target. `none` has no
 projection dedupe marker or checkpoint. Handler effects must remain pure and warnings advisory.
 
-This foundation does **not** retire the prior draft migration path or its receipts. Those paths
-are pending independent audit and are not qualification for this cutover. Do not use the old
-migration bypass to claim accepted-baseline admission or run mixed writers. No sharding, saga,
+This foundation does **not** retire the prior draft migration path or its receipts. Serving
+coordinators reject migration receipt bypass; the isolated migration CLI opts in while pending
+independent audit. Do not run mixed writers. No sharding, saga,
 SDK removal, automatic spill, or historical verification is included.

@@ -66,7 +66,7 @@ REDEMEINE_MONGO_URI="mongodb://localhost:${MONGO_PORT}/?replicaSet=rs0" \
 REDEMEINE_RABBIT_URI="amqp://localhost:${RABBIT_PORT}" \
 REDEMEINE_MONGO_DIGEST="$MONGO_DIGEST" REDEMEINE_RABBIT_DIGEST="$RABBIT_DIGEST" \
 REDEMEINE_EVIDENCE_PATH="$EVIDENCE_PATH" REDEMEINE_GIT_SHA="$GIT_SHA" \
-pnpm exec tsx integration/realStack.ts
+pnpm exec tsx integration/realAcceptedStack.ts
 
 docker rm -f "$MONGO_CONTAINER" "$RABBIT_CONTAINER" >/dev/null
 trap - EXIT

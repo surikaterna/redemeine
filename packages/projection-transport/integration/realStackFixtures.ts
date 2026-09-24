@@ -1,4 +1,4 @@
-import type { ProjectionQueueRegistryManifest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionHandler, ProjectionQueueRegistryManifest, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type { Channel, ConsumeMessage } from 'amqplib';
 import type { IBaseEvent, ICommit } from 'tapeworm';
 import type { ProjectionRabbitChannel, RabbitDelivery } from '../src';
@@ -28,7 +28,7 @@ export interface StackEvent extends IBaseEvent {
 }
 
 export function tapewormCommit(sequence: number, amounts: readonly number[]): ICommit<StackEvent> {
-  let offset = sequence === 0 ? 0 : 2;
+  const offset = sequence === 0 ? 0 : sequence + 1;
   return {
     id: `22222222-2222-4222-8222-${String(sequence).padStart(12, '0')}`,
     partitionId: PARTITION_ID,
@@ -51,7 +51,13 @@ export function tapewormCommit(sequence: number, amounts: readonly number[]): IC
 }
 
 export function stackDefinitions() {
-  return runtimeDefinitions('v1');
+  return runtimeDefinitions('v1').map((entry) => entry.definition.name !== 'Q-inline' ? entry : {
+    ...entry, definition: { ...entry.definition, fromStream: { ...entry.definition.fromStream,
+      handlers: { ...entry.definition.fromStream.handlers, Changed: ((state, event) => {
+        state.count += Number(event.payload.amount);
+        state.seen.push(Number(event.payload.amount));
+      }) satisfies ProjectionHandler<StackState> } } }
+  });
 }
 
 export function stackManifest(
@@ -91,6 +97,7 @@ export function adaptChannel(channel: Channel): ProjectionRabbitChannel {
     return value;
   };
   return {
+    checkQueue: (name) => channel.checkQueue(name),
     assertExchange: (name, type, options) => channel.assertExchange(name, type, options),
     assertQueue: (name, options) => channel.assertQueue(name, options),
     prefetch: (count) => channel.prefetch(count),

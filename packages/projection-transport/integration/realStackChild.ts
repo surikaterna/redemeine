@@ -13,11 +13,13 @@ import {
   createTapewormMongoCompleteCommitRangeReader,
   MongoProjectionTransportStore,
   ProjectionRabbitWorker,
+  SourceTailPoller,
   type ProjectionTransportDocument
 } from '../src';
 import {
   adaptChannel,
   PARTITION_ID,
+  SOURCE_ID,
   stackDefinitions,
   stackManifest,
   type StackEvent,
@@ -83,6 +85,7 @@ class ObservedStore implements ProjectionSourceCommitStorePort<StackState> {
 }
 
 class ObservedSourceOrder implements ProjectionSourceOrderPort {
+  readonly acceptedBaseline = true as const;
   constructor(
     private readonly delegate: MongoProjectionTransportStore,
     private readonly client: MongoClient
@@ -112,14 +115,13 @@ async function run(): Promise<void> {
     mongoClient: mongo
   });
   const manifest = stackManifest(queue);
+  const rangeReader = createTapewormMongoCompleteCommitRangeReader<StackEvent>({
+    collection: db.collection<ICommit<StackEvent>>(`tw_${PARTITION_ID}_commits`), partitionId: PARTITION_ID
+  });
   const transport = new MongoProjectionTransportStore({
     collection: db.collection<ProjectionTransportDocument>(`${scenario}_transport`),
     mongoClient: mongo,
-    manifest
-  });
-  const rangeReader = createTapewormMongoCompleteCommitRangeReader<StackEvent>({
-    collection: db.collection<ICommit<StackEvent>>(`tw_${PARTITION_ID}_commits`),
-    partitionId: PARTITION_ID
+    manifest, cutoverReadiness: { reader: rangeReader }
   });
   const coordinator = createProjectionCommitCoordinator<StackState>({
     queueBindingId: queue, manifest, definitions: stackDefinitions(),
@@ -127,6 +129,9 @@ async function run(): Promise<void> {
     sourceOrder: new ObservedSourceOrder(transport, mongo), rangeReader,
     maxCommits: 100, maxBytes: 1_048_576, maxGapPages: 10, maxConflictRetries: 2
   });
+  const sourceTail = new SourceTailPoller({ queueId: queue, sourceIds: scenario === 'retry' || scenario === 'terminal' ? [] : [SOURCE_ID],
+    reader: rangeReader, transport, coordinator, maxCommits: 100, maxBytes: 1_048_576,
+    maxPages: 10, intervalMs: 200, onFailure: (error) => process.stderr.write(`source tail: ${error.message}\n`) });
   await channel.assertQueue(`${queue}.retry`, {
     durable: true, deadLetterExchange: '', deadLetterRoutingKey: queue
   });
@@ -136,6 +141,7 @@ async function run(): Promise<void> {
     queue, deadLetterExchange: `${queue}.dlx`, deadLetterRoutingKey: 'failed',
     prefetch: 1, maxMessageBytes: 1_048_576, retryBackoffMs: 60_000,
     coordinator,
+    sourceTail,
     initialize: async () => { await transport.initialize(); await rangeReader.initialize(); },
     scheduleRetry: async (message, reason, minimumDelayMs) => {
       const publication = await publishConfirmedRetry(channel, `${queue}.retry`, message.content, {
