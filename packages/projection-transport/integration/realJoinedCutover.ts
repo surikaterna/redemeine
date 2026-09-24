@@ -8,6 +8,7 @@ import { approvalDigest, MongoProjectionTransportStore, ProjectionRabbitWorker, 
 import { adaptChannel, tapewormCommit } from './realStackFixtures';
 import { createJoinedUsers, verifyOperatorWriteOnce, verifyWorkerApprovalRights, type JoinedAuthFixture } from './realJoinedAuth';
 import { verifyMultiInventoryRollback } from './realJoinedMulti';
+import { verifyAttestedEmptyInventory } from './realJoinedEmpty';
 
 const uri = process.env.REDEMEINE_MONGO_URI;
 if (!uri) throw new Error('REDEMEINE_MONGO_URI required');
@@ -32,7 +33,6 @@ interface Scenario {
   readonly transportCollection: Collection<ProjectionTransportDocument>;
   readonly workerApprovals: Collection<JoinedApproval>;
   readonly transport: MongoProjectionTransportStore;
-  readonly legacy: { _id: string; aggregateType: string; aggregateId: string; targetDocId: string; createdAt: string };
   readonly scopedId: string;
 }
 
@@ -123,13 +123,16 @@ function singleScenario(auth: JoinedAuthFixture, adminDb: Db, channel: ConfirmCh
     manifest: singleManifest(projectionName, queueId), joinedInventories: [item], joinedApprovals: workerApprovals });
   return { projectionName, queueId, auth, adminDb, channel, declaredQueues, links, documents, item,
     approval: singleApproval(projectionName, queueId), transportCollection, workerApprovals, transport,
-    legacy: { _id: 'Order:one', aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target',
-      createdAt: new Date().toISOString() }, scopedId: [projectionName, 'g1', 'Order', 'one'].join('\u0000') };
+    scopedId: [projectionName, 'g1', 'Order', 'one'].join('\u0000') };
 }
 
 async function setupSingle(s: Scenario): Promise<void> {
   await s.documents.insertOne({ _id: 'target', state: { count: 0 } });
-  await s.links.insertOne(s.legacy);
+  assert(await s.links.countDocuments({}) === 0
+    && await s.auth.workerDb.collection(`${s.projectionName}_dedupe`).countDocuments({}) === 0
+    && await s.transportCollection.countDocuments({}) === 0,
+  'New per-projection link, progress and transport collections must start empty.');
+  cases.push(`${s.projectionName}:new_link_progress_transport_collections_empty_before_seed`);
   if (s.channel) {
     await s.channel.assertExchange(`${s.queueId}.dlx`, 'direct', { durable: true, arguments: {} });
     await s.channel.assertQueue(s.queueId, { durable: true, deadLetterExchange: `${s.queueId}.dlx` });
@@ -158,11 +161,19 @@ async function verifyInitialFailures(s: Scenario): Promise<void> {
   cases.push(`${projectionName}:rabbit_precheck_rejected_before_bootstrap_consume_coverage_own_progress`);
   assert(await auth.workerDb.collection(`${projectionName}_dedupe`).countDocuments({}) === 0,
     'Omission wrote own-record progress');
+  await s.links.insertOne({ _id: 'Order:one', aggregateType: 'Order', aggregateId: 'one',
+    targetDocId: 'target', createdAt: new Date().toISOString() });
+  await rejectBeforeAdoption(transport, queueId, transportCollection, 'unscoped ghost');
+  await s.links.deleteOne({ _id: 'Order:one' });
   await s.links.insertOne({ _id: s.scopedId, aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target',
     createdAt: new Date().toISOString(), v2Revision: 0 });
-  await s.links.deleteOne({ _id: 'Order:one' });
-  await rejectBeforeAdoption(transport, queueId, transportCollection, 'missing legacy');
-  await s.links.insertOne(s.legacy);
+  const scoped = await s.links.findOne({ _id: s.scopedId });
+  assert(await s.links.countDocuments({}) === 1 && scoped?.v2Revision === 0,
+    'Only the manually seeded scoped link may exist at adoption.');
+  await s.links.deleteOne({ _id: s.scopedId });
+  await rejectBeforeAdoption(transport, queueId, transportCollection, 'missing scoped');
+  assert(scoped, 'Scoped seed disappeared before missing-link test.');
+  await s.links.insertOne(scoped);
   await s.links.updateOne({ _id: s.scopedId }, { $set: { aggregateType: 'Wrong' } });
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'wrong scoped type');
   await s.links.updateOne({ _id: s.scopedId }, { $set: { aggregateType: 'Order' } });
@@ -174,23 +185,24 @@ async function verifyRemainingFailures(s: Scenario): Promise<void> {
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'unknown scoped');
   await links.deleteOne({ _id: 'other\u0000g2\u0000Order\u0000one' });
   await links.insertOne({ _id: 'Order:extra', targetDocId: 'target' });
-  await rejectBeforeAdoption(transport, queueId, transportCollection, 'unknown legacy');
+  await rejectBeforeAdoption(transport, queueId, transportCollection, 'unknown unscoped');
   await links.deleteOne({ _id: 'Order:extra' });
   await links.updateOne({ _id: scopedId }, { $set: { targetDocId: null } });
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'tombstoned link');
   await links.updateOne({ _id: scopedId }, { $set: { targetDocId: 'target' } });
-  await links.updateOne({ _id: 'Order:one' }, { $set: { aggregateId: 'wrong' } });
-  await rejectBeforeAdoption(transport, queueId, transportCollection, 'malformed legacy');
-  await links.updateOne({ _id: 'Order:one' }, { $set: { aggregateId: 'one' } });
+  await links.updateOne({ _id: scopedId }, { $set: { aggregateId: 'wrong' } });
+  await rejectBeforeAdoption(transport, queueId, transportCollection, 'malformed scoped');
+  await links.updateOne({ _id: scopedId }, { $set: { aggregateId: 'one' } });
   await documents.updateOne({ _id: 'target' }, { $set: { tombstone: true } });
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'tombstone target');
   await documents.updateOne({ _id: 'target' }, { $unset: { tombstone: '' } });
   await documents.deleteOne({ _id: 'target' });
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'missing target');
   await documents.insertOne({ _id: 'target', state: { count: 0 } });
-  await links.insertMany([{ _id: 'extra1', targetDocId: 'target' }, { _id: 'extra2', targetDocId: 'target' }]);
+  await links.insertMany([{ _id: 'extra1', targetDocId: 'target' }, { _id: 'extra2', targetDocId: 'target' },
+    { _id: 'extra3', targetDocId: 'target' }]);
   await rejectBeforeAdoption(transport, queueId, transportCollection, 'overflow');
-  await links.deleteMany({ _id: { $in: ['extra1', 'extra2'] } });
+  await links.deleteMany({ _id: { $in: ['extra1', 'extra2', 'extra3'] } });
 }
 
 function wrongHandle(s: Scenario): MongoProjectionTransportStore {
@@ -334,6 +346,7 @@ async function run(): Promise<void> {
       await verifyRestart(scenario);
     }
     cases.push(...await verifyMultiInventoryRollback(root, auth, name, sourceId, hash));
+    cases.push(...await verifyAttestedEmptyInventory(root, auth, name, sourceId, hash));
   } finally {
     await cleanup(auth, adminDb, rabbit, channel, declaredQueues);
   }

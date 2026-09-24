@@ -24,17 +24,22 @@ function multiConfig(database: string, sourceId: string, hash: `sha256:${string}
     transportNamespace: `${database}.multi_transport`, approvedBy: 'operator', approvedAt: new Date().toISOString(),
     inventories: names.map((projectionName) => ({ projectionName, generation: 'g1',
       linkNamespace: `${database}.${projectionName}_links`, documentNamespace: `${database}.${projectionName}_documents`,
-      expected: [{ aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target' }], maxLinkRows: 2 })) };
+      expected: [{ aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target' }], maxLinkRows: 1 })) };
   const approval: JoinedApproval = { ...draft, digest: approvalDigest(draft) };
   return { queueId, manifest, baseline, approval };
 }
 
-async function seedLegacy(root: MongoClient, database: string): Promise<void> {
+async function seedExistingTargets(root: MongoClient, database: string): Promise<void> {
   const db = root.db(database);
+  if (await db.collection('multi_dedupe').countDocuments({}) !== 0
+    || await db.collection('multi_transport').countDocuments({}) !== 0) {
+    throw new Error('Multi-inventory new progress/transport collections were not empty.');
+  }
   for (const projectionName of names) {
     await db.collection<Document & { _id: string }>(`${projectionName}_documents`).insertOne({ _id: 'target', state: { count: 0 } });
-    await db.collection<Document & { _id: string }>(`${projectionName}_links`).insertOne({ _id: 'Order:one', aggregateType: 'Order',
-      aggregateId: 'one', targetDocId: 'target', createdAt: new Date().toISOString() });
+    if (await db.collection(`${projectionName}_links`).countDocuments({}) !== 0) {
+      throw new Error('Multi-inventory new link collection was not empty before scoped seed.');
+    }
   }
 }
 
@@ -88,7 +93,7 @@ async function assertConcurrentAdopters(worker: MongoProjectionTransportStore, a
 export async function verifyMultiInventoryRollback(root: MongoClient, auth: JoinedAuthFixture,
   database: string, sourceId: string, hash: `sha256:${string}`): Promise<readonly string[]> {
   const { queueId, manifest, baseline, approval } = multiConfig(database, sourceId, hash);
-  await seedLegacy(root, database);
+  await seedExistingTargets(root, database);
   await seedScoped(root, database, 'M1');
   await auth.operatorDb.collection<JoinedApproval>('joined_approvals').insertOne(approval);
   const transportCollection = auth.workerDb.collection<ProjectionTransportDocument>('multi_transport');

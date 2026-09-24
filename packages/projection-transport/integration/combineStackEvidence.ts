@@ -36,6 +36,7 @@ if (!Array.isArray(old.crashes) || old.crashes.length !== 4 || !poison || unknow
   || joined.manuallySeededLink !== ['joined-own', 'v1', 'Customer', 'customer-17'].join('\u0000')
   || joined.targetDocumentId !== 'Joined:one'
   || joined.rejectedBeforeQueueCheckBootstrapConsume !== true || joined.noCoverageOrOwnRecordOnRejection !== true
+  || joined.newLinkAndProgressEmptyBeforeSeed !== true || joined.scopedRowsAfterSeed !== 1
   || joined.targetCount !== 13 || joined.v2Revision !== 1 || joined.ownRecordSequence !== 4
   || joined.coveredSequence !== 4 || joined.acknowledgements !== 2
   || joined.restartRedeliveryDeduplicated !== true) {

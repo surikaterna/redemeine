@@ -26,6 +26,8 @@ export interface JoinedScenarioEvidence {
   readonly baseline: 3;
   readonly rejectedBeforeQueueCheckBootstrapConsume: true;
   readonly noCoverageOrOwnRecordOnRejection: true;
+  readonly newLinkAndProgressEmptyBeforeSeed: true;
+  readonly scopedRowsAfterSeed: 1;
   readonly manuallySeededLink: string;
   readonly targetDocumentId: string;
   readonly targetCount: number;
@@ -109,10 +111,10 @@ async function prepare(ctx: JoinedStackContext, queue: string): Promise<void> {
   registerJoinedQueue(ctx.queues, queue);
   const documents = ctx.db.collection<Document & { _id: string }>(joinedCollections.documents);
   await documents.insertOne({ _id: JOINED_TARGET, state: { count: 10, seen: [] }, updatedAt: new Date().toISOString() });
-  const links = ctx.db.collection<Document & { _id: string }>(joinedCollections.links);
-  await links.insertOne({ _id: `${JOINED_AGGREGATE_TYPE}:${JOINED_AGGREGATE_ID}`,
-    aggregateType: JOINED_AGGREGATE_TYPE, aggregateId: JOINED_AGGREGATE_ID,
-    targetDocId: JOINED_TARGET, createdAt: new Date().toISOString() });
+  assert(await ctx.db.collection(joinedCollections.links).countDocuments({}) === 0
+    && await ctx.db.collection(joinedCollections.dedupe).countDocuments({}) === 0
+    && await ctx.db.collection(joinedCollections.transport).countDocuments({}) === 0,
+  'New joined link/progress/transport collections must start empty.');
   const manifest = joinedManifest(queue);
   await ctx.db.collection<JoinedApproval>(joinedCollections.approvals).insertOne(joinedApproval(manifest, ctx.db.databaseName));
   const runtime = createRuntime(ctx, queue);
@@ -142,10 +144,9 @@ async function seedScoped(ctx: JoinedStackContext): Promise<string> {
   await links.updateOne({ _id }, { $setOnInsert: row }, { upsert: true });
   const actual = await links.findOne({ _id });
   assert(actual && Object.keys(actual).length === Object.keys(row).length
-    && Object.entries(row).every(([key, value]) => actual[key] === value),
+    && Object.entries(row).every(([key, value]) => actual[key] === value)
+    && await links.countDocuments({}) === 1,
   'Manual scoped link seed conflicted with persisted row.');
-  const legacy = await links.findOne({ _id: `${JOINED_AGGREGATE_TYPE}:${JOINED_AGGREGATE_ID}` });
-  assert(legacy?.targetDocId === JOINED_TARGET && legacy.v2Revision === undefined, 'Legacy link was modified by seed.');
   return _id;
 }
 
@@ -220,6 +221,7 @@ export async function runJoinedAcceptedScenario(ctx: JoinedStackContext): Promis
   assert(target?.state?.count === 13 && target.v2Revision === 1, 'Joined target changed on restart/redelivery.');
   return { name: 'B3-joined-manual-seed', queueId: queue, baseline: JOINED_BASELINE,
     rejectedBeforeQueueCheckBootstrapConsume: true, noCoverageOrOwnRecordOnRejection: true,
+    newLinkAndProgressEmptyBeforeSeed: true, scopedRowsAfterSeed: 1,
     manuallySeededLink: scopedId, targetDocumentId: JOINED_TARGET,
     targetCount: target.state.count, v2Revision: target.v2Revision,
     ownRecordSequence: JOINED_SEQUENCE, coveredSequence: JOINED_SEQUENCE, acknowledgements: firstAck + restartAck,

@@ -61,6 +61,6 @@ export function joinedApproval(manifest: ProjectionQueueRegistryManifest, databa
       linkNamespace: `${database}.${joinedCollections.links}`,
       documentNamespace: `${database}.${joinedCollections.documents}`,
       expected: [{ aggregateType: JOINED_AGGREGATE_TYPE, aggregateId: JOINED_AGGREGATE_ID, targetDocId: JOINED_TARGET }],
-      maxLinkRows: 2 }] };
+      maxLinkRows: 1 }] };
   return { ...draft, digest: approvalDigest(draft) };
 }

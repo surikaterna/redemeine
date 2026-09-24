@@ -28,6 +28,7 @@ test('combined joined scenario binds a distinct queue and collections to an appr
   expect(approval.digest).toBe(approvalDigest(approval));
   expect(approval.inventories[0]?.expected).toEqual([{ aggregateType: JOINED_AGGREGATE_TYPE,
     aggregateId: JOINED_AGGREGATE_ID, targetDocId: JOINED_TARGET }]);
+  expect(approval.inventories[0]?.maxLinkRows).toBe(1);
   expect(approval.queueBindingId).toBe(queue);
   expect(new Set(Object.values(joinedCollections)).size).toBe(Object.values(joinedCollections).length);
   expect(approval.inventories[0]?.linkNamespace).toBe(`isolated-db.${joinedCollections.links}`);

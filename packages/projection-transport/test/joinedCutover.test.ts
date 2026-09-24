@@ -80,7 +80,9 @@ describe('durable joined cutover approval', () => {
     docs.set('target', { _id: 'target', state: {}, tombstone: true });
     await expect(verify()).rejects.toThrow('target');
   });
+});
 
+describe('approved known-empty joined inventory', () => {
   it('requires explicit attested approval and an empty new collection for zero initial links', async () => {
     const { rows, item, approval } = fixture();
     const namespace = 'projection.joined_approvals';

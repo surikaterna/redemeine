@@ -26,7 +26,8 @@ export async function createJoinedUsers(root: MongoClient, rootUri: string, data
   const collectionActions = ['find', 'insert', 'update', 'remove', 'createIndex', 'listIndexes'];
   const collections = ['A_documents', 'A_links', 'A_dedupe', 'A_transport',
     'B_documents', 'B_links', 'B_dedupe', 'B_transport',
-    'M1_documents', 'M1_links', 'M2_documents', 'M2_links', 'multi_transport', 'multi_dedupe'];
+    'M1_documents', 'M1_links', 'M2_documents', 'M2_links', 'multi_transport', 'multi_dedupe',
+    'empty_documents', 'empty_links', 'empty_dedupe', 'empty_transport'];
   await db.createCollection('joined_approvals');
   for (const collection of collections) await db.createCollection(collection);
   await db.command({ createRole: 'zz6h-approval-provisioner', privileges: [
