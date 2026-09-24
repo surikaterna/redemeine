@@ -59,10 +59,15 @@
     "docs:typedoc": "typedoc",
     "docs:audit": "tsx bin/redemeine-reflector.ts --verify-tsdoc",
     "docs:llms": "tsx bin/redemeine-reflector.ts --generate-llms-ctx > llms.txt",
-    "docs:install": "pnpm --dir website install",
+    "docs:install": "pnpm install --frozen-lockfile",
     "docs:dev": "pnpm --dir website run start",
     "docs:build": "pnpm run docs:install && pnpm --dir website run build",
     "check:projection-runtime-boundaries": "node ./bin/check-projection-runtime-boundaries.js",
+    "check:projection-contract-consumer": "node ./bin/check-projection-contract-consumer.js",
+    "test:projection-mongo-real": "pnpm --dir packages/projection-runtime-store-mongodb run test:real-mongo",
+    "test:projection-real-stack": "pnpm --dir packages/projection-transport run test:real-stack",
+    "test:projection-consumer-types": "pnpm run check:projection-contract-consumer",
+    "bench:projection-source-progress": "pnpm --dir packages/projection-transport run bench:source-progress",
     "verify:workspace": "pnpm exec turbo run typecheck build test --continue"
   },
   "workspaces": [

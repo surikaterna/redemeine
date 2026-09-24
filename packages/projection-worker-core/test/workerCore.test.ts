@@ -472,4 +472,16 @@ describe('projection-worker-core', () => {
     expect(after.items[1]?.decision).toEqual({ status: 'nack', retryable: true, reason: 'write-timeout' });
     expect(loads).toEqual(['invoice-1', 'invoice-2', 'invoice-1', 'invoice-2']);
   });
+
+  test.each([
+    ['conflict', 'store-conflict', true],
+    ['transient', 'store-transient-failure', true],
+    ['terminal', 'store-terminal-failure', false]
+  ] as const)('restores the legacy empty %s failure reason', async (kind, reason, retryable) => {
+    const worker = createProjectionWorkerCore(() => {
+      throw { kind, reason: '' };
+    });
+    const result = await worker.push(createCommit('failure', 'invoice-1'));
+    expect(result.item.decision).toEqual({ status: 'nack', retryable, reason });
+  });
 });

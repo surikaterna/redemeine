@@ -1,0 +1,39 @@
+{
+  "name": "@redemeine/projection-transport",
+  "version": "0.1.0",
+  "description": "Private Tapeworm and Rabbit transport adapters for projections",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.integration.json --noEmit",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-transport/test",
+    "test:real-stack": "bash integration/run-real-stack.sh",
+    "bench:source-progress": "bash integration/run-source-progress-benchmark.sh",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-mongodb": "workspace:*",
+    "@redemeine/projection-worker-core": "workspace:*",
+    "amqplib": "2.0.1",
+    "mongodb": "6.18.0",
+    "tapeworm": "0.6.0",
+    "tapeworm_persistence_store_mongodb": "3.1.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "0.10.8",
+    "tsup": "8.4.0",
+    "tsx": "4.21.0",
+    "typescript": "5.8.3"
+  }
+}
