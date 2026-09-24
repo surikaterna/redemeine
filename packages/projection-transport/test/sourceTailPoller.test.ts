@@ -39,10 +39,10 @@ test.each([-1, 0, 4])('configured source B=%s drains without any Rabbit arrival,
   await poller.bootstrap();
   expect(dispatched).toEqual([]);
   high = b + 3;
-  expect(await poller.pollOnce()).toBe(false);
-  expect(await poller.pollOnce()).toBe(true);
+  expect(await poller.pollOnce()).toBe('continuation');
+  expect(await poller.pollOnce()).toBe('caught_up');
   expect(dispatched).toEqual([b + 1, b + 2, b + 3]);
-  expect(await poller.pollOnce()).toBe(true);
+  expect(await poller.pollOnce()).toBe('caught_up');
   expect(dispatched).toHaveLength(3);
 });
 
@@ -81,12 +81,47 @@ test('Rabbit notification must match complete indexed source commit, even on cov
   const poller = new SourceTailPoller({ queueId: 'orders', sourceIds: [sourceId], transport, reader,
     coordinator: {} as ProjectionCommitCoordinator, intervalMs: 10, maxBytes: 1000, maxCommits: 1, maxPages: 1,
     onFailure: (error) => failures.push(error.message) });
-  expect(await poller.readAuthoritativeNotification(expected)).toEqual(expected);
-  await expect(poller.readAuthoritativeNotification({ ...expected, commitId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }))
+  expect(await poller.resolveNotification(expected)).toEqual({ status: 'authoritative', commit: expected });
+  await expect(poller.resolveNotification({ ...expected, commitId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }))
     .rejects.toThrow('does not match');
   available = false;
-  await expect(poller.readAuthoritativeNotification(expected)).rejects.toThrow('does not match');
+  await expect(poller.resolveNotification(expected)).rejects.toThrow('does not match');
   expect(failures).toHaveLength(2);
+});
+
+test.each([0, 4])('B=%s reliable modes suppress pruned pre-B without an indexed historical fetch', async (b) => {
+  const old = commit(b === 0 ? 0 : 2);
+  const record = { lastAcceptedSequence: b, manifestId: 'manifest', queueBindingId: 'orders', sourceId,
+    strategyScope: [{ strategy: 'own_record' }, { strategy: 'in_document' }] } as AcceptedBaseline;
+  const transport = { probeRegisteredSource: async () => ({ record, highWatermark: b }) } as MongoProjectionTransportStore;
+  const readCompleteRange = jest.fn(async () => { throw new Error('pre-B source was pruned'); });
+  const reader = { readCompleteRange } as TapewormMongoRangeReader;
+  const poller = new SourceTailPoller({ queueId: 'orders', sourceIds: [sourceId], transport, reader,
+    coordinator: {} as ProjectionCommitCoordinator, intervalMs: 10, maxBytes: 1000, maxCommits: 1, maxPages: 1,
+    onFailure: () => undefined });
+  expect(await poller.resolveNotification(old)).toEqual({ status: 'accepted_baseline', commit: old });
+  expect(readCompleteRange).not.toHaveBeenCalled();
+});
+
+test.each([0, 4])('B=%s none dispatches only retained validated old commits', async (b) => {
+  const old = commit(b === 0 ? 0 : 2);
+  const record = { lastAcceptedSequence: b, manifestId: 'manifest', queueBindingId: 'orders', sourceId,
+    strategyScope: [{ strategy: 'own_record' }, { strategy: 'none' }] } as AcceptedBaseline;
+  const transport = { probeRegisteredSource: async () => ({ record, highWatermark: b }) } as MongoProjectionTransportStore;
+  let available = true;
+  const reader = { readCompleteRange: async (request: { afterSequence: number | null }) => available
+    ? { status: 'complete', commits: [{ commit: old, encodedByteLength: 100 }], encodedByteLength: 100,
+      continuationAfterSequence: old.commitSequence, hasMore: false }
+    : { status: 'incomplete', reason: 'history_unavailable', details: 'pruned',
+      continuationAfterSequence: request.afterSequence } } as TapewormMongoRangeReader;
+  const failures: string[] = [];
+  const poller = new SourceTailPoller({ queueId: 'orders', sourceIds: [sourceId], transport, reader,
+    coordinator: {} as ProjectionCommitCoordinator, intervalMs: 10, maxBytes: 1000, maxCommits: 1, maxPages: 1,
+    onFailure: (error) => failures.push(error.message) });
+  expect(await poller.resolveNotification(old)).toEqual({ status: 'authoritative', commit: old });
+  available = false;
+  await expect(poller.resolveNotification(old)).rejects.toThrow('historical_commit_unavailable');
+  expect(failures).toEqual(['historical_commit_unavailable']);
 });
 
 test.each(['bootstrap', 'page'] as const)('stop joins in-flight %s without dispatch or alert', async (phase) => {
@@ -118,7 +153,7 @@ test.each(['bootstrap', 'page'] as const)('stop joins in-flight %s without dispa
   expect(failures).toEqual([]);
 });
 
-test('bounded page shortfall emits alert and paced resume rather than a healthy no-op', async () => {
+test('bounded page continuation is paced, successful and never reported as a failure', async () => {
   const failures: string[] = [];
   const record = { lastAcceptedSequence: -1, manifestId: 'manifest', queueBindingId: 'orders', sourceId } as AcceptedBaseline;
   let covered: number | null = null;
@@ -135,7 +170,8 @@ test('bounded page shortfall emits alert and paced resume rather than a healthy 
     intervalMs: 1, maxBytes: 1000, maxCommits: 1, maxPages: 1, maxBootstrapPasses: 3,
     onFailure: (error) => failures.push(error.message) });
   await poller.bootstrap();
-  expect(failures).toEqual([expect.stringContaining('bounded page cap')]);
+  expect(failures).toEqual([]);
   expect(covered).toBe(1);
+  expect(poller.isHealthy()).toBe(true);
   await poller.stop();
 });

@@ -5,6 +5,14 @@ import type { ProjectionCommitCoordinator } from '@redemeine/projection-worker-c
 import type { MongoProjectionTransportStore } from './mongoTransportStore';
 import type { TapewormMongoRangeReader } from './tapewormMongoRangeReader';
 
+export type SourceTailPass = 'caught_up' | 'continuation';
+
+export class HistoricalNotificationRejectedError extends Error {
+  constructor(readonly reason: 'historical_commit_unavailable' | 'historical_commit_mismatch') {
+    super(reason);
+  }
+}
+
 export interface SourceTailPollerOptions {
   readonly queueId: string;
   readonly sourceIds: readonly string[];
@@ -39,12 +47,21 @@ export class SourceTailPoller {
 
   isHealthy(): boolean { return this.healthy && !this.stopping; }
 
-  async readAuthoritativeNotification(notification: ProjectionSourceCommit): Promise<ProjectionSourceCommit> {
+  async resolveNotification(notification: ProjectionSourceCommit): Promise<{
+    status: 'authoritative' | 'accepted_baseline'; commit: ProjectionSourceCommit;
+  }> {
     try {
       if (!this.options.sourceIds.includes(notification.streamId)) throw new Error('Unconfigured Rabbit source UUID.');
       const { record, highWatermark } = await this.options.transport.probeRegisteredSource(
         this.options.queueId, notification.streamId, 'durable_queue_and_dlx_asserted');
-      if (record.queueBindingId !== this.options.queueId || notification.commitSequence > highWatermark) {
+      if (record.queueBindingId !== this.options.queueId || record.sourceId !== notification.streamId) {
+        throw new Error('Rabbit source does not match immutable queue binding.');
+      }
+      const preBaseline = notification.commitSequence <= record.lastAcceptedSequence;
+      if (preBaseline && record.strategyScope.every(({ strategy }) => strategy !== 'none')) {
+        return { status: 'accepted_baseline', commit: notification };
+      }
+      if (notification.commitSequence > highWatermark) {
         throw new Error('Rabbit source notification is beyond the indexed source tail.');
       }
       const sequence = notification.commitSequence;
@@ -52,11 +69,15 @@ export class SourceTailPoller {
         throughSequence: sequence, maxCommits: 1, maxBytes: this.options.maxBytes };
       const page = await this.options.reader.readCompleteRange(request);
       const authoritative = page.status === 'complete' ? page.commits[0]?.commit : undefined;
+      if (preBaseline && page.status !== 'complete') {
+        throw new HistoricalNotificationRejectedError('historical_commit_unavailable');
+      }
       if (page.status !== 'complete' || !validateCompleteCommitRange(request, page).valid
         || page.commits.length !== 1 || !authoritative || !isDeepStrictEqual(authoritative, notification)) {
+        if (preBaseline) throw new HistoricalNotificationRejectedError('historical_commit_mismatch');
         throw new Error('Rabbit notification does not match the complete indexed source commit.');
       }
-      return authoritative;
+      return { status: 'authoritative', commit: authoritative };
     } catch (error) {
       this.fail(error);
       throw error;
@@ -75,16 +96,15 @@ export class SourceTailPoller {
     try {
       await this.options.reader.initialize();
       await this.options.transport.initialize();
-      let caughtUp = false;
+      let result: SourceTailPass = 'continuation';
       for (let attempt = 0; attempt < (this.options.maxBootstrapPasses ?? 1_000); attempt += 1) {
         if (this.stopping) throw new Error('Source tail bootstrap stopped.');
-        caughtUp = await this.pollOnce();
+        result = await this.pollOnce();
         if (this.stopping) throw new Error('Source tail bootstrap stopped.');
-        if (caughtUp) break;
-        this.fail(new Error('Source tail bootstrap reached bounded page cap; resuming after backoff.'));
+        if (result === 'caught_up') break;
         await this.pauseBootstrap();
       }
-      if (!caughtUp) throw new Error('Source tail bootstrap exceeded bounded page attempts.');
+      if (result !== 'caught_up') throw new Error('Source tail bootstrap exceeded bounded page attempts.');
       if (this.stopping) throw new Error('Source tail bootstrap stopped.');
       this.healthy = true;
     } catch (error) {
@@ -116,16 +136,16 @@ export class SourceTailPoller {
     this.healthy = false;
   }
 
-  async pollOnce(): Promise<boolean> {
-    if (this.stopping) return false;
-    let caughtUp = true;
+  async pollOnce(): Promise<SourceTailPass> {
+    if (this.stopping) return 'continuation';
+    let result: SourceTailPass = 'caught_up';
     for (const sourceId of this.options.sourceIds) {
-      if (!await this.pollSource(sourceId)) caughtUp = false;
+      if (await this.pollSource(sourceId) === 'continuation') result = 'continuation';
     }
-    return caughtUp;
+    return result;
   }
 
-  private async pollSource(sourceId: string): Promise<boolean> {
+  private async pollSource(sourceId: string): Promise<SourceTailPass> {
     const { record, highWatermark } = await this.options.transport.probeRegisteredSource(this.options.queueId, sourceId,
       'durable_queue_and_dlx_asserted');
     const binding = await this.options.transport.readQueueBinding(this.options.queueId);
@@ -136,6 +156,7 @@ export class SourceTailPoller {
     let after = await this.options.transport.loadCoveredThrough(this.options.queueId, sourceId);
     if (after === null) after = record.lastAcceptedSequence;
     if (after > highWatermark) throw new Error('Indexed source history precedes durable coverage.');
+    const initial = after;
     for (let page = 0; !this.stopping && after < highWatermark && page < this.options.maxPages; page += 1) {
       const request = { sourceId, afterSequence: after === -1 ? null : after, throughSequence: highWatermark,
         maxCommits: this.options.maxCommits, maxBytes: this.options.maxBytes };
@@ -150,15 +171,17 @@ export class SourceTailPoller {
         after = entry.commit.commitSequence;
       }
     }
-    return !this.stopping && after === highWatermark;
+    if (after < highWatermark && after === initial && !this.stopping) {
+      throw new Error(`Indexed source tail stalled without progress for ${sourceId}.`);
+    }
+    return !this.stopping && after === highWatermark ? 'caught_up' : 'continuation';
   }
 
   private schedule(): void {
     if (!this.running) return;
     this.timer = setTimeout(() => {
-      this.active = this.pollOnce().then((caughtUp) => {
-        if (!caughtUp && !this.stopping) this.fail(new Error('Source tail reached bounded page cap; resuming after backoff.'));
-        else this.healthy = !this.stopping && caughtUp;
+      this.active = this.pollOnce().then(() => {
+        this.healthy = !this.stopping;
       }).catch((error: unknown) => { if (!this.stopping) this.fail(error); });
       void this.active.finally(() => { this.active = undefined; this.schedule(); });
     }, this.options.intervalMs);

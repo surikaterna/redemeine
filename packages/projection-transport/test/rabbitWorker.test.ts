@@ -8,6 +8,7 @@ import {
   type RabbitSettlementEvent
 } from '../src';
 import type { SourceTailPoller } from '../src/sourceTailPoller';
+import { HistoricalNotificationRejectedError } from '../src/sourceTailPoller';
 
 const commitWire = {
   id: '22222222-2222-4222-8222-222222222222',
@@ -32,7 +33,7 @@ class FakeChannel implements ProjectionRabbitChannel {
   handler: ((message: RabbitDelivery | null) => void) | undefined;
   readonly lifecycle: string[] = [];
   readonly ack = jest.fn<(message: RabbitDelivery) => void>();
-  readonly nack = jest.fn<(message: RabbitDelivery, allUpTo: false, requeue: false) => void>();
+  readonly nack = jest.fn<(message: RabbitDelivery, allUpTo: false, requeue: boolean) => void>();
   readonly cancel = jest.fn(async () => undefined);
   readonly assertExchange = jest.fn(async () => { this.lifecycle.push('exchange'); });
   readonly checkQueue = jest.fn(async () => { this.lifecycle.push('checkQueue'); });
@@ -68,7 +69,7 @@ function workerOptions(source: ProjectionCommitCoordinator, events: RabbitSettle
     prefetch: 4, maxMessageBytes: 64_000, retryBackoffMs: 1_000, now: () => 10_000, coordinator: source,
     initialize: jest.fn(async () => undefined),
     sourceTail: { bootstrap: jest.fn(async () => undefined), start: jest.fn(), stop: jest.fn(async () => undefined),
-      isHealthy: () => true, readAuthoritativeNotification: jest.fn(async (commit: ProjectionSourceCommit) => commit) } as unknown as SourceTailPoller,
+      isHealthy: () => true, resolveNotification: jest.fn(async (commit: ProjectionSourceCommit) => ({ status: 'authoritative', commit })) } as unknown as SourceTailPoller,
     scheduleRetry: jest.fn(async () => ({ durable: true as const, notBeforeEpochMs: 11_000 })),
     observeSettlement: jest.fn(async (event: RabbitSettlementEvent) => { events.push(event); })
   };
@@ -96,6 +97,110 @@ describe('ProjectionRabbitWorker', () => {
     expect(channel.ack).not.toHaveBeenCalled();
     expect(options.scheduleRetry).toHaveBeenCalled();
     await worker.stop();
+  });
+  it('DLQs an unavailable pre-B none commit with an explicit reason, without retry publishing', async () => {
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed));
+    const worker = new ProjectionRabbitWorker({ ...options, sourceTail: { ...options.sourceTail,
+      resolveNotification: async () => { throw new HistoricalNotificationRejectedError('historical_commit_unavailable'); }
+    } as SourceTailPoller });
+    await worker.start(channel);
+    const message = delivery();
+    channel.deliver(message);
+    await flush();
+    expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+    expect(options.observeSettlement).toHaveBeenCalledWith(expect.objectContaining({ kind: 'permanent',
+      reason: 'historical_commit_unavailable' }));
+    expect(options.coordinator.process).not.toHaveBeenCalled();
+    expect(options.scheduleRetry).not.toHaveBeenCalled();
+    await worker.stop();
+  });
+
+  it('joins a notification read and requeues before any coordinator dispatch on stop', async () => {
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed));
+    let entered!: () => void; let release!: () => void;
+    const begun = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const worker = new ProjectionRabbitWorker({ ...options, sourceTail: { ...options.sourceTail,
+      resolveNotification: async (source: ProjectionSourceCommit) => { entered(); await gate;
+        return { status: 'authoritative' as const, commit: source }; }
+    } as SourceTailPoller });
+    await worker.start(channel);
+    const message = delivery();
+    channel.deliver(message);
+    await begun;
+    const stopping = worker.stop();
+    await flush();
+    expect(options.coordinator.process).not.toHaveBeenCalled();
+    expect(options.sourceTail.stop).not.toHaveBeenCalled();
+    release();
+    await stopping;
+    expect(channel.nack).toHaveBeenCalledWith(message, false, true);
+    expect(channel.ack).not.toHaveBeenCalled();
+    const restarted = new ProjectionRabbitWorker(workerOptions(options.coordinator));
+    const restartedChannel = new FakeChannel();
+    await restarted.start(restartedChannel);
+    restartedChannel.deliver(delivery(2));
+    await flush();
+    expect(restartedChannel.ack).toHaveBeenCalledTimes(1);
+    await restarted.stop();
+  });
+
+  it('joins startup bootstrap and never begins consume after a stop', async () => {
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed));
+    let entered!: () => void; let release!: () => void;
+    const begun = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const tail = { ...options.sourceTail, bootstrap: async () => { entered(); await gate; } } as SourceTailPoller;
+    const worker = new ProjectionRabbitWorker({ ...options, sourceTail: tail });
+    const starting = worker.start(channel);
+    await begun;
+    const stopping = worker.stop();
+    release();
+    await expect(starting).rejects.toThrow('stopped during startup');
+    await stopping;
+    expect(channel.consume).not.toHaveBeenCalled();
+    expect(options.coordinator.process).not.toHaveBeenCalled();
+  });
+
+  it('joins an already-started atomic commit and ACKs once before stopping tail', async () => {
+    const channel = new FakeChannel();
+    let entered!: () => void; let release!: () => void;
+    const begun = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const source = { process: jest.fn(async () => { entered(); await gate; return completed; }) } as ProjectionCommitCoordinator;
+    const options = workerOptions(source);
+    const worker = new ProjectionRabbitWorker(options);
+    await worker.start(channel);
+    channel.deliver(delivery());
+    await begun;
+    let stopped = false;
+    const stopping = worker.stop().then(() => { stopped = true; });
+    await flush();
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(channel.ack).toHaveBeenCalledTimes(1);
+    expect(channel.nack).not.toHaveBeenCalled();
+    expect(options.sourceTail.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not deadlock when settlement observation requests stop', async () => {
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed));
+    let worker!: ProjectionRabbitWorker;
+    let finished!: () => void;
+    const stopped = new Promise<void>((resolve) => { finished = resolve; });
+    worker = new ProjectionRabbitWorker({ ...options, observeSettlement: async (event) => {
+      if (event.kind === 'ack') { await worker.stop(); finished(); }
+    } });
+    await worker.start(channel);
+    channel.deliver(delivery());
+    await stopped;
+    expect(channel.ack).toHaveBeenCalledTimes(1);
+    expect(channel.nack).not.toHaveBeenCalled();
   });
   it('asserts durable DLX/manual-ack lifecycle and ACKs exactly once after completion', async () => {
     const channel = new FakeChannel();
