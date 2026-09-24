@@ -4,7 +4,7 @@ import {
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionCommitDefinition, ProjectionMigrationCommitReceipt, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
   ProjectionCommitCoordinatorOptions,
@@ -32,9 +32,6 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     throw new Error('maxConflictRetries must be a nonnegative safe integer.');
   }
   if (options.manifest.queueId !== options.queueBindingId) throw new Error('Registry manifest queue does not match queue binding.');
-  if (options.migrationReplay && options.sourceOrder.acceptedBaseline) {
-    throw new Error('Migration receipt replay cannot use accepted-baseline source admission.');
-  }
   if (options.manifest.definitions.length !== options.definitions.length) throw new Error('Runtime registry must exactly match the immutable manifest.');
   for (const [index, entry] of options.definitions.entries()) {
     const manifest = options.manifest.definitions[index];
@@ -98,7 +95,7 @@ type GapResult =
   | { status: 'failed'; outcome: ProjectionCommitCoordinatorOutcome };
 
 async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: ProjectionSourceCommit,
-  migrationReceipt?: ProjectionMigrationCommitReceipt, startAnchor = 0,
+  startAnchor = 0,
   strategyScope?: readonly { stableSingleTarget: boolean }[]): Promise<{
   outcome: ProjectionCommitCoordinatorOutcome;
   complete: boolean;
@@ -110,28 +107,11 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
         outcome: { status: 'deduplicated', attempts: 0 } });
       continue;
     }
-    if (migrationReceipt) {
-      if (!runtime.options.store.loadProjectionMigrationReceipt) {
-        return { complete: false, outcome: failureOutcome('Store does not support atomic migration receipts.', [], results, true) };
-      }
-      const sequence = await runtime.options.store.loadProjectionMigrationReceipt({ migrationId: migrationReceipt.migrationId,
-        manifestDigest: migrationReceipt.manifestDigest, projectionName: entry.definition.name, projectionGeneration: entry.generation,
-        sourceId: migrationReceipt.sourceId });
-      if (sequence === migrationReceipt.finalSequence) {
-        results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation,
-          outcome: { status: 'deduplicated', attempts: 0 } });
-        continue;
-      }
-      if (sequence !== migrationReceipt.expectedSequence) {
-        return { complete: false, outcome: failureOutcome('Migration receipt sequence conflict.', [], results, true) };
-      }
-    }
     const outcome = await executeProjectionDefinition({
       definition: entry.definition, generation: entry.generation, store: runtime.options.store,
       lanes: runtime.targetLanes, maxConflictRetries: runtime.maxConflictRetries,
       stableSingleTarget: strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
       ...(strategyScope ? { baselineSequence: startAnchor - 1 } : {}),
-      ...(migrationReceipt ? { migrationReceipt } : {})
     }, commit);
     results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation, outcome });
     if (outcome.status === 'committed' || outcome.status === 'deduplicated') continue;
@@ -203,7 +183,6 @@ async function processCandidates<TState>(
   sourceCommit: ProjectionSourceCommit,
   candidates: readonly ProjectionSourceCommit[],
   initialCoverage: number | null,
-  migrationReceipt?: ProjectionMigrationCommitReceipt,
   startAnchor = 0,
   strategyScope?: readonly { stableSingleTarget: boolean }[]
 ): Promise<ProjectionCommitCoordinatorOutcome> {
@@ -211,10 +190,7 @@ async function processCandidates<TState>(
   const allResults: ProjectionDefinitionCommitResult[] = [];
   let expectedCoverage = initialCoverage;
   for (const candidate of candidates) {
-    const candidateReceipt = migrationReceipt ? { ...migrationReceipt,
-      expectedSequence: candidate.commitSequence === 0 ? null : candidate.commitSequence - 1,
-      finalSequence: candidate.commitSequence } : undefined;
-    const dispatched = await dispatch(runtime, candidate, candidateReceipt, startAnchor, strategyScope);
+    const dispatched = await dispatch(runtime, candidate, startAnchor, strategyScope);
     allResults.push(...dispatched.outcome.definitions);
     if (!dispatched.complete) return { ...dispatched.outcome, processedSequences: processed, definitions: allResults };
     processed.push(candidate.commitSequence);
@@ -229,7 +205,6 @@ async function processCandidates<TState>(
 async function processInSourceLane<TState>(
   runtime: CoordinatorRuntime<TState>,
   commit: ProjectionSourceCommit,
-  migrationReceipt?: ProjectionMigrationCommitReceipt,
   pollOnly = false
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   let admission;
@@ -257,7 +232,7 @@ async function processInSourceLane<TState>(
     return failureOutcome('Missing or mismatched immutable source start anchor.', [], [], true);
   }
   if (commit.commitSequence < startAnchor) {
-    const dispatched = await dispatch(runtime, commit, migrationReceipt, startAnchor, admission.strategyScope);
+    const dispatched = await dispatch(runtime, commit, startAnchor, admission.strategyScope);
     return dispatched.complete
       ? { status: 'completed', processedSequences: [], definitions: dispatched.outcome.definitions }
       : dispatched.outcome;
@@ -266,10 +241,10 @@ async function processInSourceLane<TState>(
   if (pollOnly && commit.commitSequence <= (after ?? -1)) {
     return { status: 'completed', processedSequences: [], definitions: [] };
   }
-  if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, migrationReceipt, startAnchor, admission.strategyScope);
+  if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, startAnchor, admission.strategyScope);
   const recovered = await readGap(runtime, commit, after);
   if (recovered.status === 'failed') return recovered.outcome;
-  return processCandidates(runtime, commit, [...recovered.commits, commit], coverage, migrationReceipt, startAnchor, admission.strategyScope);
+  return processCandidates(runtime, commit, [...recovered.commits, commit], coverage, startAnchor, admission.strategyScope);
 }
 
 function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TState>): CoordinatorRuntime<TState> {
@@ -288,17 +263,6 @@ function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   };
 }
 
-async function processMigrationCommit<TState>(runtime: CoordinatorRuntime<TState>, commit: ProjectionSourceCommit,
-  receipt: ProjectionMigrationCommitReceipt): Promise<ProjectionCommitCoordinatorOutcome> {
-  if (receipt.sourceId !== commit.streamId || receipt.finalSequence !== commit.commitSequence) {
-    return failureOutcome('Migration receipt does not match the source commit.', [], [], true);
-  }
-  const dispatched = await dispatch(runtime, commit, receipt);
-  return dispatched.complete
-    ? { status: 'completed', processedSequences: [commit.commitSequence], definitions: dispatched.outcome.definitions }
-    : dispatched.outcome;
-}
-
 export function createProjectionCommitCoordinator<TState = unknown>(
   options: ProjectionCommitCoordinatorOptions<TState>
 ): ProjectionCommitCoordinator {
@@ -312,15 +276,14 @@ export function createProjectionCommitCoordinator<TState = unknown>(
         return Promise.resolve(outcome);
       }
       if (migrationReceipt) {
-        if (!options.migrationReplay) return Promise.resolve(failureOutcome('Migration receipt bypass is forbidden in serving runtime.', [], [], true));
-        return runtime.sourceLanes.run([commit.streamId], () => processMigrationCommit(runtime, commit, migrationReceipt));
+        return Promise.resolve(failureOutcome('Migration receipt bypass is disabled.', [], [], true));
       }
-      return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit, migrationReceipt));
+      return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit));
     },
     processPolled(commit) {
       const validation = validateProjectionSourceCommit(commit);
       if (!validation.valid) return Promise.resolve(failureOutcome('Invalid polled commit.', [], [], true));
-      return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit, undefined, true));
+      return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit, true));
     }
   };
 }

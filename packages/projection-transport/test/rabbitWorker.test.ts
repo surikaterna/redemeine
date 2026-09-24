@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { ProjectionCommitCoordinator, ProjectionCommitCoordinatorOutcome } from '@redemeine/projection-worker-core';
+import type { ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import {
   ProjectionRabbitWorker,
   type ProjectionRabbitChannel,
@@ -67,7 +68,7 @@ function workerOptions(source: ProjectionCommitCoordinator, events: RabbitSettle
     prefetch: 4, maxMessageBytes: 64_000, retryBackoffMs: 1_000, now: () => 10_000, coordinator: source,
     initialize: jest.fn(async () => undefined),
     sourceTail: { bootstrap: jest.fn(async () => undefined), start: jest.fn(), stop: jest.fn(async () => undefined),
-      isHealthy: () => true } as unknown as SourceTailPoller,
+      isHealthy: () => true, readAuthoritativeNotification: jest.fn(async (commit: ProjectionSourceCommit) => commit) } as unknown as SourceTailPoller,
     scheduleRetry: jest.fn(async () => ({ durable: true as const, notBeforeEpochMs: 11_000 })),
     observeSettlement: jest.fn(async (event: RabbitSettlementEvent) => { events.push(event); })
   };

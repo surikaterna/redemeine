@@ -157,7 +157,8 @@ export class ProjectionRabbitWorker {
     }
     let outcome: ProjectionCommitCoordinatorOutcome;
     try {
-      outcome = await this.options.coordinator.process(decoded.commit);
+      const authoritative = await this.options.sourceTail.readAuthoritativeNotification(decoded.commit);
+      outcome = await this.options.coordinator.process(authoritative);
     } catch (error) {
       await this.retry(channel, message, error instanceof Error ? error.message : 'Coordinator failed.');
       return;

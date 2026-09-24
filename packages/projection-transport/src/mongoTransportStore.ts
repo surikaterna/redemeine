@@ -89,7 +89,6 @@ function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceC
 }
 
 export class MongoProjectionTransportStore implements ProjectionSourceOrderPort, ProjectionQueueRegistryBindingPort {
-  readonly acceptedBaseline = true as const;
   private readiness: Promise<void> | undefined;
   private readonly now: () => string;
 

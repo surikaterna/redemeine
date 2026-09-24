@@ -200,13 +200,12 @@ function coordinator(
   store: ProjectionSourceCommitStorePort<State>,
   order = orderPort(),
   reader = rangeReader(),
-  anchors: Readonly<Record<string, number>> = {},
-  migrationReplay = false
+  anchors: Readonly<Record<string, number>> = {}
 ) {
   return createProjectionCommitCoordinator({
     queueBindingId: 'orders', manifest: manifest(definitions.map((item) => item.name), anchors),
     definitions: definitions.map((item) => ({ generation: 'g1', definition: item })),
-    store, ...(migrationReplay ? { migrationReplay: true as const } : {}), sourceOrder: {
+    store, sourceOrder: {
       ...order,
       async admitForDispatch(sourceCommit, queueId) {
         const admission = await order.admitForDispatch(sourceCommit, queueId);
@@ -436,7 +435,7 @@ describe('source ordering and scheduling', () => {
     const store = new MemoryCommitStore();
     const runtime = coordinator([definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'poll' })], store);
     const receipt = { migrationId: 'old', manifestDigest: HASH, sourceId: SOURCE_A, expectedSequence: null, finalSequence: 0 };
-    expect(await runtime.process(commit(0), receipt)).toMatchObject({ status: 'terminal', reason: expect.stringContaining('forbidden') });
+    expect(await runtime.process(commit(0), receipt)).toMatchObject({ status: 'terminal', reason: expect.stringContaining('disabled') });
     expect(store.requests).toHaveLength(0);
     expect((await runtime.processPolled(commit(0))).status).toBe('completed');
     expect((await runtime.processPolled(commit(0))).processedSequences).toEqual([]);
@@ -445,10 +444,17 @@ describe('source ordering and scheduling', () => {
     expect(store.requests).toHaveLength(2);
   });
 
-  test('cannot opt an accepted-baseline order port into migration replay', () => {
-    const order = { ...orderPort(), acceptedBaseline: true as const };
-    expect(() => coordinator([definition('own', { strategy: 'own_record' })], new MemoryCommitStore(),
-      order, rangeReader(), {}, true)).toThrow('cannot use accepted-baseline');
+  test('untagged order wrapper cannot opt into migration replay', async () => {
+    const order = { ...orderPort() };
+    const store = new MemoryCommitStore();
+    const sourceCommit = commit(0);
+    const options = { queueBindingId: 'orders', manifest: manifest(['own']),
+      definitions: [{ generation: 'g1', definition: definition('own', { strategy: 'own_record' }) }],
+      store, sourceOrder: order, rangeReader: rangeReader(), maxCommits: 2, maxBytes: 1000 };
+    const runtime = createProjectionCommitCoordinator({ ...options, migrationReplay: true });
+    expect(await runtime.process(sourceCommit, { migrationId: 'old', manifestDigest: HASH, sourceId: SOURCE_A,
+      expectedSequence: null, finalSequence: 0 })).toMatchObject({ status: 'terminal' });
+    expect(store.requests).toHaveLength(0);
   });
 
   test('own-record no-target first turn persists the post-baseline sequence', async () => {
@@ -634,23 +640,18 @@ describe('source ordering and scheduling', () => {
     expect(unknown).toHaveBeenCalledTimes(1);
   });
 
-  test('atomically receipts and definition-scoped skips migration replay for all strategies', async () => {
+  test('migration replay cannot skip admission for any strategy', async () => {
     const store = new MemoryCommitStore(); const order = orderPort();
     const runtime = coordinator([
       definition('inline', { strategy: 'in_document' }),
       definition('own', { strategy: 'own_record' }),
       definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'migration receipt' })
-    ], store, order, rangeReader(), {}, true);
+    ], store, order);
     const sourceCommit = commit(0);
     const receipt = { migrationId: 'migration', manifestDigest: `sha256:${'a'.repeat(64)}` as const,
       sourceId: sourceCommit.streamId, expectedSequence: null, finalSequence: 0 };
-    expect((await runtime.process(sourceCommit, receipt)).status).toBe('completed');
-    const writes = store.requests.length;
-    const repeated = await runtime.process(sourceCommit, receipt);
-    expect(repeated).toMatchObject({ status: 'completed', definitions: [
-      { outcome: { status: 'deduplicated' } }, { outcome: { status: 'deduplicated' } }, { outcome: { status: 'deduplicated' } }
-    ] });
-    expect(store.requests).toHaveLength(writes);
+    expect((await runtime.process(sourceCommit, receipt)).status).toBe('terminal');
+    expect(store.requests).toHaveLength(0);
     expect(order.advances).toEqual([]);
   });
 });
