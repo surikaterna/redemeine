@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { receiptPackageVersions } from './installed-versions.mjs';
 
 const MONGO_IMAGE = 'mongo:7.0.16';
 const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine';
@@ -138,6 +139,15 @@ async function collectVersions() {
   const rabbit = await docker(['exec', resources.rabbit, 'rabbitmqctl', 'version']);
   const mongoImage = await docker(['image', 'inspect', '--format', '{{.Id}}', MONGO_IMAGE]);
   const rabbitImage = await docker(['image', 'inspect', '--format', '{{.Id}}', RABBIT_IMAGE]);
+  const mongoContainerImage = await docker(['inspect', '--format', '{{.Image}}', resources.mongo]);
+  const rabbitContainerImage = await docker(['inspect', '--format', '{{.Image}}', resources.rabbit]);
+  if (mongoContainerImage.stdout !== mongoImage.stdout || rabbitContainerImage.stdout !== rabbitImage.stdout) {
+    throw new Error('Running service image digest does not match the pinned image');
+  }
+  if (!mongo.stdout.startsWith(`db version v${MONGO_IMAGE.split(':')[1]}`) ||
+      rabbit.stdout.split('\n').at(-1) !== RABBIT_IMAGE.split(':')[1].split('-')[0]) {
+    throw new Error('Running service version does not match the pinned image tag');
+  }
   versions = {
     mongo: mongo.stdout.split('\n')[0],
     rabbitmq: rabbit.stdout.split('\n').at(-1),
@@ -149,7 +159,7 @@ async function collectVersions() {
     mongodbAdapter: '3.1.0',
     dispatcher: '0.2.0',
     amqplib: '2.0.1',
-    mongodbDriver: '6.21.0'
+    ...receiptPackageVersions()
   };
 }
 
