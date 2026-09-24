@@ -28,6 +28,7 @@ import {
 } from './realStackFixtures';
 import type { ICommit } from 'tapeworm';
 import { publishConfirmedRetry } from './confirmedRetryPublisher';
+import { waitForSettlement } from './settlementWait';
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -172,10 +173,7 @@ async function run(): Promise<void> {
     }
   });
   await worker.start(adaptChannel(channel));
-  await Promise.race([
-    settled,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Child settlement timeout.')), 30_000))
-  ]);
+  await waitForSettlement(settled, 30_000);
   await worker.stop();
   await channel.close();
   await rabbit.close();

@@ -301,6 +301,37 @@ describe('ProjectionRabbitWorker', () => {
     expect(events.at(-1)?.kind).toBe('retry');
   });
 
+  it('retries an indexed-tail miss on a configured source once, after confirmed publication, then stops', async () => {
+    const events: RabbitSettlementEvent[] = [];
+    const channel = new FakeChannel();
+    const options = workerOptions(coordinator(completed), events);
+    let confirm!: () => void;
+    const sequenceTwo = { ...commitWire, id: '22222222-2222-4222-8222-222222222224', commitSequence: 2,
+      events: [{ ...commitWire.events[0], id: '33333333-3333-4333-8333-333333333335', version: 3 }] };
+    const message = { ...delivery(1, sequenceTwo), properties: { messageId: sequenceTwo.id } };
+    options.scheduleRetry.mockImplementation(async () => {
+      await new Promise<void>((resolve) => { confirm = resolve; });
+      return { durable: true, notBeforeEpochMs: 11_000 };
+    });
+    const tail = { ...options.sourceTail, resolveNotification: async () => {
+      throw new Error('Rabbit source notification is beyond the indexed source tail.');
+    } } as SourceTailPoller;
+    const worker = new ProjectionRabbitWorker({ ...options, sourceTail: tail });
+    await worker.start(channel);
+    channel.deliver(message);
+    await flush();
+    expect(channel.nack).not.toHaveBeenCalled();
+    expect(options.coordinator.process).not.toHaveBeenCalled();
+    confirm();
+    await flush();
+    expect(options.scheduleRetry).toHaveBeenCalledTimes(1);
+    expect(channel.nack).toHaveBeenCalledTimes(1);
+    expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+    expect(events).toEqual([expect.objectContaining({ kind: 'retry', reason: expect.stringContaining('indexed source tail') })]);
+    await worker.stop();
+    expect(channel.cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves settlement uncertain instead of hot-looping when durable backoff is not proven', async () => {
     const events: RabbitSettlementEvent[] = [];
     const channel = new FakeChannel();

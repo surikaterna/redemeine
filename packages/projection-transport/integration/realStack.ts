@@ -4,6 +4,7 @@ import { connect, type ConfirmChannel } from 'amqplib';
 import { MongoClient, type Collection } from 'mongodb';
 import EventStore, { type ICommit } from 'tapeworm';
 import MongoTapewormPersistence from 'tapeworm_persistence_store_mongodb';
+import { awaitStackChild, type ChildOutcome } from './childRunner';
 import {
   MongoProjectionTransportStore,
   type ProjectionTransportDocument
@@ -29,6 +30,7 @@ const evidencePath = required('REDEMEINE_EVIDENCE_PATH');
 const gitSha = required('REDEMEINE_GIT_SHA');
 const databaseName = `redemeine_projection_transport_${Date.now()}`;
 const queues: string[] = [];
+const childRuns: ChildOutcome[] = [];
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -55,10 +57,10 @@ async function runChild(
   queue: string,
   expectedSettlement: string,
   crashPoint = ''
-): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+): Promise<ChildOutcome> {
   const child = spawn('pnpm', ['exec', 'tsx', 'integration/realStackChild.ts'], {
     cwd: process.cwd(),
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'pipe'],
     env: {
       ...process.env,
       REDEMEINE_MONGO_URI: mongoUri,
@@ -70,11 +72,9 @@ async function runChild(
       ...(crashPoint ? { REDEMEINE_CRASH_POINT: crashPoint } : {})
     }
   });
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`Child timeout: ${scenario}`)); }, 45_000);
-    child.once('error', reject);
-    child.once('close', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
-  });
+  const outcome = await awaitStackChild(child, scenario, 45_000);
+  childRuns.push(outcome);
+  return outcome;
 }
 
 async function publish(channel: ConfirmChannel, queue: string, body: unknown, messageId: string): Promise<void> {
@@ -200,7 +200,8 @@ async function runPoisonAndRetry(client: MongoClient, channel: ConfirmChannel): 
   const retryQueue = `${databaseName}.retry`;
   queues.push(retryQueue);
   await declareTopology(channel, retryQueue);
-  const missing = { ...tapewormCommit(1, [1]), streamId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+  // The source is configured, but commit 2 has not been persisted: this is a transient indexed-tail miss.
+  const missing = tapewormCommit(2, [1]);
   await publish(channel, retryQueue, missing, missing.id);
   assert((await runChild('retry', retryQueue, 'retry')).code === 0, 'Retry child failed.');
   const retryDepth = (await channel.checkQueue(`${retryQueue}.retry`)).messageCount;
@@ -208,14 +209,21 @@ async function runPoisonAndRetry(client: MongoClient, channel: ConfirmChannel): 
   const db = client.db(databaseName);
   const publication = await db.collection('retryPublications').findOne({ scenario: 'retry' });
   const settlement = await db.collection('settlements').findOne({ scenario: 'retry', kind: 'retry' });
+  assert((await db.collection('settlements').countDocuments({ scenario: 'retry', kind: 'retry' })) === 1,
+    'Retry delivery was NACKed more than once.');
+  assert((await db.collection('retryPublications').countDocuments({ scenario: 'retry' })) === 1,
+    'Retry publisher was invoked more than once.');
+  assert(typeof settlement?.reason === 'string' && settlement.reason.includes('beyond the indexed source tail'),
+    'Retry was not caused by a missing indexed commit on the configured source.');
   assert(publication?.topologyVerified === true, 'Retry topology was not verified by the publisher.');
   assert(publication.persistent === true && publication.mandatory === true, 'Retry publication flags missing.');
   assert(publication.confirmCount === 1 && publication.returnedCount === 0, 'Retry confirmation evidence invalid.');
   assert(publication.confirmedAt instanceof Date, 'Retry confirmation timestamp missing.');
   assert(settlement?.observedAt instanceof Date, 'Retry NACK settlement timestamp missing.');
   assert(publication.confirmedAt <= settlement.observedAt, 'Worker NACK preceded retry confirmation.');
+  const unknownSource = await runUnknownSourceRetry(client, channel);
   return {
-    terminalDlq: true, durableRetryDepth: retryDepth, backoffMs: 60_000,
+    terminalDlq: true, durableRetryDepth: retryDepth, backoffMs: 60_000, unknownSource,
     retryPublisher: {
       persistent: true, mandatory: true, topologyVerified: true,
       confirmCount: publication.confirmCount, returnedCount: publication.returnedCount,
@@ -223,6 +231,25 @@ async function runPoisonAndRetry(client: MongoClient, channel: ConfirmChannel): 
       confirmedAt: publication.confirmedAt, nackObservedAt: settlement.observedAt
     }
   };
+}
+
+async function runUnknownSourceRetry(client: MongoClient, channel: ConfirmChannel): Promise<Record<string, unknown>> {
+  const scenario = 'unknown_source';
+  const queue = `${databaseName}.${scenario}`;
+  const sourceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  queues.push(queue);
+  await declareTopology(channel, queue);
+  const unknown = { ...tapewormCommit(1, [1]), streamId: sourceId };
+  await publish(channel, queue, unknown, unknown.id);
+  assert((await runChild(scenario, queue, 'retry')).code === 0, 'Unknown-source child failed.');
+  const stores = await scenarioCollections(client, scenario);
+  const settlement = await stores.settlements.findOne({ scenario, kind: 'retry' });
+  assert(settlement?.reason === 'Unconfigured Rabbit source UUID.', 'Unknown source was not explicitly rejected.');
+  assert(await stores.transport.findOne({ kind: 'coverage', sourceId }) === null, 'Unknown source advanced coverage.');
+  assert((await stores.settlements.countDocuments({ scenario, kind: 'ack' })) === 0, 'Unknown source was ACKed.');
+  const retryDepth = (await channel.checkQueue(`${queue}.retry`)).messageCount;
+  assert(retryDepth === 1, 'Unknown-source durable retry was not retained.');
+  return { rejected: true, retryDepth, reason: settlement.reason };
 }
 
 async function verifyReducedRegistry(client: MongoClient, queue: string): Promise<boolean> {
@@ -328,7 +355,7 @@ async function run(): Promise<void> {
     qualification: 'scenarios_complete_cleanup_pending', gitSha,
     versions: { tapeworm: '0.6.0', tapewormMongo: '3.1.0', mongodbDriver: '6.18.0', mongoServer: server.version, rabbitServer: rabbitVersion, amqplib: '2.0.1' },
     images: { mongo: process.env.REDEMEINE_MONGO_DIGEST, rabbit: process.env.REDEMEINE_RABBIT_DIGEST },
-    databaseName, queues, multiEventCount: persisted[0]?.events.length,
+    databaseName, queues, childRuns, multiEventCount: persisted[0]?.events.length,
     slicedQueryObserved: true, normal, crashes, gap, poison, reducedRegistryRejected,
     index: { name: rangeIndex.name, key: rangeIndex.key, unique: rangeIndex.unique, collation: rangeIndex.collation ?? 'default' },
     query: { filter: { streamId: SOURCE_ID, commitSequence: { $gt: -1, $lte: 1 } }, sort: { commitSequence: 1 }, hint: rangeIndex.name, limit: 3, batchSize: 1, winningPlan: explain.queryPlanner?.winningPlan },
