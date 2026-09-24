@@ -30,6 +30,7 @@ function valid(row, tuple, scoped) {
     ...(scoped ? ['v2Revision'] : [])]) && row.aggregateType === tuple.aggregateType &&
     row.aggregateId === tuple.aggregateId && row.targetDocId === tuple.targetDocId &&
     typeof row.createdAt === 'string' && !Number.isNaN(Date.parse(row.createdAt)) &&
+    new Date(row.createdAt).toISOString() === row.createdAt &&
     (!scoped || row.v2Revision === 0);
 }
 if (!Number.isSafeInteger(maxLinkRows) || maxLinkRows < 2 * inventory.length || maxLinkRows > 100000)

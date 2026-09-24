@@ -50,6 +50,11 @@ function exactKeys(value: unknown, keys: readonly string[]): boolean {
     && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 }
 
+function isIsoInstant(value: unknown): value is string {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return false;
+  return new Date(value).toISOString() === value;
+}
+
 export function collectionNamespace(collection: Pick<Collection<Document>, 'dbName' | 'collectionName'>): string {
   if (!collection.dbName || !collection.collectionName || collection.dbName.includes('.')
     || collection.collectionName.includes('.')) throw new Error('Invalid Mongo collection namespace.');
@@ -67,8 +72,8 @@ export function validateApproval(manifest: ProjectionQueueRegistryManifest, reco
     || record.manifestId !== manifest.manifestId || record.registryGeneration !== manifest.registryGeneration
     || record.transportNamespace !== transportNamespace || record.approvalNamespace !== approvalNamespace
     || approvalNamespace === transportNamespace
-    || typeof record.approvedBy !== 'string' || !record.approvedBy || typeof record.approvedAt !== 'string'
-    || !Number.isFinite(Date.parse(record.approvedAt)) || !Array.isArray(record.inventories)
+    || typeof record.approvedBy !== 'string' || !record.approvedBy || !isIsoInstant(record.approvedAt)
+    || !Array.isArray(record.inventories)
     || record.inventories.length !== definitions.length || resources.length !== definitions.length
     || record.digest !== approvalDigest(record) || !transportNamespace) throw new Error('Invalid durable joined approval.');
   const scopes = new Set<string>();
@@ -108,8 +113,7 @@ export function validateApproval(manifest: ProjectionQueueRegistryManifest, reco
 function validLink(row: Document, tuple: JoinedLinkTuple, scoped: boolean): boolean {
   const fields = ['_id', 'aggregateType', 'aggregateId', 'targetDocId', 'createdAt', ...(scoped ? ['v2Revision'] : [])];
   return exactKeys(row, fields) && row.aggregateType === tuple.aggregateType && row.aggregateId === tuple.aggregateId
-    && row.targetDocId === tuple.targetDocId && typeof row.createdAt === 'string'
-    && Number.isFinite(Date.parse(row.createdAt)) && (!scoped || row.v2Revision === 0);
+    && row.targetDocId === tuple.targetDocId && isIsoInstant(row.createdAt) && (!scoped || row.v2Revision === 0);
 }
 
 export async function verifyInitialLinks(item: ApprovedJoinedInventory, resource: JoinedInventory,
