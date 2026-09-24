@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
 import { connect, type ConfirmChannel } from 'amqplib';
 import { MongoClient, type Collection } from 'mongodb';
@@ -31,6 +32,7 @@ const gitSha = required('REDEMEINE_GIT_SHA');
 const databaseName = `redemeine_projection_transport_${Date.now()}`;
 const queues: string[] = [];
 const childRuns: ChildOutcome[] = [];
+const tsxCli = createRequire(import.meta.url).resolve('tsx/cli');
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -58,8 +60,9 @@ async function runChild(
   expectedSettlement: string,
   crashPoint = ''
 ): Promise<ChildOutcome> {
-  const child = spawn('pnpm', ['exec', 'tsx', 'integration/realStackChild.ts'], {
+  const child = spawn(process.execPath, [tsxCli, 'integration/realStackChild.ts'], {
     cwd: process.cwd(),
+    detached: true,
     stdio: ['inherit', 'inherit', 'pipe'],
     env: {
       ...process.env,

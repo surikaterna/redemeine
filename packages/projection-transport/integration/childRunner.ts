@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import { reapChildGroup } from './childProcessGroup';
 
 export interface ChildOutcome {
   scenario: string;
@@ -8,8 +9,25 @@ export interface ChildOutcome {
   stderr: string;
 }
 
-/** A bounded stderr excerpt survives both a normal exit and a timed-out child. */
-export function awaitStackChild(child: ChildProcess, scenario: string, timeoutMs: number,
+function closeOutcome(child: ChildProcess, scenario: string, now: () => number, started: number,
+  stderr: () => string): Promise<ChildOutcome> {
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ scenario, code, signal, elapsedMs: now() - started, stderr: stderr() }));
+  });
+}
+
+async function waitForClose(closed: Promise<ChildOutcome>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([closed.then(() => undefined), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Child did not close after process-group termination.')), 2_500);
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+/** Preserve bounded stderr and await child reaping before reporting a timed-out scenario. */
+export async function awaitStackChild(child: ChildProcess, scenario: string, timeoutMs: number,
   now: () => number = Date.now, writeStderr: (chunk: string) => void = (chunk) => process.stderr.write(chunk)
 ): Promise<ChildOutcome> {
   const started = now();
@@ -20,35 +38,22 @@ export function awaitStackChild(child: ChildProcess, scenario: string, timeoutMs
     stderr = `${stderr}${chunk}`.slice(-8_192);
   };
   child.stderr?.on('data', onData);
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    const cleanup = (): void => {
-      clearTimeout(timer);
-      child.off('close', onClose);
-      child.off('error', onError);
-      child.stderr?.off('data', onData);
-    };
-    const fail = (reason: string): void => {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      reject(new Error(`${scenario}: ${reason}; elapsedMs=${now() - started}; stderr=${stderr}`));
-    };
-    const onError = (error: Error): void => fail(error.message);
-    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      resolve({ scenario, code, signal, elapsedMs: now() - started, stderr });
-    };
-    const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch (error) {
-        fail(`child timeout and kill failed: ${error instanceof Error ? error.message : String(error)}`);
-        return;
-      }
-      fail('child timeout');
-    }, timeoutMs);
-    child.once('error', onError);
-    child.once('close', onClose);
-  });
+  const closed = closeOutcome(child, scenario, now, started, () => stderr);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const deadline = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), timeoutMs); });
+    const outcome = await Promise.race([closed, deadline]);
+    if (outcome === 'timeout') {
+      const failures: string[] = [];
+      try { await reapChildGroup(child, 250, true); } catch (error) { failures.push(String(error)); }
+      try { await waitForClose(closed); } catch (error) { failures.push(String(error)); }
+      throw new Error(`${scenario}: child timeout; elapsedMs=${now() - started}; stderr=${stderr}`
+        + (failures.length ? `; cleanup=${failures.join(', ')}` : ''));
+    }
+    await reapChildGroup(child, 250);
+    return outcome;
+  } finally {
+    if (timer) clearTimeout(timer);
+    child.stderr?.off('data', onData);
+  }
 }

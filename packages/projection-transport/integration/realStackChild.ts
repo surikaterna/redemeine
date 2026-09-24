@@ -1,5 +1,5 @@
-import { connect } from 'amqplib';
-import { MongoClient } from 'mongodb';
+import { connect, type ConfirmChannel } from 'amqplib';
+import { MongoClient, type Db } from 'mongodb';
 import type {
   CommitProjectionSourceCommitRequest,
   LoadProjectionSourceCommitSnapshotRequest,
@@ -15,7 +15,9 @@ import {
   ProjectionRabbitWorker,
   SourceTailPoller,
   type AcceptedBaseline,
-  type ProjectionTransportDocument
+  type ProjectionTransportDocument,
+  type ProjectionRabbitRetryReceipt,
+  type RabbitDelivery
 } from '../src';
 import {
   adaptChannel,
@@ -28,6 +30,7 @@ import {
 } from './realStackFixtures';
 import type { ICommit } from 'tapeworm';
 import { publishConfirmedRetry } from './confirmedRetryPublisher';
+import { cleanupChildResources } from './childCleanup';
 import { waitForSettlement } from './settlementWait';
 
 const required = (name: string): string => {
@@ -103,11 +106,30 @@ class ObservedSourceOrder implements ProjectionSourceOrderPort {
   }
 }
 
-async function run(): Promise<void> {
-  const mongo = new MongoClient(mongoUri);
-  const rabbit = await connect(rabbitUri);
-  const channel = await rabbit.createConfirmChannel();
-  await mongo.connect();
+function acceptedBaseline(manifest: ReturnType<typeof stackManifest>): AcceptedBaseline {
+  return { version: 2, kind: 'existing', queueBindingId: queue,
+    manifestId: manifest.manifestId, registryGeneration: manifest.registryGeneration,
+    sourceId: SOURCE_ID, lastAcceptedSequence: -1, startAnchor: 0, operator: 'real-stack-operator',
+    acceptedAt: '2026-09-24T00:00:00Z', acknowledgesUnverifiedHistoryAndCutoff: true,
+    oldWriterStoppedBy: 'real-stack-operator', oldWriterStoppedAt: '2026-09-24T00:00:00Z',
+    queueTailReadinessReference: 'indexed-source-polling',
+    strategyScope: stackDefinitions().map(({ generation, definition }) => ({ projectionName: definition.name,
+      generation, strategy: definition.deduplication.strategy,
+      stableSingleTarget: definition.deduplication.strategy === 'in_document' })) };
+}
+
+async function scheduleConfirmedRetry(db: Db, channel: ConfirmChannel, message: RabbitDelivery,
+  reason: string, minimumDelayMs: number): Promise<ProjectionRabbitRetryReceipt> {
+  const publication = await publishConfirmedRetry(channel, `${queue}.retry`, message.content, {
+    messageId: message.properties.messageId ?? `${scenario}-retry`,
+    expiration: String(minimumDelayMs), headers: { reason }
+  });
+  await db.collection('retryPublications').insertOne({ scenario, queue: `${queue}.retry`,
+    persistent: true, mandatory: true, topologyVerified: true, ...publication });
+  return { durable: true, notBeforeEpochMs: Date.now() + minimumDelayMs };
+}
+
+function createWorker(mongo: MongoClient, channel: ConfirmChannel, finish: () => void): ProjectionRabbitWorker {
   const db = mongo.db(databaseName);
   const projectionStore = new MongoProjectionStore<StackState>({
     collection: db.collection(`${scenario}_documents`),
@@ -130,24 +152,11 @@ async function run(): Promise<void> {
     sourceOrder: new ObservedSourceOrder(transport, mongo), rangeReader,
     maxCommits: 100, maxBytes: 1_048_576, maxGapPages: 10, maxConflictRetries: 2
   });
-  const baseline: AcceptedBaseline = { version: 2, kind: 'existing', queueBindingId: queue,
-    manifestId: manifest.manifestId, registryGeneration: manifest.registryGeneration,
-    sourceId: SOURCE_ID, lastAcceptedSequence: -1, startAnchor: 0, operator: 'real-stack-operator',
-    acceptedAt: '2026-09-24T00:00:00Z', acknowledgesUnverifiedHistoryAndCutoff: true,
-    oldWriterStoppedBy: 'real-stack-operator', oldWriterStoppedAt: '2026-09-24T00:00:00Z',
-    queueTailReadinessReference: 'indexed-source-polling',
-    strategyScope: stackDefinitions().map(({ generation, definition }) => ({ projectionName: definition.name,
-      generation, strategy: definition.deduplication.strategy,
-      stableSingleTarget: definition.deduplication.strategy === 'in_document' })) };
+  const baseline = acceptedBaseline(manifest);
   const sourceTail = new SourceTailPoller({ queueId: queue, sourceIds: [SOURCE_ID],
     reader: rangeReader, transport, coordinator, maxCommits: 100, maxBytes: 1_048_576,
     maxPages: 10, intervalMs: 200, onFailure: (error) => process.stderr.write(`source tail: ${error.message}\n`) });
-  await channel.assertQueue(`${queue}.retry`, {
-    durable: true, deadLetterExchange: '', deadLetterRoutingKey: queue
-  });
-  let finish!: () => void;
-  const settled = new Promise<void>((resolve) => { finish = resolve; });
-  const worker = new ProjectionRabbitWorker({
+  return new ProjectionRabbitWorker({
     queue, deadLetterExchange: `${queue}.dlx`, deadLetterRoutingKey: 'failed',
     prefetch: 1, maxMessageBytes: 1_048_576, retryBackoffMs: 60_000,
     coordinator,
@@ -156,28 +165,35 @@ async function run(): Promise<void> {
       await transport.initialize(); await rangeReader.initialize();
       if (!await transport.readAcceptedBaseline(queue, SOURCE_ID)) await transport.installAcceptedBaseline(baseline);
     },
-    scheduleRetry: async (message, reason, minimumDelayMs) => {
-      const publication = await publishConfirmedRetry(channel, `${queue}.retry`, message.content, {
-        messageId: message.properties.messageId ?? `${scenario}-retry`,
-        expiration: String(minimumDelayMs), headers: { reason }
-      });
-      await db.collection('retryPublications').insertOne({
-        scenario, queue: `${queue}.retry`, persistent: true, mandatory: true,
-        topologyVerified: true, ...publication
-      });
-      return { durable: true, notBeforeEpochMs: Date.now() + minimumDelayMs };
-    },
+    scheduleRetry: (message, reason, minimumDelayMs) => scheduleConfirmedRetry(db, channel, message, reason, minimumDelayMs),
     observeSettlement: async (event) => {
       await db.collection('settlements').insertOne({ scenario, ...event, observedAt: new Date() });
       if (event.kind === expectedSettlement) finish();
     }
   });
-  await worker.start(adaptChannel(channel));
-  await waitForSettlement(settled, 30_000);
-  await worker.stop();
-  await channel.close();
-  await rabbit.close();
-  await mongo.close();
+}
+
+async function run(): Promise<void> {
+  const mongo = new MongoClient(mongoUri);
+  let rabbit: Awaited<ReturnType<typeof connect>> | undefined;
+  let channel: ConfirmChannel | undefined;
+  let worker: ProjectionRabbitWorker | undefined;
+  let failure: unknown;
+  try {
+    await mongo.connect();
+    rabbit = await connect(rabbitUri);
+    channel = await rabbit.createConfirmChannel();
+    await channel.assertQueue(`${queue}.retry`, { durable: true, deadLetterExchange: '', deadLetterRoutingKey: queue });
+    let finish!: () => void;
+    const settled = new Promise<void>((resolve) => { finish = resolve; });
+    worker = createWorker(mongo, channel, finish);
+    await worker.start(adaptChannel(channel));
+    await waitForSettlement(settled, 30_000);
+  } catch (error) {
+    failure = error;
+  }
+  await cleanupChildResources({ mongo, ...(rabbit ? { rabbit } : {}),
+    ...(channel ? { channel } : {}), ...(worker ? { worker } : {}) }, failure);
 }
 
 await run();
