@@ -16,7 +16,8 @@ export {
   type ProjectionTransportDocument
 } from './mongoTransportStore';
 export { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
-export { inventoryDigest, type JoinedInventory, type JoinedLinkTuple } from './joinedCutover';
+export { approvalDigest, type JoinedApproval, type ApprovedJoinedInventory, type JoinedInventory,
+  type JoinedLinkTuple } from './joinedCutover';
 export { SourceTailPoller, type SourceTailPollerOptions } from './sourceTailPoller';
 export {
   type ProjectionRabbitChannel,

@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
-import type { Collection, Document } from 'mongodb';
+import type { ClientSession, Collection, Document } from 'mongodb';
 import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
-import { inventoryDigest, validateInventories, verifyInitialLinks, type JoinedInventory } from '../src/joinedCutover';
+import { approvalDigest, validateApproval, verifyInitialLinks, type JoinedApproval,
+  type JoinedInventory } from '../src/joinedCutover';
 
 const hash = `sha256:${'a'.repeat(64)}` as const;
 const manifest: ProjectionQueueRegistryManifest = { version: 1, manifestId: hash, queueId: 'queue-A', registryGeneration: 'g1',
@@ -11,52 +12,66 @@ const manifest: ProjectionQueueRegistryManifest = { version: 1, manifestId: hash
   ] };
 
 function fixture() {
-  const rows = new Map<string, Record<string, unknown>>();
-  const docs = new Map<string, Record<string, unknown>>([['target', { _id: 'target', state: { count: 1 } }]]);
-  rows.set('Order:one', { _id: 'Order:one', targetDocId: 'target' });
-  rows.set('A\u0000g1\u0000Order\u0000one', { _id: 'A\u0000g1\u0000Order\u0000one', aggregateType: 'Order',
-    aggregateId: 'one', targetDocId: 'target', createdAt: new Date().toISOString(), v2Revision: 0 });
-  const links = { find: () => ({ toArray: async () => [...rows.values()].filter((row) => !String(row._id).includes('\u0000')) }),
-    findOne: async ({ _id }: { _id: string }) => rows.get(_id) ?? null } as unknown as Collection<Document & { _id: string }>;
-  const documents = { findOne: async ({ _id }: { _id: string }) => docs.get(_id) ?? null } as unknown as
+  const now = new Date().toISOString();
+  const rows = new Map<string, Document>([
+    ['Order:one', { _id: 'Order:one', aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target', createdAt: now }],
+    ['A\u0000g1\u0000Order\u0000one', { _id: 'A\u0000g1\u0000Order\u0000one', aggregateType: 'Order',
+      aggregateId: 'one', targetDocId: 'target', createdAt: now, v2Revision: 0 }]
+  ]);
+  const docs = new Map<string, Document>([['target', { _id: 'target', state: { count: 1 } }]]);
+  const links = { dbName: 'projection', collectionName: 'A_links', find: () => ({
+    toArray: async () => [...rows.values()].sort((left, right) => String(left._id).localeCompare(String(right._id))) }) } as unknown as
     Collection<Document & { _id: string }>;
-  const draft = { projectionName: 'A', generation: 'g1', links, documents,
-    expected: [{ aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target' }],
-    maxLegacyRows: 2, approvedBy: 'operator', approvedAt: '2026-09-24T00:00:00Z' };
-  const item: JoinedInventory = { ...draft, approvedDigest: inventoryDigest(manifest, draft) };
-  return { rows, docs, item };
+  const documents = { dbName: 'projection', collectionName: 'A_documents',
+    findOne: async ({ _id }: { _id: string }) => docs.get(_id) ?? null } as unknown as Collection<Document & { _id: string }>;
+  const item: JoinedInventory = { projectionName: 'A', generation: 'g1', links, documents };
+  const draft = { _id: 'joined_approval:queue-A', kind: 'joined_approval' as const, queueBindingId: 'queue-A',
+    manifestId: hash, registryGeneration: 'g1', approvalNamespace: 'projection.joined_approvals',
+    transportNamespace: 'projection.A_transport',
+    approvedBy: 'operator', approvedAt: now, inventories: [{ projectionName: 'A', generation: 'g1',
+      linkNamespace: 'projection.A_links', documentNamespace: 'projection.A_documents',
+      maxLinkRows: 3, expected: [{ aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target' }] }] };
+  const approval: JoinedApproval = { ...draft, digest: approvalDigest(draft) };
+  return { rows, docs, item, approval };
 }
 
-describe('joined cutover admission', () => {
-  it('requires exact approved manifest inventory and strategy-independent scoped links', async () => {
-    const { item } = fixture();
-    expect(() => validateInventories(manifest, [])).toThrow('Missing');
-    expect(() => validateInventories(manifest, [item, item])).toThrow();
-    expect(() => validateInventories(manifest, [{ ...item, generation: 'g2' }])).toThrow();
-    expect(() => validateInventories(manifest, [{ ...item, approvedDigest: hash }])).toThrow();
-    validateInventories(manifest, [item]);
-    await expect(verifyInitialLinks(item)).resolves.toBeUndefined();
+describe('durable joined cutover approval', () => {
+  it('requires separately provisioned exact scope, database/collections and digest', async () => {
+    const { item, approval } = fixture();
+    const namespace = 'projection.joined_approvals';
+    expect(() => validateApproval(manifest, null, [item], 'projection.A_transport', namespace)).toThrow();
+    expect(() => validateApproval(manifest, approval, [], 'projection.A_transport', namespace)).toThrow();
+    expect(() => validateApproval(manifest, approval, [item], 'projection.wrong', namespace)).toThrow();
+    expect(() => validateApproval(manifest, { ...approval, digest: hash }, [item], 'projection.A_transport', namespace)).toThrow();
+    expect(() => validateApproval(manifest, approval, [{ ...item, links: {
+      ...item.links, dbName: 'projection', collectionName: 'other_links' } as JoinedInventory['links'] }],
+    'projection.A_transport', namespace)).toThrow();
+    validateApproval(manifest, approval, [item], 'projection.A_transport', namespace);
+    await expect(verifyInitialLinks(approval.inventories[0]!, item, {} as ClientSession)).resolves.toBeUndefined();
   });
 
-  it('rejects omission, wrong scoped target, tombstone, absent target, unexpected legacy key and bound overflow', async () => {
-    const { item, rows, docs } = fixture();
-    const scopedId = 'A\u0000g1\u0000Order\u0000one';
-    rows.delete(scopedId);
-    await expect(verifyInitialLinks(item)).rejects.toThrow('scoped');
-    rows.set(scopedId, { _id: scopedId, targetDocId: 'wrong', v2Revision: 0, createdAt: new Date().toISOString() });
-    await expect(verifyInitialLinks(item)).rejects.toThrow('scoped');
-    rows.set(scopedId, { _id: scopedId, aggregateType: 'Order', aggregateId: 'one', targetDocId: null,
-      v2Revision: 1, createdAt: new Date().toISOString() });
-    await expect(verifyInitialLinks(item)).rejects.toThrow('scoped');
-    rows.set(scopedId, { _id: scopedId, aggregateType: 'Order', aggregateId: 'one', targetDocId: 'target',
-      v2Revision: 0, createdAt: new Date().toISOString() });
+  it('rejects unknown scoped/legacy, malformed, missing, wrong target and bounded overflow', async () => {
+    const { rows, docs, item, approval } = fixture();
+    const verify = () => verifyInitialLinks(approval.inventories[0]!, item, {} as ClientSession);
+    rows.set('other\u0000g2\u0000Order\u0000one', { _id: 'other\u0000g2\u0000Order\u0000one' });
+    await expect(verify()).rejects.toThrow('differs');
+    rows.delete('other\u0000g2\u0000Order\u0000one');
+    rows.set('Order:extra', { _id: 'Order:extra' });
+    await expect(verify()).rejects.toThrow('differs');
+    rows.set('Order:more', { _id: 'Order:more' });
+    await expect(verify()).rejects.toThrow('bounded');
+    rows.delete('Order:more'); rows.delete('Order:extra');
+    const legacy = rows.get('Order:one')!;
+    rows.set('Order:one', { ...legacy, aggregateType: 'Wrong' });
+    await expect(verify()).rejects.toThrow('conflicting');
+    rows.set('Order:one', legacy);
+    const scoped = rows.get('A\u0000g1\u0000Order\u0000one')!;
+    rows.set('A\u0000g1\u0000Order\u0000one', { ...scoped, targetDocId: null });
+    await expect(verify()).rejects.toThrow('conflicting');
+    rows.set('A\u0000g1\u0000Order\u0000one', scoped);
     docs.delete('target');
-    await expect(verifyInitialLinks(item)).rejects.toThrow('target');
+    await expect(verify()).rejects.toThrow('target');
     docs.set('target', { _id: 'target', state: {}, tombstone: true });
-    await expect(verifyInitialLinks(item)).rejects.toThrow('target');
-    rows.set('Order:extra', { _id: 'Order:extra', targetDocId: 'target' });
-    await expect(verifyInitialLinks(item)).rejects.toThrow('legacy');
-    rows.set('Order:more', { _id: 'Order:more', targetDocId: 'target' });
-    await expect(verifyInitialLinks(item)).rejects.toThrow('bounded');
+    await expect(verify()).rejects.toThrow('target');
   });
 });
