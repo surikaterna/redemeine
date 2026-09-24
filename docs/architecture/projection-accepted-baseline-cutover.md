@@ -15,7 +15,8 @@ transactions compare the original legacy state, checkpoint and updatedAt; detect
 are rejected for operator inspection. Subsequent writes detect changed checkpoint/updatedAt
 when possible; unchanged or deliberately restored values cannot prove an old writer absent.
 
-Configure a **finite explicit list of UUIDs**; no all-source enumeration or dynamic birth inference.
+Configure a **nonempty finite explicit list of UUIDs** bound to the same immutable queue; no
+all-source enumeration or dynamic birth inference. A no-op poller cannot enable Rabbit consumption.
 An operator may explicitly accept B=-1 on an existing empty source with its historical risk.
 New-source birth registration is disabled until authoritative creation and absent-target evidence
 can be checked. A seq0 commit or a queue delivery alone is not such evidence.
@@ -31,7 +32,10 @@ the producer or its availability. Rabbit is a latency/redelivery optimization, *
 that every commit was published. Before consume and again on reconnect, bounded complete indexed
 pages from B+1 through H pass through the normal coordinator with coverage advanced only after
 all definitions finish. A paced poll of the same configured sources continues during operation:
-new commits can be picked up even when no Rabbit notification arrives. Poll errors, expired
+new commits can be picked up even when no Rabbit notification arrives. Every direct Rabbit
+delivery, including an already-covered redelivery, must match a complete indexed authoritative
+source commit before definition dispatch; a missing/mismatched notification is retried and alerted,
+never folded or ACKed as supplied by the broker. Poll errors, bounded-page shortfalls, expired
 history and incompatible queue topology stop healthy admission/ACK and require alert/recovery;
 retries are bounded and paced. A network outage longer than source retention may invalidate the
 guarantee. Conditional post-cutover delivery requires an accurate B, immutable retained complete
@@ -46,7 +50,8 @@ deployment assumptions; no joins, fanout or link mutation. For `own_record`, the
 transaction writes the final sequence for this source even if it has no target. `none` has no
 projection dedupe marker or checkpoint. Handler effects must remain pure and warnings advisory.
 
-This foundation does **not** retire the prior draft migration path or its receipts. Serving
-coordinators reject migration receipt bypass; the isolated migration CLI opts in while pending
-independent audit. Do not run mixed writers. No sharding, saga,
+This foundation does **not** delete the prior draft migration modules or receipts. The old CLI
+is disabled and all coordinators reject migration receipt bypass; historical migration artifacts
+are retained solely for independent audit before the deletion slice. Do not run mixed writers.
+No sharding, saga,
 SDK removal, automatic spill, or historical verification is included.

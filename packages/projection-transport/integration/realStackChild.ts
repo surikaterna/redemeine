@@ -14,6 +14,7 @@ import {
   MongoProjectionTransportStore,
   ProjectionRabbitWorker,
   SourceTailPoller,
+  type AcceptedBaseline,
   type ProjectionTransportDocument
 } from '../src';
 import {
@@ -85,7 +86,6 @@ class ObservedStore implements ProjectionSourceCommitStorePort<StackState> {
 }
 
 class ObservedSourceOrder implements ProjectionSourceOrderPort {
-  readonly acceptedBaseline = true as const;
   constructor(
     private readonly delegate: MongoProjectionTransportStore,
     private readonly client: MongoClient
@@ -129,7 +129,16 @@ async function run(): Promise<void> {
     sourceOrder: new ObservedSourceOrder(transport, mongo), rangeReader,
     maxCommits: 100, maxBytes: 1_048_576, maxGapPages: 10, maxConflictRetries: 2
   });
-  const sourceTail = new SourceTailPoller({ queueId: queue, sourceIds: scenario === 'retry' || scenario === 'terminal' ? [] : [SOURCE_ID],
+  const baseline: AcceptedBaseline = { version: 2, kind: 'existing', queueBindingId: queue,
+    manifestId: manifest.manifestId, registryGeneration: manifest.registryGeneration,
+    sourceId: SOURCE_ID, lastAcceptedSequence: -1, startAnchor: 0, operator: 'real-stack-operator',
+    acceptedAt: '2026-09-24T00:00:00Z', acknowledgesUnverifiedHistoryAndCutoff: true,
+    oldWriterStoppedBy: 'real-stack-operator', oldWriterStoppedAt: '2026-09-24T00:00:00Z',
+    queueTailReadinessReference: 'indexed-source-polling',
+    strategyScope: stackDefinitions().map(({ generation, definition }) => ({ projectionName: definition.name,
+      generation, strategy: definition.deduplication.strategy,
+      stableSingleTarget: definition.deduplication.strategy === 'in_document' })) };
+  const sourceTail = new SourceTailPoller({ queueId: queue, sourceIds: [SOURCE_ID],
     reader: rangeReader, transport, coordinator, maxCommits: 100, maxBytes: 1_048_576,
     maxPages: 10, intervalMs: 200, onFailure: (error) => process.stderr.write(`source tail: ${error.message}\n`) });
   await channel.assertQueue(`${queue}.retry`, {
@@ -142,7 +151,10 @@ async function run(): Promise<void> {
     prefetch: 1, maxMessageBytes: 1_048_576, retryBackoffMs: 60_000,
     coordinator,
     sourceTail,
-    initialize: async () => { await transport.initialize(); await rangeReader.initialize(); },
+    initialize: async () => {
+      await transport.initialize(); await rangeReader.initialize();
+      if (!await transport.readAcceptedBaseline(queue, SOURCE_ID)) await transport.installAcceptedBaseline(baseline);
+    },
     scheduleRetry: async (message, reason, minimumDelayMs) => {
       const publication = await publishConfirmedRetry(channel, `${queue}.retry`, message.content, {
         messageId: message.properties.messageId ?? `${scenario}-retry`,

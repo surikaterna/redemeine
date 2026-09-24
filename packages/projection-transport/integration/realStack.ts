@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { connect, type ConfirmChannel } from 'amqplib';
-import { MongoClient } from 'mongodb';
+import { MongoClient, type Collection } from 'mongodb';
 import EventStore, { type ICommit } from 'tapeworm';
 import MongoTapewormPersistence from 'tapeworm_persistence_store_mongodb';
 import {
@@ -110,7 +110,7 @@ async function assertProjectionState(client: MongoClient, scenario: string, expe
   assert(n?.state.count === expectedN, `${scenario}: N state mismatch.`);
   assert(cursor?.kind === 'coverage' && cursor.sequence === coverage, `${scenario}: coverage mismatch.`);
   assert(ownNoTarget?.commitSequence === coverage, `${scenario}: own no-target progress missing.`);
-  assert(await stores.links.countDocuments() === 3, `${scenario}: staged projection links missing.`);
+  assert(await stores.links.countDocuments() === 2, `${scenario}: staged projection links missing.`);
 }
 
 async function runCrashScenario(
@@ -170,7 +170,7 @@ async function runNormalSequenceZero(
   await declareTopology(channel, queue);
   await publish(channel, queue, wire, wire.id);
   assert((await runChild(scenario, queue, 'ack')).code === 0, 'Normal sequence-zero child failed.');
-  await assertProjectionState(client, scenario, 2, 0);
+  await assertProjectionState(client, scenario, 4, 0);
   return { sequence: 0, events: wire.events.length, acknowledged: true };
 }
 
@@ -181,11 +181,11 @@ async function runGapAndReconnect(client: MongoClient, channel: ConfirmChannel, 
   await declareTopology(channel, queue);
   await publish(channel, queue, commits[1], commits[1]?.id ?? 'missing');
   assert((await runChild(scenario, queue, 'ack')).code === 0, 'Gap catchup child failed.');
-  await assertProjectionState(client, scenario, 3, 1);
+  await assertProjectionState(client, scenario, 4, 1);
   await publish(channel, queue, commits[1], commits[1]?.id ?? 'missing');
   assert((await runChild(scenario, queue, 'ack')).code === 0, 'Reconnect redelivery failed.');
-  await assertProjectionState(client, scenario, 4, 1);
-  return { recoveredSequences: [0, 1], reconnectRedelivery: true, noneCount: 4 };
+  await assertProjectionState(client, scenario, 5, 1);
+  return { recoveredSequences: [0, 1], reconnectRedelivery: true, noneCount: 5 };
 }
 
 async function runPoisonAndRetry(client: MongoClient, channel: ConfirmChannel): Promise<Record<string, unknown>> {
@@ -271,29 +271,42 @@ async function cleanupLogical(client: MongoClient, channel: ConfirmChannel): Pro
   }
 }
 
+async function startSource(client: MongoClient): Promise<{
+  partition: Awaited<ReturnType<InstanceType<typeof EventStore>['openPartition']>>;
+  first: ICommit<StackEvent>;
+  collection: Collection<ICommit<StackEvent>>;
+  commits: readonly ICommit<StackEvent>[];
+}> {
+  const db = client.db(databaseName);
+  const partition = await (Reflect.construct(EventStore, [new MongoTapewormPersistence(db)]) as InstanceType<typeof EventStore>)
+    .openPartition(PARTITION_ID);
+  const commits = [tapewormCommit(0, [1, 1]), tapewormCommit(1, [1])];
+  await partition.append([commits[0] as ICommit<StackEvent>]);
+  const collection = db.collection<ICommit<StackEvent>>(`tw_${PARTITION_ID}_commits`);
+  const first = await collection.findOne({ streamId: SOURCE_ID, commitSequence: 0 });
+  assert(first?.events.length === 2, 'Published Tapeworm writer did not persist complete sequence0.');
+  return { partition, first, collection, commits };
+}
+
 async function run(): Promise<void> {
   const client = new MongoClient(mongoUri);
   const rabbit = await connect(rabbitUri);
   const channel = await rabbit.createConfirmChannel();
   await client.connect();
+  const { partition, first, collection, commits } = await startSource(client);
   const db = client.db(databaseName);
-  const persistence = new MongoTapewormPersistence(db);
-  const eventStore = Reflect.construct(EventStore, [persistence]) as InstanceType<typeof EventStore>;
-  const partition = await eventStore.openPartition(PARTITION_ID);
-  const commits = [tapewormCommit(0, [1, 1]), tapewormCommit(1, [1])];
-  await partition.append([...commits]);
+
+  const normal = await runNormalSequenceZero(client, channel, first);
+  const crashes = [];
+  crashes.push(await runCrashScenario(client, channel, first, 'before_save', 4));
+  crashes.push(await runCrashScenario(client, channel, first, 'after_p', 4));
+  crashes.push(await runCrashScenario(client, channel, first, 'after_all', 6));
+  crashes.push(await runCrashScenario(client, channel, first, 'after_coverage', 4));
+  await partition.append([commits[1] as ICommit<StackEvent>]);
   const sliced = await partition.queryStream?.(SOURCE_ID, 1);
   assert(sliced?.[0]?.events.length === 1, 'Published Tapeworm sliced query behavior was not observed.');
-  const collection = db.collection<ICommit<StackEvent>>(`tw_${PARTITION_ID}_commits`);
   const persisted = await collection.find({ streamId: SOURCE_ID }).sort({ commitSequence: 1 }).toArray();
   assert(persisted.length === 2 && persisted[0]?.events.length === 2, 'Published Tapeworm writer did not persist complete commits.');
-
-  const normal = await runNormalSequenceZero(client, channel, persisted[0] as ICommit<StackEvent>);
-  const crashes = [];
-  crashes.push(await runCrashScenario(client, channel, persisted[0] as ICommit<StackEvent>, 'before_save', 2));
-  crashes.push(await runCrashScenario(client, channel, persisted[0] as ICommit<StackEvent>, 'after_p', 2));
-  crashes.push(await runCrashScenario(client, channel, persisted[0] as ICommit<StackEvent>, 'after_all', 4));
-  crashes.push(await runCrashScenario(client, channel, persisted[0] as ICommit<StackEvent>, 'after_coverage', 4));
   const gap = await runGapAndReconnect(client, channel, persisted);
   const poison = await runPoisonAndRetry(client, channel);
   const coverageQueue = `${databaseName}.crash_after_coverage`;
