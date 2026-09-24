@@ -24,7 +24,6 @@ export interface V2State {
   links: Map<string, V2Link>;
   ownProgress: Map<string, number>;
   ownBaselines: Map<string, number>;
-  migrationReceipts: Map<string, { manifestDigest: string; sequence: number }>;
 }
 
 export interface ProjectionDedupeWarning {
@@ -41,9 +40,6 @@ const documentKey = (name: string, generation: string, target: string): string =
 const linkKey = (name: string, generation: string, type: string, id: string): string =>
   `${scope(name, generation)}\u0000${type}\u0000${id}`;
 const ownKey = (name: string, generation: string, source: string): string => `${scope(name, generation)}\u0000${source}`;
-export const migrationReceiptKey = (migrationId: string, name: string, generation: string, source: string): string =>
-  `${migrationId}\u0000${scope(name, generation)}\u0000${source}`;
-
 const recordsEqual = (left: Readonly<Record<string, number>>, right: Readonly<Record<string, number>>): boolean => {
   const keys = Object.keys(left);
   return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
@@ -90,12 +86,6 @@ const validateLinks = <TState>(request: CommitProjectionSourceCommitRequest<TSta
 };
 
 const validateProgress = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): string | null => {
-  if (request.migrationReceipt) {
-    const receipt = request.migrationReceipt;
-    const actual = state.migrationReceipts.get(migrationReceiptKey(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId));
-    if (actual && actual.manifestDigest !== receipt.manifestDigest) return 'migration receipt manifest conflict';
-    if ((actual?.sequence ?? null) !== receipt.expectedSequence) return 'migration receipt sequence conflict';
-  }
   if (request.progress.strategy === 'none') return null;
   if (request.progress.strategy === 'own_record') {
     const source = request.progress.source;
@@ -137,8 +127,7 @@ const cloneV2State = (current: V2State): V2State => ({
   documentMetadata: new Map(current.documentMetadata),
   links: new Map(current.links),
   ownProgress: new Map(current.ownProgress),
-  ownBaselines: new Map(current.ownBaselines),
-  migrationReceipts: new Map(current.migrationReceipts)
+  ownBaselines: new Map(current.ownBaselines)
 });
 
 const applyDocuments = <TState>(
@@ -185,12 +174,6 @@ const applyProgress = <TState>(request: CommitProjectionSourceCommitRequest<TSta
     const key = ownKey(request.projectionName, request.projectionGeneration, source.sourceId);
     if (source.expectedSequence === null && source.baselineSequence !== undefined) state.ownBaselines.set(key, source.baselineSequence);
     state.ownProgress.set(key, source.finalSequence);
-  }
-  if (request.migrationReceipt) {
-    const receipt = request.migrationReceipt;
-    state.migrationReceipts.set(migrationReceiptKey(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId), {
-      manifestDigest: receipt.manifestDigest, sequence: receipt.finalSequence
-    });
   }
 };
 

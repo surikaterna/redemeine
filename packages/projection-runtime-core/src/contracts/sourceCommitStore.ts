@@ -1,5 +1,4 @@
 import type { ProjectionSourceCommit } from './sourceCommit';
-import { isProjectionSha256Digest } from './registry';
 import type { ProjectionUuidBase64Url22 } from './uuidCodec';
 
 export interface ProjectionSourceCommitDocument<TState = unknown> {
@@ -58,14 +57,6 @@ export type ProjectionSourceCommitProgress =
   | ProjectionOwnRecordCommitProgress
   | ProjectionNoCommitProgress;
 
-export interface ProjectionMigrationCommitReceipt {
-  migrationId: string;
-  manifestDigest: `sha256:${string}`;
-  sourceId: string;
-  expectedSequence: number | null;
-  finalSequence: number;
-}
-
 export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   version: 1;
   mode: 'atomic-all';
@@ -75,8 +66,6 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   finalDocuments: readonly ProjectionSourceCommitDocument<TState>[];
   stagedLinks: readonly ProjectionSourceCommitLink[];
   progress: ProjectionSourceCommitProgress;
-  /** Migration-only atomic replay checkpoint. Ordinary runtime requests omit this field. */
-  migrationReceipt?: ProjectionMigrationCommitReceipt;
 }
 
 export interface CommitProjectionSourceCommitCommitted {
@@ -107,24 +96,13 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
   commitProjectionSourceCommit(
     request: CommitProjectionSourceCommitRequest<TState>
   ): Promise<CommitProjectionSourceCommitResult>;
-  loadProjectionMigrationReceipt?(request: {
-    migrationId: string;
-    manifestDigest: `sha256:${string}`;
-    projectionName: string;
-    projectionGeneration: string;
-    sourceId: string;
-  }): Promise<number | null>;
 }
 
 export function validateCommitProjectionSourceCommitRelationships<TState>(
   request: CommitProjectionSourceCommitRequest<TState>
 ): string | null {
-  const receipt = request.migrationReceipt;
-  if (receipt && (receipt.migrationId.trim().length === 0 || !isProjectionSha256Digest(receipt.manifestDigest)
-    || receipt.sourceId !== request.commit.streamId || receipt.finalSequence !== request.commit.commitSequence
-    || receipt.expectedSequence !== (receipt.finalSequence === 0 ? null : receipt.finalSequence - 1))) {
-    return 'migration receipt must match the contiguous source commit boundary';
-  }
+  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress'];
+  if (Object.keys(request).some((key) => !allowed.includes(key))) return 'unsupported source commit request fields';
   if (request.progress.strategy === 'own_record' && request.progress.source.baselineSequence !== undefined) {
     const source = request.progress.source;
     const baseline = source.baselineSequence;

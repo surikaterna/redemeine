@@ -34,17 +34,6 @@ export interface ProjectionDedupeRecord {
   acceptedBaselineSequence?: number;
 }
 
-export interface ProjectionMigrationReceiptRecord {
-  _id: string;
-  migrationId: string;
-  manifestDigest: `sha256:${string}`;
-  projectionName: string;
-  projectionGeneration: string;
-  sourceId: string;
-  commitSequence: number;
-  updatedAt: string;
-}
-
 export interface MongoCollectionLike<TDocument extends Document = Document> {
   findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
   updateOne(
@@ -68,7 +57,6 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
   linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
   dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
-  migrationReceiptCollection?: MongoCollectionLike<ProjectionMigrationReceiptRecord>;
   mongoClient: MongoClientLike;
   transactionOptions?: TransactionOptions;
   now?: () => string;

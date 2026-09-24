@@ -4,7 +4,6 @@ import type {
   ProjectionQueueRegistryManifest,
   ProjectionSourceCommit,
   ProjectionSourceCommitStorePort,
-  ProjectionMigrationCommitReceipt,
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 
@@ -47,6 +46,6 @@ export interface ProjectionCommitCoordinatorOptions<TState = unknown> {
 }
 
 export interface ProjectionCommitCoordinator {
-  process(commit: ProjectionSourceCommit, migrationReceipt?: ProjectionMigrationCommitReceipt): Promise<ProjectionCommitCoordinatorOutcome>;
+  process(commit: ProjectionSourceCommit): Promise<ProjectionCommitCoordinatorOutcome>;
   processPolled(commit: ProjectionSourceCommit): Promise<ProjectionCommitCoordinatorOutcome>;
 }

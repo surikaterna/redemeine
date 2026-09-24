@@ -16,7 +16,6 @@ import {
   commitV2,
   deleteV2TargetMetadata,
   loadV2Snapshot,
-  migrationReceiptKey,
   type ProjectionDedupeWarning,
   type V2State
 } from './internal/sourceCommitV2';
@@ -29,7 +28,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
-  private v2: V2State = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map(), migrationReceipts: new Map() };
+  private v2: V2State = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map() };
   private readonly emittedWarnings = new Set<string>();
 
   constructor(private readonly options: { onDedupeWarning?: (warning: ProjectionDedupeWarning) => void } = {}) {}
@@ -86,16 +85,6 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     return execution.result;
   }
 
-  async loadProjectionMigrationReceipt(request: {
-    migrationId: string; manifestDigest: `sha256:${string}`; projectionName: string; projectionGeneration: string; sourceId: string;
-  }): Promise<number | null> {
-    const row = this.v2.migrationReceipts.get(migrationReceiptKey(
-      request.migrationId, request.projectionName, request.projectionGeneration, request.sourceId
-    ));
-    if (row && row.manifestDigest !== request.manifestDigest) throw new Error('Migration receipt manifest conflict.');
-    return row?.sequence ?? null;
-  }
-
   async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
     return this.links.get(`${aggregateType}:${aggregateId}`) ?? null;
   }
@@ -121,7 +110,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     this.documents.clear();
     this.links.clear();
     this.dedupe.clear();
-    this.v2 = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map(), migrationReceipts: new Map() };
+    this.v2 = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map() };
     this.emittedWarnings.clear();
   }
 

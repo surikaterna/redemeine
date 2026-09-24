@@ -269,14 +269,12 @@ export function createProjectionCommitCoordinator<TState = unknown>(
   assertOptions(options);
   const runtime = createRuntime(options);
   return {
-    process(commit, migrationReceipt) {
+    process(commit) {
+      if (arguments.length !== 1) return Promise.resolve(failureOutcome('Unsupported coordinator process arguments.', [], [], true));
       const validation = validateProjectionSourceCommit(commit);
       if (!validation.valid) {
         const outcome = failureOutcome(`Invalid source commit: ${validation.issues.join(',')}`, [], [], true);
         return Promise.resolve(outcome);
-      }
-      if (migrationReceipt) {
-        return Promise.resolve(failureOutcome('Migration receipt bypass is disabled.', [], [], true));
       }
       return runtime.sourceLanes.run([commit.streamId], () => processInSourceLane(runtime, commit));
     },

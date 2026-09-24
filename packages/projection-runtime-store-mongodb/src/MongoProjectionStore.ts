@@ -12,7 +12,7 @@ import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
-import { commitMongoV2, loadMongoV2Snapshot, migrationReceiptId } from './store/sourceCommitV2';
+import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
@@ -116,20 +116,6 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     }
   }
 
-  async loadProjectionMigrationReceipt(request: {
-    migrationId: string;
-    manifestDigest: `sha256:${string}`;
-    projectionName: string;
-    projectionGeneration: string;
-    sourceId: string;
-  }): Promise<number | null> {
-    if (!this.options.migrationReceiptCollection) throw new Error('Migration receipt collection is required.');
-    const _id = migrationReceiptId(request.migrationId, request.projectionName, request.projectionGeneration, request.sourceId);
-    const row = await this.options.migrationReceiptCollection.findOne({ _id });
-    if (row && row.manifestDigest !== request.manifestDigest) throw new Error('Migration receipt manifest conflict.');
-    return row?.commitSequence ?? null;
-  }
-
   async resolveTarget(aggregateType: string, aggregateId: string): Promise<string | null> {
     const row = await this.options.linkCollection.findOne({ _id: `${aggregateType}:${aggregateId}` });
     return row ? row.targetDocId : null;
@@ -179,8 +165,6 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async reconcileUnknownCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
-    const migrationResult = await this.reconcileMigrationReceipt(request);
-    if (migrationResult) return migrationResult;
     if (request.progress.strategy === 'none') {
       this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
@@ -203,28 +187,6 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     );
     this.reportReconciliation(request, 'committed');
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
-  }
-
-  private async reconcileMigrationReceipt(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult | null> {
-    const receipt = request.migrationReceipt;
-    if (!receipt) return null;
-    const sequence = await this.loadProjectionMigrationReceipt({
-      migrationId: receipt.migrationId,
-      manifestDigest: receipt.manifestDigest,
-      projectionName: request.projectionName,
-      projectionGeneration: request.projectionGeneration,
-      sourceId: receipt.sourceId
-    });
-    if (sequence !== receipt.finalSequence) return null;
-    this.reportReconciliation(request, 'committed');
-    return {
-      version: 1,
-      status: 'committed',
-      commitSequence: request.commit.commitSequence,
-      documentRevisions: {},
-      linkRevisions: {},
-      progress: request.progress
-    };
   }
 
   private reconciliationSnapshotMatches(request: CommitProjectionSourceCommitRequest<TState>, snapshot: ProjectionSourceCommitSnapshot<TState>): boolean {

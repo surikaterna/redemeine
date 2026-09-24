@@ -13,7 +13,6 @@ import type {
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
   ProjectionLinkRecord,
-  ProjectionMigrationReceiptRecord
 } from '../src';
 
 type AnyRecord = Record<string, unknown>;
@@ -567,9 +566,6 @@ export const createProjectionLinkCollection = (): InMemoryMongoCollection<Projec
 
 export const createProjectionDedupeCollection = (): InMemoryMongoCollection<ProjectionDedupeRecord> =>
   new InMemoryMongoCollection<ProjectionDedupeRecord>();
-
-export const createProjectionMigrationReceiptCollection = (): InMemoryMongoCollection<ProjectionMigrationReceiptRecord> =>
-  new InMemoryMongoCollection<ProjectionMigrationReceiptRecord>();
 
 type FakeMongoClientOptions = {
   failWithTransactionError?: Error & { code?: number; name?: string };

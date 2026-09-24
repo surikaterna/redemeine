@@ -59,8 +59,7 @@ deployment assumptions; no joins, fanout or link mutation. For `own_record`, the
 transaction writes the final sequence for this source even if it has no target. `none` has no
 projection dedupe marker or checkpoint. Handler effects must remain pure and warnings advisory.
 
-This foundation does **not** delete the prior draft migration modules or receipts. The old CLI
-is disabled and all coordinators reject migration receipt bypass; historical migration artifacts
-are retained solely for independent audit before the deletion slice. Do not run mixed writers.
-No sharding, saga,
-SDK removal, automatic spill, or historical verification is included.
+The prior draft rebuild migration modules, CLI, receipts and generation pointer have been removed.
+Opt-in fresh-generation rebuild is tracked separately as `redemeine-awq1`, not inferred from
+accepted existing documents. Do not run mixed writers. No sharding, saga, SDK removal, automatic
+spill, or historical verification is included.

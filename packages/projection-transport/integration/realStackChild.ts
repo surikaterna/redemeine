@@ -65,12 +65,6 @@ class ObservedStore implements ProjectionSourceCommitStorePort<StackState> {
     return this.delegate.loadProjectionSourceCommitSnapshot(request);
   }
 
-  loadProjectionMigrationReceipt(request: {
-    migrationId: string; manifestDigest: `sha256:${string}`; projectionName: string; projectionGeneration: string; sourceId: string;
-  }) {
-    return this.delegate.loadProjectionMigrationReceipt(request);
-  }
-
   async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<StackState>) {
     if (crashPoint === 'before_save') await killAt(this.client, crashPoint, { projection: request.projectionName });
     const result = await this.delegate.commitProjectionSourceCommit(request);

@@ -19,9 +19,6 @@ const scope = (name: string, generation: string): string => `${name}\u0000${gene
 const linkId = (name: string, generation: string, type: string, id: string): string =>
   `${scope(name, generation)}\u0000${type}\u0000${id}`;
 const ownId = (name: string, generation: string, source: string): string => `${scope(name, generation)}\u0000${source}`;
-export const migrationReceiptId = (migrationId: string, name: string, generation: string, source: string): string =>
-  `${migrationId}\u0000${scope(name, generation)}\u0000${source}`;
-
 type WriteResult = { matchedCount?: number; upsertedCount?: number };
 
 const recordsEqual = (left: Readonly<Record<string, number>>, right: Readonly<Record<string, number>>): boolean => {
@@ -122,17 +119,6 @@ const validateSnapshot = <TState>(
     }
   }
   return null;
-};
-
-const validateMigrationReceipt = async <TState>(request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>,
-  session: ClientSession): Promise<string | null> => {
-  if (!request.migrationReceipt) return null;
-  if (!options.migrationReceiptCollection) return 'migration receipt collection is required';
-  const receipt = request.migrationReceipt;
-  const _id = migrationReceiptId(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId);
-  const current = await options.migrationReceiptCollection.findOne({ _id }, { session });
-  if (current && current.manifestDigest !== receipt.manifestDigest) return 'migration receipt manifest conflict';
-  return (current?.commitSequence ?? null) === receipt.expectedSequence ? null : 'migration receipt sequence conflict';
 };
 
 const writeDocuments = async <TState>(
@@ -236,19 +222,6 @@ const writeOwnProgress = async <TState>(
   if (!didWrite(result)) throw new Error('projection-v2-occ:own-record');
 };
 
-const writeMigrationReceipt = async <TState>(request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>,
-  session: ClientSession): Promise<void> => {
-  if (!request.migrationReceipt || !options.migrationReceiptCollection) return;
-  const receipt = request.migrationReceipt;
-  const _id = migrationReceiptId(receipt.migrationId, request.projectionName, request.projectionGeneration, receipt.sourceId);
-  const filter = receipt.expectedSequence === null ? { _id, commitSequence: { $exists: false } } : { _id, commitSequence: receipt.expectedSequence };
-  const result = await options.migrationReceiptCollection.updateOne(filter, { $set: { migrationId: receipt.migrationId,
-    manifestDigest: receipt.manifestDigest, projectionName: request.projectionName, projectionGeneration: request.projectionGeneration,
-    sourceId: receipt.sourceId, commitSequence: receipt.finalSequence, updatedAt: options.now?.() ?? new Date().toISOString() } },
-  { upsert: receipt.expectedSequence === null, session });
-  if (!didWrite(result)) throw new Error('projection-v2-occ:migration-receipt');
-};
-
 const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitRequest<TState>): LoadProjectionSourceCommitSnapshotRequest => ({
   projectionName: request.projectionName,
   projectionGeneration: request.projectionGeneration,
@@ -279,14 +252,13 @@ export const commitMongoV2 = async <TState>(
         return { version: 1, status: 'rejected', category: 'terminal', retryable: false,
           reason: 'Legacy document first touch requires original state CAS.' };
       }
-      const failure = validateSnapshot(request, snapshot) ?? await validateMigrationReceipt(request, options, session);
+      const failure = validateSnapshot(request, snapshot);
       if (failure) return failure.startsWith('legacy document changed')
         ? { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: failure }
         : conflict(failure);
       const documentRevisions = await writeDocuments(request, options, session);
       const linkRevisions = await writeLinks(request, options, session);
       await writeOwnProgress(request, options, session);
-      await writeMigrationReceipt(request, options, session);
       return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
     });
   } catch (error) {

@@ -4,7 +4,6 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionMigrationCommitReceipt } from '@redemeine/projection-runtime-core';
 import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult } from './projectionCommitReducer';
@@ -16,7 +15,6 @@ export interface ProjectionDefinitionExecutorOptions<TState> {
   store: ProjectionSourceCommitStorePort<TState>;
   lanes: ProjectionLaneScheduler;
   maxConflictRetries: number;
-  migrationReceipt?: ProjectionMigrationCommitReceipt;
   stableSingleTarget?: boolean;
   baselineSequence?: number;
 }
@@ -100,8 +98,7 @@ async function commitReduction<TState>(
   attempt: number
 ): Promise<AttemptResult<TState>> {
   try {
-    const result = await options.store.commitProjectionSourceCommit({ ...reduction.request,
-      ...(options.migrationReceipt ? { migrationReceipt: options.migrationReceipt } : {}) });
+    const result = await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
       const outcome = result.commitSequence === commit.commitSequence
         ? { status: 'committed' as const, attempts: attempt }

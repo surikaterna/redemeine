@@ -181,7 +181,6 @@ export type {
   ProjectionOwnRecordCommitProgress,
   ProjectionNoCommitProgress,
   ProjectionSourceCommitProgress,
-  ProjectionMigrationCommitReceipt,
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitCommitted,
   CommitProjectionSourceCommitRejected,

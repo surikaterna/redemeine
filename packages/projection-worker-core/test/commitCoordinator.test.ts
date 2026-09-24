@@ -96,7 +96,6 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
   readonly revisions = new Map<string, number>();
   readonly inline = new Map<string, Record<string, number>>();
   readonly own = new Map<string, number>();
-  readonly migrationReceipts = new Map<string, { manifestDigest: string; sequence: number }>();
   conflicts = 0;
 
   async loadProjectionSourceCommitSnapshot(request: Parameters<ProjectionSourceCommitStorePort<State>['loadProjectionSourceCommitSnapshot']>[0]) {
@@ -132,11 +131,6 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
     if (request.progress.strategy === 'own_record') {
       this.own.set(`${request.projectionName}:${request.progress.source.sourceId}`, request.progress.source.finalSequence);
     }
-    if (request.migrationReceipt) {
-      this.migrationReceipts.set(`${request.projectionName}:${request.migrationReceipt.sourceId}`, {
-        manifestDigest: request.migrationReceipt.manifestDigest, sequence: request.migrationReceipt.finalSequence
-      });
-    }
     return {
       version: 1 as const,
       status: 'committed' as const,
@@ -147,13 +141,6 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
     };
   }
 
-  async loadProjectionMigrationReceipt(request: {
-    migrationId: string; manifestDigest: `sha256:${string}`; projectionName: string; projectionGeneration: string; sourceId: string;
-  }): Promise<number | null> {
-    const row = this.migrationReceipts.get(`${request.projectionName}:${request.sourceId}`);
-    if (row && row.manifestDigest !== request.manifestDigest) throw new Error('manifest conflict');
-    return row?.sequence ?? null;
-  }
 }
 
 function orderPort(): ProjectionSourceOrderPort & { advances: number[] } {
@@ -431,11 +418,11 @@ describe('source ordering and scheduling', () => {
     expect(store.loads).toHaveLength(0);
   });
 
-  test('serving rejects migration receipt bypass and polled coverage never repeats none', async () => {
+  test('rejects obsolete process arguments before admission; polled coverage never repeats none', async () => {
     const store = new MemoryCommitStore();
     const runtime = coordinator([definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'poll' })], store);
-    const receipt = { migrationId: 'old', manifestDigest: HASH, sourceId: SOURCE_A, expectedSequence: null, finalSequence: 0 };
-    expect(await runtime.process(commit(0), receipt)).toMatchObject({ status: 'terminal', reason: expect.stringContaining('disabled') });
+    const call = runtime.process as (...args: unknown[]) => ReturnType<typeof runtime.process>;
+    expect(await call(commit(0), { legacyReceipt: true })).toMatchObject({ status: 'terminal', reason: 'Unsupported coordinator process arguments.' });
     expect(store.requests).toHaveLength(0);
     expect((await runtime.processPolled(commit(0))).status).toBe('completed');
     expect((await runtime.processPolled(commit(0))).processedSequences).toEqual([]);
@@ -444,7 +431,7 @@ describe('source ordering and scheduling', () => {
     expect(store.requests).toHaveLength(2);
   });
 
-  test('untagged order wrapper cannot opt into migration replay', async () => {
+  test('untagged order wrapper cannot opt into obsolete replay admission', async () => {
     const order = { ...orderPort() };
     const store = new MemoryCommitStore();
     const sourceCommit = commit(0);
@@ -452,8 +439,8 @@ describe('source ordering and scheduling', () => {
       definitions: [{ generation: 'g1', definition: definition('own', { strategy: 'own_record' }) }],
       store, sourceOrder: order, rangeReader: rangeReader(), maxCommits: 2, maxBytes: 1000 };
     const runtime = createProjectionCommitCoordinator({ ...options, migrationReplay: true });
-    expect(await runtime.process(sourceCommit, { migrationId: 'old', manifestDigest: HASH, sourceId: SOURCE_A,
-      expectedSequence: null, finalSequence: 0 })).toMatchObject({ status: 'terminal' });
+    const call = runtime.process as (...args: unknown[]) => ReturnType<typeof runtime.process>;
+    expect(await call(sourceCommit, { legacyReceipt: true })).toMatchObject({ status: 'terminal' });
     expect(store.requests).toHaveLength(0);
   });
 
@@ -640,18 +627,4 @@ describe('source ordering and scheduling', () => {
     expect(unknown).toHaveBeenCalledTimes(1);
   });
 
-  test('migration replay cannot skip admission for any strategy', async () => {
-    const store = new MemoryCommitStore(); const order = orderPort();
-    const runtime = coordinator([
-      definition('inline', { strategy: 'in_document' }),
-      definition('own', { strategy: 'own_record' }),
-      definition('none', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'migration receipt' })
-    ], store, order);
-    const sourceCommit = commit(0);
-    const receipt = { migrationId: 'migration', manifestDigest: `sha256:${'a'.repeat(64)}` as const,
-      sourceId: sourceCommit.streamId, expectedSequence: null, finalSequence: 0 };
-    expect((await runtime.process(sourceCommit, receipt)).status).toBe('terminal');
-    expect(store.requests).toHaveLength(0);
-    expect(order.advances).toEqual([]);
-  });
 });

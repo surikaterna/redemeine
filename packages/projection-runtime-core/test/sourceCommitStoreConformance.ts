@@ -60,19 +60,16 @@ export const defineProjectionSourceCommitStoreConformance = (
       expect(snapshot.links[0]).toMatchObject({ targetDocumentId: 'target-a', revision: 1 });
     });
 
-    test('persists migration-only receipt atomically for none and advances contiguously', async () => {
+    test('rejects an obsolete receipt field without state or progress writes', async () => {
       const store = await createStore();
-      expect(store.loadProjectionMigrationReceipt).toBeDefined();
-      const first = { ...baseRequest({ strategy: 'none' }), finalDocuments: [], stagedLinks: [],
+      const request = { ...baseRequest({ strategy: 'none' }),
         migrationReceipt: { migrationId: 'migration-one', manifestDigest: `sha256:${'a'.repeat(64)}` as const,
           sourceId, expectedSequence: null, finalSequence: 0 } };
-      expect((await store.commitProjectionSourceCommit(first)).status).toBe('committed');
-      expect(await store.loadProjectionMigrationReceipt!({ migrationId: 'migration-one', manifestDigest: first.migrationReceipt.manifestDigest,
-        projectionName: 'orders', projectionGeneration: 'v2', sourceId })).toBe(0);
-      const second = { ...first, commit: { ...first.commit, commitSequence: 1 }, migrationReceipt: { ...first.migrationReceipt, expectedSequence: 0, finalSequence: 1 } };
-      expect((await store.commitProjectionSourceCommit(second)).status).toBe('committed');
-      expect(await store.loadProjectionMigrationReceipt!({ migrationId: 'migration-one', manifestDigest: first.migrationReceipt.manifestDigest,
-        projectionName: 'orders', projectionGeneration: 'v2', sourceId })).toBe(1);
+      expect(await store.commitProjectionSourceCommit(request)).toMatchObject({ status: 'rejected', category: 'terminal', retryable: false,
+        reason: 'unsupported source commit request fields' });
+      const snapshot = await store.loadProjectionSourceCommitSnapshot({ projectionName: 'orders', projectionGeneration: 'v2',
+        targetDocumentIds: ['target-a'], links: [], progressStrategy: 'none' });
+      expect(snapshot.targets[0]).toMatchObject({ state: null, revision: null });
     });
 
     test('rolls back all writes on a late link fence conflict', async () => {
