@@ -1,10 +1,11 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { createSaga } from '@redemeine/saga';
 import { bindSagaRegistrations, compileSagaRoutes, createStartEventBindings, processSagaSourceEvent,
-  registerSagaTurnDefinition, type SagaTurnSourceEvent } from '@redemeine/saga-runtime';
+  registerSagaTurnDefinition, validateBusinessState, type SagaTurnSourceEvent } from '@redemeine/saga-runtime';
 import { openMongoSagaTurnRepository } from '@redemeine/saga-runtime-store-tapeworm';
-import { BSON, type Db, MongoClient } from 'mongodb';
+import { BSON, type Db, MongoClient, ObjectId, UUID } from 'mongodb';
 import type { ICommit } from 'tapeworm';
+import MongoPersistence from 'tapeworm_persistence_store_mongodb';
 import { realOrders } from './fixtures';
 
 const uri = process.env.REDEMEINE_MONGO_URL;
@@ -58,13 +59,85 @@ async function stored(db: Db, instanceId: string) {
   return result;
 }
 
+async function removeTestDatabase(db: Db, client: MongoClient): Promise<void> {
+  try {
+    await db.dropDatabase();
+    const remaining = (await db.admin().listDatabases({ nameOnly: true })).databases
+      .some((entry) => entry.name === db.databaseName);
+    if (remaining) throw new Error(`Saga test database ${db.databaseName} was not removed`);
+    console.info(JSON.stringify({ mongoVersion: (await db.admin().serverInfo()).version,
+      removedDatabase: db.databaseName }));
+  } finally {
+    await client.close();
+  }
+}
+
+function measureProposedCommit(instanceId: string, sourceEvent: SagaTurnSourceEvent) {
+  const businessState = { blob: 'z'.repeat(8 * 1024 * 1024 - 256), count: 2 };
+  validateBusinessState(businessState);
+  const identity = { sourceTriggerId: 'candidate-trigger', sagaKey: 'bounded.mongo.large-state',
+    instanceId, routeId: 'paid-route' };
+  const events = [
+    { id: 'candidate:event:0', type: 'saga.source_event_observed.event', version: 6,
+      payload: { record: { eventType: sourceEvent.type, observedAt: sourceEvent.createDateTime,
+        payload: sourceEvent.payload, metadata: sourceEvent.metadata } } },
+    { id: 'candidate:event:1', type: 'saga.business_state_recorded.event', version: 7,
+      payload: { schemaVersion: 1, sagaKey: identity.sagaKey, definitionVersion: 1,
+        state: businessState, recordedAt: sourceEvent.createDateTime } }
+  ];
+  const proposed = { id: 'candidate', partitionId: 'sagas', streamId: instanceId,
+    commitSequence: 2, sagaTurnIdentity: identity, events, _id: new ObjectId(),
+    token: new UUID('00000000-0000-0000-0000-000000000000'), isDispatched: false, createDateTime: new Date() };
+  const eventBsonBytes = events.map((event) => BSON.calculateObjectSize(event));
+  const proposedBsonBytes = BSON.calculateObjectSize(proposed);
+  expect(eventBsonBytes.every((bytes) => bytes < 10 * 1024 * 1024)).toBe(true);
+  expect(proposedBsonBytes).toBeGreaterThan(12 * 1024 * 1024);
+  expect(proposedBsonBytes).toBeLessThan(16 * 1024 * 1024);
+  return { businessStateJsonBytes: Buffer.byteLength(JSON.stringify(businessState)), eventBsonBytes, proposedBsonBytes };
+}
+
+async function rejectOversizedPhysicalTurn(db: Db, instanceId: string, context: ReturnType<typeof routes>, originalIds: string[]) {
+  const sourceEvent = source('over-physical', 'real.order-paid.v1.event', 'large', { note: 'm'.repeat(4_700_000) });
+  const measured = measureProposedCommit(instanceId, sourceEvent);
+  const openPartition = MongoPersistence.prototype.openPartition;
+  let realAppendCalls = 0;
+  let instrumented = false;
+  const openSpy = jest.spyOn(MongoPersistence.prototype, 'openPartition').mockImplementation(function (
+    this: InstanceType<typeof MongoPersistence>, ...args: unknown[]
+  ) {
+    const partitionId = args[0];
+    if (partitionId !== undefined && typeof partitionId !== 'string') throw new TypeError('Invalid partition ID');
+    return openPartition.call(this, partitionId).then((partition: Awaited<ReturnType<InstanceType<typeof MongoPersistence>['openPartition']>>) => {
+      instrumented = true;
+      const append = partition.append.bind(partition);
+      jest.spyOn(partition, 'append').mockImplementation((commit, callback) => {
+        realAppendCalls += 1;
+        return append(commit, callback);
+      });
+      return partition;
+    });
+  });
+  try {
+    const repository = await openMongoSagaTurnRepository(db, 'sagas');
+    await expect(processSagaSourceEvent(context.table, repository, sourceEvent, context.options))
+      .rejects.toMatchObject({ code: 'invalid_tapeworm_stream', retryable: false });
+    expect(instrumented).toBe(true);
+    expect(realAppendCalls).toBe(0);
+  } finally {
+    openSpy.mockRestore();
+  }
+  expect((await stored(db, instanceId)).map((row) => row.id)).toEqual(originalIds);
+  console.info(JSON.stringify({ ...measured, realAppendCalls, originalCommitCount: originalIds.length }));
+}
+
 (uri ? describe : describe.skip)('real Mongo bounded saga processor', () => {
   it('persists large complete turns, replays after reopening, and refuses a physically oversized new turn', async () => {
     const client = new MongoClient(uri!);
     const db = client.db(`saga_7hd4_processor_${Date.now()}_${process.pid}`);
     try {
       await client.connect();
-      const { table, options } = routes();
+      const context = routes();
+      const { table, options } = context;
       const repository = await openMongoSagaTurnRepository(db, 'sagas');
       const first = source('placed', 'real.order-placed.v1.event');
       const second = source('paid', 'real.order-paid.v1.event');
@@ -93,13 +166,9 @@ async function stored(db: Db, instanceId: string) {
       expect((await processSagaSourceEvent(table, reopened, first, options))[0]?.status).toBe('reconciled');
       expect((await processSagaSourceEvent(table, reopened, second, options))[0]?.status).toBe('reconciled');
       expect((await stored(db, instanceId)).map((row) => row.id)).toEqual(rows.map((row) => row.id));
-      const overPhysical = source('over-physical', 'real.order-paid.v1.event', 'large', { note: 'm'.repeat(4_700_000) });
-      await expect(processSagaSourceEvent(table, reopened, overPhysical, options))
-        .rejects.toMatchObject({ code: 'invalid_tapeworm_stream', retryable: false });
-      expect((await stored(db, instanceId)).map((row) => row.id)).toEqual(rows.map((row) => row.id));
+      await rejectOversizedPhysicalTurn(db, instanceId, context, rows.map((row) => row.id));
     } finally {
-      await db.dropDatabase().catch(() => undefined);
-      await client.close();
+      await removeTestDatabase(db, client);
     }
   }, 60_000);
 });
