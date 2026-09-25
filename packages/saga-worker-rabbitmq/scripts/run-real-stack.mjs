@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { receiptPackageVersions } from './installed-versions.mjs';
+import { assertScenarioEvidence, scenarioHash, selectRealStackSuites } from './real-stack-selection.mjs';
 
 const MONGO_IMAGE = 'mongo:7.0.16';
 const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine';
@@ -20,12 +20,7 @@ const receiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}.json`;
 const jestResultPath = `/tmp/opencode/redemeine-wrdf-${suffix}-jest.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
 const slice = process.env.REDEMEINE_REAL_SLICE;
-const identitySlice = ['redemeine-371j.1', 'redemeine-371j.2'].includes(slice);
-const intentSlice = slice === 'redemeine-vpwm.3.3';
-if (slice && !identitySlice && !intentSlice) throw new Error('Unsupported real-stack slice');
-const testPaths = identitySlice ? ['saga-identity-real.integration.test.ts'] : intentSlice
-  ? ['saga-real-stack.integration.test.ts', 'saga-intent-real.integration.test.ts']
-  : ['saga-real-stack.integration.test.ts'];
+const selection = selectRealStackSuites(slice);
 const startedAt = new Date();
 let testExitCode = null;
 let failure = null;
@@ -34,6 +29,7 @@ let cleanup = {};
 let scenarios = [];
 let codeHead = null;
 let scenarioSha256 = null;
+let resourcesAttempted = false;
 
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -84,6 +80,7 @@ async function mappedPort(container, port) {
 }
 
 async function createResources() {
+  resourcesAttempted = true;
   await docker(['pull', MONGO_IMAGE], { capture: false });
   await docker(['pull', RABBIT_IMAGE], { capture: false });
   await docker(['network', 'create', resources.network]);
@@ -199,31 +196,29 @@ async function runTests() {
       '--outputFile',
       jestResultPath,
       '--runTestsByPath',
-      ...testPaths.map((name) => `packages/saga-worker-rabbitmq/integration/${name}`)
+      ...selection.paths.map((name) => `packages/saga-worker-rabbitmq/integration/${name}`)
     ],
     { cwd: root, env, allowFailure: true }
   );
   testExitCode = result.code;
   await collectScenarios();
   if (result.code !== 0) throw new Error(`real-stack Jest invocation failed with exit code ${result.code}`);
+  assertScenarioEvidence(jestReport, selection.paths);
 }
 
-async function assertCommittedIdentitySlice() {
-  if (!identitySlice && !intentSlice) return;
+async function assertCommittedHead() {
   const status = await execute('git', ['status', '--porcelain'], { capture: true });
   if (status.stdout) throw new Error('Qualification slice must run from a clean committed HEAD');
   codeHead = (await execute('git', ['rev-parse', 'HEAD'], { capture: true })).stdout;
-  const hash = createHash('sha256');
-  for (const name of [...testPaths, ...(intentSlice ? ['intentFixtures.ts', 'fixtures.ts', 'harness.ts', 'identitySettlements.ts'] : [])]) {
-    hash.update(name).update('\0').update(await readFile(new URL(`../integration/${name}`, import.meta.url)));
-  }
-  scenarioSha256 = hash.digest('hex');
+  scenarioSha256 = await scenarioHash(selection.paths,
+    name => readFile(new URL(`../integration/${name}`, import.meta.url)));
 }
 
+let jestReport;
 async function collectScenarios() {
   try {
-    const report = JSON.parse(await readFile(jestResultPath, 'utf8'));
-    scenarios = report.testResults.flatMap(({ assertionResults }) =>
+    jestReport = JSON.parse(await readFile(jestResultPath, 'utf8'));
+    scenarios = jestReport.testResults.flatMap(({ assertionResults }) =>
       assertionResults.map(({ ancestorTitles, title, status, duration, failureMessages }) => ({
         name: [...ancestorTitles, title].join(' > '),
         status,
@@ -239,6 +234,10 @@ async function collectScenarios() {
 }
 
 async function removeResources() {
+  if (!resourcesAttempted) {
+    cleanup = { containersRemaining: [], volumesRemaining: [], networksRemaining: [] };
+    return;
+  }
   await docker(['rm', '-f', resources.mongo, resources.rabbit], { allowFailure: true });
   await docker(['volume', 'rm', resources.mongoVolume, resources.rabbitVolume], { allowFailure: true });
   await docker(['network', 'rm', resources.network], { allowFailure: true });
@@ -253,7 +252,7 @@ async function removeResources() {
 }
 
 try {
-  await assertCommittedIdentitySlice();
+  await assertCommittedHead();
   await createResources();
   await waitForServices();
   await collectVersions();
@@ -262,13 +261,23 @@ try {
   failure = error instanceof Error ? error.message : String(error);
   process.exitCode = 1;
 } finally {
-  await removeResources();
+  try {
+    await removeResources();
+    if (Object.values(cleanup).some(remaining => remaining.length > 0)) {
+      failure = [failure, 'Real-stack resources remain after cleanup'].filter(Boolean).join('; ');
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    cleanup = { ...cleanup, error: String(error) };
+    failure = [failure, `cleanup: ${String(error)}`].filter(Boolean).join('; ');
+    process.exitCode = 1;
+  }
   const finishedAt = new Date();
   await writeFile(
     receiptPath,
     `${JSON.stringify(
       {
-        issue: slice ?? 'redemeine-wrdf',
+        issue: selection.issue,
         codeHead,
         scenarioSha256,
         invocation,
