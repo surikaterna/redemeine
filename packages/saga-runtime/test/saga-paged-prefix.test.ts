@@ -85,6 +85,34 @@ describe('bounded saga prefix replay', () => {
     })() }, resolved)).rejects.toMatchObject({ code: 'saga_state_too_large', retryable: false });
     expect(repository.appendCalls).toHaveLength(1);
   });
+  it('keeps complete observation/state pairs atomic across page boundaries and refuses a later incomplete turn', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('atomic-pages', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    let completePages = 0;
+    const commits = (async function* () {
+      yield first;
+      for (let sequence = 1; sequence < 66; sequence += 1) {
+        const complete = first.events.slice(2).map((stored, offset) => ({ ...stored,
+          version: 4 + (sequence - 1) * 2 + offset }));
+        if (sequence === 64) completePages += 1;
+        yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
+          events: sequence === 65 ? complete.slice(0, 1) : complete };
+      }
+    })();
+    await expect(foldSagaTurn({ streamId: id, nextCommitSequence: 66, commits }, resolved))
+      .rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(completePages).toBe(1);
+    expect(repository.appendCalls).toHaveLength(1);
+  });
   it('projects the original prefix inside a complete stored commit without changing its event versions', async () => {
     const repository = new FakeTurnRepository();
     const table = createTurnTable('prefix', createCounters());

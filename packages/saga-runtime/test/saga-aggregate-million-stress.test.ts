@@ -7,8 +7,8 @@ import { createCounters, createTurnTable, FakeTurnRepository, registrationOption
 
 const enabled = process.env.SAGA_AGGREGATE_MILLION_STRESS === '1';
 
-(enabled ? describe : describe.skip)('lazy million-commit SagaAggregate fold', () => {
-  it('retains one generated row, one target, and bounded aggregate states', async () => {
+(enabled ? describe : describe.skip)('lazy paged SagaAggregate fold', () => {
+  it('accounts for one bounded page, one target, and bounded aggregate states', async () => {
     jest.setTimeout(4 * 60 * 60 * 1000);
     const repository = new FakeTurnRepository();
     const table = createTurnTable('million-fold', createCounters());
@@ -24,30 +24,37 @@ const enabled = process.env.SAGA_AGGREGATE_MILLION_STRESS === '1';
     const total = Number(process.env.SAGA_AGGREGATE_STRESS_COMMITS ?? 1_000_000);
     if (!Number.isSafeInteger(total) || total < 2 || total > 1_000_000) throw new Error('Invalid aggregate stress commit count');
     let generated = 0;
-    let retained = 0;
-    let peak = 0;
+    let peakPageCount = 0;
+    let peakPageBytes = 0;
     const result = await foldSagaTurn({ streamId: id, nextCommitSequence: total, commits: (async function* () {
-      for (let sequence = 0; sequence < total; sequence += 1) {
-        const commit = sequence === 0 ? first : { ...first, commitId: `unrelated-${sequence}`, commitSequence: sequence,
-          events: first.events.slice(2).map((stored, offset) => ({ ...stored,
-            version: 4 + (sequence - 1) * 2 + offset })) };
-        generated += 1;
-        retained += 1;
-        peak = Math.max(peak, retained);
-        yield commit;
-        retained -= 1;
+      for (let start = 0; start < total; start += 64) {
+        const page = [];
+        let pageBytes = 0;
+        for (let sequence = start; sequence < Math.min(start + 64, total); sequence += 1) {
+          const commit = sequence === 0 ? first : { ...first, commitId: `unrelated-${sequence}`, commitSequence: sequence,
+            events: first.events.slice(2).map((stored, offset) => ({ ...stored,
+              version: 4 + (sequence - 1) * 2 + offset })) };
+          page.push(commit);
+          generated += 1;
+          pageBytes += Buffer.byteLength(JSON.stringify(commit));
+        }
+        peakPageCount = Math.max(peakPageCount, page.length);
+        peakPageBytes = Math.max(peakPageBytes, pageBytes);
+        yield* page;
       }
     })() }, resolved);
     expect(generated).toBe(total);
-    expect(peak).toBe(1);
+    expect(peakPageCount).toBe(64);
+    expect(peakPageBytes).toBeLessThan(12 * 1024 * 1024);
     expect(result.hydrated.state.totals.observedEvents).toBe(total);
     expect(result.nextEventVersion).toBe(4 + (total - 1) * 2);
     expect(result.target?.stored.commitSequence).toBe(0);
     const stateBytes = Buffer.byteLength(JSON.stringify(result.hydrated.state));
     const prefixBytes = Buffer.byteLength(JSON.stringify(result.target?.original.state));
     const candidateBytes = Buffer.byteLength(JSON.stringify(result.target?.stored));
-    expect(stateBytes + prefixBytes + candidateBytes).toBeLessThan(36 * 1024 * 1024);
-    console.info(JSON.stringify({ generated, peakLiveYieldedRows: peak, stateBytes, prefixBytes, candidateBytes,
-      nextEventVersion: result.nextEventVersion }));
+    const peakAccountedBytes = peakPageBytes + stateBytes + prefixBytes + candidateBytes;
+    expect(peakAccountedBytes).toBeLessThan(48 * 1024 * 1024);
+    console.info(JSON.stringify({ generated, peakPageCount, peakPageBytes, stateBytes, prefixBytes, candidateBytes,
+      peakAccountedBytes, nextEventVersion: result.nextEventVersion }));
   });
 });
