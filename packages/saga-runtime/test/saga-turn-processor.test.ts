@@ -98,6 +98,25 @@ describe('durable saga state-turn processor', () => {
     expect(repository.appendCalls).toHaveLength(0);
   });
 
+  it.each(['flattened', 'missing'] as const)('refuses %s observed record on replay before handler or append', async (shape) => {
+    const repository = new FakeTurnRepository();
+    const { counters, table, outcome } = await initialize(repository, 'observed-record');
+    const first = repository.appendCalls[0]?.events;
+    if (!first || !outcome) throw new Error('missing first commit');
+    repository.replaceEvents(outcome.instanceId, first.map((event, index) => {
+      if (index !== 2) return event;
+      const record = payloadOf(event).record;
+      if (typeof record !== 'object' || record === null) throw new Error('missing observed record fixture');
+      return { ...event, payload: shape === 'flattened' ? { ...record } : {} };
+    }));
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, sourceEvent({
+      type: 'turn.order-paid.v1.event', commitId: 'after-corruption', eventId: 'after-corruption'
+    }))).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(counters.handler).toBe(0);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
   it('rejects active declarative policy drift before handler or duplicate ACK', async () => {
     const repository = new FakeTurnRepository();
     const { table, counters } = await initialize(repository, 'policy-drift');

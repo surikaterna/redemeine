@@ -124,7 +124,11 @@ async function expectFanoutCommit(harness: ScenarioHarness, id: string, sagaKey:
     'saga.source_event_observed.event', 'saga.business_state_recorded.event'
   ]);
   expect(commits[0]?.events[1]?.payload).toMatchObject({ sagaKey, schemaVersion: 1 });
-  expect(commits[0]?.events[2]?.payload).toMatchObject({ eventId: 'partial-fanout-event' });
+  expect(commits[0]?.events[2]?.payload).toMatchObject({ record: {
+    eventId: 'partial-fanout-event', eventType: 'real.order-placed.v1.event',
+    payload: { orderId: 'order-partial-fanout' }
+  } });
+  expect(commits[0]?.events[2]?.payload).not.toHaveProperty('eventId');
   expect(await replayState(harness, id)).toEqual({ count: 0, seen: [] });
 }
 
