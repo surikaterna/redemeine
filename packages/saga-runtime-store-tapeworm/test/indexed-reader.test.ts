@@ -1,8 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 import { BSON, type Collection, ObjectId, UUID } from 'mongodb';
 import type { ICommit } from 'tapeworm';
+import { processSagaSourceEvent, type SagaTurnRepository, type SagaTurnStoredCommit } from '@redemeine/saga-runtime';
+import { createCounters, createTurnTable, FakeTurnRepository, registrationOptions, sourceEvent } from '../../saga-runtime/test/fixtures/turn-processor.fixture';
 import { IndexedSagaCommitReader, type SagaCommitPage } from '../src/IndexedSagaCommitReader';
 import type { TapewormSagaEvent } from '../src/contracts';
+import { storedCommitFromTapeworm, validateTapewormCommit } from '../src/validation';
 
 const partition = 'sagas';
 const stream = 'saga-1';
@@ -84,6 +87,40 @@ class LazyMillionCollection extends FakeCollection {
   }
 }
 
+class LazyPhysicalBoundaryCollection extends FakeCollection {
+  generated: number[] = [];
+
+  constructor(private readonly first: SagaTurnStoredCommit) { super(); }
+
+  private physical(sequence: number): ICommit<TapewormSagaEvent> {
+    const id = sequence === 0 ? this.first.commitId : `later-${sequence}`;
+    const pair = this.first.events.slice(2).map((event, position) => ({ ...event,
+      version: 4 + (sequence - 1) * 2 + position }));
+    const selected = sequence === 63 ? pair.slice(0, 1) : sequence === 64 ? pair.slice(1) : pair;
+    const events = sequence === 0 ? this.first.events : selected.map((event, position) => ({ ...event,
+      id: `${id}:event:${position}` }));
+    return { ...row(sequence), id, streamId: this.first.streamId, sagaTurnIdentity: this.first.identity,
+      events };
+  }
+
+  override find(filter: Record<string, unknown>): Cursor {
+    this.filters.push(filter);
+    const owner = this;
+    const lazy = new class extends Cursor {
+      override async next() { owner.generated.push(64); return owner.physical(64); }
+      override async *[Symbol.asyncIterator]() {
+        const range = filter.commitSequence as { $gt: number; $lte: number };
+        for (let sequence = range.$gt + 1; sequence <= range.$lte && sequence <= range.$gt + this.max; sequence += 1) {
+          owner.generated.push(sequence);
+          yield owner.physical(sequence);
+        }
+      }
+    }([], filter);
+    this.cursors.push(lazy);
+    return lazy;
+  }
+}
+
 async function readAll(mongo: FakeCollection): Promise<SagaCommitPage[]> {
   const reader = mongo.reader();
   const high = await reader.capture(stream);
@@ -98,6 +135,56 @@ async function readAll(mongo: FakeCollection): Promise<SagaCommitPage[]> {
 }
 
 describe('indexed Mongo saga complete-commit reader', () => {
+  it('rejects a physical observation-only turn at the 64th commit before delivering the next-page state', async () => {
+    const writer = new FakeTurnRepository();
+    const table = createTurnTable('indexed-physical-boundary', createCounters());
+    const source = sourceEvent();
+    const options = registrationOptions(table);
+    const [started] = await processSagaSourceEvent(table, writer, source, options);
+    const instanceId = started!.instanceId;
+    const first = (await (await writer.load(instanceId)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const collection = new LazyPhysicalBoundaryCollection(first);
+    const reader = collection.reader();
+    let pages = 0;
+    let firstPageSize = 0;
+    let firstContinuation = -1;
+    let stateOnlyDelivered = 0;
+    let appendCalls = 0;
+    const repository: SagaTurnRepository = {
+      load: async () => {
+        const high = await reader.capture(instanceId);
+        return { streamId: instanceId, nextCommitSequence: high + 1, commits: (async function* () {
+          let after = -1;
+          let version = 0;
+          while (after < high) {
+            const page = await reader.page(instanceId, after, high);
+            pages += 1;
+            firstPageSize = page.commits.length;
+            firstContinuation = page.afterSequence;
+            for (const raw of page.commits) {
+              const validated = validateTapewormCommit(raw, partition, instanceId, raw.commitSequence, version);
+              version += validated.commit.events.length;
+              if (raw.commitSequence === 64) stateOnlyDelivered += 1;
+              yield storedCommitFromTapeworm(validated.commit);
+            }
+            after = page.afterSequence;
+          }
+        })() };
+      },
+      findCommit: async () => { throw new Error('Early duplicate lookup must not run'); },
+      assertCommitMaterial: () => { throw new Error('Invalid history must not be reconciled'); },
+      append: async () => { appendCalls += 1; throw new Error('Invalid history must not be appended'); }
+    };
+    await expect(processSagaSourceEvent(table, repository, source, options))
+      .rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect({ pages, firstPageSize, firstContinuation, stateOnlyDelivered, appendCalls })
+      .toEqual({ pages: 1, firstPageSize: 64, firstContinuation: 63, stateOnlyDelivered: 0, appendCalls: 0 });
+    expect(collection.cursors).toHaveLength(2);
+    expect(collection.cursors[1]?.max).toBe(65);
+    expect(collection.cursors.every((cursor) => cursor.closed && cursor.hintName === index.name && cursor.batch === 1)).toBe(true);
+    expect(collection.generated.filter((sequence) => sequence === 64)).toHaveLength(2);
+  });
   it('refuses a mismatched namespace', () => {
     const mongo = new FakeCollection();
     mongo.collectionName = 'tw_elsewhere_commits';
