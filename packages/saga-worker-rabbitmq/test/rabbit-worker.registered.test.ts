@@ -67,7 +67,7 @@ it('ACKs only after an intent-free registered start has appended its four events
   await worker.stop();
 });
 
-it.each(['invalid', 'overflow'])('dead-letters %s complete turn before append without ACK or hot retry', async orderId => {
+it.each(['invalid', 'overflow', 'nul'])('dead-letters %s complete turn before append without ACK or hot retry', async orderId => {
   started = 0;
   const registration = register();
   const table = compileRegisteredSagaRoutes([registration],
@@ -85,7 +85,8 @@ it.each(['invalid', 'overflow'])('dead-letters %s complete turn before append wi
     { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
   await worker.start();
   const source = body();
-  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId } }] } });
+  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId },
+    metadata: orderId === 'nul' ? { nested: Object.fromEntries([['bad\u0000key', 1]]) } : source.events[0].metadata }] } });
   await worker.handle(incoming);
   expect(started).toBe(1);
   expect(appendCalls).toEqual([]);

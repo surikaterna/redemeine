@@ -141,6 +141,18 @@ describe('Tapeworm saga turn repository', () => {
     expect(BSON.calculateObjectSize(committed.events[0]!)).toBeLessThan(10 * 1024 * 1024);
   });
 
+  it('rejects nested BSON-null keys before reaching the real partition append', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const nested = Object.fromEntries([['bad\u0000key', { count: 1 }]]);
+    const source = request({ events: [{ type: 'saga.source_event_observed.event', payload: { record: { metadata: { nested } } } }] });
+    expect(() => assertSagaTurnPreappendBudget(source, target.partitionId, 0))
+      .toThrow('cannot be serialized as BSON');
+    await expect(target.append(source)).rejects.toMatchObject({ code: 'invalid_tapeworm_stream', retryable: false });
+    expect(partition.appendCalls).toBe(0);
+    expect(source.events[0]?.payload).toEqual({ record: { metadata: { nested: { 'bad\u0000key': { count: 1 } } } } });
+  });
+
   it('rejects an oversized individual intent before append without capping the state at 64 KiB', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);

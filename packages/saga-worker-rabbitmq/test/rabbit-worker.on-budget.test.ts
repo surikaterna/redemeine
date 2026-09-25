@@ -72,5 +72,14 @@ it('dead-letters an over-limit on turn without appending its final intent or ACK
   expect(appendCount()).toBe(1);
   expect(channel.acks).toEqual([{ message: initial, allUpTo: false }]);
   expect(channel.nacks).toEqual([{ message: on, allUpTo: false, requeue: false }]);
+  const badKey = Object.fromEntries([['bad\u0000key', 1]]);
+  const invalid = message({ body: { ...source, id: 'commit-3', commitSequence: 6,
+    events: [{ ...source.events[1], metadata: { nested: badKey } }] }, messageId: 'commit-3' });
+  await worker.handle(invalid);
+  expect(appendCount()).toBe(1);
+  expect(channel.acks).toEqual([{ message: initial, allUpTo: false }]);
+  expect(channel.nacks).toEqual([
+    { message: on, allUpTo: false, requeue: false }, { message: invalid, allUpTo: false, requeue: false }
+  ]);
   await worker.stop();
 });

@@ -69,3 +69,17 @@ it('rejects a physical observation event over 10 MiB before permissive append', 
   }), options)).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
   expect(repository.appendCalls).toHaveLength(0);
 });
+
+it.each(['start', 'on'] as const)('rejects %s source metadata with a nested BSON-null key before permissive append', async kind => {
+  const { table, options } = setup(0, 0);
+  const repository = new FakeTurnRepository();
+  if (kind === 'on') await processSagaSourceEvent(table, repository, sourceEvent(), options);
+  const before = repository.appendCalls.length;
+  const nested = Object.fromEntries([['bad\u0000key', { count: 1 }]]);
+  const metadata = { nested };
+  const source = sourceEvent({ ...(kind === 'on' ? { type: 'turn.order-paid.v1.event', commitId: 'second' } : {}), metadata });
+  await expect(processSagaSourceEvent(table, repository, source, options))
+    .rejects.toMatchObject({ code: 'invalid_tapeworm_stream', retryable: false });
+  expect(repository.appendCalls).toHaveLength(before);
+  expect(source.metadata).toEqual({ nested: { 'bad\u0000key': { count: 1 } } });
+});

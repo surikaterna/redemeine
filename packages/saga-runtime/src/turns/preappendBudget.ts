@@ -12,6 +12,14 @@ function invalid(message: string, cause?: unknown): never {
   throw new SagaTurnIntegrityError('incompatible_turn_commit', message, {}, cause);
 }
 
+function assertSerializable(value: object): void {
+  try {
+    BSON.serialize(value);
+  } catch (cause) {
+    throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga turn cannot be serialized as BSON', {}, cause);
+  }
+}
+
 export function assertSagaTurnPreappendBudget(request: SagaTurnAppendRequest, partitionId: string,
   firstEventVersion: number): number {
   if (typeof partitionId !== 'string' || !partitionId || !Number.isSafeInteger(firstEventVersion) || firstEventVersion < 0) {
@@ -44,5 +52,6 @@ export function assertSagaTurnPreappendBudget(request: SagaTurnAppendRequest, pa
     isDispatched: false, createDateTime: new Date(0) };
   const bytes = BSON.calculateObjectSize(physical);
   if (bytes > SAGA_TURN_MAX_COMMIT_BSON_BYTES) return invalid('Saga complete commit exceeds the BSON byte limit');
+  assertSerializable(physical);
   return bytes;
 }
