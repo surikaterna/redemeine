@@ -50,10 +50,10 @@ export function createRealDefinition(name: string, counters: RealCounters) {
       counters.initial += 1;
       return { count: 0, seen: [] };
     })
-    .start((_input: { orderId: string }) => {
+    .start((_state, _input: unknown) => {
       counters.start += 1;
     })
-    .correlateBy((input) => input.orderId)
+    .correlateBy((input) => orderIdFrom({ payload: input }))
     .triggeredBy({
       kind: 'domain',
       toStartInput: (event: { payload: RealPayload }) => ({ orderId: event.payload.orderId })
