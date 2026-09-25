@@ -55,16 +55,14 @@ function paidSource(commitId = 'paid-commit') {
 }
 
 describe('saga turn OCC and ordered fanout', () => {
-  it('commits one concurrent duplicate and refuses the unproven other', async () => {
+  it('commits one concurrent duplicate and reconciles the proven other', async () => {
     const repository = new FakeTurnRepository();
     const { table } = await initialize(repository, 'concurrent-duplicate');
     const [first, second] = await Promise.allSettled([
       processSagaSourceEvent(table, repository, paidSource()),
       processSagaSourceEvent(table, repository, paidSource())
     ]);
-    expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
-    const refused = first.status === 'rejected' ? first.reason : second.status === 'rejected' ? second.reason : null;
-    expect(refused).toMatchObject({ code: 'duplicate_proof_required', retryable: false });
+    expect([first.status, second.status]).toEqual(['fulfilled', 'fulfilled']);
     expect(repository.appendCalls).toHaveLength(2);
     expect(repository.appendCalls[0]?.commitId).toBe(repository.appendCalls[1]?.commitId);
     expect(repository.appendCalls[0]?.events).toEqual(repository.appendCalls[1]?.events);
@@ -85,7 +83,60 @@ describe('saga turn OCC and ordered fanout', () => {
     expect(first.events[0]?.headers).toBeUndefined();
   });
 
-  it('refuses after a conflict when the same turn appeared without original-prefix proof', async () => {
+  it('replays a historical on turn from its original prefix, not the latest state', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'historical-prefix');
+    await processSagaSourceEvent(table, repository, paidSource());
+    await processSagaSourceEvent(table, repository, paidSource('later-paid'));
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, paidSource())).resolves.toMatchObject([{ status: 'reconciled' }]);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('proves the original start after later turns but processes a distinct on-matching start trigger', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'competing-starts');
+    await processSagaSourceEvent(table, repository, paidSource());
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, sourceEvent())).resolves.toMatchObject([{ status: 'reconciled' }]);
+    await expect(processSagaSourceEvent(table, repository, sourceEvent({
+      commitId: 'other-start', eventId: 'other-start-event'
+    }))).resolves.toMatchObject([{ status: 'committed' }]);
+    expect(repository.appendCalls).toHaveLength(1);
+    expect(repository.appendCalls[0]?.events).toHaveLength(2);
+  });
+
+  it.each([
+    ['payload', { payload: { orderId: 'order-1', amount: 12 } }],
+    ['metadata', { metadata: { tenant: 'different' } }],
+    ['time', { createDateTime: '2026-09-21T12:00:00.000Z' }],
+    ['source version', { sequence: 999 }]
+  ] as const)('refuses a reused on-turn ID with changed %s', async (_name, changed) => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'changed-source');
+    await processSagaSourceEvent(table, repository, paidSource());
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, { ...paidSource(), ...changed })).rejects.toMatchObject({
+      code: 'incompatible_turn_commit', retryable: false
+    });
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('refuses a concurrent same-ID commit whose physical state differs', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'changed-state');
+    repository.beforeAppend = (request, target) => {
+      target.commit({ ...request, events: request.events.map((event) => event.type === 'saga.business_state_recorded.event'
+        ? { ...event, payload: { ...(event.payload as object), state: { count: 99 } } } : event) });
+      return { status: 'conflict' };
+    };
+    await expect(processSagaSourceEvent(table, repository, paidSource())).rejects.toMatchObject({
+      code: 'incompatible_turn_commit', retryable: false
+    });
+    expect(repository.appendCalls).toHaveLength(1);
+  });
+
+  it('proves the original prefix after a concurrent same-turn conflict', async () => {
     const repository = new FakeTurnRepository();
     const { counters, table } = await initialize(repository, 'conflict-duplicate');
     let first = true;
@@ -95,8 +146,8 @@ describe('saga turn OCC and ordered fanout', () => {
       target.commit(request);
       return { status: 'conflict' };
     };
-    await expect(processSagaSourceEvent(table, repository, paidSource())).rejects.toMatchObject({ code: 'duplicate_proof_required', retryable: false });
-    expect(counters.handler).toBe(1);
+    await expect(processSagaSourceEvent(table, repository, paidSource())).resolves.toMatchObject([{ status: 'reconciled' }]);
+    expect(counters.handler).toBe(2);
     expect(repository.appendCalls).toHaveLength(1);
   });
 

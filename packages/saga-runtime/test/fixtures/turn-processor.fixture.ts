@@ -6,6 +6,8 @@ import {
   bindSagaRegistrations,
   createStartEventBindings,
   registerSagaDefinition,
+  assertEquivalentSagaCommit,
+  SagaTurnIntegrityError,
   type CompiledSagaRoutingTable,
   type SagaTurnProcessorOptions,
   type SagaTurnAppendRequest,
@@ -206,6 +208,13 @@ export class FakeTurnRepository implements SagaTurnRepository {
     this.findCalls.push({ streamId, commitId });
     if (this.forcedCommit !== undefined) return this.forcedCommit;
     return this.commits.get(this.commitKey(streamId, commitId)) ?? null;
+  }
+
+  assertCommitMaterial(stored: SagaTurnStoredCommit, request: SagaTurnAppendRequest, firstEventVersion: number): void {
+    if (stored.commitSequence !== request.expectedNextCommitSequence) {
+      throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Original sequence differs');
+    }
+    assertEquivalentSagaCommit(stored, request, 'sagas', firstEventVersion);
   }
 
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {

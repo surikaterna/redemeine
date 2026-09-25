@@ -352,6 +352,7 @@ export function wrapRepository(base: SagaTurnRepository, append: SagaTurnReposit
   return {
     load: (id) => base.load(id),
     findCommit: (streamId, commitId) => base.findCommit(streamId, commitId),
+    assertCommitMaterial: (stored, request, version) => base.assertCommitMaterial(stored, request, version),
     append
   };
 }

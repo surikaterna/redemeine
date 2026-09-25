@@ -25,7 +25,7 @@ async function inspectDeadLetter(channel: Channel, queue: string, messageId: str
   return message;
 }
 
-describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
+describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
   let stack: RealStack;
   beforeAll(async () => { stack = await connectRealStack(); });
   afterAll(async () => {
@@ -33,7 +33,7 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
     expect(stack.dispatcherFailures).toEqual([]);
   });
 
-  it('commits one four-event start, then dead-letters duplicate and legacy replay without new writes', async () => {
+  it('ACKs only equivalent duplicate material and dead-letters legacy replay without new writes', async () => {
     const counters = createCounters();
     const { definition, table } = createRealTable('identity-guard', counters);
     const registration = registerSagaTurnDefinition({ definition, pluginManifests: [],
@@ -70,18 +70,14 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
       expect(captured).toHaveLength(1);
 
       await publishCommit(stack, source);
-      await waitForIdentitySettlement(trace, { kind: 'nack', messageId: source.id,
-        sourceEventId: 'identity-guard-event', requeue: false }, 2, harness.queue, harness.deadQueue);
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: source.id,
+        sourceEventId: 'identity-guard-event' }, 2, harness.queue, harness.deadQueue);
       await waitForQueueSettled(harness.queue);
       expect(trace.settled).toEqual([
         { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' },
-        { kind: 'nack', messageId: source.id, sourceEventId: 'identity-guard-event', requeue: false }
+        { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' }
       ]);
-      await inspectDeadLetter(harness.channel, harness.deadQueue, source.id, 'identity-guard-event');
-      await pollUntil('duplicate DLQ drained', async () => {
-        const counts = await queueCounts(harness.deadQueue);
-        return counts.ready === 0 && counts.unacknowledged === 0;
-      });
+      expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(await streamCommits(harness, id)).toHaveLength(1);
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
 
@@ -109,7 +105,7 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
       await waitForQueueSettled(harness.queue);
       expect(trace.settled).toEqual([
         { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' },
-        { kind: 'nack', messageId: source.id, sourceEventId: 'identity-guard-event', requeue: false },
+        { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' },
         { kind: 'nack', messageId: 'identity-legacy-delivery', sourceEventId: 'identity-legacy-event', requeue: false }
       ]);
       await inspectDeadLetter(harness.channel, harness.deadQueue, 'identity-legacy-delivery', 'identity-legacy-event');
@@ -121,6 +117,47 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(trace.settled).toHaveLength(3);
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
+      expect(harness.settlementErrors).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('ACKs a historical on turn only after its original prefix and full source material match', async () => {
+    const counters = createCounters();
+    const { definition, table } = createRealTable('historical-proof', counters);
+    const trace: SettlementTrace = { received: [], settled: [] };
+    const harness = await createScenario(stack, 'historical-proof', table, {
+      channel: (base) => observeIdentitySettlements(base, trace), prefetch: 1
+    });
+    try {
+      const orderId = 'order-historical-proof';
+      const id = instanceId(definition.sagaKey, orderId);
+      await appendSourceCommit(stack, { id: 'historical-start', streamId: 'historical-start-input',
+        events: [sourceEvent('historical-placed', 'real.order-placed.v1.event', { orderId })] });
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: 'historical-start', sourceEventId: 'historical-placed' },
+        1, harness.queue, harness.deadQueue);
+      const first = await appendSourceCommit(stack, { id: 'historical-first', streamId: 'historical-first-input',
+        events: [sourceEvent('historical-paid', 'real.order-paid.v1.event', { orderId, amount: 3 })] });
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: 'historical-first', sourceEventId: 'historical-paid' },
+        2, harness.queue, harness.deadQueue);
+      await appendSourceCommit(stack, { id: 'historical-second', streamId: 'historical-second-input',
+        events: [sourceEvent('historical-adjusted', 'real.order-adjusted.v1.event', { orderId, amount: 2 })] });
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: 'historical-second', sourceEventId: 'historical-adjusted' },
+        3, harness.queue, harness.deadQueue);
+      const before = await streamCommits(harness, id);
+      expect(before).toHaveLength(3);
+      await publishCommit(stack, first);
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: 'historical-first', sourceEventId: 'historical-paid' },
+        4, harness.queue, harness.deadQueue);
+      expect(await streamCommits(harness, id)).toEqual(before);
+      const changed = { ...first, events: first.events.map((event) => ({ ...event,
+        payload: { orderId, amount: 99 } })) };
+      await publishCommit(stack, changed);
+      await waitForIdentitySettlement(trace, { kind: 'nack', messageId: 'historical-first',
+        sourceEventId: 'historical-paid', requeue: false }, 5, harness.queue, harness.deadQueue);
+      await inspectDeadLetter(harness.channel, harness.deadQueue, 'historical-first', 'historical-paid');
+      expect(await streamCommits(harness, id)).toEqual(before);
       expect(harness.settlementErrors).toEqual([]);
     } finally {
       await harness.close();

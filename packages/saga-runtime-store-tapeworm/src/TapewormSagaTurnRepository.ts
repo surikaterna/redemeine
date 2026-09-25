@@ -84,6 +84,13 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
     return found;
   }
 
+  assertCommitMaterial(stored: SagaTurnStoredCommit, request: SagaTurnAppendRequest, firstEventVersion: number): void {
+    if (stored.commitSequence !== request.expectedNextCommitSequence) {
+      throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Original saga commit sequence differs from reconstructed prefix');
+    }
+    assertEquivalentSagaCommit(stored, request, this.options.partitionId, firstEventVersion);
+  }
+
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
     if (!Array.isArray(request.events) || request.events.length === 0 || request.events.length > SAGA_COMMIT_EVENTS) {
       throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event count exceeds complete-commit limit');

@@ -19,7 +19,7 @@ const resources = {
 const receiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}.json`;
 const jestResultPath = `/tmp/opencode/redemeine-wrdf-${suffix}-jest.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
-const identitySlice = process.env.REDEMEINE_REAL_SLICE === 'redemeine-371j.1';
+const identitySlice = ['redemeine-371j.1', 'redemeine-371j.2'].includes(process.env.REDEMEINE_REAL_SLICE);
 if (process.env.REDEMEINE_REAL_SLICE && !identitySlice) throw new Error('Unsupported real-stack slice');
 const startedAt = new Date();
 let testExitCode = null;
@@ -262,7 +262,7 @@ try {
     receiptPath,
     `${JSON.stringify(
       {
-        issue: identitySlice ? 'redemeine-371j.1' : 'redemeine-wrdf',
+        issue: identitySlice ? process.env.REDEMEINE_REAL_SLICE : 'redemeine-wrdf',
         codeHead,
         scenarioSha256,
         invocation,

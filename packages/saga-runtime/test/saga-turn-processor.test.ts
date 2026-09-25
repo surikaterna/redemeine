@@ -244,28 +244,26 @@ describe('durable saga state-turn processor', () => {
     expect(repository.appendCalls).toHaveLength(0);
   });
 
-  it('reconciles a known deterministic turn before invoking its handler', async () => {
+  it('reconciles a proven original start without invoking its handler', async () => {
     const repository = new FakeTurnRepository();
     const { counters, table } = await initialize(repository, 'duplicate');
     counters.initial = 0;
-    await expect(processSagaSourceEvent(table, repository, sourceEvent())).rejects.toMatchObject({ code: 'duplicate_proof_required', retryable: false });
-    expect(counters).toMatchObject({ initial: 0, start: 0, handler: 0 });
+    await expect(processSagaSourceEvent(table, repository, sourceEvent())).resolves.toMatchObject([{ status: 'reconciled' }]);
+    expect(counters).toMatchObject({ initial: 1, start: 0, handler: 0 });
     expect(repository.appendCalls).toHaveLength(1);
   });
 
   it('fails incompatible deterministic commits with an integrity error', async () => {
     const repository = new FakeTurnRepository();
     const table = createTurnTable('integrity', createCounters());
-    repository.forcedCommit = {
-      streamId: 'wrong-stream',
-      commitId: 'wrong-commit',
-      commitSequence: 0,
-      identity: { sourceTriggerId: 'wrong', sagaKey: 'wrong', instanceId: 'wrong', routeId: 'wrong' }
-    };
+    repository.beforeAppend = (request) => ({ status: 'reconciled', commit: {
+      partitionId: 'sagas', streamId: 'wrong-stream', commitId: request.commitId, commitSequence: 0,
+      identity: request.identity, events: []
+    } });
     const promise = processSagaSourceEvent(table, repository, sourceEvent());
     await expect(promise).rejects.toBeInstanceOf(SagaTurnIntegrityError);
     await expect(promise).rejects.toMatchObject({ kind: 'integrity', retryable: false, code: 'incompatible_turn_commit' });
-    expect(repository.appendCalls).toHaveLength(0);
+    expect(repository.appendCalls).toHaveLength(1);
   });
 
   it('fails start/on correlation disagreement before repository access', async () => {

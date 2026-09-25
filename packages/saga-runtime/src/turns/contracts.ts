@@ -61,6 +61,7 @@ export type SagaTurnAppendResult =
 export interface SagaTurnRepository {
   load(instanceId: string): Promise<SagaTurnStreamSnapshot>;
   findCommit(streamId: string, commitId: string): Promise<SagaTurnStoredCommit | null>;
+  assertCommitMaterial(stored: SagaTurnStoredCommit, request: SagaTurnAppendRequest, firstEventVersion: number): void;
   append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult>;
 }
 
