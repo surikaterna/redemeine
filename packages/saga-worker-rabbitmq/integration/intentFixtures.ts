@@ -11,6 +11,9 @@ const invoice = createAggregate('invoice', { id: 'a1' })
 const billing = createAggregate('billing', { id: 'a1' })
   .commands(() => ({ pay: (_state, id: string) => ({ type: 'unused', payload: { id } }) }))
   .overrideCommandNames({ pay: 'billing.charge.command' }).build();
+export function payCommandEnvelopes() {
+  return [invoice.commandCreators.pay('a1'), billing.commandCreators.pay('a1')];
+}
 type Mode = 'normal' | 'invalid-start' | 'invalid-on';
 export const intentRegistry = [{ plugin_key: 'outbound', actions: [
   { name: 'send', interaction: 'fire_and_forget' as const },

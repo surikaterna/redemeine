@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
-import { createSagaAggregate, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
+import { createSagaAggregate, deriveSourceTriggerId, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
 import { decodeIntent } from '../../saga-runtime/src/intentWire';
 import { openMongoSagaTurnRepository } from '@redemeine/saga-runtime-store-tapeworm';
 import type { Event } from '@redemeine/kernel';
@@ -56,8 +56,8 @@ function checkTurn(commit: ICommit, request: SagaTurnAppendRequest, partitionId:
   expect(intents.map(intent => intent.origin.ordinal)).toEqual([0, 1, 2, 3, 4, 5]);
   expect(new Set(intents.map(intent => intent.intentId)).size).toBe(6);
   expect(intents.map(intent => intent.schemaVersion)).toEqual([1, 1, 1, 1, 1, 1]);
-  expect(intents[2]).toMatchObject({ kind: 'dispatch', command: 'invoice.pay.command', payload: { id: 'a1' } });
-  expect(intents[3]).toMatchObject({ kind: 'dispatch', command: 'billing.charge.command', payload: { id: 'a1' } });
+  expect(intents[2]).toMatchObject({ kind: 'dispatch', command: 'invoice.pay.command', payload: 'a1' });
+  expect(intents[3]).toMatchObject({ kind: 'dispatch', command: 'billing.charge.command', payload: 'a1' });
   const response = intents[start ? 1 : 0];
   expect(response).toMatchObject({ plugin_key: 'outbound', action_name: 'ask', interaction: 'request_response',
     routing_metadata: { response_handler_key: 'done', error_handler_key: 'failed', retry_handler_key: 'again' } });
@@ -226,12 +226,13 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
     const { definition, table } = createIntentTable('intent-ambiguous');
     const observed = trace();
     let injected = false;
-    let appended = false;
+    const requests: SagaTurnAppendRequest[] = [];
     const harness = await createScenario(stack, 'intent-ambiguous', table, {
       channel: base => observeIdentitySettlements(base, observed),
       repository: base => wrapRepository(base, async request => {
+        requests.push(request);
         const result = await base.append(request);
-        if (!injected) { injected = true; appended = true; throw new Error('lost append response'); }
+        if (!injected) { injected = true; throw new Error('lost append response'); }
         return result;
       })
     });
@@ -240,10 +241,17 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       const id = instanceId(definition.sagaKey, orderId);
       await appendSourceCommit(stack, { id: 'ambiguous-first', streamId: 'ambiguous-input',
         events: [sourceEvent('ambiguous-placed', 'real.order-placed.v1.event', { orderId })] });
-      await settled(harness, observed, 'ambiguous-first', 'ambiguous-placed', 'ack', 1);
-      expect(appended).toBe(true);
-      expect(await streamCommits(harness, id)).toHaveLength(1);
-      expect((await streamCommits(harness, id))[0]?.events).toHaveLength(12);
+      const identity = { messageId: 'ambiguous-first', sourceEventId: 'ambiguous-placed' };
+      await pollUntil('ambiguous redelivery reconciled and ACKed', () =>
+        observed.received.length >= 2 && observed.settled.length >= 2);
+      await waitForQueueSettled(harness.queue);
+      expect(observed.received).toEqual([identity, identity]);
+      expect(observed.settled).toEqual([{ ...identity, kind: 'nack', requeue: true }, { ...identity, kind: 'ack' }]);
+      expect(injected).toBe(true);
+      expect(requests).toHaveLength(1);
+      const commits = await streamCommits(harness, id);
+      expect(commits).toHaveLength(1);
+      assertPhysicalTurn(commits[0]!, requests[0]!, harness.partitionId, 0);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
     } finally { await harness.close(); }
   });
@@ -343,8 +351,11 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       const count = phase === 'on' ? 2 : 1;
       await pollUntil('first fanout route committed', async () => (await streamCommits(harness, firstId)).length === count);
       expect(await streamCommits(harness, lateId)).toHaveLength(count - 1);
-      expect((await queueCounts(harness.queue)).unacknowledged).toBe(1);
-      expect(observed.settled.map(item => item.kind)).toEqual(phase === 'on' ? ['ack'] : []);
+      const identity = { messageId: `${label}-update`, sourceEventId: `${label}-event` };
+      await pollUntil('gated delivery observed', () => observed.received.some(item =>
+        item.messageId === identity.messageId && item.sourceEventId === identity.sourceEventId));
+      expect(observed.received.filter(item => item.messageId === identity.messageId)).toEqual([identity]);
+      expect(observed.settled.filter(item => item.messageId === identity.messageId)).toEqual([]);
       fault!.release();
       await pollUntil('both fanout routes committed and ACKed', async () =>
         (await streamCommits(harness, lateId)).length === count &&
@@ -352,9 +363,13 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       await waitForQueueSettled(harness.queue);
       expect(observed.settled.filter(item => item.messageId === `${label}-update`).map(item => [item.kind, item.requeue]))
         .toEqual([['nack', true], ['ack', undefined]]);
+      expect(observed.received.filter(item => item.messageId === identity.messageId)).toEqual([identity, identity]);
+      const sourceTriggerId = deriveSourceTriggerId({ partitionId: stack.sourcePartitionId,
+        streamId: `${label}-input`, commitId: `${label}-update`, eventIndex: 0 });
       for (const id of [firstId, lateId]) {
         const commits = await streamCommits(harness, id);
         expect(commits).toHaveLength(count);
+        expect(commits[count - 1]).toMatchObject({ sagaTurnIdentity: { sourceTriggerId } });
         const request = fault!.requests.find(item => item.streamId === id);
         if (!request) throw new Error('missing fanout request');
         assertPhysicalTurn(commits[count - 1]!, request, harness.partitionId, phase === 'on' ? 12 : 0);
