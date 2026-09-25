@@ -53,6 +53,22 @@ describe('saga turn OCC and ordered fanout', () => {
     expect([first[0]?.status, second[0]?.status].sort()).toEqual(['committed', 'reconciled']);
     expect(repository.appendCalls).toHaveLength(2);
     expect(repository.appendCalls[0]?.commitId).toBe(repository.appendCalls[1]?.commitId);
+    expect(repository.appendCalls[0]?.events).toEqual(repository.appendCalls[1]?.events);
+  });
+
+  it('derives stable command metadata without rewriting source metadata or aliasing another source', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'stable-envelopes');
+    const source = paidSource();
+    await processSagaSourceEvent(table, repository, source);
+    const first = repository.appendCalls[0]!;
+    repository.appendCalls.length = 0;
+    await processSagaSourceEvent(table, repository, paidSource('other-paid-commit'));
+    const second = repository.appendCalls[0]!;
+    expect(first.events[0]?.metadata).toMatchObject({ command: { type: expect.any(String), id: expect.any(String) } });
+    expect(first.events[0]?.metadata).not.toEqual(second.events[0]?.metadata);
+    expect(first.events[0]?.payload).toMatchObject({ record: { metadata: { tenant: 'tenant-1' } } });
+    expect(first.events[0]?.headers).toBeUndefined();
   });
 
   it('reconciles after a conflict when the same turn appeared without rerunning', async () => {

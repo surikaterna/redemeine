@@ -2,7 +2,8 @@ import type { Event } from '@redemeine/kernel';
 import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
-import type { ResolvedSagaTurnRouteGroup, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
+import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
+import type { ResolvedSagaTurnRouteGroup, SagaTurnIdentity, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
 import {
   assertStoredSagaReplayOrder,
@@ -99,12 +100,15 @@ function assertExistingIdentity(state: SagaAggregateState, resolved: ResolvedSag
   }
 }
 
-function appendCommand(aggregate: SagaAggregate, current: SagaAggregateState, pending: Event[], command: { type: string; payload: unknown }): SagaAggregateState {
-  const events = aggregate.process(current, command);
+function appendCommand(aggregate: SagaAggregate, current: SagaAggregateState, pending: Event[], command: { type: string; payload: unknown },
+  identity: SagaTurnIdentity, sourceTime: string): SagaAggregateState {
+  const commandId = deriveSagaTurnEnvelopeId(identity, sourceTime, pending.length, 'command');
+  const events = aggregate.process(current, { ...command, id: commandId });
   let next = current;
   for (const event of events) {
-    next = aggregate.apply(next, event);
-    pending.push(event);
+    const stableEvent = { ...event, id: deriveSagaTurnEnvelopeId(identity, sourceTime, pending.length, 'event') };
+    next = aggregate.apply(next, stableEvent);
+    pending.push(stableEvent);
   }
   return next;
 }
@@ -142,6 +146,7 @@ export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: Resolve
   const route = resolved.startRoute;
   if (!route) throw new SagaTurnPermanentError('missing_start_route', 'Cannot initialize a saga from an on-only route');
   const pending: Event[] = [];
+  const identity = { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId };
   let state = turn.state;
   let initialState: unknown;
   try {
@@ -153,9 +158,9 @@ export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: Resolve
     id: resolved.instanceId,
     sagaType: route.definition.sagaType,
     createdAt: source.createDateTime
-  }));
-  state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)));
-  appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(initialState, resolved, source)));
+  }), identity, source.createDateTime);
+  state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
+  appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(initialState, resolved, source)), identity, source.createDateTime);
   return pending;
 }
 
@@ -184,8 +189,9 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
     });
   }
   const pending: Event[] = [];
-  const observed = appendCommand(turn.aggregate, turn.state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)));
-  appendCommand(turn.aggregate, observed, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)));
+  const identity = { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId };
+  const observed = appendCommand(turn.aggregate, turn.state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
+  appendCommand(turn.aggregate, observed, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
   return pending;
 }
 
