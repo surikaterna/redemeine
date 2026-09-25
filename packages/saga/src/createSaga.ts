@@ -1581,7 +1581,7 @@ export interface SagaBuilderAwaitingCorrelation<
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
   TStartInput
 > {
-  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderAwaitingCorrelation<TNextState, TPlugins, TResponseHandlerBindings, TStartInput>;
+  initialState(factory: SagaInitialStateFactory<TState>): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
   onResponses<THandlers extends SagaAnyResponseHandlerMap<TState, TPlugins>>(
     handlers: THandlers
   ): SagaBuilderAwaitingCorrelation<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>, TStartInput>;
@@ -1609,7 +1609,7 @@ export interface SagaBuilderCorrelated<
   TStartInput,
   TCorrelationId
 > {
-  initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>): SagaBuilderCorrelated<TNextState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
+  initialState(factory: SagaInitialStateFactory<TState>): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
   onResponses<THandlers extends SagaAnyResponseHandlerMap<TState, TPlugins>>(
     handlers: THandlers
   ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings & SagaBindingsFromResponseHandlers<THandlers>, TStartInput, TCorrelationId>;
@@ -1770,9 +1770,9 @@ function createSagaBuilder<
     TLocalResponseHandlerBindings extends SagaResponseHandlerTokenBindings,
     TStartInput
   >(): SagaBuilderAwaitingCorrelation<TLocalState, TPlugins, TLocalResponseHandlerBindings, TStartInput> => ({
-    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+    initialState(factory: SagaInitialStateFactory<TLocalState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
-      return createAwaitingCorrelationBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput>();
+      return createAwaitingCorrelationBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput>();
     },
     onResponses<THandlers extends SagaAnyResponseHandlerMap<TLocalState, TPlugins>>(handlers: THandlers) {
       const nextState = state as unknown as SagaDefinitionDraft<
@@ -1869,9 +1869,9 @@ function createSagaBuilder<
     TStartInput,
     TCorrelationId
   >(): SagaBuilderCorrelated<TLocalState, TPlugins, TLocalResponseHandlerBindings, TStartInput, TCorrelationId> => ({
-    initialState<TNextState>(factory: SagaInitialStateFactory<TNextState>) {
+    initialState(factory: SagaInitialStateFactory<TLocalState>) {
       state.initialState = factory as SagaInitialStateFactory<unknown>;
-      return createCorrelatedBuilder<TNextState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
+      return createCorrelatedBuilder<TLocalState, TLocalResponseHandlerBindings, TStartInput, TCorrelationId>();
     },
     onResponses<THandlers extends SagaAnyResponseHandlerMap<TLocalState, TPlugins>>(handlers: THandlers) {
       const nextState = state as unknown as SagaDefinitionDraft<

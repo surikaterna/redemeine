@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import type { Draft } from 'immer';
 import {
   createSaga,
   createSagaCommandsFor,
@@ -51,7 +52,9 @@ describe('saga SDK initiation and command identity', () => {
           state.count += 1;
           ctx.commandsFor(invalid, start.id).invalid();
         }).correlateBy((start) => start.id).build();
-      await expect(runSagaStartHandler({ definition, startInput: { id: 'one' }, metadata }))
+      await expect(runSagaStartHandler({
+        definition, startInput: { id: 'one' }, metadata, plugins: [], responseHandlers: {}
+      }))
         .rejects.toThrow(TypeError);
     }
   });
@@ -87,5 +90,34 @@ describe('saga SDK initiation and command identity', () => {
     expect(output.intents[2]).toMatchObject({
       routing_metadata: { handler_data: { id: 'order-2' }, response_handler_key: 'ok', error_handler_key: 'fail' }, metadata
     });
+  });
+
+  it('revokes escaped drafts on immediate and awaited failures without returning partial intents', async () => {
+    for (const asynchronous of [false, true]) {
+      const original = { count: 0 };
+      const escaped: { draft?: Draft<typeof original> } = {};
+      const failure = new Error('start failed');
+      const definition = createSaga({ identity }).initialState(() => original)
+        .start<{ id: string }>((state, _start, ctx) => {
+          escaped.draft = state;
+          state.count += 1;
+          ctx.schedule('partial', 100);
+          if (asynchronous) {
+            return Promise.resolve().then(() => { throw failure; });
+          }
+          throw failure;
+        }).correlateBy((start) => start.id).build();
+
+      await expect(runSagaStartHandler({
+        definition, startInput: { id: 'one' }, metadata, plugins: [], responseHandlers: {}
+      })).rejects.toBe(failure);
+      expect(original).toEqual({ count: 0 });
+      expect(escaped.draft).toBeDefined();
+      expect(() => {
+        if (escaped.draft === undefined) throw new Error('handler did not receive a draft');
+        escaped.draft.count += 1;
+      }).toThrow();
+      expect(original).toEqual({ count: 0 });
+    }
   });
 });

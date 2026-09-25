@@ -18,8 +18,8 @@ export interface RunSagaStartInput<
   readonly definition: SagaDefinition<TState, TPlugins, TBindings, TStartInput>;
   readonly startInput: TStartInput;
   readonly metadata: SagaIntentMetadata;
-  readonly plugins?: TPlugins;
-  readonly responseHandlers?: TBindings;
+  readonly plugins: TPlugins;
+  readonly responseHandlers: TBindings;
 }
 
 /** Execute a start decision in memory; the caller owns validation and durable commit. */
@@ -42,6 +42,15 @@ export async function runSagaStartHandler<
     input.responseHandlers,
     input.plugins
   );
-  await definition.start(draft as Draft<TState>, startInput, ctx);
-  return { state: finishDraft(draft) as TState, intents };
+  try {
+    await definition.start(draft as Draft<TState>, startInput, ctx);
+    return { state: finishDraft(draft) as TState, intents };
+  } catch (error) {
+    try {
+      finishDraft(draft);
+    } catch {
+      // Preserve the original handler/finalization failure even if revocation fails.
+    }
+    throw error;
+  }
 }
