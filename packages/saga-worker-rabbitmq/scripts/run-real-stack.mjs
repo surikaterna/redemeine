@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { receiptPackageVersions } from './installed-versions.mjs';
@@ -18,12 +19,16 @@ const resources = {
 const receiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}.json`;
 const jestResultPath = `/tmp/opencode/redemeine-wrdf-${suffix}-jest.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
+const identitySlice = process.env.REDEMEINE_REAL_SLICE === 'redemeine-371j.1';
+if (process.env.REDEMEINE_REAL_SLICE && !identitySlice) throw new Error('Unsupported real-stack slice');
 const startedAt = new Date();
 let testExitCode = null;
 let failure = null;
 let versions = {};
 let cleanup = {};
 let scenarios = [];
+let codeHead = null;
+let scenarioSha256 = null;
 
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -189,13 +194,24 @@ async function runTests() {
       '--outputFile',
       jestResultPath,
       '--runTestsByPath',
-      'packages/saga-worker-rabbitmq/integration/saga-real-stack.integration.test.ts'
+       identitySlice
+         ? 'packages/saga-worker-rabbitmq/integration/saga-identity-real.integration.test.ts'
+         : 'packages/saga-worker-rabbitmq/integration/saga-real-stack.integration.test.ts'
     ],
     { cwd: root, env, allowFailure: true }
   );
   testExitCode = result.code;
   await collectScenarios();
   if (result.code !== 0) throw new Error(`real-stack Jest invocation failed with exit code ${result.code}`);
+}
+
+async function assertCommittedIdentitySlice() {
+  if (!identitySlice) return;
+  const status = await execute('git', ['status', '--porcelain'], { capture: true });
+  if (status.stdout) throw new Error('Identity slice must run from a clean committed HEAD');
+  codeHead = (await execute('git', ['rev-parse', 'HEAD'], { capture: true })).stdout;
+  const testFile = new URL('../integration/saga-identity-real.integration.test.ts', import.meta.url);
+  scenarioSha256 = createHash('sha256').update(await readFile(testFile)).digest('hex');
 }
 
 async function collectScenarios() {
@@ -231,6 +247,7 @@ async function removeResources() {
 }
 
 try {
+  await assertCommittedIdentitySlice();
   await createResources();
   await waitForServices();
   await collectVersions();
@@ -245,7 +262,9 @@ try {
     receiptPath,
     `${JSON.stringify(
       {
-        issue: 'redemeine-wrdf',
+         issue: identitySlice ? 'redemeine-371j.1' : 'redemeine-wrdf',
+         codeHead,
+         scenarioSha256,
         invocation,
         firstFullInvocation: invocation === 'first',
         runId,
