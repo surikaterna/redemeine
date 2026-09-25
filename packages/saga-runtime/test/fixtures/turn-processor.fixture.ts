@@ -1,5 +1,6 @@
 import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
+import { deriveSourceTriggerId, deriveTurnCommitId } from '../../src/identity/deterministicIds';
 import { createSaga } from '@redemeine/saga';
 import {
   compileRegisteredSagaRoutes,
@@ -281,11 +282,18 @@ export class FakeTurnRepository implements SagaTurnRepository {
   }
 
   replaceBusinessState(request: SagaTurnAppendRequest, count: number): void {
-    const events = request.events.map((event) => {
-      if (event.type !== 'saga.business_state_recorded.event' || typeof event.payload !== 'object' || event.payload === null) return event;
-      return { ...event, payload: { ...event.payload, sourceTriggerId: 'winner-trigger', state: { count } } };
+    const observed = request.events[0]?.payload as { record: { sourcePosition: {
+      partitionId: string; streamId: string; commitId: string; eventIndex: number } } };
+    const position = { ...observed.record.sourcePosition, commitId: `${observed.record.sourcePosition.commitId}-winner` };
+    const winner = { ...request.identity, sourceTriggerId: deriveSourceTriggerId(position) };
+    const events = request.events.map((event, index) => {
+      if (index === 0) return { ...event, payload: { record: { ...observed.record, sourcePosition: position } } };
+      if (event.type === 'saga.business_state_recorded.event' && typeof event.payload === 'object' && event.payload !== null) {
+        return { ...event, payload: { ...event.payload, sourceTriggerId: winner.sourceTriggerId, state: { count } } };
+      }
+      return event;
     });
-    this.commit({ ...request, commitId: `${request.commitId}-winner`, identity: { ...request.identity, sourceTriggerId: 'winner-trigger' }, events });
+    this.commit({ ...request, commitId: deriveTurnCommitId(winner), identity: winner, events });
   }
 
   removeBusinessState(streamId: string): void {

@@ -2,6 +2,7 @@ import type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 import type { DefinitionIdentityV1 } from './routing/executableIdentity';
 import type { WireIntent } from './intentWire';
 import type { TimerFactV1 } from './turns/lifecycleWire';
+import type { SourceTriggerIdentityInput } from './identity/deterministicIds';
 
 export type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 
@@ -14,6 +15,7 @@ export interface SagaRecentWindowLimits {
 
 export interface SagaObservedSourceEventRecord {
   eventType: string;
+  sourcePosition?: SourceTriggerIdentityInput;
   aggregateType?: string;
   aggregateId?: string;
   eventId?: string;

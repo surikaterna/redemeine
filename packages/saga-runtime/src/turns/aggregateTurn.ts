@@ -74,7 +74,7 @@ function replayCommitEvents(commit: SagaTurnStoredCommit, count: number, version
     if (validated.kind === 'intentRecorded') {
       assertIntentCommitIdentity(commit, validated.payload.intent as WireIntent);
     }
-    assertStoredSagaReplayOrder(replay, validated);
+    assertStoredSagaReplayOrder(replay, validated, commit.identity);
     try {
       state = aggregate.apply(state, validated.event);
       assertStateBudget(state);
@@ -217,6 +217,8 @@ function appendCommand(aggregate: SagaAggregate, current: SagaAggregateState, pe
 function observationPayload(source: SagaTurnSourceEvent) {
   return {
     eventType: source.type,
+    sourcePosition: { partitionId: source.partitionId, streamId: source.streamId,
+      commitId: source.commitId, eventIndex: source.eventIndex },
     eventId: source.eventId,
     observedAt: source.createDateTime,
     payload: source.payload,

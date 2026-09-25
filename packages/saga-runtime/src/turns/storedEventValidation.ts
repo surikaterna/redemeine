@@ -5,6 +5,7 @@ import { SagaTurnIntegrityError } from './errors';
 import { decodeIntent, type WireRegistryEntry } from '../intentWire';
 import type { WireIntent } from '../intentWire';
 import type { TimerFactV1 } from './lifecycleWire';
+import { deriveSourceTriggerId } from '../identity/deterministicIds';
 import {
   assertKeys, canonicalCorrelation, invalid, optionalRecord, optionalSafeInteger,
   optionalString, optionalTimestamp, requireRecord, requireSafeInteger,
@@ -58,7 +59,7 @@ function validateDefinitionIdentity(payload: Record<string, unknown>): void {
 function validateObserved(payload: Record<string, unknown>): void {
   assertKeys(payload, ['record'], [], 'sourceEventObserved');
   const record = requireRecord(payload.record, 'sourceEventObserved.record');
-  assertKeys(record, ['eventType', 'observedAt'], ['aggregateType', 'aggregateId', 'eventId', 'sequence', 'correlationId', 'causationId', 'payload', 'metadata'], 'sourceEventObserved.record');
+  assertKeys(record, ['eventType', 'observedAt'], ['sourcePosition', 'aggregateType', 'aggregateId', 'eventId', 'sequence', 'correlationId', 'causationId', 'payload', 'metadata'], 'sourceEventObserved.record');
   requireString(record, 'eventType', 'sourceEventObserved.record.eventType');
   requireTimestamp(record, 'observedAt', 'sourceEventObserved.record.observedAt');
   for (const key of ['aggregateType', 'aggregateId', 'eventId', 'correlationId', 'causationId']) {
@@ -66,6 +67,12 @@ function validateObserved(payload: Record<string, unknown>): void {
   }
   optionalSafeInteger(record, 'sequence', 'sourceEventObserved.record.sequence');
   optionalRecord(record, 'metadata', 'sourceEventObserved.record.metadata');
+  if (record.sourcePosition !== undefined) {
+    const position = requireRecord(record.sourcePosition, 'sourceEventObserved.record.sourcePosition');
+    assertKeys(position, ['partitionId', 'streamId', 'commitId', 'eventIndex'], [], 'sourceEventObserved.record.sourcePosition');
+    deriveSourceTriggerId({ partitionId: requireString(position, 'partitionId'), streamId: requireString(position, 'streamId'),
+      commitId: requireString(position, 'commitId'), eventIndex: requireSafeInteger(position.eventIndex, 'eventIndex') });
+  }
 }
 
 function validateTransition(payload: Record<string, unknown>): void {

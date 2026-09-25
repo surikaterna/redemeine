@@ -6,6 +6,8 @@ import { canonicalCorrelation, requireRecord, requireSafeInteger, requireString 
 import type { WireIntent } from '../intentWire';
 import type { TimerFactV1 } from './lifecycleWire';
 import type { SagaStoredEventKind, ValidatedStoredSagaEvent } from './storedEventValidation';
+import { deriveSourceTriggerId, type SourceTriggerIdentityInput } from '../identity/deterministicIds';
+import type { SagaTurnIdentity } from './contracts';
 
 export interface SagaStoredReplayContext {
   created: boolean;
@@ -18,6 +20,7 @@ export interface SagaStoredReplayContext {
   turn: { sagaKey: string; correlation: string; sourceId: string; definitionVersion: number; turnId: string | null;
     nextOrdinal: number; awaitingTimer: WireIntent | null } | null;
   turnStarted: boolean;
+  observedSourceId: string | null;
 }
 
 export function createSagaStoredReplayContext(): SagaStoredReplayContext {
@@ -30,7 +33,8 @@ export function createSagaStoredReplayContext(): SagaStoredReplayContext {
     businessIdentity: null,
     definitionIdentity: null,
     turn: null,
-    turnStarted: false
+    turnStarted: false,
+    observedSourceId: null
   };
 }
 
@@ -50,7 +54,7 @@ function assertTransitionOrder(context: SagaStoredReplayContext, payload: Record
   context.lifecycleState = to;
 }
 
-function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
+function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>, identity: SagaTurnIdentity): void {
   if (context.lastKind !== 'sourceEventObserved' || context.pendingObservations !== 1) {
     throw invalidReplay('Each authoritative business state must pair with exactly one preceding source observation');
   }
@@ -58,20 +62,32 @@ function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<s
     context.definitionIdentity.definitionVersion !== payload.definitionVersion) {
     throw invalidReplay('Business state disagrees with recorded definition identity');
   }
-  const identity = JSON.stringify([
+  if (payload.sourceTriggerId !== context.observedSourceId || payload.sourceTriggerId !== identity.sourceTriggerId ||
+    payload.sagaKey !== identity.sagaKey) throw invalidReplay('Business state disagrees with physical source identity');
+  const businessKey = JSON.stringify([
     requireString(payload, 'sagaKey'),
     requireSafeInteger(payload.definitionVersion, 'definitionVersion', 1),
     serializeSagaCorrelation(canonicalCorrelation(payload.correlation))
   ]);
-  if (context.businessIdentity !== null && context.businessIdentity !== identity) {
+  if (context.businessIdentity !== null && context.businessIdentity !== businessKey) {
     throw invalidReplay('Stored business state identity changes within one saga stream');
   }
-  context.businessIdentity = identity;
+  context.businessIdentity = businessKey;
   context.authoritative = true;
   context.pendingObservations = 0;
+  context.observedSourceId = null;
   context.turn = { sagaKey: requireString(payload, 'sagaKey'), correlation: serializeSagaCorrelation(canonicalCorrelation(payload.correlation)),
     sourceId: requireString(payload, 'sourceTriggerId'), definitionVersion: requireSafeInteger(payload.definitionVersion, 'definitionVersion', 1),
     turnId: null, nextOrdinal: 0, awaitingTimer: null };
+}
+
+function observedSourceId(payload: Record<string, unknown>, identity: SagaTurnIdentity): string {
+  const record = requireRecord(payload.record, 'sourceEventObserved.record');
+  if (record.sourcePosition === undefined) return identity.sourceTriggerId;
+  const position = record.sourcePosition as SourceTriggerIdentityInput;
+  const derived = deriveSourceTriggerId(position);
+  if (derived !== identity.sourceTriggerId) throw invalidReplay('Observed source position disagrees with physical turn identity');
+  return derived;
 }
 
 function assertIntentOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
@@ -100,9 +116,24 @@ function assertTimerOrder(context: SagaStoredReplayContext, payload: Record<stri
   context.turn!.awaitingTimer = null;
 }
 
-export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent): void {
+function assertObservedOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>, identity: SagaTurnIdentity): void {
+  if (!context.authoritative && context.lastKind !== 'definitionIdentityRecorded') {
+    throw invalidReplay('Initial source must immediately follow definition identity');
+  }
+  if (context.pendingObservations !== 0 || context.turnStarted || context.turn?.awaitingTimer) {
+    throw invalidReplay('Source observation must begin a complete turn');
+  }
+  context.observedSourceId = observedSourceId(payload, identity);
+  context.pendingObservations = 1;
+  context.turn = null;
+  context.turnStarted = true;
+}
+
+export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent,
+  identity: SagaTurnIdentity): void {
   if (stored.kind === 'instanceCreated') {
     if (context.created || context.lastKind !== null) throw invalidReplay('Saga stream contains multiple instance creation events');
+    if (stored.payload.id !== identity.instanceId) throw invalidReplay('Created instance disagrees with physical turn identity');
     context.created = true;
     const lifecycle = stored.payload.lifecycleState;
     assertSagaLifecycleState(lifecycle);
@@ -119,22 +150,11 @@ export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, st
   } else if (!context.definitionIdentity) {
     throw invalidReplay('Saga stream lacks definition identity before its first turn');
   } else if (stored.kind === 'sourceEventObserved') {
-    if (!context.authoritative && context.lastKind !== 'definitionIdentityRecorded') {
-      throw invalidReplay('Initial source must immediately follow definition identity');
-    }
-    if (context.pendingObservations !== 0 || context.turnStarted || context.turn?.awaitingTimer) {
-      throw invalidReplay('Source observation must begin a complete turn');
-    }
-    context.pendingObservations += 1;
-    context.turn = null;
-    context.turnStarted = true;
-    if (context.authoritative && context.pendingObservations > 1) {
-      throw invalidReplay('A new source observation cannot begin before the prior authoritative turn records business state');
-    }
+    assertObservedOrder(context, stored.payload, identity);
   } else if (stored.kind === 'stateTransitioned') {
     assertTransitionOrder(context, stored.payload);
   } else if (stored.kind === 'businessStateRecorded') {
-    assertBusinessOrder(context, stored.payload);
+    assertBusinessOrder(context, stored.payload, identity);
   } else if (stored.kind === 'intentRecorded') {
     assertIntentOrder(context, stored.payload);
   } else if (stored.kind === 'timerFactRecorded') {
@@ -161,4 +181,6 @@ export function assertStoredSagaCommitBoundary(context: SagaStoredReplayContext)
     throw invalidReplay('Physical saga commit ends with an incomplete authoritative turn');
   }
   context.turnStarted = false;
+  context.turn = null;
+  context.observedSourceId = null;
 }
