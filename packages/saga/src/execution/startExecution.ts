@@ -10,7 +10,7 @@ import type {
 import type { SagaResponseHandlerTokenBindings } from '../definition/responseTokens';
 
 export interface RunSagaStartInput<
-  TState extends Record<string, unknown>,
+  TState extends object,
   TStartInput,
   TPlugins extends SagaPluginManifestList = readonly [],
   TBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
@@ -24,7 +24,7 @@ export interface RunSagaStartInput<
 
 /** Execute a start decision in memory; the caller owns validation and durable commit. */
 export async function runSagaStartHandler<
-  TState extends Record<string, unknown>,
+  TState extends object,
   TStartInput,
   TPlugins extends SagaPluginManifestList = readonly [],
   TBindings extends SagaResponseHandlerTokenBindings = Record<never, never>

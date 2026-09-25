@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import type { Draft } from 'immer';
+import { immerable, type Draft } from 'immer';
 import {
   createSaga,
   createSagaCommandsFor,
@@ -11,6 +11,10 @@ import {
 
 const identity = { namespace: 'orders', name: 'start_dispatch', version: 1 };
 const metadata = { sagaId: 's1', correlationId: 'c1', causationId: 'e1' };
+interface StartState {
+  readonly count: number;
+  readonly nested: { readonly ids: string[] };
+}
 const aggregate = {
   aggregateType: 'order',
   pure: { eventProjectors: {} },
@@ -60,7 +64,7 @@ describe('saga SDK initiation and command identity', () => {
   });
 
   it('drafts initial state without mutating it and returns all intents including routing data', async () => {
-    const original = { count: 0, ids: [] as string[] };
+    const original: StartState = { count: 0, nested: { ids: [] } };
     const notify = defineSagaPlugin({ plugin_key: 'notify', actions: {
       send: defineOneWay((id: string) => ({ id })),
       ask: defineRequestResponse((id: string) => ({ id }))
@@ -69,22 +73,24 @@ describe('saga SDK initiation and command identity', () => {
       .initialState(() => original)
       .onResponses({ ok: () => undefined })
       .onErrors({ fail: () => undefined })
+      .onRetries({ again: () => undefined })
       .start<{ id: string }>(async (state, start, ctx) => {
         await Promise.resolve();
         state.count += 1;
-        state.ids.push(start.id);
+        state.nested.ids.push(start.id);
         ctx.actions.core.dispatch(aggregate, start.id).rename(start.id);
         ctx.actions.notify.send(start.id);
         ctx.actions.notify.ask(start.id).withData({ id: start.id })
           .onResponse(ctx.onResponse.ok).onError(ctx.onError.fail);
+        void ctx.onRetry.again;
       }).correlateBy((start) => start.id).build();
     const output = await runSagaStartHandler({
       definition, startInput: { id: 'order-2' }, metadata,
-      responseHandlers: { ok: { phase: 'response' }, fail: { phase: 'error' } },
+      responseHandlers: { ok: { phase: 'response' }, fail: { phase: 'error' }, again: { phase: 'retry' } },
       plugins: [notify] as const
     });
-    expect(output.state).toEqual({ count: 1, ids: ['order-2'] });
-    expect(original).toEqual({ count: 0, ids: [] });
+    expect(output.state).toEqual({ count: 1, nested: { ids: ['order-2'] } });
+    expect(original).toEqual({ count: 0, nested: { ids: [] } });
     expect(output.intents).toHaveLength(3);
     expect(output.intents[0]).toMatchObject({ execution_payload: { command: 'custom.order.reserve' }, metadata });
     expect(output.intents[2]).toMatchObject({
@@ -94,8 +100,8 @@ describe('saga SDK initiation and command identity', () => {
 
   it('revokes escaped drafts on immediate and awaited failures without returning partial intents', async () => {
     for (const asynchronous of [false, true]) {
-      const original = { count: 0 };
-      const escaped: { draft?: Draft<typeof original> } = {};
+      const original: StartState = { count: 0, nested: { ids: [] } };
+      const escaped: { draft?: Draft<StartState> } = {};
       const failure = new Error('start failed');
       const definition = createSaga({ identity }).initialState(() => original)
         .start<{ id: string }>((state, _start, ctx) => {
@@ -111,13 +117,34 @@ describe('saga SDK initiation and command identity', () => {
       await expect(runSagaStartHandler({
         definition, startInput: { id: 'one' }, metadata, plugins: [], responseHandlers: {}
       })).rejects.toBe(failure);
-      expect(original).toEqual({ count: 0 });
+      expect(original).toEqual({ count: 0, nested: { ids: [] } });
       expect(escaped.draft).toBeDefined();
       expect(() => {
         if (escaped.draft === undefined) throw new Error('handler did not receive a draft');
         escaped.draft.count += 1;
       }).toThrow();
-      expect(original).toEqual({ count: 0 });
+      expect(original).toEqual({ count: 0, nested: { ids: [] } });
     }
+  });
+
+  it('accepts Immer draftable object shapes but rejects non-draftable classes before the handler', async () => {
+    // This SDK helper drafts arrays and marked classes; durable JSON state validation is a separate runtime boundary.
+    class MarkedState { [immerable] = true; count = 0; }
+    class UnmarkedState { count = 0; }
+    for (const initialState of [() => ({ count: 0 }), () => [0], () => new MarkedState()]) {
+      const handler = jest.fn((state: Draft<{ count: number } | number[] | MarkedState>) => {
+        if ('count' in state) state.count += 1;
+        else state.push(1);
+      });
+      const definition = createSaga({ identity }).initialState(initialState).start(handler).correlateBy(() => 'one').build();
+      await expect(runSagaStartHandler({ definition, startInput: undefined, metadata, plugins: [], responseHandlers: {} }))
+        .resolves.toBeDefined();
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
+    const handler = jest.fn((_state: Draft<UnmarkedState>) => undefined);
+    const definition = createSaga({ identity }).initialState(() => new UnmarkedState()).start(handler).correlateBy(() => 'one').build();
+    await expect(runSagaStartHandler({ definition, startInput: undefined, metadata, plugins: [], responseHandlers: {} }))
+      .rejects.toThrow();
+    expect(handler).not.toHaveBeenCalled();
   });
 });
