@@ -1,4 +1,5 @@
 import {
+  assertEquivalentSagaCommit,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
   SagaTurnIntegrityError,
@@ -44,12 +45,6 @@ function findById(commits: readonly ICommit<TapewormSagaEvent>[], commitId: stri
   return commits.find(({ id }) => id === commitId) ?? null;
 }
 
-function sameIdentity(left: SagaTurnStoredCommit['identity'], right: SagaTurnAppendRequest['identity']): boolean {
-  return (
-    left.sourceTriggerId === right.sourceTriggerId && left.sagaKey === right.sagaKey && left.instanceId === right.instanceId && left.routeId === right.routeId
-  );
-}
-
 function incompatibleCommit(request: SagaTurnAppendRequest, actualIdentity?: SagaTurnStoredCommit['identity'], cause?: unknown): SagaTurnIntegrityError {
   return new SagaTurnIntegrityError(
     'incompatible_turn_commit',
@@ -89,6 +84,12 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
 
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
     const before = await this.readStream(request.streamId);
+    const existing = findById(before.commits, request.commitId);
+    if (existing) {
+      const stored = storedCommitFromTapeworm(existing);
+      assertEquivalentSagaCommit(stored, request, this.options.partitionId, this.firstEventVersion(before.commits, stored.commitSequence));
+      return { status: 'reconciled', commit: stored };
+    }
     if (before.nextCommitSequence !== request.expectedNextCommitSequence) return { status: 'conflict' };
     const commit = buildCommit(request, this.options.partitionId, before.nextEventVersion);
     try {
@@ -104,17 +105,22 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
     return validateTapewormStream(commits, this.options.partitionId, streamId);
   }
 
+  private firstEventVersion(commits: readonly ICommit<TapewormSagaEvent>[], sequence: number): number {
+    return commits.slice(0, sequence).reduce((total, commit) => total + commit.events.length, 0);
+  }
+
   private async reconcileAppendFailure(error: unknown, request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
-    let expectedStreamCommit: ICommit<TapewormSagaEvent> | null;
+    let readback: Awaited<ReturnType<TapewormSagaTurnRepository['readStream']>>;
     try {
-      expectedStreamCommit = findById((await this.readStream(request.streamId)).commits, request.commitId);
+      readback = await this.readStream(request.streamId);
     } catch (readbackError) {
       if (readbackError instanceof SagaTurnIntegrityError) throw readbackError;
       throw error;
     }
+    const expectedStreamCommit = findById(readback.commits, request.commitId);
     if (expectedStreamCommit) {
       const stored = storedCommitFromTapeworm(expectedStreamCommit);
-      if (!sameIdentity(stored.identity, request.identity)) throw incompatibleCommit(request, stored.identity, error);
+      assertEquivalentSagaCommit(stored, request, this.options.partitionId, this.firstEventVersion(readback.commits, stored.commitSequence));
       return { status: 'reconciled', commit: stored };
     }
     if (error instanceof ConcurrencyError) return { status: 'conflict' };

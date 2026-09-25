@@ -21,10 +21,21 @@ export interface SagaTurnIdentity {
 }
 
 export interface SagaTurnStoredCommit {
+  readonly partitionId: string;
   readonly streamId: string;
   readonly commitId: string;
   readonly commitSequence: number;
   readonly identity: SagaTurnIdentity;
+  readonly events: readonly SagaTurnStoredEvent[];
+}
+
+export interface SagaTurnStoredEvent {
+  readonly id: string;
+  readonly type: string;
+  readonly version: number;
+  readonly payload: unknown;
+  readonly headers?: Readonly<Record<string, unknown>>;
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface SagaTurnStreamSnapshot {

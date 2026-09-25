@@ -112,6 +112,39 @@ describe('Tapeworm saga turn repository', () => {
     expect(partition.queryAllCalls).toBe(0);
   });
 
+  it('refuses same-ID requests whose ordered content, headers, or metadata differ', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    await target.append(request());
+    const mutations: SagaTurnAppendRequest['events'][] = [
+      request().events.slice(0, 1),
+      [{ type: 'saga.instance_created.event', payload: { id: 'other' } }, request().events[1]!],
+      [{ ...request().events[0]!, headers: { token: 'different' } }, request().events[1]!],
+      [request().events[0]!, { ...request().events[1]!, metadata: { origin: 'different' } }],
+      [...request().events].reverse()
+    ];
+    for (const events of mutations) {
+      await expect(target.append(request({ expectedNextCommitSequence: 1, events }))).rejects.toMatchObject({
+        code: 'incompatible_turn_commit', retryable: false
+      });
+    }
+    expect(partition.commits).toHaveLength(1);
+    expect(partition.queryAllCalls).toBe(0);
+  });
+
+  it('refuses ambiguous after-write success when the stored event material changed', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const original = request();
+    partition.appendFailure = { error: new Error('network timeout'), afterWrite: true };
+    const result = await target.append(original);
+    expect(result.status).toBe('reconciled');
+    const actual = partition.commits[0]!;
+    partition.commits[0] = { ...actual, events: actual.events.map((event, index) => index === 1 ? { ...event, payload: { state: { count: 2 } } } : event) };
+    await expect(target.append(original)).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    expect(partition.queryAllCalls).toBe(0);
+  });
+
   it('maps concurrency without expected-stream readback to conflict without queryAll', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);

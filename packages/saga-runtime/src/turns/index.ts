@@ -5,3 +5,4 @@ export * from './processSagaSource';
 export * from './processSagaTurn';
 export * from './routePlanning';
 export * from './sourceValidation';
+export { assertEquivalentSagaCommit } from './commitMaterial';

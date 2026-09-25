@@ -30,6 +30,9 @@ function requireInteger(record: Record<string, unknown>, key: string, expected: 
 
 function eventFromUnknown(value: unknown, expectedVersion: number): { readonly stored: unknown; readonly tapeworm: TapewormSagaEvent } {
   if (!isRecord(value)) throw invalid('Tapeworm event must be an object');
+  if (Object.keys(value).some((key) => !['id', 'type', 'version', 'payload', 'headers', 'metadata'].includes(key))) {
+    throw invalid('Tapeworm event has unsupported fields');
+  }
   requireString(value, 'id', 'Tapeworm event id');
   const type = requireString(value, 'type', 'Tapeworm event type');
   if (!type.endsWith('.event')) throw invalid('Tapeworm event type must end in .event');
@@ -57,12 +60,18 @@ function commitFromUnknown(
   firstEventVersion: number
 ): { readonly commit: ICommit<TapewormSagaEvent>; readonly events: readonly unknown[] } {
   if (!isRecord(value)) throw invalid('Tapeworm commit must be an object');
+  if (Object.keys(value).some((key) => !['id', 'partitionId', 'streamId', 'commitSequence', 'events', 'sagaTurnIdentity'].includes(key))) {
+    throw invalid('Tapeworm commit has unsupported fields');
+  }
   requireString(value, 'id', 'Tapeworm commit id');
   if (value.partitionId !== partitionId) throw invalid('Tapeworm commit partitionId does not match configured partition');
   if (value.streamId !== streamId) throw invalid('Tapeworm commit streamId does not match requested stream');
   requireInteger(value, 'commitSequence', expectedSequence, 'Tapeworm commit sequence');
   if (!Array.isArray(value.events) || value.events.length === 0) throw invalid('Tapeworm commit events must be non-empty');
   const validatedEvents = value.events.map((event, index) => eventFromUnknown(event, firstEventVersion + index));
+  for (let index = 0; index < validatedEvents.length; index += 1) {
+    if (validatedEvents[index]?.tapeworm.id !== `${value.id}:event:${index}`) throw invalid('Tapeworm event ID does not match commit position');
+  }
   const commit: ICommit<TapewormSagaEvent> = {
     id: requireString(value, 'id', 'Tapeworm commit id'),
     partitionId,
@@ -91,6 +100,9 @@ export function validateTapewormStream(value: unknown, partitionId: string, stre
 
 function identityFromUnknown(value: unknown): SagaTurnIdentity {
   if (!isRecord(value)) throw invalid('Stored saga turn identity must be an object');
+  if (Object.keys(value).length !== 4 || Object.keys(value).some((key) => !['sourceTriggerId', 'sagaKey', 'instanceId', 'routeId'].includes(key))) {
+    throw invalid('Stored saga turn identity has unsupported fields');
+  }
   return {
     sourceTriggerId: requireString(value, 'sourceTriggerId', 'Stored sourceTriggerId'),
     sagaKey: requireString(value, 'sagaKey', 'Stored sagaKey'),
@@ -100,10 +112,23 @@ function identityFromUnknown(value: unknown): SagaTurnIdentity {
 }
 
 export function storedCommitFromTapeworm(value: ICommit<TapewormSagaEvent>): SagaTurnStoredCommit {
+  const events = value.events.map((event) => {
+    if (!Number.isSafeInteger(event.version) || event.version === undefined || event.version < 0) throw invalid('Tapeworm event version is invalid');
+    return {
+      id: event.id,
+      type: event.type,
+      version: event.version,
+      payload: event.payload,
+      ...(event.headers === undefined ? {} : { headers: event.headers }),
+      ...(event.metadata === undefined ? {} : { metadata: event.metadata })
+    };
+  });
   return {
+    partitionId: value.partitionId,
     streamId: value.streamId,
     commitId: value.id,
     commitSequence: value.commitSequence,
-    identity: identityFromUnknown(value.sagaTurnIdentity)
+    identity: identityFromUnknown(value.sagaTurnIdentity),
+    events
   };
 }
