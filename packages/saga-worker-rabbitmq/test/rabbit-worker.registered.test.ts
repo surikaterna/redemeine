@@ -12,6 +12,7 @@ const definition = createSaga<State>({ identity: { namespace: 'worker', name: 'r
     started++;
     state.count = input.orderId.length;
     if (input.orderId === 'intent') ctx.actions.core.schedule('later', 1000);
+    if (input.orderId === 'invalid') ctx.actions.core.schedule('later', -1);
   })
   .correlateBy((input) => input.orderId)
   .triggeredBy({ kind: 'event', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
@@ -62,7 +63,7 @@ it('ACKs only after an intent-free registered start has appended its four events
   await worker.stop();
 });
 
-it('dead-letters an emitted timer before append without ACK or hot retry', async () => {
+it('dead-letters an invalid emitted timer before append without ACK or hot retry', async () => {
   started = 0;
   const registration = register();
   const table = compileRegisteredSagaRoutes([registration],
@@ -79,12 +80,42 @@ it('dead-letters an emitted timer before append without ACK or hot retry', async
     { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
   await worker.start();
   const source = body();
-  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId: 'intent' } }] } });
+  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId: 'invalid' } }] } });
   await worker.handle(incoming);
   expect(started).toBe(1);
   expect(appendCalls).toEqual([]);
   expect(channel.acks).toEqual([]);
   expect(channel.nacks).toEqual([{ message: incoming, allUpTo: false, requeue: false }]);
+  await worker.stop();
+});
+
+it('ACKs a valid timer only after its intent and fact share the physical append', async () => {
+  const registration = register();
+  const table = compileRegisteredSagaRoutes([registration],
+    [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
+  const appended: string[][] = [];
+  const repository: SagaTurnRepository = {
+    load: async streamId => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
+    findCommit: async () => null,
+    assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
+    append: async request => {
+      appended.push(request.events.map(event => event.type));
+      return { status: 'committed', commitSequence: 0 };
+    }
+  };
+  const channel = new FakeChannel();
+  const worker = createSagaRabbitWorker(options(channel, createSagaSourceEventProcessor(table, repository,
+    { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
+  await worker.start();
+  const source = body();
+  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId: 'intent' } }] } });
+  await worker.handle(incoming);
+  expect(appended).toEqual([[
+    'saga.instance_created.event', 'saga.definition_identity_recorded.event', 'saga.source_event_observed.event',
+    'saga.business_state_recorded.event', 'saga.intent_recorded.event', 'saga.timer_fact_recorded.event'
+  ]]);
+  expect(channel.acks).toEqual([{ message: incoming, allUpTo: false }]);
+  expect(channel.nacks).toEqual([]);
   await worker.stop();
 });
 

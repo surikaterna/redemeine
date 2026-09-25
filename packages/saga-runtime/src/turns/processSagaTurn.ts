@@ -51,13 +51,14 @@ function assertEquivalentCommit(stored: SagaTurnStoredCommit, candidate: TurnCom
   }
 }
 
-function activeRegistration(resolved: ResolvedSagaTurnRouteGroup, options: SagaTurnProcessorOptions): { identity: DefinitionIdentityV1; start: SagaTurnRegistration | null; registry: readonly WireRegistryEntry[] } {
+function activeRegistration(resolved: ResolvedSagaTurnRouteGroup, options: SagaTurnProcessorOptions): { identity: DefinitionIdentityV1; start: SagaTurnRegistration | null; on: SagaTurnRegistration | null; registry: readonly WireRegistryEntry[] } {
   const routes = [resolved.startRoute, resolved.onRoute].filter((route): route is CompiledSagaRoute => route !== null);
   if (routes.length === 0 || typeof options.registrationForRoute !== 'function') {
     throw new SagaTurnPermanentError('missing_registration', 'Saga route requires a verified registration');
   }
   let active: DefinitionIdentityV1 | null = null;
   let start: SagaTurnRegistration | null = null;
+  let on: SagaTurnRegistration | null = null;
   let registry: readonly WireRegistryEntry[] = [];
   for (const route of routes) {
     let registration;
@@ -76,9 +77,10 @@ function activeRegistration(resolved: ResolvedSagaTurnRouteGroup, options: SagaT
     active = identity;
     registry = registration.wireRegistry;
     if (route.kind === 'start') start = registration;
+    else on = registration;
   }
   if (!active) throw new SagaTurnPermanentError('missing_registration', 'Saga route requires a verified registration');
-  return { identity: active, start, registry };
+  return { identity: active, start, on, registry };
 }
 
 function selectRoute(resolved: ResolvedSagaTurnRouteGroup, exists: boolean): CompiledSagaRoute | null {
@@ -125,12 +127,12 @@ function retryLimit(options: SagaTurnProcessorOptions): number {
 }
 
 async function processAttempt(repository: SagaTurnRepository, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, options: SagaTurnProcessorOptions) {
-  const { identity: active, start, registry } = activeRegistration(resolved, options);
+  const { identity: active, start, on, registry } = activeRegistration(resolved, options);
   const loaded = await repository.load(resolved.instanceId);
   const { hydrated, target, nextEventVersion } = await foldSagaTurn(loaded, resolved, registry);
   const exists = hydrated.state.id !== null;
   if (exists) assertHydratedSagaIdentity(hydrated, resolved, active);
-  const duplicate = await proveOriginalTurn(repository, resolved, source, active, target, start);
+  const duplicate = await proveOriginalTurn(repository, resolved, source, active, target, start, on);
   if (duplicate) {
     const candidate = createCandidate(resolved, duplicate);
     return { status: 'reconciled', sagaKey: resolved.sagaKey, sourceTriggerId: resolved.sourceTriggerId,
@@ -144,7 +146,7 @@ async function processAttempt(repository: SagaTurnRepository, resolved: Resolved
   let events;
   try {
     events = exists
-      ? await buildExistingTurnEvents(hydrated, resolved, source, active)
+      ? await buildExistingTurnEvents(hydrated, resolved, source, active, on ?? requireStartRegistration())
       : await buildInitialTurnEvents(hydrated, resolved, source, active, start ?? requireStartRegistration());
   } catch (error) {
     if (error instanceof SagaTurnError) throw error;

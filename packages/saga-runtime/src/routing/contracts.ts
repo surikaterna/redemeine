@@ -1,4 +1,4 @@
-import type { SagaAggregateDefinition, SagaCorrelationFactory, SagaDefinition, SagaHandler, SagaIntentMetadata } from '@redemeine/saga';
+import type { SagaAggregateDefinition, SagaCorrelationFactory, SagaDefinition, SagaHandler, SagaIntent, SagaIntentMetadata } from '@redemeine/saga';
 import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
 import type { SagaTurnRegistration } from './registerSagaDefinition';
 import type { StartTurnOrigin } from './startIntentValidation';
@@ -34,7 +34,7 @@ export interface CompiledSagaOnRoute {
   readonly handlerKey: string;
   readonly definition: SagaRouteDefinitionIdentity;
   readonly handler?: SagaHandler<unknown, SagaAggregateDefinition, string>;
-  readonly executeOn?: (state: unknown, event: unknown, metadata: SagaIntentMetadata) => Promise<{ state: unknown; intents: readonly unknown[] }>;
+  readonly executeOn?: (state: unknown, event: unknown, metadata: SagaIntentMetadata) => Promise<{ state: unknown; intents: readonly SagaIntent[] }>;
   readonly correlate: SagaCorrelationFactory;
 }
 

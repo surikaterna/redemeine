@@ -1,5 +1,5 @@
 import { runSagaStartHandler } from '@redemeine/saga';
-import type { SagaDefinition, SagaIntentMetadata, SagaPluginManifestList, SagaResponseHandlerTokenBindings } from '@redemeine/saga';
+import type { SagaDefinition, SagaIntent, SagaIntentMetadata, SagaPluginManifestList, SagaResponseHandlerTokenBindings } from '@redemeine/saga';
 import type { CompiledSagaOnRoute, CompiledSagaRoute, CompiledSagaRoutingTable, SagaRouteDefinitionIdentity } from './contracts';
 import type { SagaTurnAggregateEvent } from '../turns/aggregateEvent';
 import { registeredOnRoutes } from './registeredOnRoutes';
@@ -25,16 +25,17 @@ export interface SagaRegistration<TState extends object = object> {
   readonly definitionVersion: number;
   readonly definitionIdentity: DefinitionIdentityV1;
   readonly wireRegistry: readonly WireRegistryEntry[];
+  readonly normalizeIntents: (intents: readonly SagaIntent[], origin: StartTurnOrigin, metadata: SagaIntentMetadata, clock: string) => readonly WireIntent[];
   readonly releaseId?: string;
   readonly assertCurrent: () => void;
   readonly executeStart: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, turnClock: string) => Promise<{ state: TState; intents: readonly WireIntent[] }>;
   readonly startContracts: SagaDefinition['startContracts'];
   readonly onRoutes: readonly CompiledSagaOnRoute[];
   readonly hasStateParser: boolean;
-  readonly executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => Promise<{ state: unknown; intents: readonly unknown[] }>;
+  readonly executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => Promise<{ state: unknown; intents: readonly SagaIntent[] }>;
 }
 
-export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent' | 'wireRegistry'> &
+export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent' | 'wireRegistry' | 'normalizeIntents'> &
   Partial<Pick<SagaRegistration, 'executeStart'>>;
 
 function frozenWireRegistry(manifests: SagaPluginManifestList, commands: readonly string[]): readonly WireRegistryEntry[] {
@@ -138,6 +139,7 @@ export function registerSagaDefinition<
   const sagaKey = definition.sagaKey;
   const definitionVersion = definition.identity.version;
   const commands = [...options.canonicalCommandTypes];
+  const wireRegistry = frozenWireRegistry(pluginManifests, commands);
   const schemas = options.declaredSchemas ? [...options.declaredSchemas] : [];
   if (options.releaseId !== undefined && (typeof options.releaseId !== 'string' || !options.releaseId || options.releaseId.length > 256 || [...options.releaseId].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new TypeError('Invalid opaque release ID');
   const { definitionIdentity, assertCurrent } = createExecutableGuard(definition, pluginManifests, responseHandlerBindings, commands, schemas);
@@ -149,7 +151,11 @@ export function registerSagaDefinition<
     sagaKey,
     definitionVersion,
     definitionIdentity,
-    wireRegistry: frozenWireRegistry(pluginManifests, commands),
+    wireRegistry,
+    normalizeIntents: (intents: readonly SagaIntent[], origin: StartTurnOrigin, metadata: SagaIntentMetadata, clock: string) => {
+      assertCurrent();
+      return validateStartIntents(intents, origin, metadata, wireRegistry, responseHandlerBindings, clock);
+    },
     startContracts: definition.startContracts,
     onRoutes,
     hasStateParser: options.parseState !== undefined && options.parseOnEvent !== undefined,
@@ -176,10 +182,16 @@ export function registerSagaTurnDefinition(options: {
 }): SagaTurnRegistration {
   const { definition, pluginManifests, responseHandlerBindings } = options;
   validateSagaRegistration(definition, pluginManifests, responseHandlerBindings);
+  const commands = [...options.canonicalCommandTypes];
+  const wireRegistry = frozenWireRegistry(pluginManifests, commands);
   const guard = createExecutableGuard(definition, pluginManifests, responseHandlerBindings,
-    [...options.canonicalCommandTypes], options.declaredSchemas ? [...options.declaredSchemas] : []);
+    commands, options.declaredSchemas ? [...options.declaredSchemas] : []);
   const registration = Object.freeze({ definition, sagaKey: definition.sagaKey,
-    definitionVersion: definition.identity.version, wireRegistry: frozenWireRegistry(pluginManifests, options.canonicalCommandTypes), ...guard });
+    definitionVersion: definition.identity.version, wireRegistry,
+    normalizeIntents: (intents: readonly SagaIntent[], origin: StartTurnOrigin, metadata: SagaIntentMetadata, clock: string) => {
+      guard.assertCurrent();
+      return validateStartIntents(intents, origin, metadata, wireRegistry, responseHandlerBindings, clock);
+    }, ...guard });
   issuedRegistrations.add(registration);
   return registration;
 }

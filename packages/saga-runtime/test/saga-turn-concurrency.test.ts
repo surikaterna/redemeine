@@ -211,14 +211,14 @@ describe('saga turn OCC and ordered fanout', () => {
     expect(secondCounters).toMatchObject({ initial: 1, start: 1, handler: 1 });
   });
 
-  it('never reports success when a later fanout start emits a timer', async () => {
+  it('never reports success when a later fanout start emits an invalid timer', async () => {
     const repository = new FakeTurnRepository();
     const first = registeredTurnDefinition(createTurnDefinition('fanout-a', createCounters()));
     const laterDefinition = createSaga<{ count: number }>({ identity: { namespace: 'turns', name: 'fanout-z', version: 1 } })
       .initialState(() => ({ count: 0 }))
       .start<{ orderId: string }>((state, input, ctx) => {
         state.count = input.orderId.length;
-        ctx.actions.core.schedule('later', 1000);
+         ctx.actions.core.schedule('later', -1);
       })
       .correlateBy((input) => input.orderId)
       .triggeredBy({ kind: 'domain', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
@@ -232,7 +232,7 @@ describe('saga turn OCC and ordered fanout', () => {
     const source = sourceEvent();
     for (let delivery = 0; delivery < 2; delivery += 1) {
       await expect(processSagaSourceEvent(table, repository, source)).rejects.toMatchObject({
-        code: 'unsupported_intents', retryable: false
+         code: 'start_failed', retryable: false
       });
     }
     expect(repository.appendCalls).toHaveLength(1);

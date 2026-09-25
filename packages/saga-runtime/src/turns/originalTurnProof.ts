@@ -42,7 +42,7 @@ export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: R
 
 export async function proveOriginalTurn(
   repository: SagaTurnRepository, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
-  active: DefinitionIdentityV1, target: SagaTurnFold['target'], start: SagaTurnRegistration | null
+  active: DefinitionIdentityV1, target: SagaTurnFold['target'], start: SagaTurnRegistration | null, on: SagaTurnRegistration | null
 ): Promise<CompiledSagaRoute | null> {
   if (!target) return null;
   const { route, stored, original, firstEventVersion } = target;
@@ -55,7 +55,7 @@ export async function proveOriginalTurn(
   let events;
   try {
     events = index === 0 ? await buildInitialTurnEvents(original, resolved, source, active, start ?? requireStartRegistration())
-      : await buildExistingTurnEvents(original, resolved, source, active);
+      : await buildExistingTurnEvents(original, resolved, source, active, on ?? requireStartRegistration());
   } catch (error) {
     throw new SagaTurnPermanentError('duplicate_proof_required', 'Original saga turn cannot be reproduced', {}, error);
   }

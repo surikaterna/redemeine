@@ -13,7 +13,6 @@ import {
   SagaTurnError,
   SagaTurnIntegrityError,
   SagaTurnPermanentError,
-  SagaTurnUnsupportedError
 } from '../src/index';
 import {
   createCounters,
@@ -84,7 +83,7 @@ describe('durable saga state-turn processor', () => {
     expect(stateCount(repository.appendCalls[0]?.events[3])).toBe('order-1'.length);
   });
 
-  it('rejects a validated plugin intent and a failed start without creating an instance', async () => {
+  it('persists a validated plugin intent but rejects a failed start without creating an instance', async () => {
     const plugin = defineSagaPlugin({ plugin_key: 'outbound', actions: { send: defineOneWay((id: string) => ({ id })) } });
     for (const failure of ['intent', 'throw'] as const) {
       const repository = new FakeTurnRepository();
@@ -105,10 +104,22 @@ describe('durable saga state-turn processor', () => {
         }, parseOnEvent: parseTurnEvent, canonicalCommandTypes: [] });
       const table = compileRegisteredSagaRoutes([registration],
         [{ registration, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }]);
-      await expect(processRegisteredEvent(table, repository, sourceEvent(),
-        { registrationForRoute: bindSagaRegistrations(table, [registration]) }))
-        .rejects.toMatchObject({ code: failure === 'intent' ? 'unsupported_intents' : 'start_failed', retryable: false });
-      expect(repository.appendCalls).toHaveLength(0);
+      const run = processRegisteredEvent(table, repository, sourceEvent(),
+        { registrationForRoute: bindSagaRegistrations(table, [registration]) });
+      if (failure === 'throw') {
+        await expect(run).rejects.toMatchObject({ code: 'start_failed', retryable: false });
+        expect(repository.appendCalls).toHaveLength(0);
+      } else {
+        await expect(run).resolves.toMatchObject([{ status: 'committed' }]);
+        expect(repository.appendCalls).toHaveLength(1);
+        expect(repository.appendCalls[0]?.events.map(({ type }) => type)).toEqual([
+          'saga.instance_created.event', 'saga.definition_identity_recorded.event',
+          'saga.source_event_observed.event', 'saga.business_state_recorded.event', 'saga.intent_recorded.event'
+        ]);
+        expect(payloadOf(repository.appendCalls[0]?.events[4]).intent).toMatchObject({
+          kind: 'plugin', plugin_key: 'outbound', action_name: 'send', interaction: 'fire_and_forget', execution_payload: { id: 'order-1' }
+        });
+      }
     }
   });
 
@@ -290,7 +301,6 @@ describe('durable saga state-turn processor', () => {
   });
 
   it.each([
-    ['intent', SagaTurnUnsupportedError, 'unsupported_intents'],
     ['throw', SagaTurnError, 'handler_failed'],
     ['invalid', SagaTurnError, 'state_validation_failed']
   ] as const)('rejects %s handler output before writing', async (mode, errorType, code) => {
@@ -306,6 +316,23 @@ describe('durable saga state-turn processor', () => {
     await expect(promise).rejects.toMatchObject({ code });
     await expect(promise).rejects.toBeInstanceOf(errorType);
     expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('persists an on timer and its adjacent fact in one complete commit', async () => {
+    const repository = new FakeTurnRepository();
+    const { table } = await initialize(repository, 'on-timer');
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, sourceEvent({
+      type: 'turn.order-paid.v1.event', payload: { orderId: 'order-1', mode: 'intent' }, commitId: 'timer-source'
+    }))).resolves.toMatchObject([{ status: 'committed' }]);
+    expect(repository.appendCalls).toHaveLength(1);
+    expect(repository.appendCalls[0]?.events.map(({ type }) => type)).toEqual([
+      'saga.source_event_observed.event', 'saga.business_state_recorded.event',
+      'saga.intent_recorded.event', 'saga.timer_fact_recorded.event'
+    ]);
+    const intent = payloadOf(repository.appendCalls[0]?.events[2]).intent;
+    expect(intent).toMatchObject({ kind: 'schedule', timerId: 'later', dueAt: '2026-09-21T10:00:00.001Z' });
+    expect(payloadOf(repository.appendCalls[0]?.events[3]).fact).toMatchObject({ action: 'schedule', timerId: 'later' });
   });
 
   it('reconciles a proven original start by recomputing its pure handler without another append', async () => {

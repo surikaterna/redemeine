@@ -230,7 +230,8 @@ export function parseIntent(text: string, registry: readonly WireRegistryEntry[]
 }
 export function normalizePluginIntent(input: SagaPluginIntent, origin: WireOrigin, registry: readonly WireRegistryEntry[], turnClock?: string): WireIntent {
   if (input.plugin_key === 'core') {
-    if (input.interaction !== 'fire_and_forget' || input.routing_metadata !== undefined) throw new TypeError('unsupported core interaction');
+    if (input.interaction !== 'fire_and_forget' || input.routing_metadata !== undefined ||
+      input.retry_policy_override !== undefined || input.compensation !== undefined) throw new TypeError('unsupported core interaction');
     bounded(input.execution_payload);
     const payload = object(input.execution_payload, 'core payload');
     if (input.action_name === 'dispatch') {

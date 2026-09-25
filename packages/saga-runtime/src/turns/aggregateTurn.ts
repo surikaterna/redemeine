@@ -7,7 +7,7 @@ import { deriveSagaTurnEnvelopeId, deriveTurnCommitId } from '../identity/determ
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnIdentity, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
-import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
+import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
 import type { WireIntent, WireRegistryEntry } from '../intentWire';
 import {
   assertStoredSagaReplayOrder,
@@ -253,6 +253,19 @@ function statePayload(state: unknown, resolved: ResolvedSagaTurnRouteGroup, sour
   };
 }
 
+function appendIntents(turn: HydratedSagaTurn, state: SagaAggregateState, pending: Event[], intents: readonly WireIntent[],
+  identity: SagaTurnIdentity, clock: string): void {
+  for (const intent of intents) {
+    state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordIntent({ schemaVersion: 1, intent }), identity, clock);
+    if (intent.kind === 'schedule' || intent.kind === 'cancelSchedule') {
+      const fact = intent.kind === 'schedule'
+        ? { action: intent.kind, intentId: intent.intentId, timerId: intent.timerId, dueAt: intent.dueAt }
+        : { action: intent.kind, intentId: intent.intentId, timerId: intent.timerId };
+      state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordTimerFact({ schemaVersion: 1, fact }), identity, clock);
+    }
+  }
+}
+
 export async function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
   active: DefinitionIdentityV1, registration: SagaTurnRegistration): Promise<readonly Event[]> {
   const route = resolved.startRoute;
@@ -275,8 +288,6 @@ export async function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: R
   } catch (error) {
     throw new SagaTurnPermanentError('start_failed', 'Saga start input or handler failed', { sagaKey: resolved.sagaKey }, error);
   }
-  if (output.intents.length > 0) throw new SagaTurnUnsupportedError('unsupported_intents', 'Saga intents require durable intent support (.3)',
-    { routeId: route.routeId, intentCount: output.intents.length });
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.createInstance({
     id: resolved.instanceId,
     sagaType: route.definition.sagaType,
@@ -284,11 +295,13 @@ export async function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: R
   }), identity, source.createDateTime);
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordDefinitionIdentity({ schemaVersion: 1, ...active }), identity, source.createDateTime);
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
-  appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
+  state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
+  appendIntents(turn, state, pending, output.intents, identity, source.createDateTime);
   return pending;
 }
 
-export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, active: DefinitionIdentityV1): Promise<readonly Event[]> {
+export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
+  active: DefinitionIdentityV1, registration: SagaTurnRegistration): Promise<readonly Event[]> {
   const route = resolved.onRoute;
   if (!route) throw new SagaTurnPermanentError('missing_on_route', 'Cannot update a saga without an on route');
   if (turn.state.businessState === null || turn.state.businessState === undefined) {
@@ -299,8 +312,8 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
   try {
     const metadata = {
       sagaId: resolved.instanceId,
-      correlationId: source.correlationId ?? serializeSagaCorrelation(resolved.correlation),
-      causationId: source.causationId ?? source.eventId
+      correlationId: serializeSagaCorrelation(resolved.correlation),
+      causationId: resolved.sourceTriggerId
     };
     if (route.executeOn) output = await route.executeOn(turn.state.businessState, resolved.event, metadata);
     else if (route.handler) output = await runSagaHandler(turn.state.businessState, resolved.event, route.handler, metadata);
@@ -309,16 +322,19 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
     if (error instanceof SagaTurnError) throw error;
     throw new SagaTurnPermanentError('handler_failed', 'Saga on handler failed', { routeId: route.routeId }, error);
   }
-  if (output.intents.length > 0) {
-    throw new SagaTurnUnsupportedError('unsupported_intents', 'Saga intents are unsupported by the durable state-turn processor', {
-      routeId: route.routeId,
-      intentCount: output.intents.length
-    });
+  const metadata = { sagaId: resolved.instanceId, correlationId: serializeSagaCorrelation(resolved.correlation), causationId: resolved.sourceTriggerId };
+  let intents: readonly WireIntent[];
+  try {
+    intents = registration.normalizeIntents(output.intents, { sagaKey: resolved.sagaKey, correlation: resolved.correlation,
+      sourceId: resolved.sourceTriggerId, routeId: route.routeId }, metadata, source.createDateTime);
+  } catch (error) {
+    throw new SagaTurnPermanentError('invalid_on_intent', 'Saga on emitted an invalid intent', { routeId: route.routeId }, error);
   }
   const pending: Event[] = [];
   const identity = { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId };
   const observed = appendCommand(turn.aggregate, turn.state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
-  appendCommand(turn.aggregate, observed, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
+  const state = appendCommand(turn.aggregate, observed, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
+  appendIntents(turn, state, pending, intents, identity, source.createDateTime);
   return pending;
 }
 
