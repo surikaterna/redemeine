@@ -15,6 +15,18 @@ jest.setTimeout(45_000);
 
 function trace(): SettlementTrace { return { received: [], settled: [] }; }
 
+function replacementObservations() {
+  const deliveries: Array<{ id: string | undefined; redelivered: boolean }> = [];
+  const outcomes: string[][] = [];
+  const acks: Array<string | undefined> = [];
+  return { deliveries, outcomes, acks, observer: {
+    delivered: (messageId: string | undefined, redelivered: boolean) =>
+      deliveries.push({ id: messageId, redelivered }),
+    processed: (_eventId: string, statuses: readonly string[]) => outcomes.push([...statuses]),
+    acked: (messageId: string | undefined) => acks.push(messageId)
+  } };
+}
+
 function wireIntent(payload: unknown): WireIntent {
   if (typeof payload !== 'object' || payload === null || !('intent' in payload)) throw new Error('missing intent');
   const intent = payload.intent;
@@ -200,21 +212,13 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       expect(committed[1]?.events).toHaveLength(10);
       expect(observed.settled).toHaveLength(1);
       await closed;
-      const deliveries: Array<{ id: string | undefined; redelivered: boolean }> = [];
-      const outcomes: string[][] = [];
-      const acks: Array<string | undefined> = [];
-      const replacementTrace = {
-        delivered: (messageId: string | undefined, redelivered: boolean) =>
-          deliveries.push({ id: messageId, redelivered }),
-        processed: (_eventId: string, statuses: readonly string[]) => outcomes.push([...statuses]),
-        acked: (messageId: string | undefined) => acks.push(messageId)
-      };
-      replacement = await startReplacementWorker(stack, harness, table, replacementTrace);
-      await pollUntil('replacement ACK', () => acks.includes('crash-second'));
+      const replacementTrace = replacementObservations();
+      replacement = await startReplacementWorker(stack, harness, table, replacementTrace.observer);
+      await pollUntil('replacement ACK', () => replacementTrace.acks.includes('crash-second'));
       await waitForQueueSettled(harness.queue);
-      expect(deliveries).toContainEqual({ id: 'crash-second', redelivered: true });
-      expect(outcomes).toContainEqual(['reconciled']);
-      expect(acks).toEqual(['crash-second']);
+      expect(replacementTrace.deliveries).toContainEqual({ id: 'crash-second', redelivered: true });
+      expect(replacementTrace.outcomes).toContainEqual(['reconciled']);
+      expect(replacementTrace.acks).toEqual(['crash-second']);
       expect(await streamCommits(harness, id)).toEqual(committed);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
     } finally {
