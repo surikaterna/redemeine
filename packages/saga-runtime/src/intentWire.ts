@@ -36,14 +36,35 @@ export interface WireRegistryEntry { readonly plugin_key: string; readonly actio
 
 const MAX_BYTES = 65536;
 const MAX_DEPTH = 16;
-const encoder = new TextEncoder();
 interface JsonBudget { bytes: number; readonly seen: Set<object> }
 function charge(budget: JsonBudget, bytes: number): void {
   budget.bytes += bytes;
   if (budget.bytes > MAX_BYTES) throw new RangeError('wire size exceeded');
 }
-function quotedBytes(value: string): number {
-  return encoder.encode(JSON.stringify(value)).byteLength;
+function isPair(value: string, index: number, unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff && index + 1 < value.length && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff;
+}
+function chargeQuoted(budget: JsonBudget, value: string): void {
+  charge(budget, 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (isPair(value, index, unit)) { charge(budget, 4); index += 1; continue; }
+    if (unit >= 0xd800 && unit <= 0xdfff) { charge(budget, 6); continue; }
+    if (unit === 0x22 || unit === 0x5c || unit === 0x08 || unit === 0x09 || unit === 0x0a || unit === 0x0c || unit === 0x0d) { charge(budget, 2); continue; }
+    if (unit < 0x20) { charge(budget, 6); continue; }
+    charge(budget, unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3);
+  }
+}
+function utf8LengthUpTo(value: string, limit: number): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (isPair(value, index, unit)) { bytes += 4; index += 1; }
+    else if (unit >= 0xd800 && unit <= 0xdfff) bytes += 3;
+    else bytes += unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
+    if (bytes > limit) return bytes;
+  }
+  return bytes;
 }
 function scanArray(value: readonly unknown[], budget: JsonBudget, depth: number): void {
   for (let index = 0; index < value.length; index += 1) {
@@ -62,7 +83,8 @@ function scanObject(value: object, budget: JsonBudget, depth: number): void {
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue;
     if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw new TypeError('unsafe JSON key');
-    charge(budget, quotedBytes(key) + (first ? 1 : 2));
+    charge(budget, first ? 1 : 2);
+    chargeQuoted(budget, key);
     first = false;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !('value' in descriptor)) throw new TypeError('non-JSON accessor');
@@ -71,10 +93,10 @@ function scanObject(value: object, budget: JsonBudget, depth: number): void {
 }
 function scanJson(value: unknown, budget: JsonBudget, depth: number): void {
   if (depth > MAX_DEPTH) throw new RangeError('wire depth exceeded');
-  if (typeof value === 'string') { charge(budget, quotedBytes(value)); return; }
+  if (typeof value === 'string') { chargeQuoted(budget, value); return; }
   if (value === null || typeof value === 'boolean') { charge(budget, value === null ? 4 : value ? 4 : 5); return; }
   if (typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0)) {
-    charge(budget, encoder.encode(JSON.stringify(value)).byteLength);
+    charge(budget, JSON.stringify(value).length);
     return;
   }
   if (typeof value !== 'object') throw new TypeError('non-JSON value');
@@ -92,7 +114,7 @@ function bounded(value: unknown): void {
   scanJson(value, { bytes: 0, seen: new Set<object>() }, 0);
 }
 function requireText(value: unknown, name: string): string {
-  if (typeof value !== 'string' || value.length === 0 || new TextEncoder().encode(value).byteLength > 4096) throw new TypeError(`invalid ${name}`);
+  if (typeof value !== 'string' || value.length === 0 || utf8LengthUpTo(value, 4096) > 4096) throw new TypeError(`invalid ${name}`);
   return value;
 }
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -203,7 +225,7 @@ export function encodeIntent(value: WireIntent, registry: readonly WireRegistryE
   return JSON.stringify(decodeIntent(value, registry));
 }
 export function parseIntent(text: string, registry: readonly WireRegistryEntry[]): WireIntent {
-  if (new TextEncoder().encode(text).byteLength > MAX_BYTES) throw new RangeError('wire size exceeded');
+  if (utf8LengthUpTo(text, MAX_BYTES) > MAX_BYTES) throw new RangeError('wire size exceeded');
   return decodeIntent(JSON.parse(text), registry);
 }
 export function normalizePluginIntent(input: SagaPluginIntent, origin: WireOrigin, registry: readonly WireRegistryEntry[], turnClock?: string): WireIntent {
@@ -253,7 +275,7 @@ export function decodeOutcome(value: unknown, intent: WireIntent): WireOutcome {
   return result;
 }
 export function parseOutcome(text: string, intent: WireIntent): WireOutcome {
-  if (new TextEncoder().encode(text).byteLength > MAX_BYTES) throw new RangeError('wire size exceeded');
+  if (utf8LengthUpTo(text, MAX_BYTES) > MAX_BYTES) throw new RangeError('wire size exceeded');
   return decodeOutcome(JSON.parse(text), intent);
 }
 export function validateIntentBatch(intents: readonly WireIntent[], registry: readonly WireRegistryEntry[]): readonly WireIntent[] {

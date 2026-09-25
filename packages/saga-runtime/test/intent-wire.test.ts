@@ -112,4 +112,40 @@ describe('private saga wire v1', () => {
     const unicode = { ...valid, payload: '😀'.repeat(17000) };
     expect(() => decodeIntent(unicode, registry)).toThrow('wire size exceeded');
   });
+
+  it('matches JSON.stringify byte counts at the boundary for escapes and Unicode in values and keys', () => {
+    const valid = createWireIntent(origin, meta, { kind: 'dispatch', command: 'invoice.pay.command', payload: null }, registry);
+    const samples = ['ASCII', '"\\\b\t\n\f\r\u0000\u001f', '\u2028\u2029', 'é漢', '😀', '\ud800X\udc00'];
+    for (const sample of samples) {
+      const candidate = { ...valid, payload: { [sample]: sample, pad: '' } };
+      const remaining = 65536 - new TextEncoder().encode(JSON.stringify(candidate)).byteLength;
+      const exact = { ...candidate, payload: { [sample]: sample, pad: 'x'.repeat(remaining) } };
+      expect(new TextEncoder().encode(JSON.stringify(exact)).byteLength).toBe(65536);
+      expect(decodeIntent(exact, registry)).toMatchObject({ payload: exact.payload });
+      expect(() => decodeIntent({ ...exact, payload: { [sample]: sample, pad: `${exact.payload.pad}x` } }, registry)).toThrow('wire size exceeded');
+    }
+  });
+
+  it('rejects giant leaf and key without encoding them or touching a following getter', () => {
+    const valid = createWireIntent(origin, meta, { kind: 'dispatch', command: 'invoice.pay.command', payload: null }, registry);
+    const giant = 'a'.repeat(1_200_000);
+    const stringify = JSON.stringify;
+    const encode = TextEncoder.prototype.encode;
+    const jsonSpy = jest.spyOn(JSON, 'stringify').mockImplementation((value: unknown) => {
+      if (typeof value === 'string' && value.length > 65536) throw new Error('ENCODED_GIANT');
+      return stringify(value);
+    });
+    const encodeSpy = jest.spyOn(TextEncoder.prototype, 'encode').mockImplementation(function (value?: string) {
+      if (value !== undefined && value.length > 65536) throw new Error('ENCODED_GIANT');
+      return encode.call(this, value);
+    });
+    try {
+      for (const payload of [giant, { [giant]: 1 }]) {
+        let touched = false;
+        const candidate = Object.defineProperty({ ...valid, payload }, 'poison', { enumerable: true, get() { touched = true; throw new Error('READ_POISON'); } });
+        expect(() => decodeIntent(candidate, registry)).toThrow('wire size exceeded');
+        expect(touched).toBe(false);
+      }
+    } finally { jsonSpy.mockRestore(); encodeSpy.mockRestore(); }
+  });
 });
