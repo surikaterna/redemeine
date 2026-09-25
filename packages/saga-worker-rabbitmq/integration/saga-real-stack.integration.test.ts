@@ -280,6 +280,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       ]);
       await Promise.all([publishCommit(stack, update), publishCommit(stack, update)]);
       await waitForCommitCount(harness, id, 2);
+      await pollUntil('both concurrent append outcomes', () => statuses.length === 2 || control!.failures.length > 0);
       await waitForQueueSettled(harness.queue);
       expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), failures: control!.failures,
         settlementErrors: harness.settlementErrors })
