@@ -22,7 +22,8 @@ export function registeredOnRoutes<TState extends object, TPlugins extends SagaP
       if (!eventType) throw new SagaRouteCompilationError('unknown_handler_event', `Handler ${group.aggregateType}.${handlerKey} has no runtime event type`);
       routes.push(Object.freeze({
         kind: 'on', sagaKey: definition.sagaKey, definitionVersion: definition.identity.version,
-        aggregateType: group.aggregateType, handlerKey, eventType, definition, correlate,
+        aggregateType: group.aggregateType, handlerKey, eventType, definition,
+        correlate: (event: unknown) => { assertCurrent(); return correlate(event); },
         routeId: deriveSagaRouteId({ kind: 'on', sagaKey: definition.sagaKey,
           definitionVersion: definition.identity.version, aggregateType: group.aggregateType, handlerKey, eventType }),
         executeOn: async (state: unknown, event: unknown, metadata: SagaIntentMetadata) => {

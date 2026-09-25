@@ -42,6 +42,8 @@ function captureReferences<TState, TPlugins extends SagaPluginManifestList, TBin
     ...definition.startContracts.triggers.flatMap((trigger) => [trigger.kind, trigger.when, trigger.toStartInput]),
     ...Object.entries(definition.responseHandlers).flat(), ...Object.entries(definition.errorHandlers).flat(),
     ...Object.entries(definition.retryHandlers).flat(),
+    ...definition.correlations.flatMap((entry) => [entry, entry.aggregateType, entry.sagaType,
+      entry.sagaUrn, entry.aggregate, entry.correlate]),
     ...definition.handlers.flatMap((group) => [group.aggregateType, ...Object.entries(group.handlers).flat()]),
     ...manifests.flatMap((manifest) => Object.entries(manifest.actions).flatMap(([name, action]) => [name, action.build]))];
 }

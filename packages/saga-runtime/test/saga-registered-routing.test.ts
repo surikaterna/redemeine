@@ -87,3 +87,48 @@ it('decodes start, state and event before invoking typed handlers', async () => 
   expect(await registration.executeOn(result.state, parseEvent(source), metadata, 'placed'))
     .toEqual({ state: { orderId: 'o', count: 1 }, intents: [] });
 });
+
+it('refuses stale compiled correlation before routing or executing, without affecting another registration', async () => {
+  const mutations = [
+    (entries: typeof first.correlations) => { entries[0]!.correlate = () => 'changed'; },
+    (entries: typeof first.correlations) => { entries[0]!.aggregateType = 'changed'; },
+    (entries: typeof first.correlations) => { entries[0]!.sagaType = 'changed'; },
+    (entries: typeof first.correlations) => { entries[0]!.sagaUrn = 'changed'; },
+    (entries: typeof first.correlations) => { entries[0]!.aggregate = { ...orders }; },
+    (entries: typeof first.correlations) => { entries[0] = { ...entries[0]! }; },
+    (entries: typeof first.correlations) => { entries.push({ ...entries[0]! }); }
+  ];
+  for (const mutate of mutations) {
+    const changed = { ...first, correlations: first.correlations.map((entry) => ({ ...entry })) };
+    const candidate = registerSagaDefinition({ definition: changed, pluginManifests: [] as const,
+      responseHandlerBindings: {}, canonicalCommandTypes: [], parseStartInput: (value: unknown) => ({ orderId: orderId(value) }),
+      parseState: (value: unknown): OrderState => {
+        if (!value || typeof value !== 'object' || !('count' in value) || typeof value.count !== 'number') throw new TypeError('Invalid state');
+        return { orderId: orderId(value), count: value.count };
+      }, parseOnEvent: parseEvent });
+    const table = compileRegisteredSagaRoutes([candidate, other]);
+    const resolve = bindSagaRegistrations(table, [candidate, other]);
+    const onRoute = table.routes.find((route) => route.kind === 'on' && route.sagaKey === candidate.sagaKey);
+    const otherRoute = table.routes.find((route) => route.kind === 'on' && route.sagaKey === other.sagaKey);
+    if (!onRoute || !otherRoute) throw new Error('Missing registered on route');
+    mutate(changed.correlations);
+    expect(() => onRoute.correlate(parseEvent(source))).toThrow('changed');
+    expect(() => resolve(onRoute)).toThrow('changed');
+    expect(() => candidate.executeOn({ orderId: 'o', count: 0 }, parseEvent(source), metadata, 'placed')).toThrow('changed');
+    expect(() => resolve(otherRoute)).not.toThrow();
+    expect(otherRoute.correlate(parseEvent(source))).toEqual('o');
+  }
+  const changed = { ...first, correlations: [...first.correlations.map((entry) => ({ ...entry })),
+    { ...first.correlations[0]!, aggregate: { ...orders }, aggregateType: 'extra' }] };
+  const candidate = registerSagaDefinition({ definition: changed, pluginManifests: [] as const,
+    responseHandlerBindings: {}, canonicalCommandTypes: [], parseStartInput: (value: unknown) => ({ orderId: orderId(value) }),
+    parseState: (value: unknown): OrderState => {
+      if (!value || typeof value !== 'object' || !('count' in value) || typeof value.count !== 'number') throw new TypeError('Invalid state');
+      return { orderId: orderId(value), count: value.count };
+    }, parseOnEvent: parseEvent });
+  const table = compileRegisteredSagaRoutes([candidate]);
+  const onRoute = table.routes.find((route) => route.kind === 'on');
+  if (!onRoute) throw new Error('Missing registered on route');
+  changed.correlations.reverse();
+  expect(() => onRoute.correlate(parseEvent(source))).toThrow('changed');
+});
