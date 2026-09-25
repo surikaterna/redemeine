@@ -13,9 +13,10 @@ try {
   writeFileSync(join(temp, 'package.json'), '{"name":"saga-installed-consumer","private":true,"type":"module"}');
   writeFileSync(join(temp, 'tsconfig.json'), JSON.stringify({
     compilerOptions: { strict: true, noEmit: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', skipLibCheck: true },
-    files: ['consumer.mts']
+    files: ['consumer.mts', 'intent-consumer.mts']
   }));
   copyFileSync(join(root, 'packages/saga/test/consumer-start-dispatch.mts'), join(temp, 'consumer.mts'));
+  copyFileSync(join(root, 'packages/saga-runtime/test/intent-consumer.mts'), join(temp, 'intent-consumer.mts'));
   const scope = join(temp, 'node_modules/@redemeine');
   const installed = join(scope, 'saga');
   mkdirSync(installed, { recursive: true });

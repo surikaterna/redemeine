@@ -1,0 +1,18 @@
+# Private saga intent wire v1 (`redemeine-1tad`)
+
+`packages/saga-runtime/src/intentWire.ts` is deliberately **not** exported from either package entry point. It is an executable validation/normalization contract, not a deployed executor or a new SDK API. `schemaVersion: 1` is mandatory; unknown versions and historical local-key commands are refused, not silently upgraded. Producers must register the exact creator-produced command envelope `type` (including naming overrides) as a unique `commandTypes` entry; `pay` is not a substitute for `invoice.pay.command`. Registered plugin key/action/interaction tuples must be unique. No arbitrary dotted-name reconstruction is performed.
+
+| Record | Required facts | Future consumption |
+| --- | --- | --- |
+| All intents | sagaKey, canonical correlation, stable sourceId, routeId, zero-based ordinal; derived instanceId, turnId, intentId; sagaId, serialized correlationId, causationId matching origin | One consumed source + state + ordered intents + timer facts in one OCC commit (future vpwm.1/.3). IDs use domain-separated SHA-256 framed preimages; version is excluded from instance identity. No source identity means refuse. |
+| plugin fire_and_forget | registered named action, JSON execution_payload, optional JSON retry/compensation | Future registered executor only; no closure/inline effect. |
+| plugin request_response | same plus response/error keys, optional retry key and JSON handler_data | Persist original routing; deliver outcome to its **intentId**, never FIFO. |
+| core.dispatch | registered canonical creator envelope.type, payload, optional aggregateId | Reject unregistered and legacy local keys. |
+| core.schedule / cancelSchedule | timerId and absolute canonical UTC dueAt / timerId | Schedule dueAt = persisted turn clock + SDK delay milliseconds; never read the wall clock on replay. Timer firing is out of scope. |
+| outcome | intentId, instanceId, correlationId, response/error discriminator, matching token, exact handler_data, JSON value | Validate against the originating request before continuing; error outcome does not imply successful callback. |
+
+All inputs are bounded to 64 KiB encoded UTF-8, depth 16, and finite JSON primitives/plain arrays/objects; undefined, functions, Date, BigInt, cycles and unknown record fields are rejected. Parse before persistence and again on read/replay. Producers must batch-validate ordered intents to reject repeated IDs. Do not treat a valid wire record as proof of an executed effect.
+
+Future executor contract (vpwm.4): resolve registered named action by exact tuple; conditional claim/epoch and expiry under OCC; call with intentId as external idempotency key; persist a response/error outcome before callback continuation. Claim loss, retry, poison and pending failed callback must remain recoverable. Dedupe is by intentId; at-least-once external invocation is possible and destinations must reconcile or be idempotent. Out-of-order completions must route by ID with retained handler_data and token.
+
+Conformance belongs to the **actual future production engine** (vpwm.4/.5) injected with a virtual clock and transactional-memory adapter, followed by real-adapter crash/restart tests. Test pre/post claim, effect, outcome, continuation and ACK, lease expiry, stale owner, two intents completing in reverse order and pending failed callback. This document/codec does not implement that engine, a second fixture engine, persistence, scheduling, or start routing.
