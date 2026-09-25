@@ -19,8 +19,13 @@ const resources = {
 const receiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}.json`;
 const jestResultPath = `/tmp/opencode/redemeine-wrdf-${suffix}-jest.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
-const identitySlice = ['redemeine-371j.1', 'redemeine-371j.2'].includes(process.env.REDEMEINE_REAL_SLICE);
-if (process.env.REDEMEINE_REAL_SLICE && !identitySlice) throw new Error('Unsupported real-stack slice');
+const slice = process.env.REDEMEINE_REAL_SLICE;
+const identitySlice = ['redemeine-371j.1', 'redemeine-371j.2'].includes(slice);
+const intentSlice = slice === 'redemeine-vpwm.3.3';
+if (slice && !identitySlice && !intentSlice) throw new Error('Unsupported real-stack slice');
+const testPaths = identitySlice ? ['saga-identity-real.integration.test.ts'] : intentSlice
+  ? ['saga-real-stack.integration.test.ts', 'saga-intent-real.integration.test.ts']
+  : ['saga-real-stack.integration.test.ts'];
 const startedAt = new Date();
 let testExitCode = null;
 let failure = null;
@@ -194,9 +199,7 @@ async function runTests() {
       '--outputFile',
       jestResultPath,
       '--runTestsByPath',
-      identitySlice
-        ? 'packages/saga-worker-rabbitmq/integration/saga-identity-real.integration.test.ts'
-        : 'packages/saga-worker-rabbitmq/integration/saga-real-stack.integration.test.ts'
+      ...testPaths.map((name) => `packages/saga-worker-rabbitmq/integration/${name}`)
     ],
     { cwd: root, env, allowFailure: true }
   );
@@ -206,12 +209,15 @@ async function runTests() {
 }
 
 async function assertCommittedIdentitySlice() {
-  if (!identitySlice) return;
+  if (!identitySlice && !intentSlice) return;
   const status = await execute('git', ['status', '--porcelain'], { capture: true });
-  if (status.stdout) throw new Error('Identity slice must run from a clean committed HEAD');
+  if (status.stdout) throw new Error('Qualification slice must run from a clean committed HEAD');
   codeHead = (await execute('git', ['rev-parse', 'HEAD'], { capture: true })).stdout;
-  const testFile = new URL('../integration/saga-identity-real.integration.test.ts', import.meta.url);
-  scenarioSha256 = createHash('sha256').update(await readFile(testFile)).digest('hex');
+  const hash = createHash('sha256');
+  for (const name of [...testPaths, ...(intentSlice ? ['intentFixtures.ts', 'fixtures.ts', 'harness.ts', 'identitySettlements.ts'] : [])]) {
+    hash.update(name).update('\0').update(await readFile(new URL(`../integration/${name}`, import.meta.url)));
+  }
+  scenarioSha256 = hash.digest('hex');
 }
 
 async function collectScenarios() {
@@ -262,7 +268,7 @@ try {
     receiptPath,
     `${JSON.stringify(
       {
-        issue: identitySlice ? process.env.REDEMEINE_REAL_SLICE : 'redemeine-wrdf',
+        issue: slice ?? 'redemeine-wrdf',
         codeHead,
         scenarioSha256,
         invocation,

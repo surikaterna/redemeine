@@ -404,7 +404,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
     }
   });
 
-  it('7. dead-letters unsupported intent output without a durable append', async () => {
+  it('7. dead-letters invalid final intent output without a durable append', async () => {
     const counters = createCounters();
     const { definition, table } = createRealTable('unsupported-intent', counters);
     const harness = await createScenario(stack, 'unsupported-intent', table);

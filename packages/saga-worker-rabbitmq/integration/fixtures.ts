@@ -67,7 +67,7 @@ function parseRealState(value: unknown): RealSagaState {
   return { ...value, count: value.count, seen: value.seen };
 }
 
-function parseRealEvent(value: unknown): SagaTurnAggregateEvent {
+export function parseRealEvent(value: unknown): SagaTurnAggregateEvent {
   if (typeof value !== 'object' || value === null || !('id' in value) || typeof value.id !== 'string' ||
       !('type' in value) || typeof value.type !== 'string' || !('payload' in value) ||
       ('aggregateType' in value && typeof value.aggregateType !== 'string') ||
@@ -117,7 +117,7 @@ function requireState(value: unknown): RealSagaState {
   return value as RealSagaState;
 }
 
-function orderIdFrom(value: unknown): string {
+export function orderIdFrom(value: unknown): string {
   if (typeof value !== 'object' || value === null || !('payload' in value)) throw new Error('event payload is required');
   const payload = value.payload;
   if (typeof payload !== 'object' || payload === null || !('orderId' in payload) || typeof payload.orderId !== 'string') {
@@ -134,7 +134,7 @@ function applyEvent(
 ): void {
   if (!event.id) throw new Error('event id is required');
   counters.handlers.set(event.id, (counters.handlers.get(event.id) ?? 0) + 1);
-  if (event.payload.mode === 'intent') context.schedule('unsupported', 1);
+  if (event.payload.mode === 'intent') context.schedule('invalid-last', -1);
   if (event.payload.mode === 'large') state.large = 'x'.repeat(8 * 1024 * 1024 + 1);
   state.count += event.payload.amount ?? 1;
   state.seen.push(event.id);
