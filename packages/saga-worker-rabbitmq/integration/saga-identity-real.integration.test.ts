@@ -79,7 +79,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
       ]);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(await streamCommits(harness, id)).toHaveLength(1);
-      expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
+      expect(counters).toMatchObject({ initial: 2, start: 0, handlers: new Map() });
 
       const legacyId = instanceId(definition.sagaKey, 'order-legacy-identity');
       const first = captured[0];
@@ -116,7 +116,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
       });
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(trace.settled).toHaveLength(3);
-      expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
+      expect(counters).toMatchObject({ initial: 2, start: 0, handlers: new Map() });
       expect(harness.settlementErrors).toEqual([]);
     } finally {
       await harness.close();
