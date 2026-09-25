@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { SagaTurnPermanentError, SagaTurnTransientError, SagaTurnUnsupportedError } from '@redemeine/saga-runtime';
+import type { Channel } from 'amqplib';
+import { observeReplacement } from '../integration/replacementObservation';
 import { createSagaRabbitWorker, decodeSagaRabbitMessage } from '../src/index';
 import { body, deferred, FakeChannel, flush, limits, message, options, source } from './helpers';
 
@@ -91,7 +93,7 @@ describe('Rabbit saga worker delivery', () => {
     expect(failures).toEqual([expect.objectContaining({ settlement: 'ack', error: channel.ackError })]);
   });
 
-  it('reprocesses an original-prefix turn after an ACK throws before broker settlement and channel close', async () => {
+  it('settles a supplied second delivery after the first ACK throws and its channel closes', async () => {
     const original = new class extends FakeChannel {
       closed = false;
       override ack(): void { throw new Error('ACK failed before broker settlement'); }
@@ -100,12 +102,8 @@ describe('Rabbit saga worker delivery', () => {
     const replacement = new FakeChannel();
     const failures: unknown[] = [];
     const deliveries: string[] = [];
-    const persisted = { count: 0 };
     const processEvent = async (event: { eventId: string }) => {
       deliveries.push(event.eventId);
-      const recomputed = 0 + 1; // Retry computes from the original prefix, not the current persisted value.
-      if (persisted.count === 0) persisted.count = recomputed;
-      else if (persisted.count !== recomputed) throw new Error('Original-prefix material differs');
       return [];
     };
     const first = createSagaRabbitWorker(options(original, processEvent, failures, {
@@ -127,11 +125,35 @@ describe('Rabbit saga worker delivery', () => {
     const redelivery = { ...input, fields: { ...input.fields, redelivered: true } };
     await retry.handle(redelivery);
     expect(deliveries).toEqual(['event-1', 'event-1']);
-    expect(persisted.count).toBe(1);
     expect(replacement.acks).toEqual([{ message: redelivery, allUpTo: false }]);
     expect(replacement.nacks).toHaveLength(0);
     expect(failures).toHaveLength(1);
     await retry.stop();
+  });
+
+  it('forwards malformed envelopes and contains delivery and ACK observer exceptions', async () => {
+    const channel = new FakeChannel();
+    const seen: string[] = [];
+    const delivered: string[] = [];
+    const observed = observeReplacement(channel as unknown as Channel, {
+      delivered: (id) => { delivered.push(id ?? 'missing'); throw new Error('delivery observer failed'); },
+      processed: () => undefined,
+      acked: () => { throw new Error('ACK observer failed'); }
+    });
+    const worker = createSagaRabbitWorker(options(channel, async (event) => {
+      seen.push(event.eventId);
+      return [];
+    }, [], { channel: observed }));
+    await worker.start();
+    const malformed = message({ body: '{invalid-json' });
+    const valid = message({ body: { ...body(), events: [body().events[0]] } });
+    channel.callbacks[0]?.(malformed);
+    channel.callbacks[0]?.(valid);
+    await worker.stop();
+    expect(delivered).toEqual(['commit-1', 'commit-1']);
+    expect(seen).toEqual(['event-1']);
+    expect(channel.nacks).toEqual([{ message: malformed, allUpTo: false, requeue: false }]);
+    expect(channel.acks).toEqual([{ message: valid, allUpTo: false }]);
   });
 
   it('attempts only NACK and reports a closed-channel NACK exception', async () => {
