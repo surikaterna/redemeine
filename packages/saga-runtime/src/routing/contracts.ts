@@ -1,5 +1,8 @@
-import type { SagaAggregateDefinition, SagaCorrelationFactory, SagaDefinition, SagaHandler } from '@redemeine/saga';
+import type { SagaAggregateDefinition, SagaCorrelationFactory, SagaDefinition, SagaHandler, SagaIntentMetadata } from '@redemeine/saga';
 import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
+import type { SagaTurnRegistration } from './registerSagaDefinition';
+import type { StartTurnOrigin } from './startIntentValidation';
+import type { WireIntent } from '../intentWire';
 
 export interface SagaStartEventBinding<TDefinition extends SagaDefinition = SagaDefinition> {
   readonly definition: TDefinition;
@@ -14,7 +17,8 @@ export interface CompiledSagaStartRoute {
   readonly definitionVersion: number;
   readonly eventType: string;
   readonly triggerIndex: number;
-  readonly definition: SagaDefinition;
+  readonly definition: SagaRouteDefinitionIdentity;
+  readonly executeStart?: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, clock: string) => Promise<{ state: object; intents: readonly WireIntent[] }>;
   readonly when?: (trigger: unknown) => boolean;
   readonly toStartInput: (trigger: unknown) => unknown;
   readonly correlate: (startInput: unknown) => unknown;
@@ -28,15 +32,25 @@ export interface CompiledSagaOnRoute {
   readonly eventType: string;
   readonly aggregateType: string;
   readonly handlerKey: string;
-  readonly definition: SagaDefinition;
-  readonly handler: SagaHandler<unknown, SagaAggregateDefinition, string>;
+  readonly definition: SagaRouteDefinitionIdentity;
+  readonly handler?: SagaHandler<unknown, SagaAggregateDefinition, string>;
+  readonly executeOn?: (state: unknown, event: unknown, metadata: SagaIntentMetadata) => Promise<{ state: unknown; intents: readonly unknown[] }>;
   readonly correlate: SagaCorrelationFactory;
 }
 
 export type CompiledSagaRoute = CompiledSagaStartRoute | CompiledSagaOnRoute;
 
+export interface SagaRouteDefinitionIdentity {
+  readonly sagaKey: string;
+  readonly sagaType: string;
+  readonly identity: { readonly version: number };
+  readonly initialState: () => unknown;
+}
+
 export interface CompiledSagaRoutingTable {
-  readonly definitions: readonly SagaDefinition[];
+  readonly definitions: readonly SagaRouteDefinitionIdentity[];
+  readonly registered?: readonly SagaTurnRegistration[];
+  readonly legacyDefinitions?: readonly SagaDefinition[];
   readonly routes: readonly CompiledSagaRoute[];
   readonly routesByEventType: ReadonlyMap<string, readonly CompiledSagaRoute[]>;
 }

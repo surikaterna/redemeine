@@ -238,6 +238,7 @@ function statePayload(state: unknown, resolved: ResolvedSagaTurnRouteGroup, sour
 export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, active: DefinitionIdentityV1): readonly Event[] {
   const route = resolved.startRoute;
   if (!route) throw new SagaTurnPermanentError('missing_start_route', 'Cannot initialize a saga from an on-only route');
+  if (route.executeStart) throw new SagaTurnUnsupportedError('unsupported_intents', 'Registered start requires durable start-turn support');
   const pending: Event[] = [];
   const identity = { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId };
   let state = turn.state;
@@ -267,11 +268,14 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
   assertExistingIdentity(turn, resolved, active);
   let output;
   try {
-    output = await runSagaHandler(turn.state.businessState, resolved.event, route.handler, {
+    const metadata = {
       sagaId: resolved.instanceId,
       correlationId: source.correlationId ?? serializeSagaCorrelation(resolved.correlation),
       causationId: source.causationId ?? source.eventId
-    });
+    };
+    if (route.executeOn) output = await route.executeOn(turn.state.businessState, resolved.event, metadata);
+    else if (route.handler) output = await runSagaHandler(turn.state.businessState, resolved.event, route.handler, metadata);
+    else throw new TypeError('Saga on route has no executor');
   } catch (error) {
     if (error instanceof SagaTurnError) throw error;
     throw new SagaTurnPermanentError('handler_failed', 'Saga on handler failed', { routeId: route.routeId }, error);

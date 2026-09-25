@@ -1,6 +1,6 @@
 import { createSaga, defineRequestResponse, defineSagaPlugin, runSagaStartHandler } from '@redemeine/saga';
 import type { Draft } from 'immer';
-import { registerSagaDefinition } from '@redemeine/saga-runtime';
+import { compileRegisteredSagaRoutes, bindSagaRegistrations, registerSagaDefinition } from '@redemeine/saga-runtime';
 
 interface State { readonly count: number; readonly nested: { readonly ids: string[] } }
 const plugin = defineSagaPlugin({ plugin_key: 'remote', version: '1', actions: {
@@ -40,7 +40,32 @@ const parseStartInput = (input: unknown): { id: string } => {
   return { id: input.id };
 };
 const registration = registerSagaDefinition({ definition, pluginManifests: [plugin] as const,
-  responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] });
+  responseHandlerBindings: bindings, parseStartInput, parseState: (state: unknown): State => {
+    if (!state || typeof state !== 'object' || !('count' in state) || typeof state.count !== 'number') throw new TypeError('state');
+    return { count: state.count, nested: { ids: [] } };
+  }, parseOnEvent: (event: unknown) => {
+    if (!event || typeof event !== 'object' || !('type' in event) || typeof event.type !== 'string') throw new TypeError('event');
+    return { id: 'event', type: event.type, payload: {} };
+  }, canonicalCommandTypes: [] });
+interface OtherState { readonly label: string }
+const otherDefinition = createSaga({ identity: { namespace: 'orders', name: 'other', version: 1 } })
+  .initialState((): OtherState => ({ label: '' }))
+  .start<{ id: string }>((state, input) => { state.label = input.id; })
+  .correlateBy((input) => input.id).build();
+const other = registerSagaDefinition({ definition: otherDefinition, pluginManifests: [] as const,
+  responseHandlerBindings: {}, parseStartInput, canonicalCommandTypes: [],
+  parseState: (state: unknown): OtherState => {
+    if (!state || typeof state !== 'object' || !('label' in state) || typeof state.label !== 'string') throw new TypeError('state');
+    return { label: state.label };
+  }, parseOnEvent: (event: unknown) => {
+    if (!event || typeof event !== 'object' || !('type' in event) || typeof event.type !== 'string') throw new TypeError('event');
+    return { id: 'event', type: event.type, payload: {} };
+  } });
+const table = compileRegisteredSagaRoutes([registration, other]);
+void bindSagaRegistrations(table, [registration, other]);
+registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings,
+  // @ts-expect-error persisted-state parser cannot return another definition's state
+  parseStartInput, parseState: (_state: unknown): OtherState => ({ label: '' }), canonicalCommandTypes: [] });
 const typedState: Promise<{ state: State; intents: readonly unknown[] }> = registration.executeStart(
   { id: 'ok' }, metadata, { sagaKey: definition.sagaKey, correlation: { type: 'string', value: 'c' }, sourceId: 'src', routeId: 'r' }, '2026-09-25T10:00:00.000Z');
 void typedState;

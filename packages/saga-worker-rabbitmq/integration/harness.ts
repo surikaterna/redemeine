@@ -27,7 +27,8 @@ import { readRabbitQueueCounts } from './rabbitQueueCounts';
 import { observeReplacement, type ReplacementObservation } from './replacementObservation';
 
 function registeredOptions(table: CompiledSagaRoutingTable) {
-  const registrations = table.definitions.map((definition) => registerSagaTurnDefinition({
+  if (!table.legacyDefinitions) throw new TypeError('Integration harness requires legacy definitions');
+  const registrations = table.legacyDefinitions.map((definition) => registerSagaTurnDefinition({
     definition, pluginManifests: [], responseHandlerBindings: {},
     canonicalCommandTypes: []
   }));

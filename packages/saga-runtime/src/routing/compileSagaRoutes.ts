@@ -65,7 +65,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function getRuntimeEventTypes(aggregate: SagaAggregateDefinition): Readonly<Record<string, string>> {
+export function getRuntimeEventTypes(aggregate: SagaAggregateDefinition): Readonly<Record<string, string>> {
   const types: unknown = 'types' in aggregate ? aggregate.types : undefined;
   const events: unknown = isRecord(types) ? types.events : undefined;
   if (!isRecord(events) || Object.values(events).some((eventType) => typeof eventType !== 'string')) {
@@ -81,7 +81,7 @@ function getRuntimeEventTypes(aggregate: SagaAggregateDefinition): Readonly<Reco
   return eventTypes;
 }
 
-function resolveCorrelation(definition: SagaDefinition, aggregate: SagaAggregateDefinition) {
+export function resolveCorrelation(definition: Pick<SagaDefinition, 'correlations'>, aggregate: SagaAggregateDefinition) {
   const matches = definition.correlations.filter((candidate) => candidate.aggregate === aggregate);
   if (matches.length === 0) {
     throw new SagaRouteCompilationError('missing_route_correlation', `No correlation is registered for ${aggregate.aggregateType}`);
@@ -128,7 +128,7 @@ function compileOnRoutes(definition: SagaDefinition): CompiledSagaOnRoute[] {
   return routes;
 }
 
-function assertUniqueRoutes(routes: readonly CompiledSagaRoute[]): void {
+export function assertUniqueRoutes(routes: readonly CompiledSagaRoute[]): void {
   const registrations = new Set<string>();
   for (const route of routes) {
     const key = JSON.stringify([route.sagaKey, route.kind, route.routeId]);
@@ -140,7 +140,7 @@ function assertUniqueRoutes(routes: readonly CompiledSagaRoute[]): void {
   }
 }
 
-function assertUniqueWireTypes(routes: readonly CompiledSagaRoute[], kind: CompiledSagaRoute['kind']): void {
+export function assertUniqueWireTypes(routes: readonly CompiledSagaRoute[], kind: CompiledSagaRoute['kind']): void {
   const registrations = new Set<string>();
   for (const route of routes) {
     if (route.kind !== kind) continue;
@@ -156,13 +156,13 @@ function assertUniqueWireTypes(routes: readonly CompiledSagaRoute[], kind: Compi
   }
 }
 
-function compareCodeUnits(left: string, right: string): number {
+export function compareCodeUnits(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
 }
 
-function indexRoutes(routes: readonly CompiledSagaRoute[]): ReadonlyMap<string, readonly CompiledSagaRoute[]> {
+export function indexRoutes(routes: readonly CompiledSagaRoute[]): ReadonlyMap<string, readonly CompiledSagaRoute[]> {
   const mutable = new Map<string, CompiledSagaRoute[]>();
   for (const route of routes) {
     const existing = mutable.get(route.eventType) ?? [];
@@ -188,7 +188,7 @@ export function compileSagaRoutes(definitions: readonly SagaDefinition[], startE
   assertUniqueRoutes(routes);
   assertUniqueWireTypes(routes, 'start');
   assertUniqueWireTypes(routes, 'on');
-  return { definitions: [...definitions], routes, routesByEventType: indexRoutes(routes) };
+  return { definitions: [...definitions], legacyDefinitions: [...definitions], routes, routesByEventType: indexRoutes(routes) };
 }
 
 export function createStartEventBindings<const TBindings extends readonly SagaStartEventBinding[]>(...bindings: TBindings): TBindings {

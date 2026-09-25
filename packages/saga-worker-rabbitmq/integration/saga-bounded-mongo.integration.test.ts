@@ -36,7 +36,7 @@ function routes() {
     .build();
   const table = compileSagaRoutes([definition], createStartEventBindings({ definition,
     triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }));
-  const registrations = table.definitions.map((entry) => registerSagaTurnDefinition({ definition: entry,
+  const registrations = [definition].map((entry) => registerSagaTurnDefinition({ definition: entry,
     pluginManifests: [], responseHandlerBindings: {}, canonicalCommandTypes: [] }));
   return { table, options: { registrationForRoute: bindSagaRegistrations(table, registrations) } };
 }

@@ -1,6 +1,8 @@
 import { runSagaStartHandler } from '@redemeine/saga';
 import type { SagaDefinition, SagaIntentMetadata, SagaPluginManifestList, SagaResponseHandlerTokenBindings } from '@redemeine/saga';
-import type { CompiledSagaRoute, CompiledSagaRoutingTable } from './contracts';
+import type { CompiledSagaOnRoute, CompiledSagaRoute, CompiledSagaRoutingTable, SagaRouteDefinitionIdentity } from './contracts';
+import type { SagaTurnAggregateEvent } from '../turns/aggregateEvent';
+import { registeredOnRoutes } from './registeredOnRoutes';
 import { validateInitialSagaState, validateSagaRegistration } from './registrationValidation';
 import { validateBusinessState } from '../businessStateValidation';
 import { sagaPolicyFingerprint, type DeclaredSchemaIdentity, type DefinitionIdentityV1 } from './executableIdentity';
@@ -18,13 +20,17 @@ export class SagaStartDecisionError extends Error {
 }
 
 export interface SagaRegistration<TState extends object = object> {
-  readonly definition: object;
+  readonly definition: SagaRouteDefinitionIdentity;
   readonly sagaKey: string;
   readonly definitionVersion: number;
   readonly definitionIdentity: DefinitionIdentityV1;
   readonly releaseId?: string;
   readonly assertCurrent: () => void;
   readonly executeStart: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, turnClock: string) => Promise<{ state: TState; intents: readonly WireIntent[] }>;
+  readonly startContracts: SagaDefinition['startContracts'];
+  readonly onRoutes: readonly CompiledSagaOnRoute[];
+  readonly hasStateParser: boolean;
+  readonly executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => Promise<{ state: unknown; intents: readonly unknown[] }>;
 }
 
 export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent'>;
@@ -108,6 +114,8 @@ export function registerSagaDefinition<
   readonly pluginManifests: NoInfer<TPlugins>;
   readonly responseHandlerBindings: NoInfer<TBindings>;
   readonly parseStartInput: (input: unknown) => TStartInput;
+  readonly parseState?: (state: unknown) => TState;
+  readonly parseOnEvent?: (event: unknown) => SagaTurnAggregateEvent;
   readonly canonicalCommandTypes: readonly string[];
   readonly declaredSchemas?: readonly DeclaredSchemaIdentity[];
   readonly releaseId?: string;
@@ -121,14 +129,26 @@ export function registerSagaDefinition<
   const schemas = options.declaredSchemas ? [...options.declaredSchemas] : [];
   if (options.releaseId !== undefined && (typeof options.releaseId !== 'string' || !options.releaseId || options.releaseId.length > 256 || [...options.releaseId].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new TypeError('Invalid opaque release ID');
   const { definitionIdentity, assertCurrent } = createExecutableGuard(definition, pluginManifests, responseHandlerBindings, commands, schemas);
+  const onRoutes = options.parseState && options.parseOnEvent
+    ? registeredOnRoutes(definition, options.parseState, options.parseOnEvent, pluginManifests, responseHandlerBindings, assertCurrent)
+    : [];
   const registration: SagaRegistration<TState> = Object.freeze({
     definition,
     sagaKey,
     definitionVersion,
     definitionIdentity,
+    startContracts: definition.startContracts,
+    onRoutes,
+    hasStateParser: options.parseState !== undefined && options.parseOnEvent !== undefined,
     ...(options.releaseId === undefined ? {} : { releaseId: options.releaseId }),
     assertCurrent,
-    executeStart: makeStartExecutor(definition, parseStartInput, pluginManifests, responseHandlerBindings, commands, assertCurrent)
+    executeStart: makeStartExecutor(definition, parseStartInput, pluginManifests, responseHandlerBindings, commands, assertCurrent),
+    executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => {
+      assertCurrent();
+      const route = onRoutes.find((candidate) => candidate.handlerKey === handlerKey && candidate.eventType === (typeof event === 'object' && event !== null && 'type' in event ? event.type : undefined));
+      if (!route?.executeOn) throw new TypeError('Unknown saga on route');
+      return route.executeOn(state, event, metadata);
+    }
   });
   issuedRegistrations.add(registration);
   return registration;
@@ -157,6 +177,7 @@ export function bindSagaRegistrations(table: CompiledSagaRoutingTable, registrat
   const byKey = new Set<string>();
   for (const registration of registrations) {
     if (!issuedRegistrations.has(registration)) throw new TypeError('Untrusted saga registration');
+    if (table.registered && !table.registered.includes(registration)) throw new TypeError('Mismatched saga registration handle');
     registration.assertCurrent();
     if (!active.has(registration.definition) || byDefinition.has(registration.definition) || byKey.has(registration.sagaKey) ||
         !table.definitions.some((definition) => definition === registration.definition && definition.sagaKey === registration.sagaKey && definition.identity.version === registration.definitionVersion)) {
@@ -170,6 +191,7 @@ export function bindSagaRegistrations(table: CompiledSagaRoutingTable, registrat
     if (!byDefinition.has(definition)) throw new TypeError('Missing saga registration');
   }
   return (route: CompiledSagaRoute): SagaTurnRegistration => {
+    if (table.registered && !table.routes.includes(route)) throw new TypeError('Unknown saga route');
     const registration = byDefinition.get(route.definition);
     if (!registration || route.sagaKey !== registration.sagaKey || route.definitionVersion !== registration.definitionVersion ||
         route.definition.identity.version !== registration.definitionVersion) throw new TypeError('Unknown or changed saga version');
