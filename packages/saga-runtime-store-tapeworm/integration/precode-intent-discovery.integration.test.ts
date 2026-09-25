@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BSON, type Collection, type Db, MongoClient, ObjectId, UUID } from 'mongodb';
 import { openMongoSagaTurnRepository } from '../src/TapewormSagaTurnRepository';
+import { inspectIntentExplain } from './precode-plan';
 
 const uri = process.env.REDEMEINE_MONGO_URL;
 const intentType = 'saga.intent_recorded.event';
@@ -24,30 +25,13 @@ function makeCommit(id: string, oid: ObjectId, types: string[], blob = '') {
   };
 }
 
-function planStages(value: unknown): string[] {
-  if (!value || typeof value !== 'object') return [];
-  return Object.entries(value).flatMap(([key, child]) =>
-    key === 'stage' && typeof child === 'string' ? [child] : planStages(child));
-}
-
 async function explainPlans(commits: Collection, receipt: Receipt): Promise<void> {
   const filter = { 'events.type': intentType, _id: { $gt: firstId } };
   const base = () => commits.find(filter).sort({ _id: 1 }).limit(64).batchSize(1);
   const plans = { normal: await base().explain('executionStats'), hinted: await base().hint(indexName).explain('executionStats') };
   receipt.plans = Object.fromEntries(Object.entries(plans).map(([name, plan]) => [name, {
-    winningPlan: plan.queryPlanner.winningPlan,
-    stages: planStages(plan.queryPlanner.winningPlan),
-    keysExamined: plan.executionStats.totalKeysExamined,
-    docsExamined: plan.executionStats.totalDocsExamined,
-    returned: plan.executionStats.nReturned
+    winningPlan: plan.queryPlanner.winningPlan, selected: inspectIntentExplain(plan)
   }]));
-  for (const plan of Object.values(plans)) {
-    const stages = planStages(plan.queryPlanner.winningPlan);
-    expect(stages).toContain('IXSCAN');
-    expect(stages).not.toContain('COLLSCAN');
-    expect(stages).not.toContain('SORT');
-    expect(plan.executionStats.nReturned).toBe(64);
-  }
 }
 
 async function page(commits: Collection, after: ObjectId) {
@@ -167,7 +151,7 @@ async function cleanup(db: Db, client: MongoClient, receipt: Receipt): Promise<v
 (uri ? describe : describe.skip)('PRECODE ONLY: indexed intents and delayed insert, no effects', () => {
   it('records compound index explain, bounded pages and static keyset omission', async () => {
     const client = new MongoClient(uri!);
-    const db = client.db(`vpwm_precode_${Date.now()}_${process.pid}`);
+    const db = client.db(process.env.REDEMEINE_PRECODE_DB ?? `vpwm_precode_${Date.now()}_${process.pid}`);
     const receipt: Receipt = { ...scriptIdentity(), database: db.databaseName };
     try {
       await client.connect();
