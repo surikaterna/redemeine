@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { createSagaAggregate, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
-import type { WireIntent } from '../../saga-runtime/src/intentWire';
+import { decodeIntent } from '../../saga-runtime/src/intentWire';
 import { openMongoSagaTurnRepository } from '@redemeine/saga-runtime-store-tapeworm';
 import type { Event } from '@redemeine/kernel';
 import type { Channel } from 'amqplib';
 import type { ICommit } from 'tapeworm';
-import { createIntentTable } from './intentFixtures';
+import { createFanoutIntentTable, createIntentTable, intentRegistry } from './intentFixtures';
+import { assertPhysicalTurn } from './intentAssertions';
+import { concurrentIntents, gatedFanout } from './intentFaults';
 import { observeIdentitySettlements, type SettlementTrace, waitForIdentitySettlement } from './identitySettlements';
 import { appendSourceCommit, connectRealStack, createScenario, instanceId, pollUntil, publishCommit, queueCounts,
   type RealStack, sourceEvent, streamCommits, waitForDeadLetter, waitForQueueSettled,
@@ -27,13 +29,9 @@ function replacementObservations() {
   } };
 }
 
-function wireIntent(payload: unknown): WireIntent {
+function wireIntent(payload: unknown) {
   if (typeof payload !== 'object' || payload === null || !('intent' in payload)) throw new Error('missing intent');
-  const intent = payload.intent;
-  if (typeof intent !== 'object' || intent === null || !('kind' in intent) || !('origin' in intent)) {
-    throw new Error('invalid intent');
-  }
-  return intent as WireIntent;
+  return decodeIntent(payload.intent, intentRegistry);
 }
 
 async function settled(harness: ScenarioHarness, observed: SettlementTrace, id: string, eventId: string,
@@ -43,7 +41,8 @@ async function settled(harness: ScenarioHarness, observed: SettlementTrace, id: 
   await waitForQueueSettled(harness.queue);
 }
 
-function checkTurn(commit: ICommit, request: SagaTurnAppendRequest, start: boolean, data: 'null' | 'none' | 'object'): void {
+function checkTurn(commit: ICommit, request: SagaTurnAppendRequest, partitionId: string,
+  start: boolean, data: 'null' | 'none' | 'object'): void {
   const types = commit.events.map(event => event.type);
   expect(types).toEqual([
     ...(start ? ['saga.instance_created.event', 'saga.definition_identity_recorded.event'] : []),
@@ -51,11 +50,7 @@ function checkTurn(commit: ICommit, request: SagaTurnAppendRequest, start: boole
     ...Array.from({ length: 6 }, (_, i) => i >= 4
       ? ['saga.intent_recorded.event', 'saga.timer_fact_recorded.event'] : ['saga.intent_recorded.event']).flat()
   ]);
-  expect(commit).toMatchObject({ id: request.commitId, streamId: request.streamId,
-    sagaTurnIdentity: request.identity, commitSequence: start ? 0 : 1 });
-  expect(commit.events.map(event => ({ type: event.type, payload: event.payload, version: event.version })))
-    .toEqual(request.events.map((event, index) => ({ type: event.type, payload: event.payload,
-      version: (start ? 0 : 12) + index })));
+  assertPhysicalTurn(commit, request, partitionId, start ? 0 : 12);
   const intents = commit.events.filter(event => event.type === 'saga.intent_recorded.event').map(event => wireIntent(event.payload));
   expect(intents.map(intent => intent.kind)).toEqual(['plugin', 'plugin', 'dispatch', 'dispatch', 'schedule', 'cancelSchedule']);
   expect(intents.map(intent => intent.origin.ordinal)).toEqual([0, 1, 2, 3, 4, 5]);
@@ -109,8 +104,8 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       expect(physical).toHaveLength(2);
       expect(requests).toHaveLength(2);
       const shape = data === undefined ? 'none' : data === null ? 'null' : 'object';
-      checkTurn(physical[0]!, requests[0]!, true, shape);
-      checkTurn(physical[1]!, requests[1]!, false, shape);
+      checkTurn(physical[0]!, requests[0]!, harness.partitionId, true, shape);
+      checkTurn(physical[1]!, requests[1]!, harness.partitionId, false, shape);
       const reopened = await openMongoSagaTurnRepository(stack.db, harness.partitionId);
       const snapshot = await reopened.load(id);
       const aggregate = createSagaAggregate();
@@ -250,6 +245,156 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       expect(await streamCommits(harness, id)).toHaveLength(1);
       expect((await streamCommits(harness, id))[0]?.events).toHaveLength(12);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+    } finally { await harness.close(); }
+  });
+
+  it.each(['start', 'on'] as const)('concurrent same-ID %s decisions reconcile full intent content once', async phase => {
+    const label = `intent-duplicate-${phase}`;
+    const { definition, table } = createIntentTable(label);
+    const observed = trace();
+    let control: ReturnType<typeof concurrentIntents>;
+    const harness = await createScenario(stack, label, table, { prefetch: 5,
+      channel: base => observeIdentitySettlements(base, observed),
+      repository: base => { control = concurrentIntents(base); return control.repository; } });
+    try {
+      const orderId = `order-${label}`;
+      const id = instanceId(definition.sagaKey, orderId);
+      if (phase === 'on') {
+        await appendSourceCommit(stack, { id: `${label}-first`, streamId: `${label}-input`,
+          events: [sourceEvent(`${label}-placed`, 'real.order-placed.v1.event', { orderId })] });
+        await settled(harness, observed, `${label}-first`, `${label}-placed`, 'ack', 1);
+        control!.requests.length = 0;
+        control!.statuses.length = 0;
+      }
+      control!.arm();
+      const update = await appendSourceCommit(stack, { id: `${label}-update`, streamId: `${label}-input`,
+        events: [sourceEvent(`${label}-event`, phase === 'on' ? 'real.order-paid.v1.event' : 'real.order-placed.v1.event', { orderId })] });
+      await publishCommit(stack, update);
+      await pollUntil('both competing append outcomes', () => control!.statuses.length === 2);
+      await waitForQueueSettled(harness.queue);
+      expect(control!.statuses.sort()).toEqual(['committed', 'reconciled']);
+      expect(control!.requests).toHaveLength(2);
+      expect(control!.requests[0]).toEqual(control!.requests[1]);
+      const commits = await streamCommits(harness, id);
+      expect(commits).toHaveLength(phase === 'on' ? 2 : 1);
+      assertPhysicalTurn(commits[phase === 'on' ? 1 : 0]!, control!.requests[0]!, harness.partitionId,
+        phase === 'on' ? 12 : 0);
+      expect(observed.settled.map(item => item.kind)).toEqual(phase === 'on' ? ['ack', 'ack', 'ack'] : ['ack', 'ack']);
+      expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+    } finally { await harness.close(); }
+  });
+
+  it('retries real OCC between distinct intentful on decisions without dropping either complete turn', async () => {
+    const { definition, table } = createIntentTable('intent-occ');
+    const observed = trace();
+    let control: ReturnType<typeof concurrentIntents>;
+    const harness = await createScenario(stack, 'intent-occ', table, { prefetch: 5,
+      channel: base => observeIdentitySettlements(base, observed),
+      repository: base => { control = concurrentIntents(base); return control.repository; } });
+    try {
+      const orderId = 'order-intent-occ';
+      const id = instanceId(definition.sagaKey, orderId);
+      await appendSourceCommit(stack, { id: 'occ-first', streamId: 'occ-input',
+        events: [sourceEvent('occ-placed', 'real.order-placed.v1.event', { orderId })] });
+      await settled(harness, observed, 'occ-first', 'occ-placed', 'ack', 1);
+      control!.requests.length = 0;
+      control!.statuses.length = 0;
+      control!.arm();
+      await Promise.all(['a', 'b'].map(part => appendSourceCommit(stack, { id: `occ-${part}`, streamId: `occ-${part}-input`,
+        events: [sourceEvent(`occ-${part}-paid`, 'real.order-paid.v1.event', { orderId })] })));
+      await pollUntil('OCC retry finishes', () => control!.statuses.length === 3);
+      await waitForQueueSettled(harness.queue);
+      expect(control!.statuses.sort()).toEqual(['committed', 'committed', 'conflict']);
+      const commits = await streamCommits(harness, id);
+      expect(commits).toHaveLength(3);
+      for (const [index, commit] of commits.entries()) {
+        if (index === 0) continue;
+        const accepted = control!.outcomes.find(item => item.status === 'committed' && item.request.commitId === commit.id);
+        if (!accepted) throw new Error('missing accepted OCC request');
+        assertPhysicalTurn(commit, accepted.request, harness.partitionId, 12 + (index - 1) * 10);
+      }
+      expect(observed.settled.map(item => item.kind)).toEqual(['ack', 'ack', 'ack']);
+      expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+    } finally { await harness.close(); }
+  });
+
+  it.each(['start', 'on'] as const)('intentful %s fanout waits for late route and reconciles partial work', async phase => {
+    const label = `intent-fanout-${phase}`;
+    const { first, late, table } = createFanoutIntentTable(label);
+    const observed = trace();
+    let fault: ReturnType<typeof gatedFanout>;
+    const harness = await createScenario(stack, label, table, { prefetch: 1,
+      channel: base => observeIdentitySettlements(base, observed),
+      repository: base => { fault = gatedFanout(base, late.registration.sagaKey); return fault.repository; } });
+    try {
+      const orderId = `order-${label}`;
+      const firstId = instanceId(first.registration.sagaKey, orderId);
+      const lateId = instanceId(late.registration.sagaKey, orderId);
+      if (phase === 'on') {
+        await appendSourceCommit(stack, { id: `${label}-first`, streamId: `${label}-input`,
+          events: [sourceEvent(`${label}-placed`, 'real.order-placed.v1.event', { orderId })] });
+        await settled(harness, observed, `${label}-first`, `${label}-placed`, 'ack', 1);
+        fault!.requests.length = 0;
+      }
+      fault!.arm();
+      await appendSourceCommit(stack, { id: `${label}-update`, streamId: `${label}-input`,
+        events: [sourceEvent(`${label}-event`, phase === 'on' ? 'real.order-paid.v1.event' : 'real.order-placed.v1.event', { orderId })] });
+      await fault!.arrival;
+      const count = phase === 'on' ? 2 : 1;
+      await pollUntil('first fanout route committed', async () => (await streamCommits(harness, firstId)).length === count);
+      expect(await streamCommits(harness, lateId)).toHaveLength(count - 1);
+      expect((await queueCounts(harness.queue)).unacknowledged).toBe(1);
+      expect(observed.settled.map(item => item.kind)).toEqual(phase === 'on' ? ['ack'] : []);
+      fault!.release();
+      await pollUntil('both fanout routes committed and ACKed', async () =>
+        (await streamCommits(harness, lateId)).length === count &&
+        observed.settled.some(item => item.kind === 'ack' && item.messageId === `${label}-update`));
+      await waitForQueueSettled(harness.queue);
+      expect(observed.settled.filter(item => item.messageId === `${label}-update`).map(item => [item.kind, item.requeue]))
+        .toEqual([['nack', true], ['ack', undefined]]);
+      for (const id of [firstId, lateId]) {
+        const commits = await streamCommits(harness, id);
+        expect(commits).toHaveLength(count);
+        const request = fault!.requests.find(item => item.streamId === id);
+        if (!request) throw new Error('missing fanout request');
+        assertPhysicalTurn(commits[count - 1]!, request, harness.partitionId, phase === 'on' ? 12 : 0);
+      }
+      expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+    } finally { fault!.release(); await harness.close(); }
+  });
+
+  it('never ACKs intentful on fanout when the later route emits an invalid final intent', async () => {
+    const { first, late, table } = createFanoutIntentTable('intent-fanout-invalid', 'invalid-on');
+    const observed = trace();
+    const requests: SagaTurnAppendRequest[] = [];
+    const harness = await createScenario(stack, 'intent-fanout-invalid', table, { prefetch: 1,
+      channel: base => observeIdentitySettlements(base, observed),
+      repository: base => wrapRepository(base, async request => { requests.push(request); return base.append(request); }) });
+    try {
+      const orderId = 'order-intent-fanout-invalid';
+      const firstId = instanceId(first.registration.sagaKey, orderId);
+      const lateId = instanceId(late.registration.sagaKey, orderId);
+      await appendSourceCommit(stack, { id: 'fanout-valid-start', streamId: 'fanout-invalid-input',
+        events: [sourceEvent('fanout-valid-placed', 'real.order-placed.v1.event', { orderId })] });
+      await settled(harness, observed, 'fanout-valid-start', 'fanout-valid-placed', 'ack', 1);
+      for (const id of [firstId, lateId]) {
+        const [commit] = await streamCommits(harness, id);
+        const request = requests.find(item => item.streamId === id);
+        if (!commit || !request) throw new Error('missing fanout start');
+        assertPhysicalTurn(commit, request, harness.partitionId, 0);
+      }
+      await appendSourceCommit(stack, { id: 'fanout-invalid-on', streamId: 'fanout-invalid-input',
+        events: [sourceEvent('fanout-invalid-paid', 'real.order-paid.v1.event', { orderId })] });
+      await settled(harness, observed, 'fanout-invalid-on', 'fanout-invalid-paid', 'nack', 2);
+      await waitForDeadLetter(harness);
+      const firstCommits = await streamCommits(harness, firstId);
+      expect(firstCommits).toHaveLength(2);
+      const on = requests.find(item => item.streamId === firstId && item.expectedNextCommitSequence === 1);
+      if (!on) throw new Error('missing first on request');
+      assertPhysicalTurn(firstCommits[1]!, on, harness.partitionId, 12);
+      expect(await streamCommits(harness, lateId)).toHaveLength(1);
+      expect(requests.filter(item => item.streamId === lateId)).toHaveLength(1);
+      expect(observed.settled.map(item => item.kind)).toEqual(['ack', 'nack']);
     } finally { await harness.close(); }
   });
 });

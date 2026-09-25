@@ -12,6 +12,10 @@ const billing = createAggregate('billing', { id: 'a1' })
   .commands(() => ({ pay: (_state, id: string) => ({ type: 'unused', payload: { id } }) }))
   .overrideCommandNames({ pay: 'billing.charge.command' }).build();
 type Mode = 'normal' | 'invalid-start' | 'invalid-on';
+export const intentRegistry = [{ plugin_key: 'outbound', actions: [
+  { name: 'send', interaction: 'fire_and_forget' as const },
+  { name: 'ask', interaction: 'request_response' as const }
+], commandTypes: ['invoice.pay.command', 'billing.charge.command'] }] as const;
 
 function state(value: unknown): { count: number } {
   if (typeof value !== 'object' || value === null || !('count' in value) || typeof value.count !== 'number') {
@@ -27,7 +31,7 @@ function input(value: unknown): { orderId: string } {
   return { orderId: value.orderId };
 }
 
-export function createIntentTable(name: string, mode: Mode = 'normal', handlerData?: { tag: string } | null) {
+export function createIntentRegistration(name: string, mode: Mode = 'normal', handlerData?: { tag: string } | null) {
   const definition = createSaga({ identity: { namespace: 'real.stack', name, version: 1 }, plugins: [outbound] as const })
     .initialState(() => ({ count: 0 }))
     .onResponses({ done: () => undefined }).onErrors({ failed: () => undefined }).onRetries({ again: () => undefined })
@@ -62,7 +66,22 @@ export function createIntentTable(name: string, mode: Mode = 'normal', handlerDa
     responseHandlerBindings: { done: { phase: 'response' }, failed: { phase: 'error' }, again: { phase: 'retry' } },
     parseStartInput: input, parseState: state,
     parseOnEvent: parseRealEvent, canonicalCommandTypes: ['invoice.pay.command', 'billing.charge.command'] });
+  return { definition, registration };
+}
+
+export function createIntentTable(name: string, mode: Mode = 'normal', handlerData?: { tag: string } | null) {
+  const { definition, registration } = createIntentRegistration(name, mode, handlerData);
   const table = compileRegisteredSagaRoutes([registration],
     [{ registration, triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }]);
   return { definition, table };
+}
+
+export function createFanoutIntentTable(name: string, lateMode: Mode = 'normal') {
+  const first = createIntentRegistration(`${name}-first`, 'normal', { tag: 'on' });
+  const late = createIntentRegistration(`${name}-late`, lateMode, null);
+  const registrations = [first.registration, late.registration];
+  const table = compileRegisteredSagaRoutes(registrations, registrations.map(registration => ({
+    registration, triggerIndex: 0, eventTypes: ['real.order-placed.v1.event']
+  })));
+  return { first, late, table };
 }

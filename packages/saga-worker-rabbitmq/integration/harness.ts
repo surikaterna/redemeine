@@ -26,7 +26,7 @@ import { readRabbitQueueCounts } from './rabbitQueueCounts';
 import { observeReplacement, type ReplacementObservation } from './replacementObservation';
 
 function registeredOptions(table: CompiledSagaRoutingTable) {
-  const registrations = table.definitions.map(registrationForRealDefinition);
+  const registrations = table.registered ?? table.definitions.map(registrationForRealDefinition);
   return { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, registrations) };
 }
 
