@@ -113,6 +113,37 @@ describe('bounded saga prefix replay', () => {
     expect(completePages).toBe(1);
     expect(repository.appendCalls).toHaveLength(1);
   });
+  it('rejects an observation-only physical commit before a state-only commit on the next page', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('split-physical', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing first commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    const observation = { ...first, commitId: 'observation-only', commitSequence: 1,
+      events: [{ ...first.events[2]!, version: 4 }] };
+    const state = { ...first, commitId: 'state-only', commitSequence: 2,
+      events: [{ ...first.events[3]!, version: 5 }] };
+    let yielded = 0;
+    const snapshot = { streamId: id, nextCommitSequence: 3, commits: (async function* () {
+      for (const commit of [first, observation]) { yielded += 1; yield commit; }
+      yielded += 1;
+      yield state;
+    })() };
+    await expect(foldSagaTurn(snapshot, resolved)).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(yielded).toBe(2);
+    expect(repository.appendCalls).toHaveLength(1);
+    await expect(hydrateSagaTurn({ ...snapshot, commits: (async function* () {
+      yield first;
+      yield observation;
+      yield state;
+    })() }, id)).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+  });
   it('projects the original prefix inside a complete stored commit without changing its event versions', async () => {
     const repository = new FakeTurnRepository();
     const table = createTurnTable('prefix', createCounters());

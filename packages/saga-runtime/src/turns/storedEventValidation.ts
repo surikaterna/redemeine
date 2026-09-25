@@ -357,7 +357,12 @@ export function finalizeStoredSagaReplay(context: SagaStoredReplayContext): void
   if (context.created && (!context.definitionIdentity || !context.authoritative)) {
     throw invalidReplay('Saga stream has no complete identity-bearing initial turn');
   }
+  assertStoredSagaCommitBoundary(context);
+}
+
+export function assertStoredSagaCommitBoundary(context: SagaStoredReplayContext): void {
+  // One physical turn owns both its observation and authoritative business state.
   if (context.authoritative && context.pendingObservations !== 0) {
-    throw invalidReplay('Authoritative saga stream ends with a source observation that has no business state');
+    throw invalidReplay('Physical saga commit ends with a source observation that has no business state');
   }
 }
