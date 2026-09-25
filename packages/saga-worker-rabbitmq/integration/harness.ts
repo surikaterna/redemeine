@@ -79,6 +79,12 @@ export interface ReplacementWorker {
   close(): Promise<void>;
 }
 
+export interface ReplacementObservation {
+  readonly delivered: (messageId: string | undefined, eventIds: readonly string[], redelivered: boolean) => void;
+  readonly processed: (eventId: string, statuses: readonly string[]) => void;
+  readonly acked: (messageId: string | undefined) => void;
+}
+
 export interface ScenarioOptions {
   readonly repository?: (base: SagaTurnRepository) => SagaTurnRepository;
   readonly channel?: (base: Channel) => SagaRabbitChannel;
@@ -377,11 +383,34 @@ export async function waitForDeadLetter(harness: ScenarioHarness): Promise<void>
   await pollUntil(`dead letter ${harness.deadQueue}`, async () => (await queueCounts(harness.deadQueue)).ready > 0);
 }
 
-export async function startReplacementWorker(stack: RealStack, harness: ScenarioHarness, table: CompiledSagaRoutingTable): Promise<ReplacementWorker> {
+function observeReplacement(channel: Channel, observation?: ReplacementObservation): SagaRabbitChannel {
+  return {
+    ack: (message, allUpTo) => {
+      channel.ack(message, allUpTo);
+      observation?.acked(message.properties.messageId);
+    },
+    nack: channel.nack.bind(channel),
+    assertExchange: channel.assertExchange.bind(channel),
+    assertQueue: channel.assertQueue.bind(channel),
+    cancel: channel.cancel.bind(channel),
+    consume: (queue, callback, options) => channel.consume(queue, (message) => {
+      if (message && observation) {
+        const body = JSON.parse(message.content.toString()) as { events: Array<{ id: string }> };
+        observation?.delivered(message.properties.messageId, body.events.map((event) => event.id), message.fields.redelivered);
+      }
+      callback(message);
+    }, options),
+    prefetch: channel.prefetch.bind(channel)
+  };
+}
+
+export async function startReplacementWorker(stack: RealStack, harness: ScenarioHarness, table: CompiledSagaRoutingTable,
+  observation?: ReplacementObservation): Promise<ReplacementWorker> {
   const model = await connect(required('REDEMEINE_RABBIT_URL'));
   const channel = await model.createChannel();
+  const processor = createSagaSourceEventProcessor(table, harness.repository, registeredOptions(table));
   const worker = createSagaRabbitWorker({
-    channel,
+    channel: observeReplacement(channel, observation),
     queue: {
       queue: harness.queue,
       options: {
@@ -395,7 +424,11 @@ export async function startReplacementWorker(stack: RealStack, harness: Scenario
     },
     source: { collection: stack.sourceCollection, partitions: [stack.sourcePartitionId] },
     limits: { maxBodyBytes: 12 * 1024 * 1024, maxEvents: 20, prefetch: 5, shutdownTimeoutMs: 5_000 },
-    processEvent: createSagaSourceEventProcessor(table, harness.repository, registeredOptions(table)),
+    processEvent: async (event) => {
+      const outcomes = await processor(event);
+      observation?.processed(event.eventId, outcomes.map((outcome) => outcome.status));
+      return outcomes;
+    },
     onSettlementError: () => undefined
   });
   await worker.start();

@@ -91,6 +91,49 @@ describe('Rabbit saga worker delivery', () => {
     expect(failures).toEqual([expect.objectContaining({ settlement: 'ack', error: channel.ackError })]);
   });
 
+  it('reprocesses an original-prefix turn after an ACK throws before broker settlement and channel close', async () => {
+    const original = new class extends FakeChannel {
+      closed = false;
+      override ack(): void { throw new Error('ACK failed before broker settlement'); }
+      close(): void { this.closed = true; }
+    }();
+    const replacement = new FakeChannel();
+    const failures: unknown[] = [];
+    const deliveries: string[] = [];
+    const persisted = { count: 0 };
+    const processEvent = async (event: { eventId: string }) => {
+      deliveries.push(event.eventId);
+      const recomputed = 0 + 1; // Retry computes from the original prefix, not the current persisted value.
+      if (persisted.count === 0) persisted.count = recomputed;
+      else if (persisted.count !== recomputed) throw new Error('Original-prefix material differs');
+      return [];
+    };
+    const first = createSagaRabbitWorker(options(original, processEvent, failures, {
+      onSettlementError: (failure) => {
+        failures.push(failure);
+        original.close();
+      }
+    }));
+    const retry = createSagaRabbitWorker(options(replacement, processEvent));
+    const input = message({ body: { ...body(), events: [body().events[0]] } });
+    await first.start();
+    await expect(first.handle(input)).rejects.toThrow('ACK failed before broker settlement');
+    expect(original.acks).toHaveLength(0);
+    expect(original.nacks).toHaveLength(0);
+    expect(failures).toEqual([expect.objectContaining({ settlement: 'ack', message: input })]);
+    expect(original.closed).toBe(true);
+    await first.stop();
+    await retry.start();
+    const redelivery = { ...input, fields: { ...input.fields, redelivered: true } };
+    await retry.handle(redelivery);
+    expect(deliveries).toEqual(['event-1', 'event-1']);
+    expect(persisted.count).toBe(1);
+    expect(replacement.acks).toEqual([{ message: redelivery, allUpTo: false }]);
+    expect(replacement.nacks).toHaveLength(0);
+    expect(failures).toHaveLength(1);
+    await retry.stop();
+  });
+
   it('attempts only NACK and reports a closed-channel NACK exception', async () => {
     const channel = new FakeChannel();
     const failures: unknown[] = [];

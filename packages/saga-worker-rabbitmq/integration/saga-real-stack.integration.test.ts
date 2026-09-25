@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
-import type { SagaTurnAppendRequest, SagaTurnAppendResult, SagaTurnRepository } from '@redemeine/saga-runtime';
+import { deriveSourceTriggerId, type SagaTurnAppendRequest, type SagaTurnAppendResult, type SagaTurnRepository } from '@redemeine/saga-runtime';
 import type { Channel, ConsumeMessage } from 'amqplib';
 import type { ICommit } from 'tapeworm';
 import type { SagaRabbitChannel } from '../src';
@@ -20,6 +20,7 @@ import {
   streamCommits,
   waitForDeadLetter,
   waitForQueueSettled,
+  withDeadline,
   wrapRepository
 } from './harness';
 
@@ -109,6 +110,21 @@ function barrierRepository(
 
 async function expectNoDeadLetters(harness: ScenarioHarness): Promise<void> {
   expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+}
+
+async function expectFanoutCommit(harness: ScenarioHarness, id: string, sagaKey: string): Promise<void> {
+  const commits = await streamCommits(harness, id);
+  expect(commits).toHaveLength(1);
+  expect(commits[0]).toMatchObject({ commitSequence: 0, sagaTurnIdentity: {
+    sagaKey, instanceId: id, sourceTriggerId: expect.any(String), routeId: expect.any(String)
+  } });
+  expect(commits[0]?.events.map(({ type }) => type)).toEqual([
+    'saga.instance_created.event', 'saga.definition_identity_recorded.event',
+    'saga.source_event_observed.event', 'saga.business_state_recorded.event'
+  ]);
+  expect(commits[0]?.events[1]?.payload).toMatchObject({ sagaKey, schemaVersion: 1 });
+  expect(commits[0]?.events[2]?.payload).toMatchObject({ eventId: 'partial-fanout-event' });
+  expect(await replayState(harness, id)).toEqual({ count: 0, seen: [] });
 }
 
 function observeAcks(base: Channel, onAck: () => void): SagaRabbitChannel {
@@ -467,9 +483,19 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       const secondId = instanceId(second.sagaKey, 'order-partial-fanout');
       await Promise.all([waitForCommitCount(harness, firstId, 1), waitForCommitCount(harness, secondId, 1)]);
       await waitForQueueSettled(harness.queue);
-      expect(firstCounters.initial).toBe(1);
+      expect(firstCounters.initial).toBe(2);
       expect(secondCounters.initial).toBe(2);
       expect(failed).toBe(true);
+      await expectFanoutCommit(harness, firstId, first.sagaKey);
+      await expectFanoutCommit(harness, secondId, second.sagaKey);
+      const [firstCommit] = await streamCommits(harness, firstId);
+      const [secondCommit] = await streamCommits(harness, secondId);
+      const firstSource = firstCommit?.sagaTurnIdentity as { sourceTriggerId: string } | undefined;
+      const secondSource = secondCommit?.sagaTurnIdentity as { sourceTriggerId: string } | undefined;
+      const sourceTriggerId = deriveSourceTriggerId({ partitionId: stack.sourcePartitionId,
+        streamId: 'partial-fanout-source', commitId: 'partial-fanout-start', eventIndex: 0 });
+      expect(firstSource?.sourceTriggerId).toBe(sourceTriggerId);
+      expect(secondSource?.sourceTriggerId).toBe(sourceTriggerId);
       await expectNoDeadLetters(harness);
     } finally {
       await harness.close();
@@ -480,7 +506,11 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
     const counters = createCounters();
     const { definition, table } = createRealTable('ack-crash', counters);
     const channelError = new Error('injected ACK channel failure');
+    const closed = deferred();
     let armed = false;
+    const deliveries: Array<{ messageId: string | undefined; eventIds: readonly string[]; redelivered: boolean }> = [];
+    const outcomes: Array<{ eventId: string; statuses: readonly string[] }> = [];
+    const acks: Array<string | undefined> = [];
     const harness = await createScenario(stack, 'ack-crash', table, {
       channel: (base) => ({
         ack: (message: ConsumeMessage, allUpTo?: boolean) => {
@@ -496,6 +526,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       }),
       onSettlementError: async (_failure, base) => {
         await base.close();
+        closed.resolve();
       }
     });
     let replacement: Awaited<ReturnType<typeof startReplacementWorker>> | undefined;
@@ -506,12 +537,29 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
         sourceEvent('ack-crash-event', 'real.order-paid.v1.event', { orderId: 'order-ack-crash' })
       ]);
       await publishCommit(stack, update);
-      await waitForCommitCount(harness, id, 2);
+      const committed = await waitForCommitCount(harness, id, 2);
       await pollUntil('settlement observer', () => harness.settlementErrors.length === 1);
       expect(harness.settlementErrors[0]).toMatchObject({ error: channelError, settlement: 'ack' });
-      replacement = await startReplacementWorker(stack, harness, table);
+      const failedDelivery = harness.settlementErrors[0]!.message;
+      expect(failedDelivery.properties.messageId).toBe('ack-crash-paid');
+      expect(JSON.parse(failedDelivery.content.toString()).events[0].id).toBe('ack-crash-event');
+      await withDeadline('original channel close', closed.promise);
+      replacement = await startReplacementWorker(stack, harness, table, {
+        delivered: (messageId, eventIds, redelivered) => deliveries.push({ messageId, eventIds, redelivered }),
+        processed: (eventId, statuses) => outcomes.push({ eventId, statuses }),
+        acked: (messageId) => acks.push(messageId)
+      });
+      await pollUntil('replacement redelivery and ACK', () => acks.includes('ack-crash-paid'));
+      expect(acks).toEqual(['ack-crash-paid']);
+      expect(deliveries).toContainEqual({ messageId: 'ack-crash-paid', eventIds: ['ack-crash-event'], redelivered: true });
+      expect(outcomes).toContainEqual({ eventId: 'ack-crash-event', statuses: ['reconciled'] });
       await waitForQueueSettled(harness.queue);
-      expect(await streamCommits(harness, id)).toHaveLength(2);
+      const commits = await streamCommits(harness, id);
+      expect(commits).toEqual(committed);
+      expect(commits[1]?.events.map(({ type }) => type)).toEqual([
+        'saga.source_event_observed.event', 'saga.business_state_recorded.event'
+      ]);
+      expect(await replayState(harness, id)).toEqual({ count: 1, seen: ['ack-crash-event'] });
       expect(counters.handlers.get('ack-crash-event')).toBe(2);
       await expectNoDeadLetters(harness);
     } finally {
