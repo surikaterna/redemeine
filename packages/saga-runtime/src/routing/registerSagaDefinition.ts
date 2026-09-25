@@ -7,7 +7,7 @@ import { validateInitialSagaState, validateSagaRegistration } from './registrati
 import { validateBusinessState } from '../businessStateValidation';
 import { sagaPolicyFingerprint, type DeclaredSchemaIdentity, type DefinitionIdentityV1 } from './executableIdentity';
 import { startWireRegistry, validateStartIntents, type StartTurnOrigin } from './startIntentValidation';
-import type { WireIntent } from '../intentWire';
+import type { WireIntent, WireRegistryEntry } from '../intentWire';
 
 const issuedRegistrations = new WeakSet<object>();
 
@@ -24,6 +24,7 @@ export interface SagaRegistration<TState extends object = object> {
   readonly sagaKey: string;
   readonly definitionVersion: number;
   readonly definitionIdentity: DefinitionIdentityV1;
+  readonly wireRegistry: readonly WireRegistryEntry[];
   readonly releaseId?: string;
   readonly assertCurrent: () => void;
   readonly executeStart: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, turnClock: string) => Promise<{ state: TState; intents: readonly WireIntent[] }>;
@@ -33,8 +34,16 @@ export interface SagaRegistration<TState extends object = object> {
   readonly executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => Promise<{ state: unknown; intents: readonly unknown[] }>;
 }
 
-export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent'> &
+export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent' | 'wireRegistry'> &
   Partial<Pick<SagaRegistration, 'executeStart'>>;
+
+function frozenWireRegistry(manifests: SagaPluginManifestList, commands: readonly string[]): readonly WireRegistryEntry[] {
+  return Object.freeze(startWireRegistry(manifests, commands).map((entry) => Object.freeze({
+    plugin_key: entry.plugin_key,
+    actions: Object.freeze(entry.actions.map((action) => Object.freeze({ ...action }))),
+    ...(entry.commandTypes === undefined ? {} : { commandTypes: Object.freeze([...entry.commandTypes]) })
+  })));
+}
 
 function captureReferences<TState, TPlugins extends SagaPluginManifestList, TBindings extends SagaResponseHandlerTokenBindings, TInput>(
   definition: SagaDefinition<TState, TPlugins, TBindings, TInput>, manifests: TPlugins
@@ -140,6 +149,7 @@ export function registerSagaDefinition<
     sagaKey,
     definitionVersion,
     definitionIdentity,
+    wireRegistry: frozenWireRegistry(pluginManifests, commands),
     startContracts: definition.startContracts,
     onRoutes,
     hasStateParser: options.parseState !== undefined && options.parseOnEvent !== undefined,
@@ -169,7 +179,7 @@ export function registerSagaTurnDefinition(options: {
   const guard = createExecutableGuard(definition, pluginManifests, responseHandlerBindings,
     [...options.canonicalCommandTypes], options.declaredSchemas ? [...options.declaredSchemas] : []);
   const registration = Object.freeze({ definition, sagaKey: definition.sagaKey,
-    definitionVersion: definition.identity.version, ...guard });
+    definitionVersion: definition.identity.version, wireRegistry: frozenWireRegistry(pluginManifests, options.canonicalCommandTypes), ...guard });
   issuedRegistrations.add(registration);
   return registration;
 }

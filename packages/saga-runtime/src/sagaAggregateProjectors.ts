@@ -6,6 +6,8 @@ import type {
   SagaDefinitionIdentityRecordedEventPayload,
   SagaInstanceCreatedEventPayload,
   SagaIntentLifecycleRecordedEventPayload,
+  SagaIntentRecordedEventPayload,
+  SagaTimerFactRecordedEventPayload,
   SagaRecentWindowLimits,
   SagaSourceEventObservedEventPayload,
   SagaStateTransitionedEventPayload
@@ -70,6 +72,13 @@ export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWi
       state.correlation = event.payload.correlation;
       state.businessState = event.payload.state;
       state.updatedAt = event.payload.recordedAt;
+      state.transitionVersion += 1;
+    },
+    intentRecorded: (state: NormalizedSagaAggregateState<TState>, _event: Event<SagaIntentRecordedEventPayload>) => {
+      state.transitionVersion += 1;
+      state.totals.intents += 1;
+    },
+    timerFactRecorded: (state: NormalizedSagaAggregateState<TState>, _event: Event<SagaTimerFactRecordedEventPayload>) => {
       state.transitionVersion += 1;
     }
   };

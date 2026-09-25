@@ -1,5 +1,7 @@
 import type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 import type { DefinitionIdentityV1 } from './routing/executableIdentity';
+import type { WireIntent } from './intentWire';
+import type { TimerFactV1 } from './turns/lifecycleWire';
 
 export type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 
@@ -258,6 +260,16 @@ export interface SagaActivityLifecycleRecordedEventPayload {
 }
 
 export interface SagaBusinessStateRecordedEventPayload<TState = unknown> extends SagaRecordBusinessStateCommandPayload<TState> {}
+
+export interface SagaIntentRecordedEventPayload {
+  schemaVersion: 1;
+  intent: WireIntent;
+}
+
+export interface SagaTimerFactRecordedEventPayload {
+  schemaVersion: 1;
+  fact: TimerFactV1;
+}
 
 export type SagaTransitionInvariantCode =
   | 'saga_instance_not_created'

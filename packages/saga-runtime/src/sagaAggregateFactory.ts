@@ -91,7 +91,9 @@ function buildSagaAggregate<TAggregateName extends string, TState>(aggregateName
       stateTransitioned: `${aggregateName}.${toSnakeCase('stateTransitioned')}.event`,
       intentLifecycleRecorded: `${aggregateName}.${toSnakeCase('intentLifecycleRecorded')}.event`,
       activityLifecycleRecorded: `${aggregateName}.${toSnakeCase('activityLifecycleRecorded')}.event`,
-      businessStateRecorded: 'saga.business_state_recorded.event'
+      businessStateRecorded: 'saga.business_state_recorded.event',
+      intentRecorded: `${aggregateName}.intent_recorded.event`,
+      timerFactRecorded: `${aggregateName}.timer_fact_recorded.event`
     })
     .build();
   return {

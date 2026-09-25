@@ -3,11 +3,12 @@ import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
 import { BusinessStateValidationError, DEFAULT_BUSINESS_STATE_MAX_BYTES, validateBusinessState } from '../businessStateValidation';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
-import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
+import { deriveSagaTurnEnvelopeId, deriveTurnCommitId } from '../identity/deterministicIds';
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnIdentity, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
+import type { WireIntent, WireRegistryEntry } from '../intentWire';
 import {
   assertStoredSagaReplayOrder,
   assertStoredSagaCommitBoundary,
@@ -53,13 +54,26 @@ function requireEventTypes(aggregate: SagaAggregate): Readonly<Record<string, st
   return aggregate.types.events;
 }
 
+function assertIntentCommitIdentity(commit: SagaTurnStoredCommit, intent: WireIntent): void {
+  const identity = commit.identity;
+  if (commit.commitId !== deriveTurnCommitId(identity) || identity.instanceId !== commit.streamId ||
+    intent.instanceId !== identity.instanceId || intent.origin.sourceId !== identity.sourceTriggerId ||
+    intent.origin.sagaKey !== identity.sagaKey || intent.origin.routeId !== identity.routeId) {
+    throw new SagaTurnIntegrityError('invalid_stored_event', 'Stored intent does not belong to its physical turn commit');
+  }
+}
+
 function replayCommitEvents(commit: SagaTurnStoredCommit, count: number, version: number, state: SagaAggregateState,
-  aggregate: SagaAggregate, replay: SagaStoredReplayContext, eventTypes: Readonly<Record<string, string>>): SagaAggregateState {
+  aggregate: SagaAggregate, replay: SagaStoredReplayContext, eventTypes: Readonly<Record<string, string>>,
+  registry: readonly WireRegistryEntry[]): SagaAggregateState {
   for (let position = 0; position < count; position += 1) {
     const stored = commit.events[position]!;
     if (stored.version !== version + position) throw new SagaTurnIntegrityError('invalid_event_version', 'Saga event versions must be contiguous');
     const { version: _version, ...event } = stored;
-    const validated = validateStoredSagaEvent(event, eventTypes);
+    const validated = validateStoredSagaEvent(event, eventTypes, registry);
+    if (validated.kind === 'intentRecorded') {
+      assertIntentCommitIdentity(commit, validated.payload.intent as WireIntent);
+    }
     assertStoredSagaReplayOrder(replay, validated);
     try {
       state = aggregate.apply(state, validated.event);
@@ -80,7 +94,7 @@ export class SagaTurnReplaySession {
   private sequence = 0;
   private version = 0;
 
-  constructor(private readonly instanceId: string) { assertStateBudget(this.state); }
+  constructor(private readonly instanceId: string, private readonly registry: readonly WireRegistryEntry[] = []) { assertStateBudget(this.state); }
 
   get nextCommitSequence(): number { return this.sequence; }
   get nextEventVersion(): number { return this.version; }
@@ -96,10 +110,10 @@ export class SagaTurnReplaySession {
       commit.events.length === 0 || commit.events.length > 256) {
       throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Loaded saga commits must be complete and contiguous');
     }
-    this.state = replayCommitEvents(commit, commit.events.length, this.version, this.state, this.aggregate, this.replay, this.eventTypes);
+    this.state = replayCommitEvents(commit, commit.events.length, this.version, this.state, this.aggregate, this.replay, this.eventTypes, this.registry);
     assertStoredSagaCommitBoundary(this.replay);
-    if (this.sequence === 0 && (!this.replay.authoritative || commit.events.length !== 4 || this.replay.lastKind !== 'businessStateRecorded')) {
-      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one four-event commit');
+    if (this.sequence === 0 && (!this.replay.authoritative || commit.events.length < 4)) {
+      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one complete commit');
     }
     this.version += commit.events.length;
     this.sequence += 1;
@@ -118,7 +132,8 @@ export class SagaTurnReplaySession {
 export async function hydrateSagaTurn(
   snapshot: SagaTurnStreamSnapshot,
   instanceId: string,
-  prefix?: { readonly commitSequence: number; readonly eventOffset: number }
+  prefix?: { readonly commitSequence: number; readonly eventOffset: number },
+  registry: readonly WireRegistryEntry[] = []
 ): Promise<HydratedSagaTurn> {
   if (snapshot.streamId !== instanceId) throw new SagaTurnIntegrityError('stream_identity_mismatch', 'Loaded stream does not match saga instance');
   if (!Number.isSafeInteger(snapshot.nextCommitSequence) || snapshot.nextCommitSequence < 0) {
@@ -142,11 +157,11 @@ export async function hydrateSagaTurn(
       throw new SagaTurnIntegrityError('invalid_event_version', 'Original saga event offset is outside the complete commit');
     }
     const through = prefix && sequence === prefix.commitSequence ? prefix.eventOffset : commit.events.length;
-    state = replayCommitEvents(commit, through, version, state, aggregate, replay, eventTypes);
+    state = replayCommitEvents(commit, through, version, state, aggregate, replay, eventTypes, registry);
     if (through === commit.events.length) assertStoredSagaCommitBoundary(replay);
     if (sequence === 0 && through === commit.events.length &&
-      (!replay.authoritative || commit.events.length !== 4 || replay.lastKind !== 'businessStateRecorded')) {
-      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one four-event commit');
+      (!replay.authoritative || commit.events.length < 4)) {
+      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one complete commit');
     }
     version += through;
     sequence += 1;

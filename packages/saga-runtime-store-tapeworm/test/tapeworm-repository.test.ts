@@ -116,6 +116,19 @@ describe('Tapeworm saga turn repository', () => {
     expect(partition.appendCalls).toBe(0);
   });
 
+  it('rejects an oversized individual intent before append without capping the state at 64 KiB', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const intents = (size: number) => request({ events: [
+      { type: 'saga.business_state_recorded.event', payload: { state: { blob: 's'.repeat(70000) } } },
+      { type: 'saga.intent_recorded.event', payload: { schemaVersion: 1, intent: { payload: 'x'.repeat(size - 14) } } }
+    ] });
+    expect(Buffer.byteLength(JSON.stringify((intents(65536).events[1]!.payload as { intent: unknown }).intent))).toBe(65536);
+    await expect(target.append(intents(65536))).resolves.toMatchObject({ status: 'committed' });
+    await expect(target.append({ ...intents(65537), commitId: 'turn-2', expectedNextCommitSequence: 1 })).rejects.toThrow('64 KiB');
+    expect(partition.appendCalls).toBe(1);
+  });
+
   it('persists and replays one complete 1.5 MiB business-state event', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);

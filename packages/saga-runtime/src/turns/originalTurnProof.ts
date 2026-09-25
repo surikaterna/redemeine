@@ -5,6 +5,7 @@ import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEv
 import type { ResolvedSagaTurnRouteGroup, SagaTurnAppendRequest, SagaTurnRepository, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
 import { deriveTurnCommitId } from '../identity/deterministicIds';
+import type { WireRegistryEntry } from '../intentWire';
 
 export interface SagaTurnFold {
   readonly hydrated: HydratedSagaTurn;
@@ -13,7 +14,8 @@ export interface SagaTurnFold {
     readonly original: HydratedSagaTurn; readonly firstEventVersion: number } | null;
 }
 
-export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: ResolvedSagaTurnRouteGroup): Promise<SagaTurnFold> {
+export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: ResolvedSagaTurnRouteGroup,
+  registry: readonly WireRegistryEntry[] = []): Promise<SagaTurnFold> {
   if (snapshot.streamId !== resolved.instanceId || !Number.isSafeInteger(snapshot.nextCommitSequence) ||
     snapshot.nextCommitSequence < 0 || snapshot.nextCommitSequence > 1_000_000) {
     throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Invalid captured saga stream boundary');
@@ -22,7 +24,7 @@ export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: R
   const candidates = routes.map((route) => ({ route, commitId: deriveTurnCommitId({
     sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId
   }) }));
-  const session = new SagaTurnReplaySession(resolved.instanceId);
+  const session = new SagaTurnReplaySession(resolved.instanceId, registry);
   let target: SagaTurnFold['target'] = null;
   for await (const commit of snapshot.commits) {
     if (session.nextCommitSequence >= snapshot.nextCommitSequence) {

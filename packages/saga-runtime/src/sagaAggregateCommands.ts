@@ -12,6 +12,7 @@ import type {
   SagaRecordIntentLifecycleCommandPayload,
   SagaRecordStateTransitionCommandPayload
 } from './sagaAggregateContracts';
+import type { SagaIntentRecordedEventPayload, SagaTimerFactRecordedEventPayload } from './sagaAggregateContracts';
 import { assertSagaLifecycleState, SagaTransitionInvariantError } from './sagaAggregateContracts';
 import type { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
@@ -135,6 +136,16 @@ export function createSagaAggregateCommands<TState>(emit: SagaEventEmitter<TStat
       assertBusinessStateIdentity(payload);
       validateBusinessState(payload.state, validationOptions);
       return emit.businessStateRecorded({ ...payload, recordedAt: toRequiredIso8601(payload.recordedAt) });
+    },
+    recordIntent: (state: SagaCommandState<TState>, payload: SagaIntentRecordedEventPayload) => {
+      requireCreatedInstance(state, 'recordIntent');
+      if (payload.schemaVersion !== 1) throw new TypeError('Unsupported intent event version');
+      return emit.intentRecorded(payload);
+    },
+    recordTimerFact: (state: SagaCommandState<TState>, payload: SagaTimerFactRecordedEventPayload) => {
+      requireCreatedInstance(state, 'recordTimerFact');
+      if (payload.schemaVersion !== 1) throw new TypeError('Unsupported timer fact version');
+      return emit.timerFactRecorded(payload);
     }
   };
 }

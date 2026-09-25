@@ -7,3 +7,4 @@ export * from './routePlanning';
 export * from './sourceValidation';
 export { assertEquivalentSagaCommit } from './commitMaterial';
 export { assertSagaTurnJsonSafe } from './commitMaterial';
+export { assertSagaTurnIntentBudget } from './commitMaterial';

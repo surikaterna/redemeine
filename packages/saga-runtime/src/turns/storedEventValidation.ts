@@ -2,6 +2,9 @@ import type { Event } from '@redemeine/kernel';
 import { validateBusinessState } from '../businessStateValidation';
 import { assertSagaLifecycleState } from '../sagaAggregateContracts';
 import { SagaTurnIntegrityError } from './errors';
+import { decodeIntent, type WireRegistryEntry } from '../intentWire';
+import type { WireIntent } from '../intentWire';
+import type { TimerFactV1 } from './lifecycleWire';
 import {
   assertKeys, canonicalCorrelation, invalid, optionalRecord, optionalSafeInteger,
   optionalString, optionalTimestamp, requireRecord, requireSafeInteger,
@@ -20,7 +23,9 @@ export type SagaStoredEventKind =
   | 'stateTransitioned'
   | 'intentLifecycleRecorded'
   | 'activityLifecycleRecorded'
-  | 'businessStateRecorded';
+  | 'businessStateRecorded'
+  | 'intentRecorded'
+  | 'timerFactRecorded';
 
 export interface ValidatedStoredSagaEvent {
   readonly event: Event;
@@ -136,6 +141,24 @@ function validateBusiness(payload: Record<string, unknown>): void {
   validateBusinessState(payload.state);
 }
 
+function validateIntentEvent(payload: Record<string, unknown>, registry: readonly WireRegistryEntry[]): WireIntent {
+  assertKeys(payload, ['schemaVersion', 'intent'], [], 'intentRecorded');
+  if (payload.schemaVersion !== 1) throw invalid('Unsupported intent event version');
+  return decodeIntent(payload.intent, registry);
+}
+
+function validateTimerEvent(payload: Record<string, unknown>): TimerFactV1 {
+  assertKeys(payload, ['schemaVersion', 'fact'], [], 'timerFactRecorded');
+  if (payload.schemaVersion !== 1) throw invalid('Unsupported timer fact event version');
+  const fact = requireRecord(payload.fact, 'timerFactRecorded.fact');
+  if (fact.action !== 'schedule' && fact.action !== 'cancelSchedule') throw invalid('Unknown timer action');
+  assertKeys(fact, fact.action === 'schedule' ? ['intentId', 'action', 'timerId', 'dueAt'] : ['intentId', 'action', 'timerId'], [], 'timerFactRecorded.fact');
+  requireString(fact, 'intentId');
+  requireString(fact, 'timerId');
+  if (fact.action === 'schedule') requireTimestamp(fact, 'dueAt');
+  return fact as unknown as TimerFactV1;
+}
+
 const validators: Readonly<Record<SagaStoredEventKind, (payload: Record<string, unknown>) => void>> = {
   instanceCreated: validateInstance,
   definitionIdentityRecorded: validateDefinitionIdentity,
@@ -143,7 +166,9 @@ const validators: Readonly<Record<SagaStoredEventKind, (payload: Record<string, 
   stateTransitioned: validateTransition,
   intentLifecycleRecorded: validateIntent,
   activityLifecycleRecorded: validateActivity,
-  businessStateRecorded: validateBusiness
+  businessStateRecorded: validateBusiness,
+  intentRecorded: () => { throw invalid('Intent registry required'); },
+  timerFactRecorded: validateTimerEvent
 };
 const storedEventKinds = [
   'instanceCreated',
@@ -152,7 +177,9 @@ const storedEventKinds = [
   'stateTransitioned',
   'intentLifecycleRecorded',
   'activityLifecycleRecorded',
-  'businessStateRecorded'
+  'businessStateRecorded',
+  'intentRecorded',
+  'timerFactRecorded'
 ] as const satisfies readonly SagaStoredEventKind[];
 
 function kindForType(type: string, eventTypes: Readonly<Record<string, string>>): SagaStoredEventKind | null {
@@ -166,7 +193,8 @@ function isEventType(value: string): value is `${string}.event` {
   return value.endsWith('.event');
 }
 
-export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Record<string, string>>): ValidatedStoredSagaEvent {
+export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Record<string, string>>,
+  registry: readonly WireRegistryEntry[] = []): ValidatedStoredSagaEvent {
   try {
     // The complete stored envelope has an independent budget above its 8 MiB business state.
     validateBusinessState(value, { maxBytes: 12 * 1024 * 1024 });
@@ -181,7 +209,8 @@ export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Rec
   if (!kind) throw new SagaTurnIntegrityError('unknown_stored_event', `Unsupported stored saga event ${type}`);
   const payload = requireRecord(event.payload, 'stored event.payload');
   try {
-    validators[kind](payload);
+    if (kind === 'intentRecorded') validateIntentEvent(payload, registry);
+    else validators[kind](payload);
   } catch (error) {
     if (error instanceof SagaTurnIntegrityError) throw error;
     throw new SagaTurnIntegrityError('invalid_stored_event', `Stored saga event ${type} is invalid`, { type }, error);

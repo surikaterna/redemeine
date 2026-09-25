@@ -3,6 +3,8 @@ import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import { assertSagaLifecycleState, type SagaLifecycleState } from '../sagaAggregateContracts';
 import { SagaTurnPermanentError } from './errors';
 import { canonicalCorrelation, requireRecord, requireSafeInteger, requireString } from './storedEventFields';
+import type { WireIntent } from '../intentWire';
+import type { TimerFactV1 } from './lifecycleWire';
 import type { SagaStoredEventKind, ValidatedStoredSagaEvent } from './storedEventValidation';
 
 export interface SagaStoredReplayContext {
@@ -13,6 +15,9 @@ export interface SagaStoredReplayContext {
   lastKind: SagaStoredEventKind | null;
   businessIdentity: string | null;
   definitionIdentity: DefinitionIdentityV1 | null;
+  turn: { sagaKey: string; correlation: string; sourceId: string; definitionVersion: number; turnId: string | null;
+    nextOrdinal: number; awaitingTimer: WireIntent | null } | null;
+  turnStarted: boolean;
 }
 
 export function createSagaStoredReplayContext(): SagaStoredReplayContext {
@@ -23,7 +28,9 @@ export function createSagaStoredReplayContext(): SagaStoredReplayContext {
     lifecycleState: null,
     lastKind: null,
     businessIdentity: null,
-    definitionIdentity: null
+    definitionIdentity: null,
+    turn: null,
+    turnStarted: false
   };
 }
 
@@ -62,6 +69,35 @@ function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<s
   context.businessIdentity = identity;
   context.authoritative = true;
   context.pendingObservations = 0;
+  context.turn = { sagaKey: requireString(payload, 'sagaKey'), correlation: serializeSagaCorrelation(canonicalCorrelation(payload.correlation)),
+    sourceId: requireString(payload, 'sourceTriggerId'), definitionVersion: requireSafeInteger(payload.definitionVersion, 'definitionVersion', 1),
+    turnId: null, nextOrdinal: 0, awaitingTimer: null };
+}
+
+function assertIntentOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
+  const turn = context.turn;
+  if (!turn || context.pendingObservations !== 0 || (context.lastKind !== 'businessStateRecorded' && context.lastKind !== 'intentRecorded' && context.lastKind !== 'timerFactRecorded') || turn.awaitingTimer) {
+    throw invalidReplay('Intent must follow state or completed preceding intent');
+  }
+  const intent = payload.intent as WireIntent;
+  if (intent.origin.ordinal !== turn.nextOrdinal || intent.origin.sagaKey !== turn.sagaKey ||
+    serializeSagaCorrelation(intent.origin.correlation) !== turn.correlation || intent.origin.sourceId !== turn.sourceId ||
+    (turn.turnId !== null && turn.turnId !== intent.turnId)) throw invalidReplay('Intent turn identity or ordinal mismatch');
+  turn.turnId = intent.turnId;
+  turn.nextOrdinal += 1;
+  if (intent.kind === 'schedule' || intent.kind === 'cancelSchedule') turn.awaitingTimer = intent;
+}
+
+function assertTimerOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
+  const intent = context.turn?.awaitingTimer;
+  if (!intent || context.lastKind !== 'intentRecorded') throw invalidReplay('Timer fact must immediately follow its intent');
+  const fact = payload.fact as TimerFactV1;
+  if ((intent.kind !== 'schedule' && intent.kind !== 'cancelSchedule') || fact.intentId !== intent.intentId ||
+    fact.action !== intent.kind || fact.timerId !== intent.timerId ||
+    (intent.kind === 'schedule' && (fact.action !== 'schedule' || fact.dueAt !== intent.dueAt))) {
+    throw invalidReplay('Timer fact differs from authoritative intent');
+  }
+  context.turn!.awaitingTimer = null;
 }
 
 export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent): void {
@@ -83,7 +119,15 @@ export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, st
   } else if (!context.definitionIdentity) {
     throw invalidReplay('Saga stream lacks definition identity before its first turn');
   } else if (stored.kind === 'sourceEventObserved') {
+    if (!context.authoritative && context.lastKind !== 'definitionIdentityRecorded') {
+      throw invalidReplay('Initial source must immediately follow definition identity');
+    }
+    if (context.pendingObservations !== 0 || context.turnStarted || context.turn?.awaitingTimer) {
+      throw invalidReplay('Source observation must begin a complete turn');
+    }
     context.pendingObservations += 1;
+    context.turn = null;
+    context.turnStarted = true;
     if (context.authoritative && context.pendingObservations > 1) {
       throw invalidReplay('A new source observation cannot begin before the prior authoritative turn records business state');
     }
@@ -91,6 +135,12 @@ export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, st
     assertTransitionOrder(context, stored.payload);
   } else if (stored.kind === 'businessStateRecorded') {
     assertBusinessOrder(context, stored.payload);
+  } else if (stored.kind === 'intentRecorded') {
+    assertIntentOrder(context, stored.payload);
+  } else if (stored.kind === 'timerFactRecorded') {
+    assertTimerOrder(context, stored.payload);
+  } else {
+    throw invalidReplay('Unsupported legacy saga event in authoritative turn');
   }
   context.lastKind = stored.kind;
 }
@@ -104,7 +154,11 @@ export function finalizeStoredSagaReplay(context: SagaStoredReplayContext): void
 
 export function assertStoredSagaCommitBoundary(context: SagaStoredReplayContext): void {
   // One physical turn owns both its observation and authoritative business state.
-  if (context.authoritative && context.pendingObservations !== 0) {
-    throw invalidReplay('Physical saga commit ends with a source observation that has no business state');
+  if (!context.created && context.lastKind === null) return;
+  if (context.pendingObservations !== 0 || context.turn?.awaitingTimer ||
+    (context.created && !context.authoritative) ||
+    (context.lastKind !== 'businessStateRecorded' && context.lastKind !== 'intentRecorded' && context.lastKind !== 'timerFactRecorded')) {
+    throw invalidReplay('Physical saga commit ends with an incomplete authoritative turn');
   }
+  context.turnStarted = false;
 }
