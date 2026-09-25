@@ -3,6 +3,7 @@ import { bindSagaRegistrations, registerSagaDefinition, SagaStartDecisionError }
 import { compileSagaRoutes } from '../src/routing/compileSagaRoutes';
 import { deriveSagaInstanceId } from '../src/identity/deterministicIds';
 import { serializeSagaCorrelation } from '../src/identity/canonicalCorrelation';
+import { decodeIntent, decodeOutcome, encodeIntent, parseIntent } from '../src/intentWire';
 
 const plugin = defineSagaPlugin({ plugin_key: 'remote', version: '1', actions: { ask: defineRequestResponse((id: string) => ({ id })) } });
 interface State { readonly count: number; readonly ids: string[] }
@@ -14,7 +15,9 @@ const definition = createSaga({ identity: { namespace: 'orders', name: 'register
   .start<{ id: string }>((state, input, ctx) => {
     state.count++;
     state.ids.push(input.id);
-    if (input.id === 'emit') ctx.actions.remote.ask(input.id).withData({}).onResponse(ctx.onResponse.done).onError(ctx.onError.failed);
+    if (input.id === 'emit') ctx.actions.remote.ask(input.id).onResponse(ctx.onResponse.done).onError(ctx.onError.failed);
+    if (input.id === 'null') ctx.actions.remote.ask(input.id).withData(null).onResponse(ctx.onResponse.done).onError(ctx.onError.failed);
+    if (input.id === 'object') ctx.actions.remote.ask(input.id).withData({ id: input.id }).onResponse(ctx.onResponse.done).onError(ctx.onError.failed);
     void ctx.onRetry.again;
   }).correlateBy((input) => input.id).build();
 const bindings = { done: { phase: 'response' }, failed: { phase: 'error' }, again: { phase: 'retry' } } as const;
@@ -35,7 +38,24 @@ it('keeps an executable typed start closure and rejects bad trigger input before
   expect(state).toEqual({ count: 1, ids: ['ok'] });
   expect(decision.intents).toEqual([]);
   await expect(registration.executeStart({ wrong: 'ok' }, metadata, origin, clock)).rejects.toThrow('invalid start input');
-  expect((await registration.executeStart({ id: 'emit' }, metadata, origin, clock)).intents).toHaveLength(1);
+  const registry = [{ plugin_key: 'remote', actions: [{ name: 'ask', interaction: 'request_response' as const }] }];
+  for (const [id, hasData, data] of [['emit', false, undefined], ['null', true, null], ['object', true, { id: 'object' }]] as const) {
+    const intents = (await registration.executeStart({ id }, metadata, origin, clock)).intents;
+    expect(intents).toHaveLength(1);
+    const request = intents[0];
+    if (!request || request.kind !== 'plugin' || request.interaction !== 'request_response') throw new Error('request expected');
+    expect(Object.hasOwn(request.routing_metadata, 'handler_data')).toBe(hasData);
+    expect(request.routing_metadata.handler_data).toEqual(data);
+    expect(parseIntent(encodeIntent(request, registry), registry)).toEqual(request);
+    const outcome = { schemaVersion: 1, intentId: request.intentId, instanceId: request.instanceId,
+      correlationId: metadata.correlationId, result: 'response', token: 'done', value: { ok: true },
+      ...(hasData ? { handler_data: data } : {}) };
+    expect(decodeOutcome(outcome, request)).toEqual(outcome);
+    expect(() => decodeOutcome({ ...outcome, token: 'failed' }, request)).toThrow();
+    expect(() => decodeOutcome({ ...outcome, intentId: 'wrong' }, request)).toThrow();
+    expect(() => decodeOutcome({ ...outcome, handler_data: hasData ? undefined : null }, request)).toThrow();
+    expect(() => decodeIntent({ ...request, routing_metadata: { ...request.routing_metadata, handler_data: undefined } }, registry)).toThrow();
+  }
 });
 
 it('rejects wrong, missing and duplicate executable metadata', () => {
