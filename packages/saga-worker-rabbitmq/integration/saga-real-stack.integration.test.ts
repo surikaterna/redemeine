@@ -75,9 +75,11 @@ function barrierRepository(
   statuses: SagaTurnAppendResult['status'][]
 ): {
   readonly repository: SagaTurnRepository;
+  readonly failures: unknown[];
   arm(): void;
 } {
   const gate = deferred();
+  const failures: unknown[] = [];
   let armed = false;
   let arrivals = 0;
   const append = async (request: SagaTurnAppendRequest) => {
@@ -86,12 +88,18 @@ function barrierRepository(
       if (arrivals === 2) gate.resolve();
       await gate.promise;
     }
-    const result = await base.append(request);
-    statuses.push(result.status);
-    return result;
+    try {
+      const result = await base.append(request);
+      statuses.push(result.status);
+      return result;
+    } catch (error) {
+      failures.push(error);
+      throw error;
+    }
   };
   return {
     repository: wrapRepository(base, append),
+    failures,
     arm: () => {
       armed = true;
     }
@@ -272,8 +280,9 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       await Promise.all([publishCommit(stack, update), publishCommit(stack, update)]);
       await waitForCommitCount(harness, id, 2);
       await waitForQueueSettled(harness.queue);
-      expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), settlementErrors: harness.settlementErrors })
-        .toMatchObject({ statuses: ['committed', 'reconciled'], dead: { ready: 0, unacknowledged: 0 }, settlementErrors: [] });
+      expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), failures: control!.failures.map(String),
+        settlementErrors: harness.settlementErrors })
+        .toMatchObject({ statuses: ['committed', 'reconciled'], dead: { ready: 0, unacknowledged: 0 }, failures: [], settlementErrors: [] });
       expect(await streamCommits(harness, id)).toHaveLength(2);
       await expectNoDeadLetters(harness);
     } finally {
