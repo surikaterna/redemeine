@@ -272,7 +272,8 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       await Promise.all([publishCommit(stack, update), publishCommit(stack, update)]);
       await waitForCommitCount(harness, id, 2);
       await waitForQueueSettled(harness.queue);
-      expect(statuses.sort()).toEqual(['committed', 'reconciled']);
+      expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), settlementErrors: harness.settlementErrors })
+        .toMatchObject({ statuses: ['committed', 'reconciled'], dead: { ready: 0, unacknowledged: 0 }, settlementErrors: [] });
       expect(await streamCommits(harness, id)).toHaveLength(2);
       await expectNoDeadLetters(harness);
     } finally {
