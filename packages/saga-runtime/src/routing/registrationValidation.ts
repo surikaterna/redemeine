@@ -37,7 +37,7 @@ export function validateSagaRegistration<TState, TPlugins extends SagaPluginMani
   }
   const seen = new Set<string>();
   for (const manifest of manifests) {
-    if (!manifest || typeof manifest.plugin_key !== 'string' || !manifest.plugin_key || seen.has(manifest.plugin_key)) reject('duplicate or invalid manifest key');
+    if (!manifest || typeof manifest.plugin_key !== 'string' || !manifest.plugin_key || manifest.plugin_key === 'core' || seen.has(manifest.plugin_key)) reject('duplicate, reserved or invalid manifest key');
     seen.add(manifest.plugin_key);
     const entry = registry.get(manifest.plugin_key);
     if (!entry || Object.hasOwn(entry, 'version') !== Object.hasOwn(manifest, 'version') || entry.version !== manifest.version ||

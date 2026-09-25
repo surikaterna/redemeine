@@ -9,7 +9,9 @@ const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, st
 
 try {
   run('pnpm', ['--dir', join(root, 'packages/saga'), 'pack', '--pack-destination', temp]);
-  const tarball = join(temp, readdirSync(temp).find((name) => name.endsWith('.tgz')));
+  run('pnpm', ['--dir', join(root, 'packages/saga-runtime'), 'pack', '--pack-destination', temp]);
+  const tarball = join(temp, readdirSync(temp).find((name) => name.startsWith('redemeine-saga-')));
+  const runtimeTarball = join(temp, readdirSync(temp).find((name) => name.startsWith('redemeine-saga-runtime-')));
   writeFileSync(join(temp, 'package.json'), '{"name":"saga-installed-consumer","private":true,"type":"module"}');
   writeFileSync(join(temp, 'tsconfig.json'), JSON.stringify({
     compilerOptions: { strict: true, noEmit: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', skipLibCheck: true },
@@ -22,6 +24,9 @@ try {
   const installed = join(scope, 'saga');
   mkdirSync(installed, { recursive: true });
   run('tar', ['-xzf', tarball, '-C', installed, '--strip-components=1']);
+  const runtimeInstalled = join(scope, 'saga-runtime');
+  mkdirSync(runtimeInstalled, { recursive: true });
+  run('tar', ['-xzf', runtimeTarball, '-C', runtimeInstalled, '--strip-components=1']);
   symlinkSync(join(root, 'node_modules/immer'), join(temp, 'node_modules/immer'), 'dir');
   run(join(root, 'node_modules/.bin/tsc'), ['-p', join(temp, 'tsconfig.json')]);
 } finally {
