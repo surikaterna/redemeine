@@ -5,9 +5,35 @@ import { resolveSagaTurnRouteGroup } from '../src/turns/routePlanning';
 import { createSagaTurnAggregateEvent } from '../src/turns/aggregateEvent';
 import { matchSagaTurnRouteGroups } from '../src/turns/routePlanning';
 import { processSagaSourceEvent } from '../src/turns/processSagaSource';
+import type { SagaTurnRepository } from '../src/turns/contracts';
 import { createCounters, createTurnTable, FakeTurnRepository, registrationOptions, sourceEvent } from './fixtures/turn-processor.fixture';
 
 describe('bounded saga prefix replay', () => {
+  it('reconciles a historical start through the production processor after 1025 later turns', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('long-processor', createCounters());
+    const source = sourceEvent();
+    const options = registrationOptions(table);
+    const started = await processSagaSourceEvent(table, repository, source, options);
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const lazy: SagaTurnRepository = {
+      load: async () => ({ streamId: id, nextCommitSequence: 1026, commits: (async function* () {
+        yield first;
+        for (let sequence = 1; sequence < 1026; sequence += 1) {
+          yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
+            events: first.events.slice(2).map((stored, offset) => ({ ...stored,
+              version: 4 + (sequence - 1) * 2 + offset })) };
+        }
+      })() }),
+      findCommit: repository.findCommit.bind(repository),
+      assertCommitMaterial: repository.assertCommitMaterial.bind(repository),
+      append: repository.append.bind(repository)
+    };
+    expect((await processSagaSourceEvent(table, lazy, source, options))[0]?.status).toBe('reconciled');
+    expect(repository.appendCalls).toHaveLength(1);
+  });
   it('folds beyond 1024 complete commits and retains the original start prefix', async () => {
     const repository = new FakeTurnRepository();
     const table = createTurnTable('long-fold', createCounters());
