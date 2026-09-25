@@ -1,33 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { normalizeSagaCorrelation, registerSagaTurnDefinition, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
 import type { Channel, GetMessage } from 'amqplib';
-import type { SagaRabbitChannel } from '../src';
 import { createCounters, createRealTable } from './fixtures';
 import {
   appendSourceCommit, connectRealStack, createScenario, instanceId, pollUntil, publishCommit, queueCounts,
-  type RealStack, sourceEvent, streamCommits, waitForDeadLetter, waitForQueueSettled, wrapRepository
+  type RealStack, sourceEvent, streamCommits, waitForQueueSettled, wrapRepository
 } from './harness';
+import { deliveryIdentity, observeIdentitySettlements, type SettlementTrace, waitForIdentitySettlement } from './identitySettlements';
 
 jest.setTimeout(45_000);
 
-interface Settlement {
-  readonly kind: 'ack' | 'nack';
-  readonly requeue?: boolean;
-}
-
-function observeSettlement(base: Channel, outcomes: Settlement[]): SagaRabbitChannel {
-  return {
-    ack: (message, allUpTo) => { base.ack(message, allUpTo); outcomes.push({ kind: 'ack' }); },
-    nack: (message, allUpTo, requeue) => { base.nack(message, allUpTo, requeue); outcomes.push({ kind: 'nack', requeue: requeue ?? true }); },
-    assertExchange: base.assertExchange.bind(base),
-    assertQueue: base.assertQueue.bind(base),
-    cancel: base.cancel.bind(base),
-    consume: base.consume.bind(base),
-    prefetch: base.prefetch.bind(base)
-  };
-}
-
-async function inspectDeadLetter(channel: Channel, queue: string): Promise<GetMessage> {
+async function inspectDeadLetter(channel: Channel, queue: string, messageId: string, sourceEventId: string): Promise<GetMessage> {
   const found: { message: GetMessage | false } = { message: false };
   await pollUntil(`dead letter in ${queue}`, async () => {
     found.message = await channel.get(queue, { noAck: false });
@@ -35,6 +18,7 @@ async function inspectDeadLetter(channel: Channel, queue: string): Promise<GetMe
   });
   const message = found.message;
   if (!message) throw new Error('Missing dead-letter delivery');
+  expect(deliveryIdentity(message)).toEqual({ messageId, sourceEventId });
   const deaths: unknown = message.properties.headers?.['x-death'];
   expect(deaths).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'rejected', queue: queue.slice(0, -5), count: 1 })]));
   channel.ack(message);
@@ -54,10 +38,10 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
     const { definition, table } = createRealTable('identity-guard', counters);
     const registration = registerSagaTurnDefinition({ definition, pluginManifests: [],
       responseHandlerBindings: {}, canonicalCommandTypes: [] });
-    const settlements: Settlement[] = [];
+    const trace: SettlementTrace = { received: [], settled: [] };
     const captured: SagaTurnAppendRequest[] = [];
     const harness = await createScenario(stack, 'identity-guard', table, {
-      channel: (base) => observeSettlement(base, settlements),
+      channel: (base) => observeIdentitySettlements(base, trace),
       repository: (base) => wrapRepository(base, async (request) => {
         if (captured.length === 0) captured.push(request);
         return base.append(request);
@@ -69,7 +53,8 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
       const id = instanceId(definition.sagaKey, orderId);
       const source = await appendSourceCommit(stack, { id: 'identity-guard-source', streamId: 'identity-guard-input',
         events: [sourceEvent('identity-guard-event', 'real.order-placed.v1.event', { orderId })] });
-      await pollUntil('initial ACK', () => settlements.length === 1);
+      await waitForIdentitySettlement(trace, { kind: 'ack', messageId: 'identity-guard-source', sourceEventId: 'identity-guard-event' },
+        1, harness.queue, harness.deadQueue);
       await waitForQueueSettled(harness.queue);
       const physical = await streamCommits(harness, id);
       expect(physical).toHaveLength(1);
@@ -80,15 +65,23 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
         'saga.source_event_observed.event', 'saga.business_state_recorded.event'
       ]);
       expect(physical[0]?.events[1]?.payload).toEqual({ schemaVersion: 1, ...registration.definitionIdentity });
-      expect(settlements).toEqual([{ kind: 'ack' }]);
+      expect(trace.settled).toEqual([{ kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' }]);
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
       expect(captured).toHaveLength(1);
 
       await publishCommit(stack, source);
-      await waitForDeadLetter(harness);
+      await waitForIdentitySettlement(trace, { kind: 'nack', messageId: source.id,
+        sourceEventId: 'identity-guard-event', requeue: false }, 2, harness.queue, harness.deadQueue);
       await waitForQueueSettled(harness.queue);
-      expect(settlements).toEqual([{ kind: 'ack' }, { kind: 'nack', requeue: false }]);
-      expect((await inspectDeadLetter(harness.channel, harness.deadQueue)).properties.messageId).toBe(source.id);
+      expect(trace.settled).toEqual([
+        { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' },
+        { kind: 'nack', messageId: source.id, sourceEventId: 'identity-guard-event', requeue: false }
+      ]);
+      await inspectDeadLetter(harness.channel, harness.deadQueue, source.id, 'identity-guard-event');
+      await pollUntil('duplicate DLQ drained', async () => {
+        const counts = await queueCounts(harness.deadQueue);
+        return counts.ready === 0 && counts.unacknowledged === 0;
+      });
       expect(await streamCommits(harness, id)).toHaveLength(1);
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
 
@@ -111,12 +104,22 @@ describe('redemeine-371j.1 real identity and non-ACK qualification', () => {
       expect(legacyBefore).toHaveLength(1);
       await appendSourceCommit(stack, { id: 'identity-legacy-delivery', streamId: 'identity-legacy-input',
         events: [sourceEvent('identity-legacy-event', 'real.order-placed.v1.event', { orderId: 'order-legacy-identity' })] });
-      await waitForDeadLetter(harness);
+      await waitForIdentitySettlement(trace, { kind: 'nack', messageId: 'identity-legacy-delivery',
+        sourceEventId: 'identity-legacy-event', requeue: false }, 3, harness.queue, harness.deadQueue);
       await waitForQueueSettled(harness.queue);
-      expect(settlements).toEqual([{ kind: 'ack' }, { kind: 'nack', requeue: false }, { kind: 'nack', requeue: false }]);
-      expect((await inspectDeadLetter(harness.channel, harness.deadQueue)).properties.messageId).toBe('identity-legacy-delivery');
+      expect(trace.settled).toEqual([
+        { kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' },
+        { kind: 'nack', messageId: source.id, sourceEventId: 'identity-guard-event', requeue: false },
+        { kind: 'nack', messageId: 'identity-legacy-delivery', sourceEventId: 'identity-legacy-event', requeue: false }
+      ]);
+      await inspectDeadLetter(harness.channel, harness.deadQueue, 'identity-legacy-delivery', 'identity-legacy-event');
       expect(await streamCommits(harness, legacyId)).toEqual(legacyBefore);
+      await pollUntil('legacy DLQ drained', async () => {
+        const counts = await queueCounts(harness.deadQueue);
+        return counts.ready === 0 && counts.unacknowledged === 0;
+      });
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
+      expect(trace.settled).toHaveLength(3);
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
       expect(harness.settlementErrors).toEqual([]);
     } finally {
