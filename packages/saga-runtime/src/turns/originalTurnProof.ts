@@ -1,4 +1,5 @@
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
+import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 import type { CompiledSagaRoute } from '../routing/contracts';
 import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEvents, SagaTurnReplaySession, type HydratedSagaTurn } from './aggregateTurn';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnAppendRequest, SagaTurnRepository, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
@@ -39,7 +40,7 @@ export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: R
 
 export async function proveOriginalTurn(
   repository: SagaTurnRepository, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
-  active: DefinitionIdentityV1, target: SagaTurnFold['target']
+  active: DefinitionIdentityV1, target: SagaTurnFold['target'], start: SagaTurnRegistration | null
 ): Promise<CompiledSagaRoute | null> {
   if (!target) return null;
   const { route, stored, original, firstEventVersion } = target;
@@ -51,7 +52,7 @@ export async function proveOriginalTurn(
   }
   let events;
   try {
-    events = index === 0 ? buildInitialTurnEvents(original, resolved, source, active)
+    events = index === 0 ? await buildInitialTurnEvents(original, resolved, source, active, start ?? requireStartRegistration())
       : await buildExistingTurnEvents(original, resolved, source, active);
   } catch (error) {
     throw new SagaTurnPermanentError('duplicate_proof_required', 'Original saga turn cannot be reproduced', {}, error);
@@ -62,4 +63,8 @@ export async function proveOriginalTurn(
   };
   repository.assertCommitMaterial(stored, request, firstEventVersion);
   return route;
+}
+
+function requireStartRegistration(): never {
+  throw new SagaTurnPermanentError('missing_registration', 'Start route requires an executable registration');
 }

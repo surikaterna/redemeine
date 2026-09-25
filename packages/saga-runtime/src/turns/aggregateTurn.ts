@@ -5,6 +5,7 @@ import { BusinessStateValidationError, DEFAULT_BUSINESS_STATE_MAX_BYTES, validat
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
 import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
+import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnIdentity, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
 import {
@@ -235,19 +236,30 @@ function statePayload(state: unknown, resolved: ResolvedSagaTurnRouteGroup, sour
   };
 }
 
-export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, active: DefinitionIdentityV1): readonly Event[] {
+export async function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
+  active: DefinitionIdentityV1, registration: SagaTurnRegistration): Promise<readonly Event[]> {
   const route = resolved.startRoute;
   if (!route) throw new SagaTurnPermanentError('missing_start_route', 'Cannot initialize a saga from an on-only route');
-  if (route.executeStart) throw new SagaTurnUnsupportedError('unsupported_intents', 'Registered start requires durable start-turn support');
+  if (!route.executeStart || route.executeStart !== registration.executeStart) {
+    throw new SagaTurnPermanentError('invalid_registration', 'Start route requires its issued executable registration');
+  }
   const pending: Event[] = [];
   const identity = { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId };
   let state = turn.state;
-  let initialState: unknown;
+  if (!registration.executeStart) throw new SagaTurnPermanentError('missing_registration', 'Start route requires an executable registration');
+  let output: Awaited<ReturnType<NonNullable<SagaTurnRegistration['executeStart']>>>;
   try {
-    initialState = route.definition.initialState();
+    output = await registration.executeStart(route.toStartInput(resolved.event), {
+      sagaId: resolved.instanceId,
+      correlationId: serializeSagaCorrelation(resolved.correlation),
+      causationId: resolved.sourceTriggerId
+    }, { sagaKey: resolved.sagaKey, correlation: resolved.correlation, sourceId: resolved.sourceTriggerId,
+      routeId: route.routeId }, source.createDateTime);
   } catch (error) {
-    throw new SagaTurnPermanentError('initial_state_failed', 'Saga initialState failed', { sagaKey: resolved.sagaKey }, error);
+    throw new SagaTurnPermanentError('start_failed', 'Saga start input or handler failed', { sagaKey: resolved.sagaKey }, error);
   }
+  if (output.intents.length > 0) throw new SagaTurnUnsupportedError('unsupported_intents', 'Saga intents require durable intent support (.3)',
+    { routeId: route.routeId, intentCount: output.intents.length });
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.createInstance({
     id: resolved.instanceId,
     sagaType: route.definition.sagaType,
@@ -255,7 +267,7 @@ export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: Resolve
   }), identity, source.createDateTime);
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordDefinitionIdentity({ schemaVersion: 1, ...active }), identity, source.createDateTime);
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
-  appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(initialState, resolved, source)), identity, source.createDateTime);
+  appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(output.state, resolved, source)), identity, source.createDateTime);
   return pending;
 }
 

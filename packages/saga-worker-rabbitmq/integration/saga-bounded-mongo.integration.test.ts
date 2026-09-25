@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { createSaga } from '@redemeine/saga';
-import { bindSagaRegistrations, compileSagaRoutes, createStartEventBindings, processSagaSourceEvent,
-  registerSagaTurnDefinition, validateBusinessState, type SagaTurnSourceEvent } from '@redemeine/saga-runtime';
+import { bindSagaRegistrations, compileRegisteredSagaRoutes, processSagaSourceEvent,
+  registerSagaDefinition, validateBusinessState, type SagaTurnSourceEvent } from '@redemeine/saga-runtime';
 import { openMongoSagaTurnRepository } from '@redemeine/saga-runtime-store-tapeworm';
 import { BSON, type Db, MongoClient, ObjectId, UUID } from 'mongodb';
 import type { ICommit } from 'tapeworm';
@@ -21,9 +21,9 @@ function orderId(event: unknown): string {
 }
 
 function routes() {
-  const definition = createSaga<unknown>({ identity: { namespace: 'bounded.mongo', name: 'large-state', version: 1 } })
-    .initialState((): unknown => ({ blob: 'x'.repeat(largeBytes), count: 0 }))
-    .start((_state, _input: unknown) => undefined)
+  const definition = createSaga<{ blob: string; count: number }>({ identity: { namespace: 'bounded.mongo', name: 'large-state', version: 1 } })
+    .initialState(() => ({ blob: 'x'.repeat(largeBytes), count: 0 }))
+    .start((_state, _input: { orderId: string }) => undefined)
     .correlateBy((input) => orderId({ payload: input }))
     .triggeredBy({ kind: 'domain', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
     .correlate(realOrders, (event) => orderId(event))
@@ -34,10 +34,24 @@ function routes() {
       state.count += 1;
     } })
     .build();
-  const table = compileSagaRoutes([definition], createStartEventBindings({ definition,
-    triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }));
-  const registrations = [definition].map((entry) => registerSagaTurnDefinition({ definition: entry,
-    pluginManifests: [], responseHandlerBindings: {}, canonicalCommandTypes: [] }));
+  const registration = registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: {}, canonicalCommandTypes: [],
+    parseStartInput: (value: unknown) => {
+      if (typeof value !== 'object' || value === null || !('orderId' in value) || typeof value.orderId !== 'string') throw new TypeError('Invalid input');
+      return { orderId: value.orderId };
+    },
+    parseState: (value: unknown) => {
+      if (typeof value !== 'object' || value === null || !('blob' in value) || typeof value.blob !== 'string' ||
+          !('count' in value) || typeof value.count !== 'number') throw new TypeError('Invalid state');
+      return { blob: value.blob, count: value.count };
+    },
+    parseOnEvent: (value: unknown) => {
+      if (typeof value !== 'object' || value === null || !('id' in value) || typeof value.id !== 'string' ||
+          !('type' in value) || typeof value.type !== 'string' || !('payload' in value)) throw new TypeError('Invalid event');
+      return { ...value, id: value.id, type: value.type, payload: value.payload };
+    } });
+  const table = compileRegisteredSagaRoutes([registration], [{ registration,
+    triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }]);
+  const registrations = [registration];
   return { table, options: { registrationForRoute: bindSagaRegistrations(table, registrations) } };
 }
 

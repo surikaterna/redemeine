@@ -1,7 +1,8 @@
 import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createSaga } from '@redemeine/saga';
-import { compileSagaRoutes, createStartEventBindings } from '@redemeine/saga-runtime';
+import { compileRegisteredSagaRoutes, registerSagaDefinition, type SagaRegistration } from '@redemeine/saga-runtime';
+import type { SagaTurnAggregateEvent } from '@redemeine/saga-runtime';
 
 export interface RealSagaState {
   count: number;
@@ -44,14 +45,49 @@ export function createCounters(): RealCounters {
   return { initial: 0, start: 0, handlers: new Map() };
 }
 
-export function createRealDefinition(name: string, counters: RealCounters) {
-  return createSaga<unknown>({ identity: { namespace: 'real.stack', name, version: 1 } })
-    .initialState((): unknown => {
+const realRegistrations = new WeakMap<object, SagaRegistration<RealSagaState>>();
+
+export function registrationForRealDefinition(definition: object): SagaRegistration<RealSagaState> {
+  const registration = realRegistrations.get(definition);
+  if (!registration) throw new TypeError('Missing real-stack executable registration');
+  return registration;
+}
+
+function parseRealStartInput(value: unknown): { orderId: string } {
+  if (typeof value !== 'object' || value === null || !('orderId' in value) || typeof value.orderId !== 'string') {
+    throw new TypeError('Invalid real-stack start input');
+  }
+  return { orderId: value.orderId };
+}
+
+function parseRealState(value: unknown): RealSagaState {
+  if (typeof value !== 'object' || value === null || !('count' in value) || typeof value.count !== 'number' ||
+      !('seen' in value) || !Array.isArray(value.seen) || !value.seen.every((id: unknown) => typeof id === 'string') ||
+      ('large' in value && typeof value.large !== 'string')) throw new TypeError('Invalid real-stack state');
+  return { ...value, count: value.count, seen: value.seen };
+}
+
+function parseRealEvent(value: unknown): SagaTurnAggregateEvent {
+  if (typeof value !== 'object' || value === null || !('id' in value) || typeof value.id !== 'string' ||
+      !('type' in value) || typeof value.type !== 'string' || !('payload' in value) ||
+      ('aggregateType' in value && typeof value.aggregateType !== 'string') ||
+      ('aggregateId' in value && typeof value.aggregateId !== 'string') ||
+      ('sequence' in value && typeof value.sequence !== 'number') ||
+      ('metadata' in value && (typeof value.metadata !== 'object' || value.metadata === null || Array.isArray(value.metadata)))) {
+    throw new TypeError('Invalid real-stack event');
+  }
+  return { ...value, id: value.id, type: value.type, payload: value.payload };
+}
+
+export function createRealDefinition(name: string, counters: RealCounters, startWithCount = false) {
+  const definition = createSaga<RealSagaState>({ identity: { namespace: 'real.stack', name, version: 1 } })
+    .initialState((): RealSagaState => {
       counters.initial += 1;
       return { count: 0, seen: [] };
     })
-    .start((_state, _input: unknown) => {
+    .start((state, input: { orderId: string }) => {
       counters.start += 1;
+      if (startWithCount) state.count = input.orderId.length;
     })
     .correlateBy((input) => orderIdFrom({ payload: input }))
     .triggeredBy({
@@ -65,6 +101,10 @@ export function createRealDefinition(name: string, counters: RealCounters) {
       adjusted: async (state, event, context) => applyEvent(requireState(state), event, context, counters)
     })
     .build();
+  realRegistrations.set(definition, registerSagaDefinition({ definition, pluginManifests: [],
+    responseHandlerBindings: {}, parseStartInput: parseRealStartInput, parseState: parseRealState,
+    parseOnEvent: parseRealEvent, canonicalCommandTypes: [] }));
+  return definition;
 }
 
 function requireState(value: unknown): RealSagaState {
@@ -100,20 +140,21 @@ function applyEvent(
   state.seen.push(event.id);
 }
 
-export function createRealTable(name: string, counters: RealCounters) {
-  const definition = createRealDefinition(name, counters);
+export function createRealTable(name: string, counters: RealCounters, startWithCount = false) {
+  const definition = createRealDefinition(name, counters, startWithCount);
   return {
     definition,
-    table: compileSagaRoutes([definition], createStartEventBindings({ definition, triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }))
+    table: compileRegisteredSagaRoutes([registrationForRealDefinition(definition)],
+      [{ registration: registrationForRealDefinition(definition), triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }])
   };
 }
 
 export function createFanoutTable(first: ReturnType<typeof createRealDefinition>, second: ReturnType<typeof createRealDefinition>) {
-  return compileSagaRoutes(
-    [first, second],
-    createStartEventBindings(
-      { definition: first, triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] },
-      { definition: second, triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }
-    )
+  return compileRegisteredSagaRoutes(
+    [registrationForRealDefinition(first), registrationForRealDefinition(second)],
+    [
+      { registration: registrationForRealDefinition(first), triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] },
+      { registration: registrationForRealDefinition(second), triggerIndex: 0, eventTypes: ['real.order-placed.v1.event'] }
+    ]
   );
 }

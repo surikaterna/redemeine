@@ -6,7 +6,6 @@ import {
   createSagaAggregate,
   deriveSagaInstanceId,
   normalizeSagaCorrelation,
-  registerSagaTurnDefinition,
   type SagaTurnRepository
 } from '@redemeine/saga-runtime';
 import { openMongoSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
@@ -22,16 +21,12 @@ import {
   type SagaRabbitSettlementError,
   type SagaRabbitWorker
 } from '../src/index';
-import type { RealSagaState } from './fixtures';
+import { registrationForRealDefinition, type RealSagaState } from './fixtures';
 import { readRabbitQueueCounts } from './rabbitQueueCounts';
 import { observeReplacement, type ReplacementObservation } from './replacementObservation';
 
 function registeredOptions(table: CompiledSagaRoutingTable) {
-  if (!table.legacyDefinitions) throw new TypeError('Integration harness requires legacy definitions');
-  const registrations = table.legacyDefinitions.map((definition) => registerSagaTurnDefinition({
-    definition, pluginManifests: [], responseHandlerBindings: {},
-    canonicalCommandTypes: []
-  }));
+  const registrations = table.definitions.map(registrationForRealDefinition);
   return { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, registrations) };
 }
 

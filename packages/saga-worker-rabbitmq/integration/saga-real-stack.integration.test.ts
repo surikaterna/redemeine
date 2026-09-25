@@ -216,7 +216,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
 
   it('1. durably initializes before ACK with exact event and index ordering', async () => {
     const counters = createCounters();
-    const { definition, table } = createRealTable('durable-init', counters);
+    const { definition, table } = createRealTable('durable-init', counters, true);
     const entered = deferred();
     const release = deferred();
     const harness = await createScenario(stack, 'durable-init', table, {
@@ -249,8 +249,8 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
         'saga.business_state_recorded.event'
       ]);
       expect(commits[0]).toMatchObject({ commitSequence: 0, events: [{ version: 0 }, { version: 1 }, { version: 2 }, { version: 3 }] });
-      expect(await replayState(harness, id)).toEqual({ count: 0, seen: [] });
-      expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
+      expect(await replayState(harness, id)).toEqual({ count: orderId.length, seen: [] });
+      expect(counters).toMatchObject({ initial: 1, start: 1, handlers: new Map() });
       const indexes = await stack.db.collection(`tw_${harness.partitionId}_commits`).listIndexes().toArray();
       expect(indexes.some(({ key, unique }) => unique === true && key.id === 1)).toBe(true);
       expect(indexes.some(({ key, unique }) => unique === true && key.streamId === 1 && key.commitSequence === 1)).toBe(true);

@@ -33,7 +33,8 @@ export interface SagaRegistration<TState extends object = object> {
   readonly executeOn: (state: unknown, event: unknown, metadata: SagaIntentMetadata, handlerKey: string) => Promise<{ state: unknown; intents: readonly unknown[] }>;
 }
 
-export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent'>;
+export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent'> &
+  Partial<Pick<SagaRegistration, 'executeStart'>>;
 
 function captureReferences<TState, TPlugins extends SagaPluginManifestList, TBindings extends SagaResponseHandlerTokenBindings, TInput>(
   definition: SagaDefinition<TState, TPlugins, TBindings, TInput>, manifests: TPlugins

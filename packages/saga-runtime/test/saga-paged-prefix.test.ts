@@ -155,7 +155,7 @@ describe('bounded saga prefix replay', () => {
     expect(created.state.id).toBe(id);
     expect(created.state.businessState).toBeNull();
     const authoritative = await hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 4 });
-    expect(authoritative.state.businessState).toEqual({ count: 0 });
+    expect(authoritative.state.businessState).toEqual({ count: 7 });
     await expect(hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 5 }))
       .rejects.toMatchObject({ code: 'invalid_event_version' });
     const snapshot = await repository.load(id);

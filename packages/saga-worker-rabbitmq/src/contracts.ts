@@ -5,7 +5,7 @@ import type {
   SagaTurnRouteOutcome,
   SagaTurnSourceEvent
 } from '@redemeine/saga-runtime';
-import { processSagaSourceEvent } from '@redemeine/saga-runtime';
+import { assertIssuedSagaRegistration, processSagaSourceEvent } from '@redemeine/saga-runtime';
 import type { Channel, ConsumeMessage, Options } from 'amqplib';
 
 export type SagaRabbitChannel = Pick<
@@ -78,5 +78,20 @@ export function createSagaSourceEventProcessor(
   repository: SagaTurnRepository,
   options: SagaTurnProcessorOptions
 ): SagaSourceEventProcessor {
+  if (!options || typeof options.registrationForRoute !== 'function') throw new TypeError('Saga worker requires registrations');
+  if (!table.registered || table.registered.length !== table.definitions.length) {
+    throw new TypeError('Saga worker requires a compiled executable registration table');
+  }
+  for (const route of table.routes) {
+    const registration = options.registrationForRoute(route);
+    assertIssuedSagaRegistration(registration);
+    if (registration.definition !== route.definition || registration.sagaKey !== route.sagaKey ||
+        registration.definitionVersion !== route.definitionVersion ||
+        !table.registered.includes(registration) ||
+        (route.kind === 'start' && (!route.executeStart || route.executeStart !== registration.executeStart)) ||
+        (route.kind === 'on' && !route.executeOn)) {
+      throw new TypeError('Saga worker requires matching executable start registration');
+    }
+  }
   return (source) => processSagaSourceEvent(table, repository, source, options);
 }

@@ -2,13 +2,15 @@ import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createSaga } from '@redemeine/saga';
 import {
-  compileSagaRoutes,
+  compileRegisteredSagaRoutes,
   bindSagaRegistrations,
-  createStartEventBindings,
   registerSagaDefinition,
+  registerSagaTurnDefinition,
   assertEquivalentSagaCommit,
   SagaTurnIntegrityError,
   type CompiledSagaRoutingTable,
+  type SagaRegistration,
+  type SagaTurnAggregateEvent,
   type SagaTurnProcessorOptions,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
@@ -55,12 +57,47 @@ export function createCounters(): DefinitionCounters {
   return { initial: 0, start: 0, handler: 0 };
 }
 
+const registrations = new WeakMap<object, SagaRegistration<TurnState>>();
+
+export function parseTurnInput(value: unknown): { orderId: string } {
+  if (typeof value !== 'object' || value === null || !('orderId' in value) || typeof value.orderId !== 'string') {
+    throw new TypeError('Invalid turn start input');
+  }
+  return { orderId: value.orderId };
+}
+
+export function parseTurnState(value: unknown): TurnState {
+  if (typeof value !== 'object' || value === null || !('count' in value) || typeof value.count !== 'number' ||
+      ('lastEventId' in value && typeof value.lastEventId !== 'string')) throw new TypeError('Invalid turn state');
+  return { ...value, count: value.count };
+}
+
+function isTurnEvent(value: unknown): value is SagaTurnAggregateEvent {
+  return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' &&
+    'type' in value && typeof value.type === 'string' && 'payload' in value &&
+    (!('aggregateType' in value) || typeof value.aggregateType === 'string') &&
+    (!('aggregateId' in value) || typeof value.aggregateId === 'string') &&
+    (!('sequence' in value) || typeof value.sequence === 'number') &&
+    (!('metadata' in value) || (typeof value.metadata === 'object' && value.metadata !== null && !Array.isArray(value.metadata)));
+}
+
+export function parseTurnEvent(value: unknown): SagaTurnAggregateEvent {
+  if (!isTurnEvent(value)) throw new TypeError('Invalid turn event');
+  return value;
+}
+
+export function registeredTurnDefinition(definition: object): SagaRegistration<TurnState> {
+  const registration = registrations.get(definition);
+  if (!registration) throw new TypeError('Missing test executable registration');
+  return registration;
+}
+
 export function registrationOptions(table: CompiledSagaRoutingTable, maxConflictRetries?: number): SagaTurnProcessorOptions {
-  const registrations = table.definitions.map((definition) => registerSagaDefinition({
-    definition, pluginManifests: [], responseHandlerBindings: {},
-    parseStartInput: (input: unknown) => input, canonicalCommandTypes: []
+  const active = table.registered ?? table.legacyDefinitions?.map((definition) => registerSagaTurnDefinition({
+    definition, pluginManifests: [], responseHandlerBindings: {}, canonicalCommandTypes: []
   }));
-  return { registrationForRoute: bindSagaRegistrations(table, registrations), ...(maxConflictRetries === undefined ? {} : { maxConflictRetries }) };
+  if (!active) throw new TypeError('Test requires executable or legacy registrations');
+  return { registrationForRoute: bindSagaRegistrations(table, active), ...(maxConflictRetries === undefined ? {} : { maxConflictRetries }) };
 }
 
 export function createTurnDefinition(
@@ -69,7 +106,7 @@ export function createTurnDefinition(
   onCorrelation?: (event: unknown) => unknown,
   version = 1
 ) {
-  return createSaga<TurnState>({ identity: { namespace: 'turns', name, version } })
+  const definition = createSaga<TurnState>({ identity: { namespace: 'turns', name, version } })
     .initialState(() => {
       counters.initial += 1;
       return { count: 0 };
@@ -99,6 +136,9 @@ export function createTurnDefinition(
       paid: async (state, event, ctx) => runHandler(state, event, ctx, counters)
     })
     .build();
+  registrations.set(definition, registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: {},
+    parseStartInput: parseTurnInput, parseState: parseTurnState, parseOnEvent: parseTurnEvent, canonicalCommandTypes: [] }));
+  return definition;
 }
 
 function readOrderId(event: unknown): string {
@@ -129,10 +169,8 @@ async function runHandler(
 
 export function createTurnTable(name: string, counters: DefinitionCounters) {
   const definition = createTurnDefinition(name, counters);
-  return compileSagaRoutes(
-    [definition],
-    createStartEventBindings({ definition, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] })
-  );
+  return compileRegisteredSagaRoutes([registeredTurnDefinition(definition)],
+    [{ registration: registeredTurnDefinition(definition), triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }]);
 }
 
 export function createStartOnlyTable(name: string, counters: DefinitionCounters) {
@@ -147,10 +185,10 @@ export function createStartOnlyTable(name: string, counters: DefinitionCounters)
     .correlateBy((input: { orderId: string }) => input.orderId)
     .triggeredBy({ kind: 'domain', toStartInput: (event: { payload: OrderPayload }) => ({ orderId: event.payload.orderId }) })
     .build();
-  return compileSagaRoutes(
-    [definition],
-    createStartEventBindings({ definition, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] })
-  );
+  registrations.set(definition, registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: {},
+    parseStartInput: parseTurnInput, parseState: parseTurnState, parseOnEvent: parseTurnEvent, canonicalCommandTypes: [] }));
+  return compileRegisteredSagaRoutes([registeredTurnDefinition(definition)],
+    [{ registration: registeredTurnDefinition(definition), triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }]);
 }
 
 export function sourceEvent(overrides: Partial<SagaTurnSourceEvent> = {}): SagaTurnSourceEvent {

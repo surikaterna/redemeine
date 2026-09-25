@@ -5,6 +5,18 @@ import { validateInitialSagaState } from './registrationValidation';
 import { getRuntimeEventTypes, resolveCorrelation } from './compileSagaRoutes';
 import { SagaRouteCompilationError, type CompiledSagaOnRoute } from './contracts';
 import { deriveSagaRouteId } from '../identity/deterministicIds';
+import { BusinessStateValidationError } from '../businessStateValidation';
+import { SagaTurnPermanentError } from '../turns/errors';
+
+function validateOnState(state: unknown): void {
+  try {
+    validateInitialSagaState(state);
+  } catch (cause) {
+    const code = cause instanceof BusinessStateValidationError && cause.code === 'business_state_too_large'
+      ? 'saga_state_too_large' : 'state_validation_failed';
+    throw new SagaTurnPermanentError(code, 'Saga on output is not bounded JSON-safe state', {}, cause);
+  }
+}
 
 export function registeredOnRoutes<TState extends object, TPlugins extends SagaPluginManifestList,
   TBindings extends SagaResponseHandlerTokenBindings, TInput>(
@@ -33,9 +45,8 @@ export function registeredOnRoutes<TState extends object, TPlugins extends SagaP
           const decodedEvent = parseEvent(event);
           if (decodedEvent.type !== eventType) throw new TypeError('Saga event type mismatch');
           const decision = await runSagaHandler(decodedState, decodedEvent, handler, metadata, bindings, plugins);
-          validateInitialSagaState(decision.state);
+          validateOnState(decision.state);
           assertCurrent();
-          if (decision.intents.length > 0) throw new TypeError('Saga on intents are not yet supported');
           return decision;
         }
       }));

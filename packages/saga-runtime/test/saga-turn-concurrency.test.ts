@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
+import { createSaga } from '@redemeine/saga';
 import {
-  compileSagaRoutes,
-  createStartEventBindings,
+  compileRegisteredSagaRoutes,
+  registerSagaDefinition,
   processSagaSourceEvent as processRegisteredEvent,
   processSagaSourceEvents as processRegisteredEvents,
   type CompiledSagaRoutingTable,
@@ -14,6 +15,10 @@ import {
   createTurnTable,
   FakeTurnRepository,
   registrationOptions,
+  registeredTurnDefinition,
+  parseTurnInput,
+  parseTurnState,
+  parseTurnEvent,
   sourceEvent
 } from './fixtures/turn-processor.fixture';
 
@@ -184,12 +189,12 @@ describe('saga turn OCC and ordered fanout', () => {
     const secondCounters = createCounters();
     const first = createTurnDefinition('fanout-a', firstCounters);
     const second = createTurnDefinition('fanout-b', secondCounters);
-    const table = compileSagaRoutes(
-      [second, first],
-      createStartEventBindings(
-        { definition: second, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] },
-        { definition: first, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }
-      )
+    const table = compileRegisteredSagaRoutes(
+      [registeredTurnDefinition(second), registeredTurnDefinition(first)],
+      [
+        { registration: registeredTurnDefinition(second), triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] },
+        { registration: registeredTurnDefinition(first), triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }
+      ]
     );
     const outcomes = await processSagaSourceEvents(table, repository, [
       sourceEvent(),
@@ -202,7 +207,35 @@ describe('saga turn OCC and ordered fanout', () => {
     expect(repository.appendCalls).toHaveLength(4);
     expect(repository.appendCalls.slice(0, 2).every(({ events }) => events.length === 4)).toBe(true);
     expect(repository.appendCalls.slice(2).every(({ events }) => events.length === 2)).toBe(true);
-    expect(firstCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });
-    expect(secondCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });
+    expect(firstCounters).toMatchObject({ initial: 1, start: 1, handler: 1 });
+    expect(secondCounters).toMatchObject({ initial: 1, start: 1, handler: 1 });
+  });
+
+  it('never reports success when a later fanout start emits a timer', async () => {
+    const repository = new FakeTurnRepository();
+    const first = registeredTurnDefinition(createTurnDefinition('fanout-a', createCounters()));
+    const laterDefinition = createSaga<{ count: number }>({ identity: { namespace: 'turns', name: 'fanout-z', version: 1 } })
+      .initialState(() => ({ count: 0 }))
+      .start<{ orderId: string }>((state, input, ctx) => {
+        state.count = input.orderId.length;
+        ctx.actions.core.schedule('later', 1000);
+      })
+      .correlateBy((input) => input.orderId)
+      .triggeredBy({ kind: 'domain', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
+      .build();
+    const later = registerSagaDefinition({ definition: laterDefinition, pluginManifests: [], responseHandlerBindings: {},
+      parseStartInput: parseTurnInput, parseState: parseTurnState, parseOnEvent: parseTurnEvent, canonicalCommandTypes: [] });
+    const table = compileRegisteredSagaRoutes([later, first], [
+      { registration: later, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] },
+      { registration: first, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }
+    ]);
+    const source = sourceEvent();
+    for (let delivery = 0; delivery < 2; delivery += 1) {
+      await expect(processSagaSourceEvent(table, repository, source)).rejects.toMatchObject({
+        code: 'unsupported_intents', retryable: false
+      });
+    }
+    expect(repository.appendCalls).toHaveLength(1);
+    expect(repository.appendCalls[0]?.identity.sagaKey).toBe(first.sagaKey);
   });
 });

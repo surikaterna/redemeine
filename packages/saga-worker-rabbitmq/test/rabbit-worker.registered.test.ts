@@ -8,7 +8,11 @@ interface State { count: number }
 let started = 0;
 const definition = createSaga<State>({ identity: { namespace: 'worker', name: 'registered', version: 1 } })
   .initialState(() => ({ count: 0 }))
-  .start((state, input: { orderId: string }) => { started++; state.count = input.orderId.length; })
+  .start((state, input: { orderId: string }, ctx) => {
+    started++;
+    state.count = input.orderId.length;
+    if (input.orderId === 'intent') ctx.actions.core.schedule('later', 1000);
+  })
   .correlateBy((input) => input.orderId)
   .triggeredBy({ kind: 'event', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
   .build();
@@ -27,7 +31,7 @@ function register(commands: readonly string[] = [], activeDefinition = definitio
     } });
 }
 
-it('rejects absent registered start before append and never ACKs Rabbit delivery', async () => {
+it('ACKs only after an intent-free registered start has appended its four events', async () => {
   started = 0;
   const registration = register();
   const table = compileRegisteredSagaRoutes([registration], [
@@ -38,7 +42,7 @@ it('rejects absent registered start before append and never ACKs Rabbit delivery
     load: async (streamId) => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
     findCommit: async () => null,
     assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
-    append: async (request) => { appendCalls.push(request); throw new Error('unexpected append'); }
+    append: async (request) => { appendCalls.push(request); return { status: 'committed', commitSequence: 0 }; }
   };
   const channel = new FakeChannel();
   const worker = createSagaRabbitWorker(options(channel, createSagaSourceEventProcessor(table, repository,
@@ -46,8 +50,39 @@ it('rejects absent registered start before append and never ACKs Rabbit delivery
   await worker.start();
   const incoming = message({ body: { ...body(), events: [body().events[0]] } });
   await worker.handle(incoming);
+  expect(appendCalls).toEqual([expect.objectContaining({ events: [
+    expect.objectContaining({ type: 'saga.instance_created.event' }),
+    expect.objectContaining({ type: 'saga.definition_identity_recorded.event' }),
+    expect.objectContaining({ type: 'saga.source_event_observed.event' }),
+    expect.objectContaining({ type: 'saga.business_state_recorded.event', payload: expect.objectContaining({ state: { count: 7 } }) })
+  ] })]);
+  expect(started).toBe(1);
+  expect(channel.acks).toEqual([{ message: incoming, allUpTo: false }]);
+  expect(channel.nacks).toEqual([]);
+  await worker.stop();
+});
+
+it('dead-letters an emitted timer before append without ACK or hot retry', async () => {
+  started = 0;
+  const registration = register();
+  const table = compileRegisteredSagaRoutes([registration],
+    [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
+  const appendCalls: unknown[] = [];
+  const repository: SagaTurnRepository = {
+    load: async (streamId) => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
+    findCommit: async () => null,
+    assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
+    append: async (request) => { appendCalls.push(request); return { status: 'committed', commitSequence: 0 }; }
+  };
+  const channel = new FakeChannel();
+  const worker = createSagaRabbitWorker(options(channel, createSagaSourceEventProcessor(table, repository,
+    { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
+  await worker.start();
+  const source = body();
+  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId: 'intent' } }] } });
+  await worker.handle(incoming);
+  expect(started).toBe(1);
   expect(appendCalls).toEqual([]);
-  expect(started).toBe(0);
   expect(channel.acks).toEqual([]);
   expect(channel.nacks).toEqual([{ message: incoming, allUpTo: false, requeue: false }]);
   await worker.stop();
@@ -74,4 +109,19 @@ it('refuses missing and mismatched issued registrations before Rabbit startup', 
   versioned.identity.version = 2;
   expect(() => bindSagaRegistrations(versionTable, [changedVersion])).toThrow('identity mismatch');
   expect(channel.calls).toEqual([]);
+});
+
+it('refuses a table without registered executable handles before consume', () => {
+  const registration = register();
+  const table = compileRegisteredSagaRoutes([registration],
+    [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
+  const { registered: _registered, ...bareTable } = table;
+  const repository: SagaTurnRepository = {
+    load: async () => { throw new Error('unexpected load'); },
+    findCommit: async () => null,
+    assertCommitMaterial: () => undefined,
+    append: async () => { throw new Error('unexpected append'); }
+  };
+  expect(() => createSagaSourceEventProcessor(bareTable, repository,
+    { registrationForRoute: bindSagaRegistrations(table, [registration]) })).toThrow('compiled executable registration table');
 });

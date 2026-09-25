@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
-import { normalizeSagaCorrelation, registerSagaTurnDefinition, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
+import { normalizeSagaCorrelation, type SagaTurnAppendRequest } from '@redemeine/saga-runtime';
 import type { Channel, GetMessage } from 'amqplib';
-import { createCounters, createRealTable } from './fixtures';
+import { createCounters, createRealTable, registrationForRealDefinition } from './fixtures';
 import {
   appendSourceCommit, connectRealStack, createScenario, instanceId, pollUntil, publishCommit, queueCounts,
   type RealStack, sourceEvent, streamCommits, waitForQueueSettled, wrapRepository
@@ -36,8 +36,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
   it('ACKs only equivalent duplicate material and dead-letters legacy replay without new writes', async () => {
     const counters = createCounters();
     const { definition, table } = createRealTable('identity-guard', counters);
-    const registration = registerSagaTurnDefinition({ definition, pluginManifests: [],
-      responseHandlerBindings: {}, canonicalCommandTypes: [] });
+    const registration = registrationForRealDefinition(definition);
     const trace: SettlementTrace = { received: [], settled: [] };
     const captured: SagaTurnAppendRequest[] = [];
     const harness = await createScenario(stack, 'identity-guard', table, {
@@ -66,7 +65,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
       ]);
       expect(physical[0]?.events[1]?.payload).toEqual({ schemaVersion: 1, ...registration.definitionIdentity });
       expect(trace.settled).toEqual([{ kind: 'ack', messageId: source.id, sourceEventId: 'identity-guard-event' }]);
-      expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
+      expect(counters).toMatchObject({ initial: 1, start: 1, handlers: new Map() });
       expect(captured).toHaveLength(1);
 
       await publishCommit(stack, source);
@@ -79,7 +78,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
       ]);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(await streamCommits(harness, id)).toHaveLength(1);
-      expect(counters).toMatchObject({ initial: 2, start: 0, handlers: new Map() });
+      expect(counters).toMatchObject({ initial: 2, start: 2, handlers: new Map() });
 
       const legacyId = instanceId(definition.sagaKey, 'order-legacy-identity');
       const first = captured[0];
@@ -116,7 +115,7 @@ describe('redemeine-371j.2 real duplicate proof and legacy refusal', () => {
       });
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
       expect(trace.settled).toHaveLength(3);
-      expect(counters).toMatchObject({ initial: 2, start: 0, handlers: new Map() });
+      expect(counters).toMatchObject({ initial: 2, start: 2, handlers: new Map() });
       expect(harness.settlementErrors).toEqual([]);
     } finally {
       await harness.close();

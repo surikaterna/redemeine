@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { createSaga } from '@redemeine/saga';
-import { compileSagaRoutes, createStartEventBindings } from '../src/routing';
+import { compileRegisteredSagaRoutes, registerSagaDefinition } from '../src/routing';
+import type { SagaTurnAggregateEvent } from '../src/turns/aggregateEvent';
 import { processSagaSourceEvent } from '../src/turns/processSagaSource';
 import { hydrateSagaTurn } from '../src/turns/aggregateTurn';
 import { FakeTurnRepository, orders, registrationOptions, sourceEvent } from './fixtures/turn-processor.fixture';
@@ -14,7 +15,23 @@ function largeTable(initialBytes: number, nextBytes: number) {
     .correlate(orders, (event) => event.payload.orderId)
     .on(orders, { placed: (state) => { state.blob = 'y'.repeat(nextBytes); state.count += 1; } })
     .build();
-  return compileSagaRoutes([definition], createStartEventBindings({ definition, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }));
+  const registration = registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: {},
+    parseStartInput: (value: unknown) => {
+      if (typeof value !== 'object' || value === null || !('orderId' in value) || typeof value.orderId !== 'string') throw new TypeError('Invalid start input');
+      return { orderId: value.orderId };
+    },
+    parseState: (value: unknown) => {
+      if (typeof value !== 'object' || value === null || !('blob' in value) || typeof value.blob !== 'string' ||
+          !('count' in value) || typeof value.count !== 'number') throw new TypeError('Invalid business state');
+      return { blob: value.blob, count: value.count };
+    },
+    parseOnEvent: (event: unknown): SagaTurnAggregateEvent => {
+      if (typeof event !== 'object' || event === null || !('type' in event) || typeof event.type !== 'string' ||
+          !('id' in event) || typeof event.id !== 'string' || !('payload' in event)) throw new TypeError('Invalid event');
+      return { ...event, type: event.type, id: event.id, payload: event.payload };
+    }, canonicalCommandTypes: [] });
+  return compileRegisteredSagaRoutes([registration],
+    [{ registration, triggerIndex: 0, eventTypes: ['turn.order-placed.v1.event'] }]);
 }
 
 describe('saga business state budgets', () => {
@@ -40,7 +57,7 @@ describe('saga business state budgets', () => {
     const over = 8 * 1024 * 1024 + 1;
     const tooLargeInitial = largeTable(over, 0);
     await expect(processSagaSourceEvent(tooLargeInitial, repository, sourceEvent(), registrationOptions(tooLargeInitial)))
-      .rejects.toMatchObject({ code: 'saga_state_too_large', retryable: false });
+      .rejects.toMatchObject({ code: 'start_failed', retryable: false });
     expect(repository.appendCalls).toHaveLength(0);
     const tooLargeOn = largeTable(10, over);
     const options = registrationOptions(tooLargeOn);
