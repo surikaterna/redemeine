@@ -36,6 +36,61 @@ export interface WireRegistryEntry { readonly plugin_key: string; readonly actio
 
 const MAX_BYTES = 65536;
 const MAX_DEPTH = 16;
+const encoder = new TextEncoder();
+interface JsonBudget { bytes: number; readonly seen: Set<object> }
+function charge(budget: JsonBudget, bytes: number): void {
+  budget.bytes += bytes;
+  if (budget.bytes > MAX_BYTES) throw new RangeError('wire size exceeded');
+}
+function quotedBytes(value: string): number {
+  return encoder.encode(JSON.stringify(value)).byteLength;
+}
+function scanArray(value: readonly unknown[], budget: JsonBudget, depth: number): void {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) throw new TypeError('sparse JSON array');
+    if (index !== 0) charge(budget, 1);
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (!descriptor || !('value' in descriptor)) throw new TypeError('non-JSON accessor');
+    scanJson(descriptor.value, budget, depth + 1);
+  }
+  for (const key in value) {
+    if (Object.hasOwn(value, key) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length)) throw new TypeError('non-JSON array property');
+  }
+}
+function scanObject(value: object, budget: JsonBudget, depth: number): void {
+  let first = true;
+  for (const key in value) {
+    if (!Object.hasOwn(value, key)) continue;
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw new TypeError('unsafe JSON key');
+    charge(budget, quotedBytes(key) + (first ? 1 : 2));
+    first = false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !('value' in descriptor)) throw new TypeError('non-JSON accessor');
+    scanJson(descriptor.value, budget, depth + 1);
+  }
+}
+function scanJson(value: unknown, budget: JsonBudget, depth: number): void {
+  if (depth > MAX_DEPTH) throw new RangeError('wire depth exceeded');
+  if (typeof value === 'string') { charge(budget, quotedBytes(value)); return; }
+  if (value === null || typeof value === 'boolean') { charge(budget, value === null ? 4 : value ? 4 : 5); return; }
+  if (typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0)) {
+    charge(budget, encoder.encode(JSON.stringify(value)).byteLength);
+    return;
+  }
+  if (typeof value !== 'object') throw new TypeError('non-JSON value');
+  if (budget.seen.has(value)) throw new TypeError('cyclic value');
+  if (Object.getPrototypeOf(value) !== (Array.isArray(value) ? Array.prototype : Object.prototype)) throw new TypeError('invalid JSON object');
+  if (Object.getOwnPropertySymbols(value).length !== 0) throw new TypeError('non-JSON symbol key');
+  budget.seen.add(value);
+  try {
+    charge(budget, 2);
+    if (Array.isArray(value)) scanArray(value, budget, depth);
+    else scanObject(value, budget, depth);
+  } finally { budget.seen.delete(value); }
+}
+function bounded(value: unknown): void {
+  scanJson(value, { bytes: 0, seen: new Set<object>() }, 0);
+}
 function requireText(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0 || new TextEncoder().encode(value).byteLength > 4096) throw new TypeError(`invalid ${name}`);
   return value;
@@ -59,9 +114,6 @@ function json(value: unknown, depth = 0, seen = new Set<object>()): JsonValue {
     const source = object(value, 'JSON object');
     return Object.fromEntries(Object.entries(source).map(([key, item]) => [key, json(item, depth + 1, seen)]));
   } finally { seen.delete(value); }
-}
-function bounded(value: unknown): void {
-  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_BYTES) throw new RangeError('wire size exceeded');
 }
 function identity(origin: WireOrigin): Pick<WireBase, 'instanceId' | 'turnId' | 'intentId'> {
   const instanceId = deriveSagaInstanceId(requireText(origin.sagaKey, 'sagaKey'), origin.correlation);
@@ -134,6 +186,7 @@ function body(v: Record<string, unknown>, registry: readonly WireRegistryEntry[]
   throw new TypeError('unknown intent kind');
 }
 export function decodeIntent(value: unknown, registry: readonly WireRegistryEntry[]): WireIntent {
+  bounded(value);
   const v = object(value, 'intent');
   if (v.schemaVersion !== 1) throw new TypeError('unsupported wire version');
   const origin = originValue(v.origin);
@@ -147,7 +200,6 @@ export function decodeIntent(value: unknown, registry: readonly WireRegistryEntr
   return result;
 }
 export function encodeIntent(value: WireIntent, registry: readonly WireRegistryEntry[]): string {
-  json(value);
   return JSON.stringify(decodeIntent(value, registry));
 }
 export function parseIntent(text: string, registry: readonly WireRegistryEntry[]): WireIntent {
@@ -156,6 +208,8 @@ export function parseIntent(text: string, registry: readonly WireRegistryEntry[]
 }
 export function normalizePluginIntent(input: SagaPluginIntent, origin: WireOrigin, registry: readonly WireRegistryEntry[], turnClock?: string): WireIntent {
   if (input.plugin_key === 'core') {
+    if (input.interaction !== 'fire_and_forget' || input.routing_metadata !== undefined) throw new TypeError('unsupported core interaction');
+    bounded(input.execution_payload);
     const payload = object(input.execution_payload, 'core payload');
     if (input.action_name === 'dispatch') {
       exact(payload, ['command', 'payload', 'aggregateId']);
@@ -168,8 +222,10 @@ export function normalizePluginIntent(input: SagaPluginIntent, origin: WireOrigi
     }
     if (input.action_name === 'schedule') {
       exact(payload, ['id', 'delay']);
-      if (typeof payload.delay !== 'number' || !Number.isSafeInteger(payload.delay) || payload.delay < 0 || turnClock === undefined || new Date(turnClock).toISOString() !== turnClock) throw new TypeError('invalid persisted turn clock or delay');
-      const dueAt = new Date(Date.parse(turnClock) + payload.delay).toISOString();
+      if (typeof payload.delay !== 'number' || !Number.isSafeInteger(payload.delay) || payload.delay < 0 || turnClock === undefined) throw new TypeError('invalid_timer');
+      const now = Date.parse(turnClock);
+      if (!Number.isFinite(now) || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(turnClock) || new Date(now).toISOString() !== turnClock || !Number.isFinite(now + payload.delay) || now + payload.delay > 253_402_300_799_999) throw new TypeError('invalid_timer');
+      const dueAt = new Date(now + payload.delay).toISOString();
       return createWireIntent(origin, input.metadata, { kind: 'schedule', timerId: requireText(payload.id, 'timerId'), dueAt }, registry);
     }
     throw new TypeError('unknown core action');
@@ -185,6 +241,7 @@ export function createWireIntent(origin: WireOrigin, meta: WireMetadata, data: I
   return decodeIntent({ schemaVersion: 1, ...identity(origin), origin, metadata: meta, ...data }, registry);
 }
 export function decodeOutcome(value: unknown, intent: WireIntent): WireOutcome {
+  bounded(value);
   const v = object(value, 'outcome');
   exact(v, ['schemaVersion', 'intentId', 'instanceId', 'correlationId', 'result', 'token', 'handler_data', 'value']);
   if (v.schemaVersion !== 1 || v.intentId !== intent.intentId || v.instanceId !== intent.instanceId || v.correlationId !== intent.metadata.correlationId || intent.kind !== 'plugin' || intent.interaction !== 'request_response') throw new TypeError('outcome mismatch');

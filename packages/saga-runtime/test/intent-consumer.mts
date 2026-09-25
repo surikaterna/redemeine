@@ -27,12 +27,20 @@ const definition = createSaga({ identity: { namespace: 'orders', name: 'wire', v
     const responseToken: 'ok' = request.routing_metadata.response_handler_key;
     const errorToken: 'failed' = request.routing_metadata.error_handler_key;
     const handlerData: string = request.routing_metadata.handler_data.id;
+    // @ts-expect-error response token cannot be the error token
+    const wrongResponseToken: 'failed' = request.routing_metadata.response_handler_key;
+    // @ts-expect-error error token cannot be the response token
+    const wrongErrorToken: 'ok' = request.routing_metadata.error_handler_key;
+    // @ts-expect-error a completed request has mandatory routing
+    const missingRouting: typeof request = { type: 'plugin-intent', plugin_key: 'mailer', action_name: 'ask', interaction: 'request_response', execution_payload: { id: start.id }, metadata: { sagaId: 's', correlationId: 'c', causationId: 'e' } };
     // @ts-expect-error request needs routing before emission
     const incomplete: typeof request = ctx.actions.mailer.ask(start.id);
     // @ts-expect-error error token not valid in response phase
     ctx.actions.mailer.ask(start.id).onResponse(ctx.onError.failed);
+    // @ts-expect-error response token not valid in error phase
+    ctx.actions.mailer.ask(start.id).onResponse(ctx.onResponse.ok).onError(ctx.onResponse.ok);
     // @ts-expect-error handler data id is a string
     const wrongData: number = request.routing_metadata.handler_data.id;
-    void [oneWay, responseToken, errorToken, handlerData, incomplete, wrongData];
+    void [oneWay, responseToken, errorToken, handlerData, incomplete, wrongData, wrongResponseToken, wrongErrorToken, missingRouting];
   }).correlateBy(start => start.id).build();
 void [payload, wrongPayload, commandPayload, definition];

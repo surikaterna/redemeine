@@ -31,6 +31,8 @@ describe('private saga wire v1', () => {
     expect(parseOutcome(JSON.stringify(outcome(first.intentId, 'response', 'ok')), first).intentId).toBe(first.intentId);
     expect(() => decodeOutcome(outcome(first.intentId, 'response', 'ok'), second)).toThrow();
     expect(() => decodeOutcome({ ...outcome(first.intentId, 'error', 'failed'), handler_data: {} }, first)).toThrow();
+    expect(() => decodeOutcome({ ...outcome(first.intentId, 'response', 'ok'), schemaVersion: 2 }, first)).toThrow();
+    expect(() => parseOutcome(JSON.stringify({ ...outcome(first.intentId, 'response', 'ok'), value: [null, 1] }), first)).not.toThrow();
     expect(() => createWireIntent(origin, meta, { ...request, routing_metadata: undefined }, registry)).toThrow();
   });
 
@@ -43,7 +45,13 @@ describe('private saga wire v1', () => {
     expect(() => command('pay')).toThrow('legacy');
     expect(() => createWireIntent(origin, meta, { kind: 'dispatch', command: 'invoice.pay.command', payload: null }, [...registry, { plugin_key: 'other', actions: [], commandTypes: ['invoice.pay.command'] }])).toThrow();
     expect(normalizePluginIntent({ type: 'plugin-intent', plugin_key: 'core', action_name: 'dispatch', interaction: 'fire_and_forget', execution_payload: { command: 'custom.order.reserve', payload: { id: 'a1' } }, metadata: meta }, origin, registry).kind).toBe('dispatch');
+    expect(() => normalizePluginIntent({ type: 'plugin-intent', plugin_key: 'core', action_name: 'dispatch', interaction: 'request_response', execution_payload: { command: 'custom.order.reserve', payload: {} }, routing_metadata: { response_handler_key: 'ok', error_handler_key: 'fail', handler_data: { id: 'a1' } }, metadata: meta }, origin, registry)).toThrow('unsupported core interaction');
     expect(normalizePluginIntent({ type: 'plugin-intent', plugin_key: 'core', action_name: 'schedule', interaction: 'fire_and_forget', execution_payload: { id: 't1', delay: 1000 }, metadata: meta }, origin, registry, '2026-09-25T01:00:00.000Z')).toMatchObject({ dueAt: '2026-09-25T01:00:01.000Z' });
+    const sdkTimer: SagaPluginIntent<'core', 'schedule', { id: string; delay: number }, 'fire_and_forget'> = { type: 'plugin-intent', plugin_key: 'core', action_name: 'schedule', interaction: 'fire_and_forget', execution_payload: { id: 't1', delay: Number.MAX_SAFE_INTEGER }, metadata: meta };
+    expect(() => normalizePluginIntent(sdkTimer, origin, registry, '2026-09-25T01:00:00.000Z')).toThrow('invalid_timer');
+    expect(() => normalizePluginIntent({ ...sdkTimer, execution_payload: { id: 't1', delay: -1 } }, origin, registry, '2026-09-25T01:00:00.000Z')).toThrow('invalid_timer');
+    expect(() => normalizePluginIntent(sdkTimer, origin, registry, 'invalid')).toThrow('invalid_timer');
+    expect(() => normalizePluginIntent({ ...sdkTimer, execution_payload: { id: 't1', delay: 1 } }, origin, registry, '9999-12-31T23:59:59.999Z')).toThrow('invalid_timer');
     const schedule = createWireIntent(origin, meta, { kind: 'schedule', timerId: 't1', dueAt: '2026-09-25T01:00:00.000Z' }, registry);
     const cancel = createWireIntent({ ...origin, ordinal: 1 }, meta, { kind: 'cancelSchedule', timerId: 't1' }, registry);
     expect(parseIntent(encodeIntent(schedule, registry), registry)).toEqual(schedule);
@@ -70,14 +78,38 @@ describe('private saga wire v1', () => {
 
   it('rejects unknown versions, missing provenance, unsafe JSON, depth and size', () => {
     const valid = createWireIntent(origin, meta, { kind: 'dispatch', command: 'invoice.pay.command', payload: null }, registry);
+    // biome-ignore lint/suspicious/noSparseArray: an actual hole, not undefined, is the unknown-boundary regression.
+    const sparse = [, 1];
     expect(() => decodeIntent({ ...valid, schemaVersion: 2 }, registry)).toThrow('version');
     expect(() => decodeIntent({ ...valid, origin: { ...origin, sourceId: '' } }, registry)).toThrow();
     expect(() => decodeIntent({ ...valid, payload: { bad: undefined } }, registry)).toThrow();
+    expect(() => decodeIntent({ ...valid, payload: sparse }, registry)).toThrow('sparse JSON array');
+    expect(() => decodeIntent({ ...valid, payload: [undefined, 1] }, registry)).toThrow('non-JSON value');
+    expect(() => decodeIntent({ ...valid, payload: { nested: { bad: Number.POSITIVE_INFINITY } } }, registry)).toThrow('non-JSON value');
+    expect(() => decodeIntent({ ...valid, payload: { bad: () => 1 } }, registry)).toThrow();
+    expect(() => decodeIntent({ ...valid, payload: { bad: Symbol('bad') } }, registry)).toThrow();
+    expect(() => decodeIntent({ ...valid, payload: JSON.parse('{"__proto__":{"polluted":true}}') }, registry)).toThrow('unsafe JSON key');
+    expect(() => decodeOutcome({ schemaVersion: 1, intentId: 'x', instanceId: 'x', correlationId: 'x', result: 'response', token: 'x', handler_data: null, value: sparse }, valid)).toThrow('sparse JSON array');
     expect(() => decodeIntent({ ...valid, payload: new Date() }, registry)).toThrow();
     expect(() => decodeIntent({ ...valid, payload: Number.NaN }, registry)).toThrow();
     expect(() => decodeIntent({ ...valid, payload: BigInt(1) }, registry)).toThrow();
     expect(() => decodeIntent({ ...valid, payload: Array.from({ length: 18 }).reduce<object>(value => [value], {}) }, registry)).toThrow();
     expect(() => parseIntent('{broken', registry)).toThrow();
     expect(() => parseIntent(' '.repeat(65537), registry)).toThrow('size');
+  });
+
+  it('charges encoded bytes before reading oversized children or cloning unknown input', () => {
+    const valid = createWireIntent(origin, meta, { kind: 'dispatch', command: 'invoice.pay.command', payload: '' }, registry);
+    const baseline = JSON.stringify(valid).length;
+    const exact = { ...valid, payload: 'x'.repeat(65536 - baseline) };
+    expect(new TextEncoder().encode(JSON.stringify(exact)).byteLength).toBe(65536);
+    expect(decodeIntent(exact, registry)).toMatchObject({ payload: exact.payload });
+    expect(() => decodeIntent({ ...exact, payload: `${exact.payload}x` }, registry)).toThrow('wire size exceeded');
+    const huge = { ...valid, payload: { large: 'x'.repeat(65536), unread: Object.defineProperty({}, 'value', { enumerable: true, get() { throw new Error('TRAVERSED_TOO_FAR'); } }) } };
+    expect(() => decodeIntent(huge, registry)).toThrow('wire size exceeded');
+    const nested = { ...valid, payload: { outer: { large: 'x'.repeat(65536) } } };
+    expect(() => decodeIntent(nested, registry)).toThrow('wire size exceeded');
+    const unicode = { ...valid, payload: '😀'.repeat(17000) };
+    expect(() => decodeIntent(unicode, registry)).toThrow('wire size exceeded');
   });
 });
