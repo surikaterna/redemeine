@@ -59,6 +59,7 @@ export type SagaTurnAppendResult =
   | { readonly status: 'conflict' };
 
 export interface SagaTurnRepository {
+  readonly partitionId: string;
   load(instanceId: string): Promise<SagaTurnStreamSnapshot>;
   findCommit(streamId: string, commitId: string): Promise<SagaTurnStoredCommit | null>;
   assertCommitMaterial(stored: SagaTurnStoredCommit, request: SagaTurnAppendRequest, firstEventVersion: number): void;

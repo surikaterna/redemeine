@@ -1,9 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { type SagaTurnAppendRequest, SagaTurnIntegrityError } from '@redemeine/saga-runtime';
+import { assertSagaTurnPreappendBudget, type SagaTurnAppendRequest, SagaTurnIntegrityError } from '@redemeine/saga-runtime';
 import Bluebird from 'bluebird';
 import { ConcurrencyError, DuplicateCommitError, type ICommit, type IPersistencePartition, type NodeCallback } from 'tapeworm';
 import { createTapewormSagaTurnRepository, type TapewormSagaEvent } from '../src/index';
 import { assertSagaCommitBudget, type SagaCommitReader } from '../src/IndexedSagaCommitReader';
+import { BSON, ObjectId, UUID } from 'mongodb';
 
 function request(overrides: Partial<SagaTurnAppendRequest> = {}): SagaTurnAppendRequest {
   return {
@@ -114,6 +115,30 @@ describe('Tapeworm saga turn repository', () => {
     await expect(target.append(request({ events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(10 * 1024 * 1024) } }] })))
       .rejects.toThrow('byte limit');
     expect(partition.appendCalls).toBe(0);
+  });
+
+  it('shares the exact projected physical envelope, 256 boundary and event limits with the runtime precheck', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const valid = request({ events: Array.from({ length: 256 }, () => request().events[0]!) });
+    const bytes = assertSagaTurnPreappendBudget(valid, target.partitionId, 0);
+    await target.append(valid);
+    const committed = partition.commits[0]!;
+    expect(assertSagaCommitBudget({ ...committed, _id: new ObjectId(),
+      token: new UUID('00000000-0000-0000-0000-000000000000'), isDispatched: false, createDateTime: new Date() }))
+      .toBe(bytes);
+    expect(committed.events).toHaveLength(256);
+    const tooMany = request({ commitId: 'too-many', expectedNextCommitSequence: 1,
+      events: [...valid.events, valid.events[0]!] });
+    expect(() => assertSagaTurnPreappendBudget(tooMany, target.partitionId, 256)).toThrow('256');
+    await expect(target.append(tooMany)).rejects.toThrow('event count');
+    const large = request({ commitId: 'too-large', expectedNextCommitSequence: 1,
+      events: [{ type: 'saga.source_event_observed.event', payload: { blob: 'x'.repeat(9 * 1024 * 1024) },
+        metadata: { blob: 'y'.repeat(2 * 1024 * 1024) } }] });
+    expect(() => assertSagaTurnPreappendBudget(large, target.partitionId, 256)).toThrow('event exceeds');
+    await expect(target.append(large)).rejects.toThrow('byte limit');
+    expect(partition.appendCalls).toBe(1);
+    expect(BSON.calculateObjectSize(committed.events[0]!)).toBeLessThan(10 * 1024 * 1024);
   });
 
   it('rejects an oversized individual intent before append without capping the state at 64 KiB', async () => {

@@ -2,6 +2,7 @@ import {
   assertEquivalentSagaCommit,
   assertSagaTurnJsonSafe,
   assertSagaTurnIntentBudget,
+  assertSagaTurnPreappendBudget,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
   SagaTurnIntegrityError,
@@ -58,10 +59,12 @@ function incompatibleCommit(request: SagaTurnAppendRequest, actualIdentity?: Sag
 
 export class TapewormSagaTurnRepository implements SagaTurnRepository {
   private readonly options: CreateTapewormSagaTurnRepositoryOptions;
+  readonly partitionId: string;
 
   constructor(options: CreateTapewormSagaTurnRepositoryOptions) {
     assertOptions(options);
     this.options = options;
+    this.partitionId = options.partitionId;
   }
 
   async load(instanceId: string): Promise<SagaTurnStreamSnapshot> {
@@ -114,6 +117,7 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
       throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance commit budget exceeded');
     }
     const commit = buildCommit(request, this.options.partitionId, before.nextEventVersion);
+    assertSagaTurnPreappendBudget(request, this.partitionId, before.nextEventVersion);
     const commitBytes = assertSagaCommitBudget({ ...commit, _id: new ObjectId(),
       token: new UUID('00000000-0000-0000-0000-000000000000'), isDispatched: false, createDateTime: new Date() });
     if (before.totalBytes + commitBytes > SAGA_INSTANCE_BYTES) {

@@ -347,6 +347,7 @@ export function instanceId(sagaKey: string, orderId: string): string {
 
 export function wrapRepository(base: SagaTurnRepository, append: SagaTurnRepository['append']): SagaTurnRepository {
   return {
+    partitionId: base.partitionId,
     load: (id) => base.load(id),
     findCommit: (streamId, commitId) => base.findCommit(streamId, commitId),
     assertCommitMaterial: (stored, request, version) => base.assertCommitMaterial(stored, request, version),

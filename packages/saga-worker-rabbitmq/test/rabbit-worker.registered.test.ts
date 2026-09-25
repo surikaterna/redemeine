@@ -13,6 +13,9 @@ const definition = createSaga<State>({ identity: { namespace: 'worker', name: 'r
     state.count = input.orderId.length;
     if (input.orderId === 'intent') ctx.actions.core.schedule('later', 1000);
     if (input.orderId === 'invalid') ctx.actions.core.schedule('later', -1);
+    if (input.orderId === 'overflow') {
+      for (let index = 0; index < 127; index += 1) ctx.actions.core.schedule(`later-${index}`, 1000);
+    }
   })
   .correlateBy((input) => input.orderId)
   .triggeredBy({ kind: 'event', toStartInput: (event: { payload: { orderId: string } }) => event.payload })
@@ -40,6 +43,7 @@ it('ACKs only after an intent-free registered start has appended its four events
   ]);
   const appendCalls: unknown[] = [];
   const repository: SagaTurnRepository = {
+    partitionId: 'sagas',
     load: async (streamId) => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
     findCommit: async () => null,
     assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
@@ -63,13 +67,14 @@ it('ACKs only after an intent-free registered start has appended its four events
   await worker.stop();
 });
 
-it('dead-letters an invalid emitted timer before append without ACK or hot retry', async () => {
+it.each(['invalid', 'overflow'])('dead-letters %s complete turn before append without ACK or hot retry', async orderId => {
   started = 0;
   const registration = register();
   const table = compileRegisteredSagaRoutes([registration],
     [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
   const appendCalls: unknown[] = [];
   const repository: SagaTurnRepository = {
+    partitionId: 'sagas',
     load: async (streamId) => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
     findCommit: async () => null,
     assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
@@ -80,7 +85,7 @@ it('dead-letters an invalid emitted timer before append without ACK or hot retry
     { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
   await worker.start();
   const source = body();
-  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId: 'invalid' } }] } });
+  const incoming = message({ body: { ...source, events: [{ ...source.events[0], payload: { orderId } }] } });
   await worker.handle(incoming);
   expect(started).toBe(1);
   expect(appendCalls).toEqual([]);
@@ -95,6 +100,7 @@ it('ACKs a valid timer only after its intent and fact share the physical append'
     [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
   const appended: string[][] = [];
   const repository: SagaTurnRepository = {
+    partitionId: 'sagas',
     load: async streamId => ({ streamId, nextCommitSequence: 0, commits: (async function* () {})() }),
     findCommit: async () => null,
     assertCommitMaterial: () => { throw new Error('unexpected comparison'); },
@@ -148,6 +154,7 @@ it('refuses a table without registered executable handles before consume', () =>
     [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
   const { registered: _registered, ...bareTable } = table;
   const repository: SagaTurnRepository = {
+    partitionId: 'sagas',
     load: async () => { throw new Error('unexpected load'); },
     findCommit: async () => null,
     assertCommitMaterial: () => undefined,

@@ -213,6 +213,7 @@ export function sourceEvent(overrides: Partial<SagaTurnSourceEvent> = {}): SagaT
 }
 
 export class FakeTurnRepository implements SagaTurnRepository {
+  readonly partitionId = 'sagas';
   readonly appendCalls: SagaTurnAppendRequest[] = [];
   readonly findCalls: Array<{ streamId: string; commitId: string }> = [];
   readonly loadCalls: string[] = [];

@@ -152,6 +152,7 @@ describe('indexed Mongo saga complete-commit reader', () => {
     let stateOnlyDelivered = 0;
     let appendCalls = 0;
     const repository: SagaTurnRepository = {
+      partitionId: partition,
       load: async () => {
         const high = await reader.capture(instanceId);
         return { streamId: instanceId, nextCommitSequence: high + 1, commits: (async function* () {

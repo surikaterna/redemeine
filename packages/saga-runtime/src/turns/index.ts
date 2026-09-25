@@ -8,3 +8,4 @@ export * from './sourceValidation';
 export { assertEquivalentSagaCommit } from './commitMaterial';
 export { assertSagaTurnJsonSafe } from './commitMaterial';
 export { assertSagaTurnIntentBudget } from './commitMaterial';
+export { assertSagaTurnPreappendBudget, SAGA_TURN_MAX_EVENTS, SAGA_TURN_MAX_EVENT_BSON_BYTES, SAGA_TURN_MAX_COMMIT_BSON_BYTES } from './preappendBudget';

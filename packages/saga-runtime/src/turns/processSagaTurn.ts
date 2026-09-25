@@ -16,6 +16,7 @@ import type {
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnTransientError } from './errors';
 import { foldSagaTurn, proveOriginalTurn } from './originalTurnProof';
 import type { WireRegistryEntry } from '../intentWire';
+import { assertSagaTurnPreappendBudget } from './preappendBudget';
 
 interface TurnCommitCandidate {
   readonly route: CompiledSagaRoute;
@@ -99,6 +100,7 @@ function noWriteOutcome(resolved: ResolvedSagaTurnRouteGroup, exists: boolean): 
 
 async function appendTurn(repository: SagaTurnRepository, request: SagaTurnAppendRequest, resolved: ResolvedSagaTurnRouteGroup,
   candidate: TurnCommitCandidate, firstEventVersion: number) {
+  assertSagaTurnPreappendBudget(request, repository.partitionId, firstEventVersion);
   const result = await repository.append(request);
   if (result.status === 'conflict') return null;
   if (result.status === 'reconciled') {

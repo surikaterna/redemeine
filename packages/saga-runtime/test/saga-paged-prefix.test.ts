@@ -19,6 +19,7 @@ describe('bounded saga prefix replay', () => {
     const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
     if (!first) throw new Error('missing initial commit');
     const lazy: SagaTurnRepository = {
+      partitionId: repository.partitionId,
       load: async () => ({ streamId: id, nextCommitSequence: 1026, commits: (async function* () {
         yield first;
         for (let sequence = 1; sequence < 1026; sequence += 1) {

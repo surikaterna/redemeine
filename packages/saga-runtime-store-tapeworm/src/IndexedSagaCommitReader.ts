@@ -1,4 +1,5 @@
-import { assertSagaTurnJsonSafe, SagaTurnIntegrityError } from '@redemeine/saga-runtime';
+import { assertSagaTurnJsonSafe, SagaTurnIntegrityError,
+  SAGA_TURN_MAX_EVENTS, SAGA_TURN_MAX_EVENT_BSON_BYTES, SAGA_TURN_MAX_COMMIT_BSON_BYTES } from '@redemeine/saga-runtime';
 import { BSON, type Collection, type IndexDescriptionInfo, UUID } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import type { TapewormSagaEvent } from './contracts';
@@ -6,10 +7,10 @@ import { storedCommitFromTapeworm, validateTapewormCommit } from './validation';
 
 export const SAGA_PAGE_COMMITS = 64;
 export const SAGA_PAGE_BYTES = 12 * 1024 * 1024;
-export const SAGA_EVENT_BYTES = 10 * 1024 * 1024;
-export const SAGA_COMMIT_EVENTS = 256;
+export const SAGA_EVENT_BYTES = SAGA_TURN_MAX_EVENT_BSON_BYTES;
+export const SAGA_COMMIT_EVENTS = SAGA_TURN_MAX_EVENTS;
 // Four MiB below Mongo's BSON limit, including the actual persisted Tapeworm envelope.
-export const SAGA_COMMIT_BYTES = 12 * 1024 * 1024;
+export const SAGA_COMMIT_BYTES = SAGA_TURN_MAX_COMMIT_BSON_BYTES;
 export const SAGA_INSTANCE_COMMITS = 1_000_000;
 export const SAGA_INSTANCE_BYTES = 1024 * 1024 * 1024;
 
