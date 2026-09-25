@@ -39,24 +39,23 @@ const parseStartInput = (input: unknown): { id: string } => {
   if (!input || typeof input !== 'object' || !('id' in input) || typeof input.id !== 'string') throw new TypeError('start input');
   return { id: input.id };
 };
-const authority = { resolveArtifact: (_sagaKey: string, _version: number) => ({ bundlePath: '/trusted/bundle.js', expectedSha256: '0'.repeat(64) }) };
 const registration = registerSagaDefinition({ definition, pluginManifests: [plugin] as const,
-  responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] }, authority);
+  responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] });
 const typedState: Promise<{ state: State; intents: readonly unknown[] }> = registration.executeStart(
   { id: 'ok' }, metadata, { sagaKey: definition.sagaKey, correlation: { type: 'string', value: 'c' }, sourceId: 'src', routeId: 'r' }, '2026-09-25T10:00:00.000Z');
 void typedState;
 // @ts-expect-error adapter requires an executable plugin tuple
-registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition, pluginManifests: [], responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] });
 // @ts-expect-error adapter rejects a mismatched plugin action tuple
-registerSagaDefinition({ definition, pluginManifests: [{ ...plugin, actions: {} }] as const, responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition, pluginManifests: [{ ...plugin, actions: {} }] as const, responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] });
 // @ts-expect-error adapter requires all response/error/retry phases
-registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: { ...bindings, done: { phase: 'error' } }, parseStartInput, canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: { ...bindings, done: { phase: 'error' } }, parseStartInput, canonicalCommandTypes: [] });
 // @ts-expect-error adapter decoder must produce the definition's start input
-registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput: (_input: unknown) => ({ wrong: 'x' }), canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput: (_input: unknown) => ({ wrong: 'x' }), canonicalCommandTypes: [] });
 // @ts-expect-error input must be unknown, not an assumed decoded shape
-registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput: (input: { id: string }) => input, canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput: (input: { id: string }) => input, canonicalCommandTypes: [] });
 // @ts-expect-error adapter requires object-shaped start state
-registerSagaDefinition({ definition: { ...definition, initialState: () => 'not a draftable record' }, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] }, authority);
+registerSagaDefinition({ definition: { ...definition, initialState: () => 'not a draftable record' }, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] });
 void runSagaStartHandler({ definition, metadata, startInput: { id: 'ok' }, plugins: [plugin] as const, responseHandlers: bindings });
 // @ts-expect-error start input mismatch
 void runSagaStartHandler({ definition, metadata, startInput: { wrong: 'ok' }, plugins: [plugin] as const, responseHandlers: bindings });

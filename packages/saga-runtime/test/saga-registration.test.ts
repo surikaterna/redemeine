@@ -1,9 +1,6 @@
 import { createSaga, defineOneWay, defineRequestResponse, defineSagaPlugin } from '@redemeine/saga';
 import { bindSagaRegistrations, registerSagaDefinition, SagaStartDecisionError } from '../src/routing/registerSagaDefinition';
 import { compileSagaRoutes } from '../src/routing/compileSagaRoutes';
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { deriveSagaInstanceId } from '../src/identity/deterministicIds';
 import { serializeSagaCorrelation } from '../src/identity/canonicalCorrelation';
 
@@ -26,13 +23,10 @@ const parseStartInput = (input: unknown): { id: string } => {
   return { id: input.id };
 };
 const options = { definition, pluginManifests: [plugin] as const, responseHandlerBindings: bindings, parseStartInput, canonicalCommandTypes: [] };
-const bundlePath = resolve(__dirname, 'fixture-bundle.js');
-const expectedSha256 = createHash('sha256').update(readFileSync(bundlePath)).digest('hex');
-const authority = { resolveArtifact: () => ({ bundlePath, expectedSha256 }) };
 const origin = { sagaKey: definition.sagaKey, correlation: { type: 'string' as const, value: 'c' }, sourceId: 'e', routeId: 'r' };
 const metadata = { sagaId: deriveSagaInstanceId(origin.sagaKey, origin.correlation), correlationId: serializeSagaCorrelation(origin.correlation), causationId: origin.sourceId };
 const clock = '2026-09-25T10:00:00.000Z';
-const register = () => registerSagaDefinition(options, authority);
+const register = () => registerSagaDefinition(options);
 
 it('keeps an executable typed start closure and rejects bad trigger input before handler', async () => {
   const registration = register();
@@ -45,7 +39,7 @@ it('keeps an executable typed start closure and rejects bad trigger input before
 });
 
 it('rejects wrong, missing and duplicate executable metadata', () => {
-  const invalid = (changes: object) => () => registerSagaDefinition({ ...options, ...changes }, authority);
+  const invalid = (changes: object) => () => registerSagaDefinition({ ...options, ...changes });
   expect(invalid({ pluginManifests: [] })).toThrow();
   expect(invalid({ pluginManifests: [plugin, plugin] })).toThrow();
   expect(invalid({ pluginManifests: [{ ...plugin, plugin_key: 'other' }] })).toThrow();
@@ -66,7 +60,7 @@ it('rejects wrong, missing and duplicate executable metadata', () => {
 
 it('rejects non-plain initial state and invalid output before a decision escapes', async () => {
   for (const state of [[], new Date(), null, { n: Number.NaN }, { nested: new Map() }]) {
-    const registration = registerSagaDefinition({ ...options, definition: { ...definition, initialState: () => state } }, authority);
+    const registration = registerSagaDefinition({ ...options, definition: { ...definition, initialState: () => state } });
     await expect(registration.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toThrow();
   }
 });
@@ -77,47 +71,47 @@ it('joins exact active identity and version only, with no worker execution', () 
   const resolve = bindSagaRegistrations(table, [registration]);
   expect(() => bindSagaRegistrations(table, [])).toThrow();
   expect(() => bindSagaRegistrations(table, [registration, registration])).toThrow();
-  expect(() => bindSagaRegistrations(table, [registerSagaDefinition({ ...options, definition: { ...definition } }, authority)])).toThrow();
+  expect(() => bindSagaRegistrations(table, [registerSagaDefinition({ ...options, definition: { ...definition } })])).toThrow();
   expect(() => resolve({ kind: 'start', definition, sagaKey: definition.sagaKey, definitionVersion: 2 } as Parameters<typeof resolve>[0])).toThrow();
 });
 
-it('verifies deployed JS bytes against independent trusted digest and refuses second identity', () => {
-  expect(() => registerSagaDefinition(options, { resolveArtifact: () => ({ bundlePath, expectedSha256: '0'.repeat(64) }) })).toThrow('digest mismatch');
-  expect(() => registerSagaDefinition(options, { resolveArtifact: () => ({ bundlePath, expectedSha256: '' }) })).toThrow();
-  expect(() => registerSagaDefinition(options, { resolveArtifact: () => ({ bundlePath: '/missing/bundle.js', expectedSha256 }) })).toThrow();
-  const second = registerSagaDefinition({ ...options, definition: { ...definition, start: () => undefined } }, authority);
-  expect(second.executableIdentity.artifactSha256).toBe(expectedSha256);
-  expect(() => bindSagaRegistrations(compileSagaRoutes([definition]), [register(), second])).toThrow();
-  const changedArtifact = { resolveArtifact: () => ({ bundlePath, expectedSha256: '1'.repeat(64) }) };
-  expect(() => registerSagaDefinition(options, changedArtifact)).toThrow();
-  let trustedDigest = expectedSha256;
-  const movingAuthority = { resolveArtifact: () => ({ bundlePath, expectedSha256: trustedDigest }) };
-  const pinned = registerSagaDefinition(options, movingAuthority);
-  trustedDigest = '1'.repeat(64);
-  expect(() => pinned.assertCurrent()).toThrow('digest mismatch');
-  expect(() => bindSagaRegistrations(compileSagaRoutes([definition]), [{ ...register(), executableIdentity: { ...register().executableIdentity, artifactSha256: '0'.repeat(64) } }])).toThrow('Untrusted');
+it('cannot trust a fixture digest or infer callback equality from declarative identity', () => {
+  const second = registerSagaDefinition({ ...options, definition: { ...definition, start: () => undefined } });
+  expect(second.definitionIdentity).toEqual(register().definitionIdentity);
+  expect(() => bindSagaRegistrations(compileSagaRoutes([definition]), [second])).toThrow();
+  expect(() => bindSagaRegistrations(compileSagaRoutes([definition]), [{ ...register(), definitionIdentity: { ...register().definitionIdentity, policySha256: '0'.repeat(64) } }])).toThrow('Untrusted');
+  const traced = registerSagaDefinition({ ...options, releaseId: 'unverified-fixture-digest' });
+  expect(traced.definitionIdentity).toEqual(register().definitionIdentity);
+  expect(traced.releaseId).toBe('unverified-fixture-digest');
+  expect(register().releaseId).toBeUndefined();
+  expect(() => registerSagaDefinition({ ...options, releaseId: 'secret\nline' })).toThrow();
 });
 
 it('refuses mutable registered callbacks, triggers, builds and policy before executing', async () => {
   const changedStart = { ...definition };
-  const start = registerSagaDefinition({ ...options, definition: changedStart }, authority);
+  const start = registerSagaDefinition({ ...options, definition: changedStart });
   changedStart.start = () => undefined;
   await expect(start.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toThrow('changed');
 
   const changedTriggers = { ...definition, startContracts: { ...definition.startContracts, triggers: [...definition.startContracts.triggers] } };
-  const triggers = registerSagaDefinition({ ...options, definition: changedTriggers }, authority);
+  const triggers = registerSagaDefinition({ ...options, definition: changedTriggers });
   changedTriggers.startContracts.triggers.push({ kind: 'event', toStartInput: () => ({ id: 'bad' }) });
   await expect(triggers.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toThrow('changed');
 
   const manifest = { ...plugin, actions: { ...plugin.actions } };
-  const executable = registerSagaDefinition({ ...options, pluginManifests: [manifest] as const }, authority);
+  const executable = registerSagaDefinition({ ...options, pluginManifests: [manifest] as const });
   manifest.actions.ask = defineRequestResponse((_id: string) => ({ id: 'changed' }));
   await expect(executable.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toThrow('changed');
 
   const changedInitial = { ...definition };
-  const initial = registerSagaDefinition({ ...options, definition: changedInitial }, authority);
+  const initial = registerSagaDefinition({ ...options, definition: changedInitial });
   changedInitial.initialState = () => ({ count: 100, ids: [] });
   await expect(initial.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toThrow('changed');
+
+  const schema = { id: 'input', version: 1 };
+  const declared = registerSagaDefinition({ ...options, declaredSchemas: [schema] });
+  schema.version = 2;
+  expect(() => declared.assertCurrent()).toThrow('changed');
 });
 
 it('validates every emitted one-way, core timer and request wire intent before returning', async () => {
@@ -131,7 +125,7 @@ it('validates every emitted one-way, core timer and request wire intent before r
       ctx.actions.core.cancelSchedule('timer');
     }).correlateBy((input) => input.id).build();
   const emittedRegistration = registerSagaDefinition({ definition: emitted, pluginManifests: [output] as const,
-    responseHandlerBindings: {}, parseStartInput, canonicalCommandTypes: [] }, authority);
+    responseHandlerBindings: {}, parseStartInput, canonicalCommandTypes: [] });
   const emittedOrigin = { ...origin, sagaKey: emitted.sagaKey };
   const emittedMetadata = { ...metadata, sagaId: deriveSagaInstanceId(emittedOrigin.sagaKey, origin.correlation) };
   const wire = (await emittedRegistration.executeStart({ id: 'ok' }, emittedMetadata, emittedOrigin, clock)).intents;
@@ -159,7 +153,7 @@ it('rejects invalid emitted action, interaction, routing and non-JSON payload wi
       corrupt(handle);
       void state;
     } };
-    const registration = registerSagaDefinition({ ...options, definition: corrupted }, authority);
+    const registration = registerSagaDefinition({ ...options, definition: corrupted });
     await expect(registration.executeStart({ id: 'ok' }, metadata, origin, clock)).rejects.toBeInstanceOf(SagaStartDecisionError);
   }
   await expect(register().executeStart({ id: 'emit' }, { ...metadata, causationId: 'wrong' }, origin, clock)).rejects.toBeInstanceOf(SagaStartDecisionError);
@@ -178,11 +172,11 @@ it('allows only explicitly declared canonical core dispatch commands', async () 
   const opts = { definition: dispatching, pluginManifests: [] as const, responseHandlerBindings: {}, parseStartInput };
   const dispatchedOrigin = { ...origin, sagaKey: dispatching.sagaKey };
   const dispatchedMetadata = { ...metadata, sagaId: deriveSagaInstanceId(dispatchedOrigin.sagaKey, origin.correlation) };
-  const allowed = registerSagaDefinition({ ...opts, canonicalCommandTypes: ['order.issue.command'] }, authority);
+  const allowed = registerSagaDefinition({ ...opts, canonicalCommandTypes: ['order.issue.command'] });
   expect((await allowed.executeStart({ id: 'ok' }, dispatchedMetadata, dispatchedOrigin, clock)).intents[0]).toMatchObject({ kind: 'dispatch', command: 'order.issue.command' });
-  const denied = registerSagaDefinition({ ...opts, canonicalCommandTypes: [] }, authority);
+  const denied = registerSagaDefinition({ ...opts, canonicalCommandTypes: [] });
   await expect(denied.executeStart({ id: 'ok' }, dispatchedMetadata, dispatchedOrigin, clock)).rejects.toBeInstanceOf(SagaStartDecisionError);
-  expect(allowed.executableIdentity.policySha256).not.toBe(denied.executableIdentity.policySha256);
+  expect(allowed.definitionIdentity.policySha256).not.toBe(denied.definitionIdentity.policySha256);
 });
 
 it('does not expose an invalid one-way emission after a preceding valid action', async () => {
@@ -196,7 +190,7 @@ it('does not expose an invalid one-way emission after a preceding valid action',
       Object.defineProperty(invalid, 'execution_payload', { value: { invalid: () => undefined } });
     }).correlateBy((input) => input.id).build();
   const registration = registerSagaDefinition({ definition: saga, pluginManifests: [pluginOneWay] as const,
-    responseHandlerBindings: {}, parseStartInput, canonicalCommandTypes: [] }, authority);
+    responseHandlerBindings: {}, parseStartInput, canonicalCommandTypes: [] });
   const turn = { ...origin, sagaKey: saga.sagaKey };
   const meta = { ...metadata, sagaId: deriveSagaInstanceId(saga.sagaKey, origin.correlation) };
   await expect(registration.executeStart({ id: 'ok' }, meta, turn, clock)).rejects.toBeInstanceOf(SagaStartDecisionError);

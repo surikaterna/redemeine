@@ -3,15 +3,11 @@ import type { SagaDefinition, SagaIntentMetadata, SagaPluginManifestList, SagaRe
 import type { CompiledSagaRoutingTable, CompiledSagaStartRoute } from './contracts';
 import { validateInitialSagaState, validateSagaRegistration } from './registrationValidation';
 import { validateBusinessState } from '../businessStateValidation';
-import { sagaPolicyFingerprint, verifySagaArtifact, type SagaExecutableIdentity, type TrustedSagaArtifact } from './executableIdentity';
+import { sagaPolicyFingerprint, type DeclaredSchemaIdentity, type DefinitionIdentityV1 } from './executableIdentity';
 import { startWireRegistry, validateStartIntents, type StartTurnOrigin } from './startIntentValidation';
 import type { WireIntent } from '../intentWire';
 
 const issuedRegistrations = new WeakSet<object>();
-
-export interface SagaArtifactAuthority {
-  readonly resolveArtifact: (sagaKey: string, definitionVersion: number) => TrustedSagaArtifact;
-}
 
 export class SagaStartDecisionError extends Error {
   readonly code = 'invalid_start_intent';
@@ -25,7 +21,8 @@ export interface SagaRegistration<TState extends object = object> {
   readonly definition: object;
   readonly sagaKey: string;
   readonly definitionVersion: number;
-  readonly executableIdentity: SagaExecutableIdentity;
+  readonly definitionIdentity: DefinitionIdentityV1;
+  readonly releaseId?: string;
   readonly assertCurrent: () => void;
   readonly executeStart: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, turnClock: string) => Promise<{ state: TState; intents: readonly WireIntent[] }>;
 }
@@ -43,25 +40,23 @@ function captureReferences<TState, TPlugins extends SagaPluginManifestList, TBin
 
 function createExecutableGuard<TState, TPlugins extends SagaPluginManifestList, TBindings extends SagaResponseHandlerTokenBindings, TInput>(
   definition: SagaDefinition<TState, TPlugins, TBindings, TInput>, manifests: TPlugins,
-  bindings: TBindings, commands: readonly string[], authority: SagaArtifactAuthority
+  bindings: TBindings, commands: readonly string[], schemas: readonly DeclaredSchemaIdentity[]
 ) {
   const sagaKey = definition.sagaKey;
   const definitionVersion = definition.identity.version;
-  const artifactSha256 = verifySagaArtifact(authority.resolveArtifact(sagaKey, definitionVersion));
-  const policySha256 = sagaPolicyFingerprint(definition, manifests, bindings, commands);
-  const executableIdentity = Object.freeze({ sagaKey, definitionVersion, artifactSha256, policySha256 });
+  const policySha256 = sagaPolicyFingerprint(manifests, bindings, commands, schemas);
+  const definitionIdentity: DefinitionIdentityV1 = Object.freeze({ sagaKey, definitionVersion, policySha256 });
   const references = captureReferences(definition, manifests);
   const assertCurrent = () => {
     validateSagaRegistration(definition, manifests, bindings);
     const current = captureReferences(definition, manifests);
     if (definition.sagaKey !== sagaKey || definition.identity.version !== definitionVersion ||
-        sagaPolicyFingerprint(definition, manifests, bindings, commands) !== policySha256 ||
-        current.length !== references.length || current.some((value, index) => value !== references[index]) ||
-        verifySagaArtifact(authority.resolveArtifact(sagaKey, definitionVersion)) !== artifactSha256) {
-      throw new TypeError('Saga executable changed after registration');
+        sagaPolicyFingerprint(manifests, bindings, commands, schemas) !== policySha256 ||
+        current.length !== references.length || current.some((value, index) => value !== references[index])) {
+      throw new TypeError('Saga definition changed after registration');
     }
   };
-  return { executableIdentity, assertCurrent };
+  return { definitionIdentity, assertCurrent };
 }
 
 function makeStartExecutor<TState extends object, TInput, TPlugins extends SagaPluginManifestList, TBindings extends SagaResponseHandlerTokenBindings>(
@@ -112,21 +107,24 @@ export function registerSagaDefinition<
   readonly responseHandlerBindings: NoInfer<TBindings>;
   readonly parseStartInput: (input: unknown) => TStartInput;
   readonly canonicalCommandTypes: readonly string[];
-}, authority: SagaArtifactAuthority): SagaRegistration<TState> {
+  readonly declaredSchemas?: readonly DeclaredSchemaIdentity[];
+  readonly releaseId?: string;
+}): SagaRegistration<TState> {
   const { definition, pluginManifests, responseHandlerBindings, parseStartInput } = options;
   validateSagaRegistration(definition, pluginManifests, responseHandlerBindings);
   if (typeof parseStartInput !== 'function' || typeof definition.start !== 'function') throw new TypeError('Saga start decoder and handler required');
-  if (!authority || typeof authority.resolveArtifact !== 'function') throw new TypeError('Trusted saga artifact authority required');
   const sagaKey = definition.sagaKey;
   const definitionVersion = definition.identity.version;
   const commands = [...options.canonicalCommandTypes];
-  if (commands.some((command) => typeof command !== 'string' || !command) || new Set(commands).size !== commands.length) throw new TypeError('Invalid canonical command allowlist');
-  const { executableIdentity, assertCurrent } = createExecutableGuard(definition, pluginManifests, responseHandlerBindings, commands, authority);
+  const schemas = options.declaredSchemas ? [...options.declaredSchemas] : [];
+  if (options.releaseId !== undefined && (typeof options.releaseId !== 'string' || !options.releaseId || options.releaseId.length > 256 || [...options.releaseId].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) throw new TypeError('Invalid opaque release ID');
+  const { definitionIdentity, assertCurrent } = createExecutableGuard(definition, pluginManifests, responseHandlerBindings, commands, schemas);
   const registration: SagaRegistration<TState> = Object.freeze({
     definition,
     sagaKey,
     definitionVersion,
-    executableIdentity,
+    definitionIdentity,
+    ...(options.releaseId === undefined ? {} : { releaseId: options.releaseId }),
     assertCurrent,
     executeStart: makeStartExecutor(definition, parseStartInput, pluginManifests, responseHandlerBindings, commands, assertCurrent)
   });
