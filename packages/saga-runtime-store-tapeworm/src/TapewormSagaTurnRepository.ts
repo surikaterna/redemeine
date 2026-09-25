@@ -1,5 +1,6 @@
 import {
   assertEquivalentSagaCommit,
+  assertSagaTurnJsonSafe,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
   SagaTurnIntegrityError,
@@ -83,6 +84,7 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
   }
 
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
+    assertSagaTurnJsonSafe(request);
     const before = await this.readStream(request.streamId);
     const existing = findById(before.commits, request.commitId);
     if (existing) {

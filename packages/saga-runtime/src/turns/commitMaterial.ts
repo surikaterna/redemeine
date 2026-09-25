@@ -3,12 +3,22 @@ import { validateBusinessState } from '../businessStateValidation';
 import type { SagaTurnAppendRequest, SagaTurnStoredCommit } from './contracts';
 import { SagaTurnIntegrityError } from './errors';
 
+export function assertSagaTurnJsonSafe(value: unknown): void {
+  try {
+    validateBusinessState(value);
+  } catch (cause) {
+    throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Turn material is not bounded JSON-safe data', {}, cause);
+  }
+}
+
 export function assertEquivalentSagaCommit(
   stored: SagaTurnStoredCommit,
   request: SagaTurnAppendRequest,
   partitionId: string,
   firstEventVersion: number
 ): void {
+  // Inspect the original request before optional fields are omitted from the wire envelope.
+  assertSagaTurnJsonSafe(request);
   const expected = {
     partitionId,
     streamId: request.streamId,
@@ -24,12 +34,8 @@ export function assertEquivalentSagaCommit(
       ...(event.metadata === undefined ? {} : { metadata: event.metadata })
     }))
   };
-  try {
-    validateBusinessState(stored);
-    validateBusinessState(expected);
-  } catch (cause) {
-    throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Turn material is not bounded JSON-safe data', { commitId: request.commitId }, cause);
-  }
+  assertSagaTurnJsonSafe(stored);
+  assertSagaTurnJsonSafe(expected);
   if (!isDeepStrictEqual(stored, expected)) {
     throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Deterministic turn ID has incompatible stored content', {
       commitId: request.commitId,

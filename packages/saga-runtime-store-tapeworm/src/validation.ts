@@ -1,4 +1,4 @@
-import { SagaTurnIntegrityError, type SagaTurnIdentity, type SagaTurnStoredCommit } from '@redemeine/saga-runtime';
+import { assertSagaTurnJsonSafe, SagaTurnIntegrityError, type SagaTurnIdentity, type SagaTurnStoredCommit } from '@redemeine/saga-runtime';
 import type { ICommit } from 'tapeworm';
 import type { TapewormSagaEvent } from './contracts';
 
@@ -59,6 +59,8 @@ function commitFromUnknown(
   expectedSequence: number,
   firstEventVersion: number
 ): { readonly commit: ICommit<TapewormSagaEvent>; readonly events: readonly unknown[] } {
+  // Validate before projecting the wire shape: an own `undefined` or exotic prototype must not disappear.
+  assertSagaTurnJsonSafe(value);
   if (!isRecord(value)) throw invalid('Tapeworm commit must be an object');
   if (Object.keys(value).some((key) => !['id', 'partitionId', 'streamId', 'commitSequence', 'events', 'sagaTurnIdentity'].includes(key))) {
     throw invalid('Tapeworm commit has unsupported fields');

@@ -29,13 +29,16 @@ type AppendFailure = Error | { readonly error: Error; readonly afterWrite: boole
 class FakeTapewormPartition implements IPersistencePartition<TapewormSagaEvent> {
   readonly commits: ICommit<TapewormSagaEvent>[] = [];
   queryAllCalls = 0;
+  appendCalls = 0;
   appendFailure?: AppendFailure;
+  afterWrite?: (commit: ICommit<TapewormSagaEvent>) => ICommit<TapewormSagaEvent>;
 
   append(commit: ICommit<TapewormSagaEvent>, callback?: NodeCallback<ICommit<TapewormSagaEvent>>) {
+    this.appendCalls += 1;
     const failure = this.appendFailure;
     this.appendFailure = undefined;
     if (failure) {
-      if (!(failure instanceof Error) && failure.afterWrite) this.commits.push(commit);
+      if (!(failure instanceof Error) && failure.afterWrite) this.commits.push(this.afterWrite?.(commit) ?? commit);
       const error = failure instanceof Error ? failure : failure.error;
       return Bluebird.reject<ICommit<TapewormSagaEvent>>(error).nodeify(callback);
     }
@@ -137,12 +140,62 @@ describe('Tapeworm saga turn repository', () => {
     const target = repository(partition);
     const original = request();
     partition.appendFailure = { error: new Error('network timeout'), afterWrite: true };
-    const result = await target.append(original);
-    expect(result.status).toBe('reconciled');
-    const actual = partition.commits[0]!;
-    partition.commits[0] = { ...actual, events: actual.events.map((event, index) => index === 1 ? { ...event, payload: { state: { count: 2 } } } : event) };
+    partition.afterWrite = (commit) => ({
+      ...commit,
+      events: commit.events.map((event, index) => index === 1 ? { ...event, payload: { state: { count: 2 } } } : event)
+    });
     await expect(target.append(original)).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    expect(partition.appendCalls).toBe(1);
+    expect(partition.commits[0]?.events[1]?.payload).toEqual({ state: { count: 2 } });
     expect(partition.queryAllCalls).toBe(0);
+  });
+
+  it.each(['headers', 'metadata'] as const)('refuses own undefined %s in the expected event before append', async (field) => {
+    const partition = new FakeTapewormPartition();
+    const bad = request({ events: [{ ...request().events[0], [field]: undefined }, request().events[1]!] });
+    await expect(repository(partition).append(bad)).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    expect(partition.appendCalls).toBe(0);
+  });
+
+  it.each(['headers', 'metadata'] as const)('refuses own undefined %s in stored material before normalization', async (field) => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    await target.append(request());
+    const commit = partition.commits[0]!;
+    partition.commits[0] = { ...commit, events: commit.events.map((event, index) => index === 0 ? { ...event, [field]: undefined } : event) };
+    await expect(target.append(request({ expectedNextCommitSequence: 1 }))).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    expect(partition.appendCalls).toBe(1);
+  });
+
+  it.each(['headers', 'metadata'] as const)('distinguishes absent %s from a present empty object', async (field) => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    await target.append(request());
+    const present = request({
+      expectedNextCommitSequence: 1,
+      events: [{ ...request().events[0], [field]: {} }, request().events[1]!]
+    });
+    await expect(target.append(present)).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    const commit = partition.commits[0]!;
+    partition.commits[0] = { ...commit, events: commit.events.map((event, index) => index === 0 ? { ...event, [field]: {} } : event) };
+    await expect(target.append(request({ expectedNextCommitSequence: 1 }))).rejects.toMatchObject({ code: 'incompatible_turn_commit', retryable: false });
+    expect(partition.appendCalls).toBe(1);
+  });
+
+  it('rejects exotic stored and expected JSON prototypes before content comparison', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const payload = Object.setPrototypeOf({ id: 'saga-1' }, new Date());
+    await expect(target.append(request({ events: [{ type: 'saga.instance_created.event', payload }] }))).rejects.toMatchObject({
+      code: 'incompatible_turn_commit', retryable: false
+    });
+    await target.append(request());
+    const commit = partition.commits[0]!;
+    partition.commits[0] = { ...commit, events: commit.events.map((event, index) => index === 0 ? { ...event, payload } : event) };
+    await expect(target.append(request({ expectedNextCommitSequence: 1 }))).rejects.toMatchObject({
+      code: 'incompatible_turn_commit', retryable: false
+    });
+    expect(partition.appendCalls).toBe(1);
   });
 
   it('maps concurrency without expected-stream readback to conflict without queryAll', async () => {

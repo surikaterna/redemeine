@@ -6,3 +6,4 @@ export * from './processSagaTurn';
 export * from './routePlanning';
 export * from './sourceValidation';
 export { assertEquivalentSagaCommit } from './commitMaterial';
+export { assertSagaTurnJsonSafe } from './commitMaterial';
