@@ -1,13 +1,17 @@
 import type { Event } from '@redemeine/kernel';
 import { validateBusinessState } from '../businessStateValidation';
+import { assertSagaLifecycleState } from '../sagaAggregateContracts';
+import { SagaTurnIntegrityError } from './errors';
 import {
-  assertCanonicalSagaCorrelation,
-  serializeSagaCorrelation,
-  type SagaCanonicalCorrelation
-} from '../identity/canonicalCorrelation';
-import { assertSagaLifecycleState, type SagaLifecycleState } from '../sagaAggregateContracts';
-import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
-import { SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
+  assertKeys, canonicalCorrelation, invalid, optionalRecord, optionalSafeInteger,
+  optionalString, optionalTimestamp, requireRecord, requireSafeInteger,
+  requireString, requireTimestamp
+} from './storedEventFields';
+export {
+  assertStoredSagaCommitBoundary, assertStoredSagaReplayOrder,
+  createSagaStoredReplayContext, finalizeStoredSagaReplay
+} from './storedReplayOrder';
+export type { SagaStoredReplayContext } from './storedReplayOrder';
 
 export type SagaStoredEventKind =
   | 'instanceCreated'
@@ -24,72 +28,8 @@ export interface ValidatedStoredSagaEvent {
   readonly payload: Record<string, unknown>;
 }
 
-export interface SagaStoredReplayContext {
-  created: boolean;
-  authoritative: boolean;
-  pendingObservations: number;
-  lifecycleState: SagaLifecycleState | null;
-  lastKind: SagaStoredEventKind | null;
-  businessIdentity: string | null;
-  definitionIdentity: DefinitionIdentityV1 | null;
-}
-
 const intentStages = new Set(['created', 'scheduled', 'dispatched', 'acknowledged', 'failed', 'cancelled']);
 const activityStages = new Set(['started', 'succeeded', 'failed', 'timedOut', 'cancelled']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw invalid(`${label} must be an object`);
-  return value;
-}
-
-function invalid(message: string): SagaTurnIntegrityError {
-  return new SagaTurnIntegrityError('invalid_stored_event', message);
-}
-
-function assertKeys(record: Record<string, unknown>, required: readonly string[], optional: readonly string[], label: string): void {
-  const allowed = new Set([...required, ...optional]);
-  for (const key of required) {
-    if (!Object.hasOwn(record, key)) throw invalid(`${label}.${key} is required`);
-  }
-  for (const key of Object.keys(record)) {
-    if (!allowed.has(key)) throw invalid(`${label}.${key} is not supported`);
-  }
-}
-
-function requireString(record: Record<string, unknown>, key: string, label = key): string {
-  const value = record[key];
-  if (typeof value !== 'string' || value.length === 0) throw invalid(`${label} must be a non-empty string`);
-  return value;
-}
-
-function optionalString(record: Record<string, unknown>, key: string, label = key): void {
-  if (record[key] !== undefined) requireString(record, key, label);
-}
-
-function requireTimestamp(record: Record<string, unknown>, key: string, label = key): void {
-  if (Number.isNaN(new Date(requireString(record, key, label)).getTime())) throw invalid(`${label} must be a valid timestamp`);
-}
-
-function optionalTimestamp(record: Record<string, unknown>, key: string, label = key): void {
-  if (record[key] !== undefined) requireTimestamp(record, key, label);
-}
-
-function optionalRecord(record: Record<string, unknown>, key: string, label = key): void {
-  if (record[key] !== undefined) requireRecord(record[key], label);
-}
-
-function requireSafeInteger(value: unknown, label: string, minimum = 0): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) throw invalid(`${label} must be a safe integer >= ${minimum}`);
-  return value;
-}
-
-function optionalSafeInteger(record: Record<string, unknown>, key: string, label = key, minimum = 0): void {
-  if (record[key] !== undefined) requireSafeInteger(record[key], label, minimum);
-}
 
 function validateInstance(payload: Record<string, unknown>): void {
   assertKeys(payload, ['id', 'sagaType', 'lifecycleState', 'createdAt'], ['metadata'], 'instanceCreated');
@@ -185,17 +125,6 @@ function validateActivity(payload: Record<string, unknown>): void {
   optionalRecord(record, 'metadata', 'activity.metadata');
 }
 
-function canonicalCorrelation(value: unknown): SagaCanonicalCorrelation {
-  const correlation = requireRecord(value, 'businessStateRecorded.correlation');
-  assertKeys(correlation, ['type', 'value'], [], 'businessStateRecorded.correlation');
-  let canonical: SagaCanonicalCorrelation;
-  if (correlation.type === 'string' && typeof correlation.value === 'string') canonical = { type: 'string', value: correlation.value };
-  else if (correlation.type === 'number' && typeof correlation.value === 'number') canonical = { type: 'number', value: correlation.value };
-  else throw invalid('businessStateRecorded.correlation must be canonical');
-  assertCanonicalSagaCorrelation(canonical);
-  return canonical;
-}
-
 function validateBusiness(payload: Record<string, unknown>): void {
   assertKeys(payload, ['schemaVersion', 'sagaKey', 'definitionVersion', 'correlation', 'sourceTriggerId', 'state', 'recordedAt'], [], 'businessStateRecorded');
   if (payload.schemaVersion !== 1) throw invalid('businessStateRecorded.schemaVersion must be 1');
@@ -271,98 +200,4 @@ export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Rec
       ...(event.metadata === undefined ? {} : { metadata: requireRecord(event.metadata, 'stored event.metadata') })
     }
   };
-}
-
-export function createSagaStoredReplayContext(): SagaStoredReplayContext {
-  return {
-    created: false,
-    authoritative: false,
-    pendingObservations: 0,
-    lifecycleState: null,
-    lastKind: null,
-    businessIdentity: null,
-    definitionIdentity: null
-  };
-}
-
-function invalidReplay(message: string): SagaTurnPermanentError {
-  return new SagaTurnPermanentError('invalid_stored_event', message);
-}
-
-function assertTransitionOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
-  const record = requireRecord(payload.record, 'stateTransitioned.record');
-  const from = record.fromState;
-  const to = record.toState;
-  assertSagaLifecycleState(from);
-  assertSagaLifecycleState(to);
-  if (context.lifecycleState !== from || from === to || from === 'completed' || from === 'failed' || from === 'cancelled') {
-    throw invalidReplay('Stored lifecycle transition violates aggregate invariants');
-  }
-  context.lifecycleState = to;
-}
-
-function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<string, unknown>): void {
-  if (context.lastKind !== 'sourceEventObserved' || context.pendingObservations !== 1) {
-    throw invalidReplay('Each authoritative business state must pair with exactly one preceding source observation');
-  }
-  if (!context.definitionIdentity || context.definitionIdentity.sagaKey !== payload.sagaKey ||
-    context.definitionIdentity.definitionVersion !== payload.definitionVersion) {
-    throw invalidReplay('Business state disagrees with recorded definition identity');
-  }
-  const identity = JSON.stringify([
-    requireString(payload, 'sagaKey'),
-    requireSafeInteger(payload.definitionVersion, 'definitionVersion', 1),
-    serializeSagaCorrelation(canonicalCorrelation(payload.correlation))
-  ]);
-  if (context.businessIdentity !== null && context.businessIdentity !== identity) {
-    throw invalidReplay('Stored business state identity changes within one saga stream');
-  }
-  context.businessIdentity = identity;
-  context.authoritative = true;
-  context.pendingObservations = 0;
-}
-
-export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent): void {
-  if (stored.kind === 'instanceCreated') {
-    if (context.created || context.lastKind !== null) throw invalidReplay('Saga stream contains multiple instance creation events');
-    context.created = true;
-    const lifecycle = stored.payload.lifecycleState;
-    assertSagaLifecycleState(lifecycle);
-    context.lifecycleState = lifecycle;
-  } else if (!context.created) {
-    throw invalidReplay('Saga stream event appears before instance creation');
-  } else if (stored.kind === 'definitionIdentityRecorded') {
-    if (context.lastKind !== 'instanceCreated' || context.definitionIdentity) throw invalidReplay('Definition identity must occur exactly once immediately after creation');
-    context.definitionIdentity = {
-      sagaKey: requireString(stored.payload, 'sagaKey'),
-      definitionVersion: requireSafeInteger(stored.payload.definitionVersion, 'definitionVersion', 1),
-      policySha256: requireString(stored.payload, 'policySha256')
-    };
-  } else if (!context.definitionIdentity) {
-    throw invalidReplay('Saga stream lacks definition identity before its first turn');
-  } else if (stored.kind === 'sourceEventObserved') {
-    context.pendingObservations += 1;
-    if (context.authoritative && context.pendingObservations > 1) {
-      throw invalidReplay('A new source observation cannot begin before the prior authoritative turn records business state');
-    }
-  } else if (stored.kind === 'stateTransitioned') {
-    assertTransitionOrder(context, stored.payload);
-  } else if (stored.kind === 'businessStateRecorded') {
-    assertBusinessOrder(context, stored.payload);
-  }
-  context.lastKind = stored.kind;
-}
-
-export function finalizeStoredSagaReplay(context: SagaStoredReplayContext): void {
-  if (context.created && (!context.definitionIdentity || !context.authoritative)) {
-    throw invalidReplay('Saga stream has no complete identity-bearing initial turn');
-  }
-  assertStoredSagaCommitBoundary(context);
-}
-
-export function assertStoredSagaCommitBoundary(context: SagaStoredReplayContext): void {
-  // One physical turn owns both its observation and authoritative business state.
-  if (context.authoritative && context.pendingObservations !== 0) {
-    throw invalidReplay('Physical saga commit ends with a source observation that has no business state');
-  }
 }
