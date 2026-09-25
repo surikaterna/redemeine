@@ -1,123 +1,188 @@
 import { describe, expect, it } from '@jest/globals';
-import { BSON, MongoClient, ObjectId, UUID } from 'mongodb';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { BSON, type Collection, type Db, MongoClient, ObjectId, UUID } from 'mongodb';
 import { openMongoSagaTurnRepository } from '../src/TapewormSagaTurnRepository';
 
 const uri = process.env.REDEMEINE_MONGO_URL;
 const intentType = 'saga.intent_recorded.event';
-const pageBytes = 12 * 1024 * 1024;
+const indexName = 'vpwm_type_id';
+const maxBytes = 12 * 1024 * 1024;
+const firstId = new ObjectId('000000000000000000000000');
+type Receipt = Record<string, unknown>;
 
-function stages(plan: unknown): string[] {
-  const found: string[] = [];
-  function visit(value: unknown): void {
-    if (!value || typeof value !== 'object') return;
-    for (const [key, child] of Object.entries(value)) {
-      if (key === 'stage' && typeof child === 'string') found.push(child);
-      else visit(child);
-    }
-  }
-  visit(plan);
-  return found;
+function makeCommit(id: string, oid: ObjectId, types: string[], blob = '') {
+  return {
+    _id: oid, token: new UUID('00000000-0000-0000-0000-000000000000'),
+    isDispatched: false, createDateTime: new Date(), id, partitionId: 'sagas',
+    streamId: id, commitSequence: 0,
+    sagaTurnIdentity: { sourceTriggerId: id, sagaKey: 'orders', instanceId: id, routeId: 'route' },
+    events: types.map((type, index) => ({ id: `${id}:event:${index}`, type, version: index,
+      payload: type === intentType ? { schemaVersion: 1, intent: { intentId: `${id}:${index}`, blob } } : {} }))
+  };
 }
 
-(uri ? describe : describe.skip)('PRECODE ONLY: saga intent source index and delayed insertion', () => {
-  it('demonstrates bounded index pages but not static scan fencing', async () => {
+function planStages(value: unknown): string[] {
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, child]) =>
+    key === 'stage' && typeof child === 'string' ? [child] : planStages(child));
+}
+
+async function explainPlans(commits: Collection, receipt: Receipt): Promise<void> {
+  const filter = { 'events.type': intentType, _id: { $gt: firstId } };
+  const base = () => commits.find(filter).sort({ _id: 1 }).limit(64).batchSize(1);
+  const plans = { normal: await base().explain('executionStats'), hinted: await base().hint(indexName).explain('executionStats') };
+  receipt.plans = Object.fromEntries(Object.entries(plans).map(([name, plan]) => [name, {
+    winningPlan: plan.queryPlanner.winningPlan,
+    stages: planStages(plan.queryPlanner.winningPlan),
+    keysExamined: plan.executionStats.totalKeysExamined,
+    docsExamined: plan.executionStats.totalDocsExamined,
+    returned: plan.executionStats.nReturned
+  }]));
+  for (const plan of Object.values(plans)) {
+    const stages = planStages(plan.queryPlanner.winningPlan);
+    expect(stages).toContain('IXSCAN');
+    expect(stages).not.toContain('COLLSCAN');
+    expect(stages).not.toContain('SORT');
+    expect(plan.executionStats.nReturned).toBe(64);
+  }
+}
+
+async function page(commits: Collection, after: ObjectId) {
+  const cursor = commits.find({ 'events.type': intentType, _id: { $gt: after } })
+    .sort({ _id: 1 }).hint(indexName).limit(64).batchSize(1);
+  const ids: string[] = [];
+  const intentIds: string[] = [];
+  let bytes = 0;
+  let last = after;
+  try {
+    for await (const row of cursor) {
+      const size = BSON.calculateObjectSize(row);
+      if (size > maxBytes) throw new Error(`Oversized one-row commit ${row.id}: ${size} bytes`);
+      if (bytes + size > maxBytes) break;
+      bytes += size;
+      ids.push(row.id as string);
+      for (const event of row.events as { type: string; payload: { intent: { intentId: string } } }[]) {
+        if (event.type === intentType) intentIds.push(event.payload.intent.intentId);
+      }
+      last = row._id as ObjectId;
+    }
+  } finally { await cursor.close(); }
+  expect(ids.length).toBeLessThanOrEqual(64);
+  expect(bytes).toBeLessThanOrEqual(maxBytes);
+  return { ids, intentIds, bytes, last };
+}
+
+async function populate(db: Db, receipt: Receipt): Promise<Collection> {
+  await openMongoSagaTurnRepository(db, 'sagas');
+  const commits = db.collection('tw_sagas_commits');
+  await commits.createIndex({ 'events.type': 1, _id: 1 }, { name: indexName });
+  receipt.indexes = await commits.listIndexes().toArray();
+  const seed = Array.from({ length: 640 }, (_, n) => makeCommit(`seed-${n}`, new ObjectId(),
+    n % 8 === 0 ? [intentType, intentType, 'saga.business_state_recorded.event'] : ['saga.business_state_recorded.event']));
+  await commits.insertMany(seed);
+  receipt.seed = { total: seed.length, intentCommits: 80, intents: 160 };
+  return commits;
+}
+
+async function delayedWriter(commits: Collection, receipt: Receipt): Promise<ObjectId> {
+  const order: string[] = [];
+  receipt.order = order;
+  const low = new ObjectId();
+  order.push(`A allocated ${low.toHexString()}; held BEFORE insertOne`);
+  const high = new ObjectId();
+  expect(low.toHexString() < high.toHexString()).toBe(true);
+  await commits.insertOne(makeCommit('B', high, [intentType]));
+  order.push(`B inserted ${high.toHexString()}`);
+  const scanned: string[] = [];
+  const intents: string[] = [];
+  const pages: { count: number; bytes: number }[] = [];
+  let after = firstId;
+  let bytes = 0;
+  while (!after.equals(high)) {
+    const next = await page(commits, after);
+    expect(next.ids.length).toBeGreaterThan(0);
+    scanned.push(...next.ids);
+    intents.push(...next.intentIds);
+    pages.push({ count: next.ids.length, bytes: next.bytes });
+    bytes += next.bytes;
+    after = next.last;
+  }
+  expect(scanned).toHaveLength(81);
+  expect(intents).toHaveLength(161);
+  expect(pages.map(({ count }) => count)).toEqual([64, 17]);
+  order.push(`scan passed B; commits=${scanned.length}; bytes=${bytes}`);
+  const inserted = await commits.insertOne(makeCommit('A', low, [intentType]));
+  order.push(`A insertOne acknowledged=${inserted.acknowledged}`);
+  const future = await page(commits, high);
+  order.push(`subsequent _id>B returns ${future.ids.length} commits`);
+  receipt.race = { low: low.toHexString(), high: high.toHexString(), inserted: inserted.acknowledged,
+    present: (await commits.findOne({ id: 'A' }))?._id?.equals(low), scanned, intents,
+    pages, scannedBytes: bytes, futureIds: future.ids, futureBytes: future.bytes };
+  expect(inserted.acknowledged).toBe(true);
+  expect((receipt.race as { present: boolean }).present).toBe(true);
+  expect(future.ids).not.toContain('A');
+  expect(future.ids).toHaveLength(0);
+  return high;
+}
+
+async function oversizedRow(commits: Collection, after: ObjectId, receipt: Receipt): Promise<void> {
+  const row = makeCommit('oversized', new ObjectId(), [intentType], 'x'.repeat(maxBytes));
+  const size = BSON.calculateObjectSize(row);
+  expect(size).toBeGreaterThan(maxBytes);
+  expect(size).toBeLessThan(16 * 1024 * 1024);
+  await commits.insertOne(row);
+  await expect(page(commits, after)).rejects.toThrow(`Oversized one-row commit ${row.id}`);
+  receipt.oversized = { id: row.id, bsonBytes: size, after: after.toHexString(), refused: true };
+}
+
+function scriptIdentity(): Receipt {
+  const cwd = process.cwd();
+  const path = resolve(cwd, cwd.endsWith('saga-runtime-store-tapeworm')
+    ? 'integration/precode-intent-discovery.integration.test.ts'
+    : 'packages/saga-runtime-store-tapeworm/integration/precode-intent-discovery.integration.test.ts');
+  return { codeHead: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+    script: path, scriptSha256: createHash('sha256').update(readFileSync(path)).digest('hex') };
+}
+
+async function cleanup(db: Db, client: MongoClient, receipt: Receipt): Promise<void> {
+  let failure: unknown;
+  try {
+    await db.dropDatabase();
+    receipt.cleanup = { dropped: db.databaseName,
+      absent: !(await db.admin().listDatabases({ nameOnly: true })).databases.some((entry) => entry.name === db.databaseName) };
+    if (!(receipt.cleanup as { absent: boolean }).absent) throw new Error(`Database ${db.databaseName} remains after drop`);
+  } catch (error) {
+    receipt.cleanup = { error: String(error) };
+    failure = error;
+  } finally {
+    await client.close();
+    console.info(`VPWM_PRECODE_RECEIPT=${JSON.stringify(receipt)}`);
+  }
+  if (failure) throw failure;
+}
+
+(uri ? describe : describe.skip)('PRECODE ONLY: indexed intents and delayed insert, no effects', () => {
+  it('records compound index explain, bounded pages and static keyset omission', async () => {
     const client = new MongoClient(uri!);
     const db = client.db(`vpwm_precode_${Date.now()}_${process.pid}`);
-    const order: string[] = [];
-    const receipt: Record<string, unknown> = { head: '865a610a6e6e1ff31291b9a1ec786a3181bafa06', database: db.databaseName };
+    const receipt: Receipt = { ...scriptIdentity(), database: db.databaseName };
     try {
       await client.connect();
       receipt.version = (await db.admin().serverInfo()).version;
       receipt.replicaSet = (await db.admin().command({ replSetGetStatus: 1 })).set;
-      await openMongoSagaTurnRepository(db, 'sagas');
-      const commits = db.collection('tw_sagas_commits');
-      await commits.createIndex({ _id: 1 }, { name: 'vpwm_intent_id', partialFilterExpression: { 'events.type': intentType } });
-      receipt.indexes = await commits.listIndexes().toArray();
-      const uuid = new UUID('00000000-0000-0000-0000-000000000000');
-      const make = (id: string, oid: ObjectId, types: string[]) => ({
-        _id: oid, token: uuid, isDispatched: false, createDateTime: new Date(),
-        id, partitionId: 'sagas', streamId: id, commitSequence: 0,
-        sagaTurnIdentity: { sourceTriggerId: id, sagaKey: 'orders', instanceId: id, routeId: 'route' },
-        events: types.map((type, index) => ({ id: `${id}:event:${index}`, type, version: index,
-          payload: type === intentType ? { schemaVersion: 1, intent: { intentId: `${id}:${index}` } } : {} }))
-      });
-      const seed = Array.from({ length: 160 }, (_, n) => make(`seed-${n}`, new ObjectId(),
-        n % 8 === 0 ? [intentType, intentType, 'saga.business_state_recorded.event'] : ['saga.business_state_recorded.event']));
-      await commits.insertMany(seed);
-      order.push('seed inserted');
-      const filter = { 'events.type': intentType, _id: { $gt: new ObjectId('000000000000000000000000') } };
-      const query = () => commits.find(filter).sort({ _id: 1 }).hint('vpwm_intent_id').limit(64).batchSize(1);
-      const plan = await query().explain('executionStats');
-      receipt.explain = { winningPlan: plan.queryPlanner.winningPlan, executionStats: plan.executionStats,
-        stages: stages(plan.queryPlanner.winningPlan) };
-      expect(receipt.explain).toEqual(expect.objectContaining({ stages: expect.arrayContaining(['IXSCAN']) }));
-      expect(stages(plan.queryPlanner.winningPlan)).not.toContain('COLLSCAN');
-      expect(stages(plan.queryPlanner.winningPlan)).not.toContain('SORT');
-      const rows = [];
-      for await (const row of query()) rows.push(row);
-      receipt.sample = { rows: rows.length, bytes: rows.reduce((sum, row) => sum + BSON.calculateObjectSize(row), 0),
-        intents: rows.flatMap((row) => (row.events as { type: string }[]).filter((event) => event.type === intentType)).length,
-        keysExamined: plan.executionStats.totalKeysExamined, docsExamined: plan.executionStats.totalDocsExamined };
-      expect(rows).toHaveLength(20);
-      expect((receipt.sample as { bytes: number }).bytes).toBeLessThan(pageBytes);
-      expect((receipt.sample as { intents: number }).intents).toBe(40);
-
-      const low = new ObjectId(); // driver-assigned _id exists before insertOne is attempted
-      order.push(`A assigned ${low.toHexString()}, paused before insertOne`);
-      const anchor = (await db.command({ ping: 1 })).operationTime;
-      const stream = commits.watch([], { startAtOperationTime: anchor, maxAwaitTimeMS: 1000 });
-      try {
-        const high = new ObjectId();
-        expect(low.toHexString() < high.toHexString()).toBe(true);
-        await commits.insertOne(make('B', high, [intentType]));
-        order.push(`B inserted ${high.toHexString()}`);
-        const passed = await commits.find({ 'events.type': intentType, _id: { $gt: new ObjectId('000000000000000000000000') } })
-          .sort({ _id: 1 }).hint('vpwm_intent_id').batchSize(1);
-        let last: ObjectId | undefined;
-        let count = 0;
-        let bytes = 0;
-        try {
-          for await (const row of passed) {
-            const size = BSON.calculateObjectSize(row);
-            expect(size).toBeLessThanOrEqual(pageBytes);
-            if (count === 64 || bytes + size > pageBytes) break;
-            bytes += size;
-            count++;
-            last = row._id as ObjectId;
-            if (last.equals(high)) break;
-          }
-        } finally { await passed.close(); }
-        expect(last?.equals(high)).toBe(true);
-        order.push(`scan passed B; rows=${count}, bytes=${bytes}`);
-        const inserted = await commits.insertOne(make('A', low, [intentType]));
-        order.push(`A insertOne acknowledged ${inserted.acknowledged}`);
-        const future = [];
-        for await (const row of commits.find({ 'events.type': intentType, _id: { $gt: high } })
-          .sort({ _id: 1 }).hint('vpwm_intent_id').limit(64).batchSize(1)) future.push(row);
-        order.push(`future keyset rows=${future.length}`);
-        const seen = new Set<string>();
-        for (let n = 0; n < 4 && !seen.has('A'); n++) {
-          const change = await stream.tryNext();
-          if (change?.operationType === 'insert') seen.add(change.fullDocument.id as string);
-        }
-        order.push(`anchored change stream inserts=${[...seen].join(',')}`);
-        receipt.race = { low: low.toHexString(), high: high.toHexString(), scannedRows: count, scannedBytes: bytes,
-          inserted: inserted.acknowledged, futureIds: future.map((row) => row.id), streamIds: [...seen] };
-        expect(inserted.acknowledged).toBe(true);
-        expect(future.some((row) => row.id === 'A')).toBe(false);
-        expect(seen.has('A')).toBe(true);
-      } finally { await stream.close(); }
-      receipt.result = 'NO_GO_STATIC_SCAN';
+      const commits = await populate(db, receipt);
+      await explainPlans(commits, receipt);
+      const high = await delayedWriter(commits, receipt);
+      await oversizedRow(commits, high, receipt);
+      receipt.result = 'NO_GO_STATIC_KEYSET_WITH_UNFENCED_INSERT';
+    } catch (error) {
+      receipt.failure = String(error);
+      throw error;
     } finally {
-      receipt.order = order;
-      try {
-        await db.dropDatabase();
-        receipt.cleanup = { dropped: db.databaseName,
-          absent: !(await db.admin().listDatabases({ nameOnly: true })).databases.some((entry) => entry.name === db.databaseName) };
-      } finally {
-        await client.close();
-        console.info(`VPWM_PRECODE_RECEIPT=${JSON.stringify(receipt)}`);
-      }
+      await cleanup(db, client, receipt);
     }
   }, 60_000);
 });
