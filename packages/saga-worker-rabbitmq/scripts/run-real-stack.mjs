@@ -194,9 +194,9 @@ async function runTests() {
       '--outputFile',
       jestResultPath,
       '--runTestsByPath',
-       identitySlice
-         ? 'packages/saga-worker-rabbitmq/integration/saga-identity-real.integration.test.ts'
-         : 'packages/saga-worker-rabbitmq/integration/saga-real-stack.integration.test.ts'
+      identitySlice
+        ? 'packages/saga-worker-rabbitmq/integration/saga-identity-real.integration.test.ts'
+        : 'packages/saga-worker-rabbitmq/integration/saga-real-stack.integration.test.ts'
     ],
     { cwd: root, env, allowFailure: true }
   );
@@ -262,9 +262,9 @@ try {
     receiptPath,
     `${JSON.stringify(
       {
-         issue: identitySlice ? 'redemeine-371j.1' : 'redemeine-wrdf',
-         codeHead,
-         scenarioSha256,
+        issue: identitySlice ? 'redemeine-371j.1' : 'redemeine-wrdf',
+        codeHead,
+        scenarioSha256,
         invocation,
         firstFullInvocation: invocation === 'first',
         runId,
