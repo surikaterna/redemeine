@@ -169,18 +169,18 @@ describe('indexed Mongo saga complete-commit reader', () => {
 
   it('refuses oversized first commits and resumes when the next complete commit exceeds remaining page bytes', async () => {
     const mongo = new FakeCollection();
-    const large = (sequence: number) => ({ ...row(sequence), events: Array.from({ length: 14 }, (_, position) => ({
-      id: `commit-${sequence}:event:${position}`, type: 'saga.instance_created.event', version: sequence * 14 + position,
-      payload: { text: 'a'.repeat(60000) }
+    const large = (sequence: number) => ({ ...row(sequence), events: Array.from({ length: 1 }, (_, position) => ({
+      id: `commit-${sequence}:event:${position}`, type: 'saga.instance_created.event', version: sequence + position,
+      payload: { text: 'a'.repeat(7 * 1024 * 1024) }
     })) });
     mongo.rows = [large(0), large(1)];
-    expect(BSON.calculateObjectSize(mongo.rows[0])).toBeLessThan(1024 * 1024);
+    expect(BSON.calculateObjectSize(mongo.rows[0])).toBeLessThan(12 * 1024 * 1024);
     const reader = mongo.reader();
     const first = await reader.page(stream, -1, 1);
     expect(first.commits).toHaveLength(1);
     expect(first.afterSequence).toBe(0);
     expect((await reader.page(stream, first.afterSequence, 1)).commits).toHaveLength(1);
-    mongo.rows = [row(0, { text: 'x'.repeat(1024 * 1024) })];
+    mongo.rows = [row(0, { text: 'x'.repeat(12 * 1024 * 1024) })];
     await expect(reader.page(stream, -1, 0)).rejects.toThrow('byte limit');
   });
 });

@@ -49,10 +49,10 @@ describe('bounded saga prefix replay', () => {
     if (!group) throw new Error('missing route');
     const resolved = resolveSagaTurnRouteGroup(group, source, event);
     const inflated = { ...first.events[2]!, payload: { record: { eventType: source.type,
-      observedAt: source.createDateTime, payload: { content: 'x'.repeat(60_000) } } } };
-    await expect(foldSagaTurn({ streamId: id, nextCommitSequence: 22, commits: (async function* () {
+      observedAt: source.createDateTime, payload: { content: 'x'.repeat(350_000) } } } };
+    await expect(foldSagaTurn({ streamId: id, nextCommitSequence: 42, commits: (async function* () {
       yield first;
-      for (let sequence = 1; sequence < 22; sequence += 1) {
+      for (let sequence = 1; sequence < 42; sequence += 1) {
         yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
           events: [inflated, first.events[3]!].map((stored, offset) => ({ ...stored, version: 4 + (sequence - 1) * 2 + offset })) };
       }

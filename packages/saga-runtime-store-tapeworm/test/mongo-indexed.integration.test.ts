@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { type ICommit } from 'tapeworm';
-import { MongoClient, ObjectId, UUID } from 'mongodb';
+import { BSON, MongoClient, ObjectId, UUID } from 'mongodb';
 import { IndexedSagaCommitReader } from '../src/IndexedSagaCommitReader';
 import { openMongoSagaTurnRepository } from '../src/TapewormSagaTurnRepository';
 import type { TapewormSagaEvent } from '../src/contracts';
@@ -41,13 +41,23 @@ const uri = process.env.REDEMEINE_MONGO_URL;
       expect((await reader.page('instance', -1, 0)).commits.map(({ commitSequence }) => commitSequence)).toEqual([0]);
       expect((await reader.page('instance', 0, 0)).commits).toEqual([]);
       expect(await reader.capture('empty')).toBe(-1);
+      const largeState = { blob: 'x'.repeat(1_500_000) };
+      const large = { streamId: 'large', commitId: 'large-0', expectedNextCommitSequence: 0,
+        identity: { ...identity, instanceId: 'large' },
+        events: [{ type: 'saga.business_state_recorded.event', payload: { state: largeState } }] };
+      expect((await repository.append(large)).status).toBe('committed');
+      const persistedLarge = await collection.findOne({ id: 'large-0' });
+      expect(BSON.calculateObjectSize(persistedLarge!)).toBeGreaterThan(1_500_000);
+      expect(BSON.calculateObjectSize(persistedLarge!)).toBeLessThan(12 * 1024 * 1024);
+      expect((await reader.page('large', -1, 0)).commits).toHaveLength(1);
+      expect((await repository.append(large)).status).toBe('reconciled');
       await expect(repository.append({ ...request, commitId: 'oversized', expectedNextCommitSequence: 1,
-        events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(70_000) } }] }))
+         events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(10 * 1024 * 1024) } }] }))
         .rejects.toThrow('byte limit');
       await collection.insertOne({ _id: new ObjectId(), token: new UUID('00000000-0000-0000-0000-000000000000'),
         isDispatched: false, createDateTime: new Date(), id: 'legacy', partitionId: 'sagas', streamId: 'legacy',
         commitSequence: 0, sagaTurnIdentity: identity,
-        events: [{ id: 'legacy:event:0', type: 'saga.instance_created.event', version: 0, payload: { text: 'y'.repeat(70_000) } }] });
+         events: [{ id: 'legacy:event:0', type: 'saga.instance_created.event', version: 0, payload: { text: 'y'.repeat(12 * 1024 * 1024) } }] });
       await expect(repository.load('legacy')).rejects.toThrow('byte limit');
       await collection.insertOne({ _id: new ObjectId(), token: new UUID('00000000-0000-0000-0000-000000000000'),
         isDispatched: false, createDateTime: new Date(), id: 'gap', partitionId: 'sagas', streamId: 'gap',

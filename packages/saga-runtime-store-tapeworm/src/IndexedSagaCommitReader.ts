@@ -5,10 +5,11 @@ import type { TapewormSagaEvent } from './contracts';
 import { storedCommitFromTapeworm, validateTapewormCommit } from './validation';
 
 export const SAGA_PAGE_COMMITS = 64;
-export const SAGA_PAGE_BYTES = 1024 * 1024;
-export const SAGA_EVENT_BYTES = 64 * 1024;
+export const SAGA_PAGE_BYTES = 12 * 1024 * 1024;
+export const SAGA_EVENT_BYTES = 10 * 1024 * 1024;
 export const SAGA_COMMIT_EVENTS = 256;
-export const SAGA_COMMIT_BYTES = 1024 * 1024;
+// Four MiB below Mongo's BSON limit, including the actual persisted Tapeworm envelope.
+export const SAGA_COMMIT_BYTES = 12 * 1024 * 1024;
 export const SAGA_INSTANCE_COMMITS = 1_000_000;
 export const SAGA_INSTANCE_BYTES = 1024 * 1024 * 1024;
 

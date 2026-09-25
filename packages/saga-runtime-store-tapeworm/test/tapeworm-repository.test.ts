@@ -111,8 +111,32 @@ describe('Tapeworm saga turn repository', () => {
     const target = repository(partition);
     await expect(target.append(request({ events: Array.from({ length: 257 }, () => request().events[0]!) })))
       .rejects.toThrow('event count');
-    await expect(target.append(request({ events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(70_000) } }] })))
+    await expect(target.append(request({ events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(10 * 1024 * 1024) } }] })))
       .rejects.toThrow('byte limit');
+    expect(partition.appendCalls).toBe(0);
+  });
+
+  it('persists and replays one complete 1.5 MiB business-state event', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const state = { blob: 'x'.repeat(1_500_000) };
+    const initial = request({ events: [{ type: 'saga.business_state_recorded.event', payload: { state } }] });
+    expect(await target.append(initial)).toMatchObject({ status: 'committed' });
+    const snapshot = await target.load('saga-1');
+    const rows = [];
+    for await (const commit of snapshot.commits) rows.push(commit);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.events[0]?.payload).toEqual({ state });
+    expect(await target.append(initial)).toMatchObject({ status: 'reconciled' });
+    expect(partition.appendCalls).toBe(1);
+  });
+
+  it('refuses a physical commit over 12 MiB even when each JSON-safe event is under its limit', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    const events = ['a', 'b'].map((character) => ({ type: 'saga.business_state_recorded.event',
+      payload: { state: { blob: character.repeat(7 * 1024 * 1024) } } }));
+    await expect(target.append(request({ events }))).rejects.toThrow('complete commit exceeds');
     expect(partition.appendCalls).toBe(0);
   });
 

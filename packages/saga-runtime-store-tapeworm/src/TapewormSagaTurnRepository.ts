@@ -12,7 +12,7 @@ import { ConcurrencyError, DuplicateCommitError, type ICommit, type IPersistence
 import { BSON, type Db, ObjectId, UUID } from 'mongodb';
 import MongoPersistence from 'tapeworm_persistence_store_mongodb';
 import type { CreateTapewormSagaTurnRepositoryOptions, TapewormSagaEvent } from './contracts';
-import { assertSagaCommitBudget, IndexedSagaCommitReader, SAGA_COMMIT_EVENTS, SAGA_INSTANCE_BYTES, SAGA_INSTANCE_COMMITS } from './IndexedSagaCommitReader';
+import { assertSagaCommitBudget, IndexedSagaCommitReader, SAGA_COMMIT_EVENTS, SAGA_EVENT_BYTES, SAGA_INSTANCE_BYTES, SAGA_INSTANCE_COMMITS } from './IndexedSagaCommitReader';
 import { storedCommitFromTapeworm, validateTapewormCommit } from './validation';
 
 function assertOptions(options: CreateTapewormSagaTurnRepositoryOptions): void {
@@ -96,7 +96,7 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
       throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event count exceeds complete-commit limit');
     }
     for (const event of request.events) {
-      if (BSON.calculateObjectSize(event) > 64 * 1024) {
+      if (BSON.calculateObjectSize(event) > SAGA_EVENT_BYTES) {
         throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event exceeds BSON byte limit');
       }
     }

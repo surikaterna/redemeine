@@ -239,7 +239,8 @@ function isEventType(value: string): value is `${string}.event` {
 
 export function validateStoredSagaEvent(value: unknown, eventTypes: Readonly<Record<string, string>>): ValidatedStoredSagaEvent {
   try {
-    validateBusinessState(value);
+    // The complete stored envelope has an independent budget above its 8 MiB business state.
+    validateBusinessState(value, { maxBytes: 12 * 1024 * 1024 });
   } catch (error) {
     throw new SagaTurnIntegrityError('invalid_stored_event', 'Stored saga event must be JSON-safe', {}, error);
   }

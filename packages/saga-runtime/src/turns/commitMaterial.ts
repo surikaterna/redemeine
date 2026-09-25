@@ -3,9 +3,10 @@ import { validateBusinessState } from '../businessStateValidation';
 import type { SagaTurnAppendRequest, SagaTurnStoredCommit } from './contracts';
 import { SagaTurnIntegrityError } from './errors';
 
+// Complete turn material may contain an 8 MiB business state plus envelope/observation.
 export function assertSagaTurnJsonSafe(value: unknown): void {
   try {
-    validateBusinessState(value);
+    validateBusinessState(value, { maxBytes: 24 * 1024 * 1024 });
   } catch (cause) {
     throw new SagaTurnIntegrityError('incompatible_turn_commit', 'Turn material is not bounded JSON-safe data', {}, cause);
   }

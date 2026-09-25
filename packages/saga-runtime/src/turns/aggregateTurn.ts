@@ -1,7 +1,7 @@
 import type { Event } from '@redemeine/kernel';
 import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
-import { validateBusinessState } from '../businessStateValidation';
+import { BusinessStateValidationError, DEFAULT_BUSINESS_STATE_MAX_BYTES, validateBusinessState } from '../businessStateValidation';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
 import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
@@ -21,14 +21,28 @@ export interface HydratedSagaTurn {
   readonly definitionIdentity: DefinitionIdentityV1 | null;
 }
 
-// Aggregate memory budget is independent of the reader's 1 GiB on-disk instance budget.
-export const SAGA_REPLAY_STATE_BYTES = 1024 * 1024;
+// Recent windows are bounded independently from the existing 8 MiB business-state contract.
+export const SAGA_REPLAY_WINDOW_BYTES = 12 * 1024 * 1024;
 
-function assertStateBudget(state: SagaAggregateState): void {
+function retainedState(state: SagaAggregateState) {
+  return { recent: state.recent, totals: state.totals,
+    id: state.id, sagaType: state.sagaType, sagaKey: state.sagaKey ?? null,
+    createdAt: state.createdAt, updatedAt: state.updatedAt, lifecycleState: state.lifecycleState,
+    transitionVersion: state.transitionVersion };
+}
+
+function assertStateBudget(state: SagaAggregateState, generated = false): void {
   try {
-    validateBusinessState(state, { maxBytes: SAGA_REPLAY_STATE_BYTES });
+    const retained = retainedState(state);
+    if (generated) {
+      // Aggregate.apply wraps some previously validated records in readonly proxies.
+      const text = JSON.stringify(retained);
+      if (typeof text !== 'string' || Buffer.byteLength(text) > SAGA_REPLAY_WINDOW_BYTES) throw new RangeError('Retained saga window exceeds byte limit');
+    } else {
+      validateBusinessState(retained, { maxBytes: SAGA_REPLAY_WINDOW_BYTES });
+    }
   } catch (cause) {
-    throw new SagaTurnPermanentError('saga_state_too_large', 'Saga aggregate state exceeds the bounded JSON-safe replay budget', {}, cause);
+    throw new SagaTurnPermanentError('saga_state_too_large', 'Saga business state or retained window exceeds its JSON-safe replay budget', {}, cause);
   }
 }
 
@@ -69,7 +83,7 @@ export class SagaTurnReplaySession {
   get nextCommitSequence(): number { return this.sequence; }
   get nextEventVersion(): number { return this.version; }
 
-  // Only copy a validated <=1 MiB state, before consuming the one target commit.
+  // Only copy a validated bounded state, before consuming the one target commit.
   prefix(): HydratedSagaTurn {
     assertStateBudget(this.state);
     return { aggregate: this.aggregate, state: structuredClone(this.state), definitionIdentity: this.replay.definitionIdentity };
@@ -175,6 +189,7 @@ function appendCommand(aggregate: SagaAggregate, current: SagaAggregateState, pe
   for (const event of events) {
     const stableEvent = { ...event, id: deriveSagaTurnEnvelopeId(identity, sourceTime, pending.length, 'event') };
     next = aggregate.apply(next, stableEvent);
+    assertStateBudget(next, true);
     pending.push(stableEvent);
   }
   return next;
@@ -198,6 +213,14 @@ function observationPayload(source: SagaTurnSourceEvent) {
 function statePayload(state: unknown, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent) {
   const version = resolved.onRoute?.definitionVersion ?? resolved.startRoute?.definitionVersion;
   if (version === undefined) throw new SagaTurnPermanentError('missing_route', 'Cannot record state without a selected route');
+  try {
+    validateBusinessState(state, { maxBytes: DEFAULT_BUSINESS_STATE_MAX_BYTES });
+  } catch (cause) {
+    if (cause instanceof BusinessStateValidationError && cause.code === 'business_state_too_large') {
+      throw new SagaTurnPermanentError('saga_state_too_large', 'New saga business state exceeds its JSON-safe budget', {}, cause);
+    }
+    throw new SagaTurnPermanentError('state_validation_failed', 'New saga business state is not JSON-safe', {}, cause);
+  }
   return {
     schemaVersion: 1 as const,
     sagaKey: resolved.sagaKey,
