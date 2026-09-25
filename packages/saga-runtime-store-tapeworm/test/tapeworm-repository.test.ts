@@ -106,6 +106,16 @@ describe('Tapeworm saga turn repository', () => {
     expect(partition.commits[1]?.events[0]?.version).toBe(2);
   });
 
+  it('refuses oversized append event counts and bytes before any read or write', async () => {
+    const partition = new FakeTapewormPartition();
+    const target = repository(partition);
+    await expect(target.append(request({ events: Array.from({ length: 257 }, () => request().events[0]!) })))
+      .rejects.toThrow('event count');
+    await expect(target.append(request({ events: [{ type: 'saga.instance_created.event', payload: { text: 'x'.repeat(70_000) } }] })))
+      .rejects.toThrow('byte limit');
+    expect(partition.appendCalls).toBe(0);
+  });
+
   it('reconciles an equivalent duplicate through expected-stream readback without queryAll', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);

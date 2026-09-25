@@ -85,8 +85,7 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
   }
 
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
-    assertSagaTurnJsonSafe(request);
-    if (request.events.length === 0 || request.events.length > SAGA_COMMIT_EVENTS) {
+    if (!Array.isArray(request.events) || request.events.length === 0 || request.events.length > SAGA_COMMIT_EVENTS) {
       throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event count exceeds complete-commit limit');
     }
     for (const event of request.events) {
@@ -94,6 +93,7 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
         throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event exceeds BSON byte limit');
       }
     }
+    assertSagaTurnJsonSafe(request);
     const before = await this.readBeforeAppend(request.streamId, request.commitId);
     const existing = before.existing;
     if (existing) {
