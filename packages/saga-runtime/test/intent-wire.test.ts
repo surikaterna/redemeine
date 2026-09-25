@@ -3,6 +3,8 @@ import { deriveSagaInstanceId } from '../src/identity/deterministicIds';
 import { serializeSagaCorrelation } from '../src/identity/canonicalCorrelation';
 import type { SagaPluginIntent } from '@redemeine/saga';
 import type { WireRegistryEntry } from '../src/intentWire';
+import { createAggregate } from '@redemeine/aggregate';
+import { createSagaCommandsFor } from '@redemeine/saga';
 
 const origin: WireOrigin = { sagaKey: 'orders', correlation: { type: 'string', value: 'o1' }, sourceId: 'source-1', routeId: 'route-1', ordinal: 0 };
 const meta = { sagaId: deriveSagaInstanceId(origin.sagaKey, origin.correlation), correlationId: serializeSagaCorrelation(origin.correlation), causationId: origin.sourceId };
@@ -48,6 +50,22 @@ describe('private saga wire v1', () => {
     expect(parseIntent(encodeIntent(cancel, registry), registry)).toEqual(cancel);
     expect(() => createWireIntent(origin, meta, { kind: 'schedule', timerId: 't1', dueAt: 'tomorrow' }, registry)).toThrow();
     expect(() => validateIntentBatch([schedule, schedule], registry)).toThrow('duplicate');
+  });
+
+  it('normalizes creator envelopes from built aggregates with identical local keys', () => {
+    const invoice = createAggregate<{ id: string }, 'invoice'>('invoice', { id: 'a1' })
+      .commands(() => ({ pay: (_state, id: string) => ({ type: 'ignored', payload: { id } }) })).build();
+    const billing = createAggregate<{ id: string }, 'billing'>('billing', { id: 'a1' })
+      .commands(() => ({ pay: (_state, id: string) => ({ type: 'ignored', payload: { id } }) }))
+      .overrideCommandNames({ pay: 'billing.charge.command' }).build();
+    const invoiceIntent = createSagaCommandsFor(invoice, 'a1', meta).pay('a1');
+    const billingIntent = createSagaCommandsFor(billing, 'a1', meta).pay('a1');
+    const first = normalizePluginIntent(invoiceIntent, origin, registry);
+    const second = normalizePluginIntent(billingIntent, { ...origin, ordinal: 1 }, registry);
+    expect(first).toMatchObject({ kind: 'dispatch', command: 'invoice.pay.command' });
+    expect(second).toMatchObject({ kind: 'dispatch', command: 'billing.charge.command' });
+    expect(parseIntent(encodeIntent(first, registry), registry)).toEqual(first);
+    expect(parseIntent(encodeIntent(second, registry), registry)).toEqual(second);
   });
 
   it('rejects unknown versions, missing provenance, unsafe JSON, depth and size', () => {
