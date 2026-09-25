@@ -41,7 +41,7 @@ export interface SagaTurnStoredEvent {
 export interface SagaTurnStreamSnapshot {
   readonly streamId: string;
   readonly nextCommitSequence: number;
-  readonly events: readonly unknown[];
+  readonly commits: AsyncIterable<SagaTurnStoredCommit>;
 }
 
 export interface SagaTurnAppendRequest {

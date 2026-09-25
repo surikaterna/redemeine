@@ -2,13 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import { type SagaTurnAppendRequest, SagaTurnIntegrityError } from '@redemeine/saga-runtime';
 import Bluebird from 'bluebird';
 import { ConcurrencyError, DuplicateCommitError, type ICommit, type IPersistencePartition, type NodeCallback } from 'tapeworm';
-import { createTapewormSagaTurnRepository, type TapewormPartitionReadiness, type TapewormSagaEvent } from '../src/index';
-
-const readiness: TapewormPartitionReadiness = {
-  partitionOpened: true,
-  uniqueCommitIdIndexReady: true,
-  uniqueStreamSequenceIndexReady: true
-};
+import { createTapewormSagaTurnRepository, type TapewormSagaEvent } from '../src/index';
+import { assertSagaCommitBudget, type SagaCommitReader } from '../src/IndexedSagaCommitReader';
 
 function request(overrides: Partial<SagaTurnAppendRequest> = {}): SagaTurnAppendRequest {
   return {
@@ -66,14 +61,27 @@ class FakeTapewormPartition implements IPersistencePartition<TapewormSagaEvent> 
 }
 
 function repository(partition: FakeTapewormPartition) {
-  return createTapewormSagaTurnRepository({ partition, partitionId: 'sagas', readiness });
+  const reader: SagaCommitReader = {
+    capture: async (streamId) => partition.commits.filter((row) => row.streamId === streamId)
+      .reduce((high, row) => Math.max(high, row.commitSequence), -1),
+    page: async (streamId, afterSequence, highWatermark) => {
+      const commits = partition.commits.filter((row) => row.streamId === streamId
+        && row.commitSequence > afterSequence && row.commitSequence <= highWatermark)
+        .sort((a, b) => a.commitSequence - b.commitSequence).slice(0, 64);
+      for (const row of commits) assertSagaCommitBudget(row);
+      return { commits, afterSequence: commits.at(-1)?.commitSequence ?? afterSequence, highWatermark };
+    }
+  };
+  return createTapewormSagaTurnRepository({ partition, partitionId: 'sagas', reader });
 }
 
 describe('Tapeworm saga turn repository', () => {
-  it('uses actual queryStream/append contracts and starts commit and event sequences at zero', async () => {
+  it('uses indexed pages/append contracts and starts commit and event sequences at zero', async () => {
     const partition = new FakeTapewormPartition();
     const target = repository(partition);
-    expect(await target.load('saga-1')).toEqual({ streamId: 'saga-1', nextCommitSequence: 0, events: [] });
+    const empty = await target.load('saga-1');
+    expect(empty.nextCommitSequence).toBe(0);
+    for await (const _commit of empty.commits) throw new Error('empty saga has commits');
     expect(await target.append(request())).toEqual({ status: 'committed', commitSequence: 0 });
     expect(partition.commits).toHaveLength(1);
     expect(partition.commits[0]).toMatchObject({ id: 'turn-1', partitionId: 'sagas', streamId: 'saga-1', commitSequence: 0 });
@@ -83,7 +91,9 @@ describe('Tapeworm saga turn repository', () => {
     ]);
     const loaded = await target.load('saga-1');
     expect(loaded.nextCommitSequence).toBe(1);
-    expect(loaded.events).toHaveLength(2);
+    const rows = [];
+    for await (const commit of loaded.commits) rows.push(commit);
+    expect(rows[0]?.events).toHaveLength(2);
     expect(partition.queryAllCalls).toBe(0);
   });
 
@@ -261,6 +271,7 @@ describe('Tapeworm saga turn repository', () => {
       commitSequence: 1,
       events: [{ id: 'bad:event:0', type: 'saga.instance_created.event', version: 0, payload: {} }]
     });
-    await expect(repository(partition).load('saga-1')).rejects.toBeInstanceOf(SagaTurnIntegrityError);
+    const snapshot = await repository(partition).load('saga-1');
+    await expect((async () => { for await (const _commit of snapshot.commits) { /* read all */ } })()).rejects.toBeInstanceOf(SagaTurnIntegrityError);
   });
 });

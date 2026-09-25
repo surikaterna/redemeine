@@ -306,9 +306,15 @@ importers:
       '@redemeine/saga-runtime':
         specifier: workspace:*
         version: link:../saga-runtime
+      mongodb:
+        specifier: 6.18.0
+        version: 6.18.0
       tapeworm:
         specifier: 0.6.0
         version: 0.6.0
+      tapeworm_persistence_store_mongodb:
+        specifier: 3.1.0
+        version: 3.1.0
     devDependencies:
       '@types/bluebird':
         specifier: 3.5.42

@@ -2,13 +2,6 @@ import { assertSagaTurnJsonSafe, SagaTurnIntegrityError, type SagaTurnIdentity, 
 import type { ICommit } from 'tapeworm';
 import type { TapewormSagaEvent } from './contracts';
 
-export interface ValidatedTapewormStream {
-  readonly commits: readonly ICommit<TapewormSagaEvent>[];
-  readonly events: readonly unknown[];
-  readonly nextCommitSequence: number;
-  readonly nextEventVersion: number;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -52,18 +45,20 @@ function eventFromUnknown(value: unknown, expectedVersion: number): { readonly s
   return { stored, tapeworm: { ...stored, version: expectedVersion } };
 }
 
-function commitFromUnknown(
+export function validateTapewormCommit(
   value: unknown,
   partitionId: string,
   streamId: string,
   expectedSequence: number,
   firstEventVersion: number
 ): { readonly commit: ICommit<TapewormSagaEvent>; readonly events: readonly unknown[] } {
-  // Validate before projecting the wire shape: an own `undefined` or exotic prototype must not disappear.
-  assertSagaTurnJsonSafe(value);
   if (!isRecord(value)) throw invalid('Tapeworm commit must be an object');
-  if (Object.keys(value).some((key) => !['id', 'partitionId', 'streamId', 'commitSequence', 'events', 'sagaTurnIdentity'].includes(key))) {
+  const allowed = ['id', 'partitionId', 'streamId', 'commitSequence', 'events', 'sagaTurnIdentity', '_id', 'token', 'isDispatched', 'createDateTime'];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) {
     throw invalid('Tapeworm commit has unsupported fields');
+  }
+  for (const key of ['id', 'partitionId', 'streamId', 'commitSequence', 'events', 'sagaTurnIdentity']) {
+    if (Object.hasOwn(value, key)) assertSagaTurnJsonSafe(value[key]);
   }
   requireString(value, 'id', 'Tapeworm commit id');
   if (value.partitionId !== partitionId) throw invalid('Tapeworm commit partitionId does not match configured partition');
@@ -83,21 +78,6 @@ function commitFromUnknown(
     ...(value.sagaTurnIdentity === undefined ? {} : { sagaTurnIdentity: value.sagaTurnIdentity })
   };
   return { commit, events: validatedEvents.map(({ stored }) => stored) };
-}
-
-export function validateTapewormStream(value: unknown, partitionId: string, streamId: string): ValidatedTapewormStream {
-  if (value === undefined || value === null) return { commits: [], events: [], nextCommitSequence: 0, nextEventVersion: 0 };
-  if (!Array.isArray(value)) throw invalid('Tapeworm queryStream result must be an array');
-  const commits: ICommit<TapewormSagaEvent>[] = [];
-  const events: unknown[] = [];
-  let eventVersion = 0;
-  for (let sequence = 0; sequence < value.length; sequence += 1) {
-    const validated = commitFromUnknown(value[sequence], partitionId, streamId, sequence, eventVersion);
-    commits.push(validated.commit);
-    events.push(...validated.events);
-    eventVersion += validated.events.length;
-  }
-  return { commits, events, nextCommitSequence: commits.length, nextEventVersion: eventVersion };
 }
 
 function identityFromUnknown(value: unknown): SagaTurnIdentity {

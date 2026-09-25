@@ -115,7 +115,7 @@ async function processAttempt(repository: SagaTurnRepository, resolved: Resolved
   const existing = await findExistingCommit(repository, resolved);
   if (existing) return existing;
   const snapshot = await repository.load(resolved.instanceId);
-  const hydrated = hydrateSagaTurn(snapshot, resolved.instanceId);
+  const hydrated = await hydrateSagaTurn(snapshot, resolved.instanceId);
   const exists = hydrated.state.id !== null;
   const route = selectRoute(resolved, exists);
   if (!route) {

@@ -2,12 +2,13 @@ import type { Event } from '@redemeine/kernel';
 import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
-import type { ResolvedSagaTurnRouteGroup, SagaTurnSourceEvent, SagaTurnStreamSnapshot } from './contracts';
+import type { ResolvedSagaTurnRouteGroup, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
 import {
   assertStoredSagaReplayOrder,
   createSagaStoredReplayContext,
   finalizeStoredSagaReplay,
+  type SagaStoredReplayContext,
   validateStoredSagaEvent
 } from './storedEventValidation';
 
@@ -21,32 +22,61 @@ function requireEventTypes(aggregate: SagaAggregate): Readonly<Record<string, st
   return aggregate.types.events;
 }
 
-export function hydrateSagaTurn(snapshot: SagaTurnStreamSnapshot, instanceId: string): HydratedSagaTurn {
-  if (snapshot.streamId !== instanceId) throw new SagaTurnIntegrityError('stream_identity_mismatch', 'Loaded stream does not match saga instance');
-  if (!Number.isSafeInteger(snapshot.nextCommitSequence) || snapshot.nextCommitSequence < 0) {
-    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Loaded next commit sequence must be a non-negative safe integer');
-  }
-  const aggregate = createSagaAggregate();
-  const eventTypes = requireEventTypes(aggregate);
-  const replay = createSagaStoredReplayContext();
-  let state = aggregate.initialState;
-  for (const stored of snapshot.events) {
-    const validated = validateStoredSagaEvent(stored, eventTypes);
+function replayCommitEvents(commit: SagaTurnStoredCommit, count: number, version: number, state: SagaAggregateState,
+  aggregate: SagaAggregate, replay: SagaStoredReplayContext, eventTypes: Readonly<Record<string, string>>): SagaAggregateState {
+  for (let position = 0; position < count; position += 1) {
+    const stored = commit.events[position]!;
+    if (stored.version !== version + position) throw new SagaTurnIntegrityError('invalid_event_version', 'Saga event versions must be contiguous');
+    const { version: _version, ...event } = stored;
+    const validated = validateStoredSagaEvent(event, eventTypes);
     assertStoredSagaReplayOrder(replay, validated);
     try {
       state = aggregate.apply(state, validated.event);
     } catch (error) {
       if (error instanceof SagaTurnError) throw error;
-      throw new SagaTurnIntegrityError(
-        'stored_event_projection_failed',
-        `Stored saga event ${validated.event.type} could not be projected`,
-        {},
-        error
-      );
+      throw new SagaTurnIntegrityError('stored_event_projection_failed', `Stored saga event ${validated.event.type} could not be projected`, {}, error);
     }
   }
-  finalizeStoredSagaReplay(replay);
-  if (snapshot.events.length > 0 && state.id === null) {
+  return state;
+}
+
+export async function hydrateSagaTurn(
+  snapshot: SagaTurnStreamSnapshot,
+  instanceId: string,
+  prefix?: { readonly commitSequence: number; readonly eventOffset: number }
+): Promise<HydratedSagaTurn> {
+  if (snapshot.streamId !== instanceId) throw new SagaTurnIntegrityError('stream_identity_mismatch', 'Loaded stream does not match saga instance');
+  if (!Number.isSafeInteger(snapshot.nextCommitSequence) || snapshot.nextCommitSequence < 0) {
+    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Loaded next commit sequence must be a non-negative safe integer');
+  }
+  if (prefix && (!Number.isSafeInteger(prefix.commitSequence) || prefix.commitSequence < 0
+    || prefix.commitSequence >= snapshot.nextCommitSequence || !Number.isSafeInteger(prefix.eventOffset) || prefix.eventOffset < 0)) {
+    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Original saga prefix boundary is invalid');
+  }
+  const aggregate = createSagaAggregate();
+  const eventTypes = requireEventTypes(aggregate);
+  const replay = createSagaStoredReplayContext();
+  let state: SagaAggregateState = aggregate.initialState;
+  let sequence = 0;
+  let version = 0;
+  for await (const commit of snapshot.commits) {
+    if (commit.streamId !== instanceId || commit.commitSequence !== sequence || commit.events.length === 0 || commit.events.length > 256) {
+      throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Loaded saga commits must be complete and contiguous');
+    }
+    if (prefix && sequence === prefix.commitSequence && prefix.eventOffset > commit.events.length) {
+      throw new SagaTurnIntegrityError('invalid_event_version', 'Original saga event offset is outside the complete commit');
+    }
+    const through = prefix && sequence === prefix.commitSequence ? prefix.eventOffset : commit.events.length;
+    state = replayCommitEvents(commit, through, version, state, aggregate, replay, eventTypes);
+    version += through;
+    sequence += 1;
+    if (prefix && commit.commitSequence === prefix.commitSequence) break;
+  }
+  if (sequence !== (prefix ? prefix.commitSequence + 1 : snapshot.nextCommitSequence)) {
+    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Captured saga history is incomplete');
+  }
+  if (!prefix) finalizeStoredSagaReplay(replay);
+  if (!prefix && sequence > 0 && state.id === null) {
     throw new SagaTurnIntegrityError('missing_instance_event', 'Stored saga stream has events but no created instance');
   }
   return { aggregate, state };

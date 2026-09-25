@@ -8,16 +8,15 @@ import {
   type SagaTurnStoredCommit,
   type SagaTurnStreamSnapshot
 } from '@redemeine/saga-runtime';
-import { ConcurrencyError, DuplicateCommitError, type ICommit } from 'tapeworm';
+import { ConcurrencyError, DuplicateCommitError, type ICommit, type IPersistencePartition } from 'tapeworm';
+import { BSON, type Db, ObjectId, UUID } from 'mongodb';
+import MongoPersistence from 'tapeworm_persistence_store_mongodb';
 import type { CreateTapewormSagaTurnRepositoryOptions, TapewormSagaEvent } from './contracts';
-import { storedCommitFromTapeworm, validateTapewormStream } from './validation';
+import { assertSagaCommitBudget, IndexedSagaCommitReader, SAGA_COMMIT_EVENTS, SAGA_INSTANCE_BYTES, SAGA_INSTANCE_COMMITS } from './IndexedSagaCommitReader';
+import { storedCommitFromTapeworm, validateTapewormCommit } from './validation';
 
 function assertOptions(options: CreateTapewormSagaTurnRepositoryOptions): void {
   if (options.partitionId.length === 0) throw new TypeError('partitionId must not be empty');
-  const readiness = options.readiness;
-  if (!readiness.partitionOpened || !readiness.uniqueCommitIdIndexReady || !readiness.uniqueStreamSequenceIndexReady) {
-    throw new TypeError('Tapeworm partition and required unique indexes must be ready before repository construction');
-  }
 }
 
 function tapewormEventId(commitId: string, position: number): string {
@@ -40,10 +39,6 @@ function buildCommit(request: SagaTurnAppendRequest, partitionId: string, firstE
       ...(event.metadata === undefined ? {} : { metadata: event.metadata })
     }))
   };
-}
-
-function findById(commits: readonly ICommit<TapewormSagaEvent>[], commitId: string): ICommit<TapewormSagaEvent> | null {
-  return commits.find(({ id }) => id === commitId) ?? null;
 }
 
 function incompatibleCommit(request: SagaTurnAppendRequest, actualIdentity?: SagaTurnStoredCommit['identity'], cause?: unknown): SagaTurnIntegrityError {
@@ -69,31 +64,52 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
   }
 
   async load(instanceId: string): Promise<SagaTurnStreamSnapshot> {
-    const stream = await this.readStream(instanceId);
+    const high = await this.options.reader.capture(instanceId);
     return {
       streamId: instanceId,
-      nextCommitSequence: stream.nextCommitSequence,
-      events: stream.events
+      nextCommitSequence: high + 1,
+      commits: this.scan(instanceId, high)
     };
   }
 
   async findCommit(streamId: string, commitId: string): Promise<SagaTurnStoredCommit | null> {
-    const stream = await this.readStream(streamId);
-    const commit = findById(stream.commits, commitId);
-    return commit ? storedCommitFromTapeworm(commit) : null;
+    const high = await this.options.reader.capture(streamId);
+    let found: SagaTurnStoredCommit | null = null;
+    for await (const commit of this.scan(streamId, high)) {
+      if (commit.commitId === commitId) {
+        if (found) throw new SagaTurnIntegrityError('duplicate_turn_commits', 'Duplicate saga commit ID within stream');
+        found = commit;
+      }
+    }
+    return found;
   }
 
   async append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
     assertSagaTurnJsonSafe(request);
-    const before = await this.readStream(request.streamId);
-    const existing = findById(before.commits, request.commitId);
+    if (request.events.length === 0 || request.events.length > SAGA_COMMIT_EVENTS) {
+      throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event count exceeds complete-commit limit');
+    }
+    for (const event of request.events) {
+      if (BSON.calculateObjectSize(event) > 64 * 1024) {
+        throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga append event exceeds BSON byte limit');
+      }
+    }
+    const before = await this.readBeforeAppend(request.streamId, request.commitId);
+    const existing = before.existing;
     if (existing) {
-      const stored = storedCommitFromTapeworm(existing);
-      assertEquivalentSagaCommit(stored, request, this.options.partitionId, this.firstEventVersion(before.commits, stored.commitSequence));
-      return { status: 'reconciled', commit: stored };
+      assertEquivalentSagaCommit(existing, request, this.options.partitionId, existing.events[0]!.version);
+      return { status: 'reconciled', commit: existing };
     }
     if (before.nextCommitSequence !== request.expectedNextCommitSequence) return { status: 'conflict' };
+    if (before.nextCommitSequence >= SAGA_INSTANCE_COMMITS) {
+      throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance commit budget exceeded');
+    }
     const commit = buildCommit(request, this.options.partitionId, before.nextEventVersion);
+    const commitBytes = assertSagaCommitBudget({ ...commit, _id: new ObjectId(),
+      token: new UUID('00000000-0000-0000-0000-000000000000'), isDispatched: false, createDateTime: new Date() });
+    if (before.totalBytes + commitBytes > SAGA_INSTANCE_BYTES) {
+      throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance byte budget exceeded');
+    }
     try {
       const appended = await this.options.partition.append(commit);
       return { status: 'committed', commitSequence: appended.commitSequence };
@@ -102,28 +118,54 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
     }
   }
 
-  private async readStream(streamId: string) {
-    const commits: unknown = await this.options.partition.queryStream(streamId);
-    return validateTapewormStream(commits, this.options.partitionId, streamId);
+  private async *scan(streamId: string, high: number, usage?: { bytes: number }): AsyncGenerator<SagaTurnStoredCommit> {
+    let after = -1;
+    let version = 0;
+    let totalBytes = 0;
+    if (high >= SAGA_INSTANCE_COMMITS) throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance commit budget exceeded');
+    while (after < high) {
+      const page = await this.options.reader.page(streamId, after, high);
+      if (page.afterSequence <= after || page.highWatermark !== high || page.commits.length > 64) {
+        throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga indexed reader made no bounded progress');
+      }
+      for (const row of page.commits) {
+        totalBytes += assertSagaCommitBudget(row, Object.hasOwn(row, '_id'));
+        if (totalBytes > SAGA_INSTANCE_BYTES) throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance byte budget exceeded');
+        if (usage) usage.bytes = totalBytes;
+        const validated = validateTapewormCommit(row, this.options.partitionId, streamId, ++after, version);
+        version += validated.events.length;
+        yield storedCommitFromTapeworm(validated.commit);
+      }
+      if (page.afterSequence !== after) throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Invalid page continuation');
+    }
   }
 
-  private firstEventVersion(commits: readonly ICommit<TapewormSagaEvent>[], sequence: number): number {
-    return commits.slice(0, sequence).reduce((total, commit) => total + commit.events.length, 0);
+  private async readBeforeAppend(streamId: string, commitId: string) {
+    const high = await this.options.reader.capture(streamId);
+    if (high >= SAGA_INSTANCE_COMMITS) throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga instance commit budget exceeded');
+    let nextEventVersion = 0;
+    const usage = { bytes: 0 };
+    let existing: SagaTurnStoredCommit | null = null;
+    for await (const commit of this.scan(streamId, high, usage)) {
+      if (commit.commitId === commitId) existing = commit;
+      nextEventVersion += commit.events.length;
+      if (!Number.isSafeInteger(nextEventVersion)) throw new SagaTurnIntegrityError('invalid_tapeworm_stream', 'Saga event version overflow');
+    }
+    return { nextCommitSequence: high + 1, nextEventVersion, totalBytes: usage.bytes, existing };
   }
 
   private async reconcileAppendFailure(error: unknown, request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult> {
-    let readback: Awaited<ReturnType<TapewormSagaTurnRepository['readStream']>>;
+    let readback: Awaited<ReturnType<TapewormSagaTurnRepository['readBeforeAppend']>>;
     try {
-      readback = await this.readStream(request.streamId);
+      readback = await this.readBeforeAppend(request.streamId, request.commitId);
     } catch (readbackError) {
       if (readbackError instanceof SagaTurnIntegrityError) throw readbackError;
       throw error;
     }
-    const expectedStreamCommit = findById(readback.commits, request.commitId);
+    const expectedStreamCommit = readback.existing;
     if (expectedStreamCommit) {
-      const stored = storedCommitFromTapeworm(expectedStreamCommit);
-      assertEquivalentSagaCommit(stored, request, this.options.partitionId, this.firstEventVersion(readback.commits, stored.commitSequence));
-      return { status: 'reconciled', commit: stored };
+      assertEquivalentSagaCommit(expectedStreamCommit, request, this.options.partitionId, expectedStreamCommit.events[0]!.version);
+      return { status: 'reconciled', commit: expectedStreamCommit };
     }
     if (error instanceof ConcurrencyError) return { status: 'conflict' };
     if (error instanceof DuplicateCommitError) throw incompatibleCommit(request, undefined, error);
@@ -133,4 +175,13 @@ export class TapewormSagaTurnRepository implements SagaTurnRepository {
 
 export function createTapewormSagaTurnRepository(options: CreateTapewormSagaTurnRepositoryOptions): TapewormSagaTurnRepository {
   return new TapewormSagaTurnRepository(options);
+}
+
+export async function openMongoSagaTurnRepository(db: Db, partitionId: string): Promise<TapewormSagaTurnRepository> {
+  if (!partitionId) throw new TypeError('Saga partition ID is required');
+  const provider = new MongoPersistence(db);
+  const partition = await provider.openPartition(partitionId);
+  const reader = new IndexedSagaCommitReader(db.collection<ICommit<TapewormSagaEvent>>(`tw_${partitionId}_commits`), partitionId);
+  await reader.capture('__saga_index_readiness__');
+  return new TapewormSagaTurnRepository({ partition: partition as unknown as IPersistencePartition<TapewormSagaEvent>, partitionId, reader });
 }

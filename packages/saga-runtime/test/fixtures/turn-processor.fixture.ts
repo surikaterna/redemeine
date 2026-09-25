@@ -171,10 +171,22 @@ export class FakeTurnRepository implements SagaTurnRepository {
 
   async load(instanceId: string) {
     this.loadCalls.push(instanceId);
+    const events = this.eventsByStream.get(instanceId) ?? [];
+    const commits = [...this.commits.values()].filter((commit) => commit.streamId === instanceId)
+      .sort((a, b) => a.commitSequence - b.commitSequence);
     return {
       streamId: instanceId,
       nextCommitSequence: this.nextSequenceByStream.get(instanceId) ?? 0,
-      events: [...(this.eventsByStream.get(instanceId) ?? [])]
+      commits: (async function* () {
+        let offset = 0;
+        for (const [position, commit] of commits.entries()) {
+          const count = position === commits.length - 1 ? events.length - offset : commit.events.length;
+          yield { ...commit, events: events.slice(offset, offset + count).map((event, index) => ({
+            ...event, id: `${commit.commitId}:event:${index}`, version: offset + index
+          })) };
+          offset += count;
+        }
+      })()
     };
   }
 
@@ -197,7 +209,12 @@ export class FakeTurnRepository implements SagaTurnRepository {
 
   commit(request: SagaTurnAppendRequest): SagaTurnAppendResult {
     const sequence = this.nextSequenceByStream.get(request.streamId) ?? 0;
-    const commit = { streamId: request.streamId, commitId: request.commitId, commitSequence: sequence, identity: request.identity };
+    const commit: SagaTurnStoredCommit = {
+      partitionId: 'sagas', streamId: request.streamId, commitId: request.commitId, commitSequence: sequence,
+      identity: request.identity,
+      events: request.events.map((event, index) => ({ ...event, id: `${request.commitId}:event:${index}`,
+        version: (this.eventsByStream.get(request.streamId)?.length ?? 0) + index }))
+    };
     this.eventsByStream.set(request.streamId, [...(this.eventsByStream.get(request.streamId) ?? []), ...request.events]);
     this.nextSequenceByStream.set(request.streamId, sequence + 1);
     this.commits.set(this.commitKey(request.streamId, request.commitId), commit);

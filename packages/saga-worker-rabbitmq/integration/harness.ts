@@ -7,7 +7,7 @@ import {
   normalizeSagaCorrelation,
   type SagaTurnRepository
 } from '@redemeine/saga-runtime';
-import { createTapewormSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
+import { openMongoSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
 import { type Channel, type ChannelModel, type ConfirmChannel, connect, type Options } from 'amqplib';
 import { type Db, MongoClient } from 'mongodb';
 import type { IBaseEvent, ICommit, IPersistencePartition } from 'tapeworm';
@@ -167,11 +167,7 @@ export async function createScenario(
   const partitionId = `saga_${required('REDEMEINE_REAL_RUN_ID')}_${safeLabel}`;
   const persistence = new MongoPersistence(stack.db);
   const partition = typedPartition<TapewormSagaEvent>(await persistence.openPartition(partitionId));
-  const baseRepository = createTapewormSagaTurnRepository({
-    partition,
-    partitionId,
-    readiness: { partitionOpened: true, uniqueCommitIdIndexReady: true, uniqueStreamSequenceIndexReady: true }
-  });
+  const baseRepository = await openMongoSagaTurnRepository(stack.db, partitionId);
   const repository = options.repository?.(baseRepository) ?? baseRepository;
   const model = await connect(required('REDEMEINE_RABBIT_URL'));
   const channel = await model.createChannel();
@@ -318,7 +314,9 @@ export async function replayState(harness: ScenarioHarness, instanceId: string):
   const snapshot = await harness.repository.load(instanceId);
   const aggregate = createSagaAggregate();
   let state = aggregate.initialState;
-  for (const stored of snapshot.events) state = aggregate.apply(state, stored as Event);
+  for await (const commit of snapshot.commits) {
+    for (const stored of commit.events) state = aggregate.apply(state, stored as Event);
+  }
   const businessState = state.businessState;
   if (!isRealSagaState(businessState)) throw new Error('expected replayed real saga state');
   return businessState;
