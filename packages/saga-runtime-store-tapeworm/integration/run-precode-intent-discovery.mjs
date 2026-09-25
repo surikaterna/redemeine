@@ -42,6 +42,23 @@ function requireSuccess(result, label) {
   return result.output;
 }
 
+async function preflight(run, expected) {
+  if (!/^[0-9a-f]{40}$/.test(expected.head ?? '') || !/^[0-9a-f]{64}$/.test(expected.testSha256 ?? '')
+    || !/^[0-9a-f]{64}$/.test(expected.runnerSha256 ?? '')) {
+    throw new Error('Require full REDEMEINE_EXPECTED_SHA, REDEMEINE_EXPECTED_TEST_SHA256 and REDEMEINE_EXPECTED_RUNNER_SHA256');
+  }
+  const dirty = requireSuccess(await run('git', ['status', '--porcelain', '--untracked-files=all']), 'git status');
+  if (dirty !== '') throw new Error('Dirty worktree: refusing PRECODE experiment');
+  const head = requireSuccess(await run('git', ['rev-parse', 'HEAD']), 'git head');
+  if (head !== expected.head) throw new Error('HEAD mismatch: refusing PRECODE experiment');
+  const testSha256 = hash(testPath);
+  const runnerSha256 = hash(fileURLToPath(import.meta.url));
+  if (testSha256 !== expected.testSha256 || runnerSha256 !== expected.runnerSha256) {
+    throw new Error('Script hash mismatch: refusing PRECODE experiment');
+  }
+  return { head, testSha256, runnerSha256 };
+}
+
 async function waitPrimary(run, id, port, interrupted) {
   for (let attempt = 0; attempt < 60; attempt++) {
     if (interrupted()) throw new Error('Interrupted before primary readiness');
@@ -83,14 +100,19 @@ export async function removeOwned(run, id) {
   return { owned: true, id, absent: true, removeExit: removed.code };
 }
 
-export async function runPrecode({ run = execute, port = availablePort, write = writeFileSync } = {}) {
+function expectedFromEnv() {
+  return { head: process.env.REDEMEINE_EXPECTED_SHA, testSha256: process.env.REDEMEINE_EXPECTED_TEST_SHA256,
+    runnerSha256: process.env.REDEMEINE_EXPECTED_RUNNER_SHA256 };
+}
+
+export async function runPrecode({ run = execute, port = availablePort, write = writeFileSync, expected = expectedFromEnv() } = {}) {
+  const identity = await preflight(run, expected);
   const name = `vpwm-precode-${randomUUID()}`;
   const db = `vpwm_precode_${randomUUID().replaceAll('-', '')}`;
   const receiptPath = resolve('/tmp/opencode', `${name}.json`);
   if (!statSync(dirname(receiptPath)).isDirectory()) throw new Error('Receipt parent missing');
-  const receipt = { issue: 'redemeine-vpwm.4.1', testSha256: hash(testPath),
-    runnerSha256: hash(fileURLToPath(import.meta.url)), database: db, image, containerName: name,
-    head: null, digest: null, mongoVersion: null, jestExit: null, status: 'NOT_STARTED' };
+  const receipt = { issue: 'redemeine-vpwm.4.1', ...identity, database: db, image, containerName: name,
+    digest: null, mongoVersion: null, jestExit: null, status: 'NOT_STARTED' };
   let id;
   let active;
   let interrupted;
@@ -99,7 +121,6 @@ export async function runPrecode({ run = execute, port = availablePort, write = 
   for (const [signal, handler] of handlers) process.on(signal, handler);
   const call = (cmd, args, options = {}) => run(cmd, args, { ...options, onChild: (child) => { active = child; } });
   try {
-    receipt.head = requireSuccess(await call('git', ['rev-parse', 'HEAD']), 'git head');
     receipt.digest = requireSuccess(await call('docker', ['image', 'inspect', image,
       '--format', '{{index .RepoDigests 0}}']), 'image digest');
     if (!/^mongo@sha256:[0-9a-f]{64}$/.test(receipt.digest)) throw new Error('Unverified Mongo image digest');
