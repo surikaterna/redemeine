@@ -8,7 +8,8 @@ import {
   createLifecycleTurnCommit,
   decodeLifecycleProgressEvent,
   decodeLifecycleTurnCommit,
-  equivalentLifecycleCommit
+  equivalentLifecycleCommit,
+  LifecycleCommitShapeError
 } from '../src/turns/lifecycleCommit';
 import { assertLifecycleVersion, decodeLifecycleProgress, decodeLifecycleTurn, equivalentLifecycleTurn } from '../src/turns/lifecycleWire';
 
@@ -117,6 +118,37 @@ describe('additive private lifecycle contract (not PR111 replay)', () => {
       { ...turn, state: 'x'.repeat(8 * 1024 * 1024) }
     ])
       expect(() => decodeLifecycleTurn(invalid, registry)).toThrow();
+  });
+
+  it('classifies malformed commit and event envelopes before accessing event fields', () => {
+    const commit = createLifecycleTurnCommit(decodeLifecycleTurn(turn, registry), 0, registry);
+    for (const malformed of [
+      null,
+      0,
+      'commit',
+      [],
+      {},
+      { ...commit, events: undefined },
+      { ...commit, events: [] },
+      { ...commit, events: [null] },
+      { ...commit, events: [0] },
+      { ...commit, events: ['event'] },
+      { ...commit, events: [[]] },
+      { ...commit, events: [{}] },
+      { ...commit, events: [{ type: 'saga.lifecycle.turn.v1.event' }] },
+      { ...commit, events: [{ payload: turn }] },
+      { ...commit, events: [{ type: 'saga.lifecycle.turn.v1.event', payload: null }] },
+      { ...commit, events: [{ type: 'saga.lifecycle.turn.v1.event', payload: [] }] },
+      { ...commit, streamId: undefined }
+    ]) {
+      try {
+        decodeLifecycleTurnCommit(malformed, registry);
+        throw new Error('malformed commit was accepted');
+      } catch (error) {
+        expect(error).toBeInstanceOf(LifecycleCommitShapeError);
+        expect(error).toMatchObject({ code: 'invalid_lifecycle_commit_shape' });
+      }
+    }
   });
 
   it('validates separate claim/outcome/continuation by originating intent, retaining token and handler_data', () => {

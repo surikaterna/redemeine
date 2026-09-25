@@ -14,6 +14,32 @@ export interface LifecycleCommitV1 {
   readonly events: readonly LifecycleCommitEvent[];
 }
 
+export class LifecycleCommitShapeError extends Error {
+  readonly code = 'invalid_lifecycle_commit_shape';
+
+  constructor() {
+    super('invalid lifecycle commit shape');
+    this.name = 'LifecycleCommitShapeError';
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireCommitEvent(value: unknown): Record<string, unknown> {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    !Object.hasOwn(value, 'type') ||
+    typeof value.type !== 'string' ||
+    !Object.hasOwn(value, 'payload') ||
+    !isRecord(value.payload)
+  )
+    throw new LifecycleCommitShapeError();
+  return value;
+}
+
 export function createLifecycleTurnCommit(
   turn: LifecycleTurnV1,
   expectedNextCommitSequence: number,
@@ -30,13 +56,21 @@ export function createLifecycleTurnCommit(
 }
 
 export function decodeLifecycleTurnCommit(value: unknown, registry: readonly WireRegistryEntry[]): LifecycleCommitV1 {
+  if (!isRecord(value)) throw new LifecycleCommitShapeError();
+  const commit = value;
+  if (
+    Object.keys(commit).length !== 4 ||
+    !['streamId', 'commitId', 'expectedNextCommitSequence', 'events'].every((key) => Object.hasOwn(commit, key)) ||
+    typeof commit.streamId !== 'string' ||
+    typeof commit.commitId !== 'string' ||
+    typeof commit.expectedNextCommitSequence !== 'number' ||
+    !Array.isArray(commit.events) ||
+    commit.events.length !== 1
+  )
+    throw new LifecycleCommitShapeError();
+  const event = requireCommitEvent(commit.events[0]);
   validateBusinessState(value, { maxBytes: 8 * 1024 * 1024, maxDepth: 36 });
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid lifecycle commit');
-  const commit = value as Record<string, unknown>;
-  if (Object.keys(commit).length !== 4 || !Object.hasOwn(commit, 'events') || !Array.isArray(commit.events) || commit.events.length !== 1)
-    throw new TypeError('invalid lifecycle commit shape');
-  const event = commit.events[0] as Record<string, unknown>;
-  if (Object.keys(event).length !== 2 || event.type !== LIFECYCLE_TURN_EVENT_TYPE) throw new TypeError('unknown lifecycle event type');
+  if (event.type !== LIFECYCLE_TURN_EVENT_TYPE) throw new TypeError('unknown lifecycle event type');
   const turn = decodeLifecycleTurn(event.payload, registry);
   if (
     commit.streamId !== turn.instanceId ||
