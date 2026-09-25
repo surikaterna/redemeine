@@ -13,7 +13,7 @@ export interface WireOrigin {
   readonly ordinal: number;
 }
 export interface WireMetadata { readonly sagaId: string; readonly correlationId: string; readonly causationId: string }
-export interface WireRouting { readonly response_handler_key: string; readonly error_handler_key: string; readonly retry_handler_key?: string; readonly handler_data: JsonValue }
+export interface WireRouting { readonly response_handler_key: string; readonly error_handler_key: string; readonly retry_handler_key?: string; readonly handler_data?: JsonValue }
 interface WireBase { readonly schemaVersion: 1; readonly intentId: string; readonly turnId: string; readonly instanceId: string; readonly origin: WireOrigin; readonly metadata: WireMetadata }
 export type WireIntent = WireBase & (
   | { readonly kind: 'plugin'; readonly plugin_key: string; readonly action_name: string; readonly interaction: 'fire_and_forget'; readonly execution_payload: JsonValue; readonly retry_policy_override?: JsonValue; readonly compensation?: JsonValue }
@@ -29,7 +29,7 @@ export type WireOutcome = {
   readonly correlationId: string;
   readonly result: 'response' | 'error';
   readonly token: string;
-  readonly handler_data: JsonValue;
+  readonly handler_data?: JsonValue;
   readonly value: JsonValue;
 };
 export interface WireRegistryEntry { readonly plugin_key: string; readonly actions: readonly { readonly name: string; readonly interaction: 'fire_and_forget' | 'request_response' }[]; readonly commandTypes?: readonly string[] }
@@ -167,7 +167,7 @@ function originValue(value: unknown): WireOrigin {
 function routing(value: unknown): WireRouting {
   const v = object(value, 'routing');
   exact(v, ['response_handler_key', 'error_handler_key', 'retry_handler_key', 'handler_data']);
-  return { response_handler_key: requireText(v.response_handler_key, 'response token'), error_handler_key: requireText(v.error_handler_key, 'error token'), handler_data: json(v.handler_data), ...(v.retry_handler_key === undefined ? {} : { retry_handler_key: requireText(v.retry_handler_key, 'retry token') }) };
+  return { response_handler_key: requireText(v.response_handler_key, 'response token'), error_handler_key: requireText(v.error_handler_key, 'error token'), ...(Object.hasOwn(v, 'handler_data') ? { handler_data: json(v.handler_data) } : {}), ...(v.retry_handler_key === undefined ? {} : { retry_handler_key: requireText(v.retry_handler_key, 'retry token') }) };
 }
 function registered(registry: readonly WireRegistryEntry[], plugin: string, action: string, interaction: string): void {
   if (registry.flatMap(entry => entry.actions.filter(item => entry.plugin_key === plugin && item.name === action && item.interaction === interaction)).length !== 1) throw new TypeError('unknown or ambiguous action');
@@ -253,9 +253,14 @@ export function normalizePluginIntent(input: SagaPluginIntent, origin: WireOrigi
     throw new TypeError('unknown core action');
   }
   const ids = identity(origin);
+  const sdkRouting = input.routing_metadata;
+  const normalizedRouting = sdkRouting === undefined ? undefined : (() => {
+    const { handler_data, ...tokens } = sdkRouting;
+    return { ...tokens, ...(handler_data === undefined ? {} : { handler_data }) };
+  })();
   return decodeIntent({ schemaVersion: 1, ...ids, origin, kind: 'plugin', plugin_key: input.plugin_key,
     action_name: input.action_name, interaction: input.interaction, execution_payload: input.execution_payload,
-    metadata: input.metadata, ...(input.routing_metadata === undefined ? {} : { routing_metadata: input.routing_metadata }),
+    metadata: input.metadata, ...(normalizedRouting === undefined ? {} : { routing_metadata: normalizedRouting }),
     ...(input.retry_policy_override === undefined ? {} : { retry_policy_override: input.retry_policy_override }),
     ...(input.compensation === undefined ? {} : { compensation: input.compensation }) }, registry);
 }
@@ -269,8 +274,12 @@ export function decodeOutcome(value: unknown, intent: WireIntent): WireOutcome {
   if (v.schemaVersion !== 1 || v.intentId !== intent.intentId || v.instanceId !== intent.instanceId || v.correlationId !== intent.metadata.correlationId || intent.kind !== 'plugin' || intent.interaction !== 'request_response') throw new TypeError('outcome mismatch');
   if (v.result !== 'response' && v.result !== 'error') throw new TypeError('invalid result');
   const expected = v.result === 'response' ? intent.routing_metadata.response_handler_key : intent.routing_metadata.error_handler_key;
-  if (v.token !== expected || JSON.stringify(json(v.handler_data)) !== JSON.stringify(intent.routing_metadata.handler_data)) throw new TypeError('outcome routing mismatch');
-  const result: WireOutcome = { schemaVersion: 1, intentId: intent.intentId, instanceId: intent.instanceId, correlationId: intent.metadata.correlationId, result: v.result, token: expected, handler_data: json(v.handler_data), value: json(v.value) };
+  const hasData = Object.hasOwn(v, 'handler_data');
+  const expectedData = Object.hasOwn(intent.routing_metadata, 'handler_data');
+  if (v.token !== expected || hasData !== expectedData) throw new TypeError('outcome routing mismatch');
+  const handlerData = hasData ? json(v.handler_data) : undefined;
+  if (hasData && JSON.stringify(handlerData) !== JSON.stringify(intent.routing_metadata.handler_data)) throw new TypeError('outcome routing mismatch');
+  const result: WireOutcome = { schemaVersion: 1, intentId: intent.intentId, instanceId: intent.instanceId, correlationId: intent.metadata.correlationId, result: v.result, token: expected, ...(hasData ? { handler_data: json(v.handler_data) } : {}), value: json(v.value) };
   bounded(result);
   return result;
 }

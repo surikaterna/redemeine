@@ -4,7 +4,7 @@ import { serializeSagaCorrelation } from '../src/identity/canonicalCorrelation';
 import type { SagaPluginIntent } from '@redemeine/saga';
 import type { WireRegistryEntry } from '../src/intentWire';
 import { createAggregate } from '@redemeine/aggregate';
-import { createSagaCommandsFor } from '@redemeine/saga';
+import { createSaga, createSagaCommandsFor, defineRequestResponse, defineSagaPlugin, runSagaStartHandler } from '@redemeine/saga';
 
 const origin: WireOrigin = { sagaKey: 'orders', correlation: { type: 'string', value: 'o1' }, sourceId: 'source-1', routeId: 'route-1', ordinal: 0 };
 const meta = { sagaId: deriveSagaInstanceId(origin.sagaKey, origin.correlation), correlationId: serializeSagaCorrelation(origin.correlation), causationId: origin.sourceId };
@@ -34,6 +34,57 @@ describe('private saga wire v1', () => {
     expect(() => decodeOutcome({ ...outcome(first.intentId, 'response', 'ok'), schemaVersion: 2 }, first)).toThrow();
     expect(() => parseOutcome(JSON.stringify({ ...outcome(first.intentId, 'response', 'ok'), value: [null, 1] }), first)).not.toThrow();
     expect(() => createWireIntent(origin, meta, { ...request, routing_metadata: undefined }, registry)).toThrow();
+  });
+
+  it('omits SDK default request data but distinguishes absent, null and JSON on the wire and outcome', () => {
+    const sdk: SagaPluginIntent<'mailer', 'ask', { prompt: string }, 'request_response'> = {
+      type: 'plugin-intent', plugin_key: 'mailer', action_name: 'ask', interaction: 'request_response',
+      execution_payload: { prompt: 'yes' }, metadata: meta,
+      routing_metadata: { response_handler_key: 'ok', error_handler_key: 'failed', handler_data: undefined },
+    };
+    const request = normalizePluginIntent(sdk, origin, registry);
+    if (request.kind !== 'plugin' || request.interaction !== 'request_response') throw new Error('request expected');
+    expect(Object.hasOwn(request.routing_metadata, 'handler_data')).toBe(false);
+    expect(parseIntent(encodeIntent(request, registry), registry)).toEqual(request);
+    const outcome = { schemaVersion: 1, intentId: request.intentId, instanceId: request.instanceId,
+      correlationId: meta.correlationId, result: 'response', token: 'ok', value: { code: 1 } };
+    const response = decodeOutcome(outcome, request);
+    expect(Object.hasOwn(response, 'handler_data')).toBe(false);
+    expect(parseOutcome(JSON.stringify(response), request)).toEqual(response);
+    expect(() => decodeIntent({ ...request, routing_metadata: { ...request.routing_metadata, handler_data: undefined } }, registry)).toThrow('non-JSON value');
+    expect(() => normalizePluginIntent({ ...sdk, routing_metadata: { ...sdk.routing_metadata, extra: true } }, origin, registry)).toThrow('unknown wire field');
+    expect(() => decodeOutcome({ ...outcome, handler_data: undefined }, request)).toThrow('non-JSON value');
+    expect(() => decodeOutcome({ ...outcome, handler_data: null }, request)).toThrow('routing mismatch');
+    expect(() => decodeOutcome({ ...outcome, token: 'failed' }, request)).toThrow('routing mismatch');
+    expect(() => decodeOutcome({ ...outcome, intentId: 'other' }, request)).toThrow('outcome mismatch');
+    expect(() => decodeOutcome({ ...outcome, schemaVersion: 2 }, request)).toThrow('outcome mismatch');
+    expect(() => decodeIntent({ ...request, schemaVersion: 2 }, registry)).toThrow('version');
+    for (const data of [null, { local: 42 }]) {
+      const withData = normalizePluginIntent({ ...sdk, routing_metadata: { ...sdk.routing_metadata, handler_data: data } }, origin, registry);
+      if (withData.kind !== 'plugin' || withData.interaction !== 'request_response') throw new Error('request expected');
+      expect(parseIntent(encodeIntent(withData, registry), registry).routing_metadata).toEqual(withData.routing_metadata);
+      const withOutcome = { ...outcome, handler_data: data };
+      expect(parseOutcome(JSON.stringify(withOutcome), withData)).toEqual(withOutcome);
+      expect(() => decodeOutcome(outcome, withData)).toThrow('routing mismatch');
+    }
+  });
+
+  it('normalizes the actual SDK request with no withData call', async () => {
+    const mailer = defineSagaPlugin({ plugin_key: 'mailer', actions: { ask: defineRequestResponse((prompt: string) => ({ prompt })) } });
+    const definition = createSaga({ identity: { namespace: 'orders', name: 'wire', version: 1 }, plugins: [mailer] as const })
+      .initialState(() => ({ count: 0 }))
+      .onResponses({ ok: () => undefined }).onErrors({ failed: () => undefined })
+      .start<{ prompt: string }>((_state, input, ctx) => {
+        ctx.actions.mailer.ask(input.prompt).onResponse(ctx.onResponse.ok).onError(ctx.onError.failed);
+      }).correlateBy(input => input.prompt).build();
+    const output = await runSagaStartHandler({ definition, startInput: { prompt: 'yes' }, metadata: meta,
+      plugins: [mailer] as const, responseHandlers: { ok: { phase: 'response' }, failed: { phase: 'error' } } });
+    expect(output.intents).toHaveLength(1);
+    const wire = normalizePluginIntent(output.intents[0], origin, registry);
+    expect(wire).toMatchObject({ kind: 'plugin', interaction: 'request_response' });
+    if (wire.kind !== 'plugin' || wire.interaction !== 'request_response') throw new Error('request expected');
+    expect(Object.hasOwn(wire.routing_metadata, 'handler_data')).toBe(false);
+    expect(parseIntent(encodeIntent(wire, registry), registry)).toEqual(wire);
   });
 
   it('retains canonical default and overridden command names and timers', () => {
