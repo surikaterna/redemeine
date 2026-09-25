@@ -1,6 +1,7 @@
 import type { Event } from '@redemeine/kernel';
 import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
+import { validateBusinessState } from '../businessStateValidation';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
 import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
@@ -20,6 +21,17 @@ export interface HydratedSagaTurn {
   readonly definitionIdentity: DefinitionIdentityV1 | null;
 }
 
+// Aggregate memory budget is independent of the reader's 1 GiB on-disk instance budget.
+export const SAGA_REPLAY_STATE_BYTES = 1024 * 1024;
+
+function assertStateBudget(state: SagaAggregateState): void {
+  try {
+    validateBusinessState(state, { maxBytes: SAGA_REPLAY_STATE_BYTES });
+  } catch (cause) {
+    throw new SagaTurnPermanentError('saga_state_too_large', 'Saga aggregate state exceeds the bounded JSON-safe replay budget', {}, cause);
+  }
+}
+
 function requireEventTypes(aggregate: SagaAggregate): Readonly<Record<string, string>> {
   if (!aggregate.types) throw new SagaTurnIntegrityError('missing_aggregate_types', 'Saga aggregate does not expose event types');
   return aggregate.types.events;
@@ -35,12 +47,55 @@ function replayCommitEvents(commit: SagaTurnStoredCommit, count: number, version
     assertStoredSagaReplayOrder(replay, validated);
     try {
       state = aggregate.apply(state, validated.event);
+      assertStateBudget(state);
     } catch (error) {
       if (error instanceof SagaTurnError) throw error;
       throw new SagaTurnIntegrityError('stored_event_projection_failed', `Stored saga event ${validated.event.type} could not be projected`, {}, error);
     }
   }
   return state;
+}
+
+export class SagaTurnReplaySession {
+  readonly aggregate = createSagaAggregate();
+  private readonly eventTypes = requireEventTypes(this.aggregate);
+  private readonly replay = createSagaStoredReplayContext();
+  private state: SagaAggregateState = this.aggregate.initialState;
+  private sequence = 0;
+  private version = 0;
+
+  constructor(private readonly instanceId: string) { assertStateBudget(this.state); }
+
+  get nextCommitSequence(): number { return this.sequence; }
+  get nextEventVersion(): number { return this.version; }
+
+  // Only copy a validated <=1 MiB state, before consuming the one target commit.
+  prefix(): HydratedSagaTurn {
+    assertStateBudget(this.state);
+    return { aggregate: this.aggregate, state: structuredClone(this.state), definitionIdentity: this.replay.definitionIdentity };
+  }
+
+  apply(commit: SagaTurnStoredCommit): void {
+    if (commit.streamId !== this.instanceId || commit.commitSequence !== this.sequence ||
+      commit.events.length === 0 || commit.events.length > 256) {
+      throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Loaded saga commits must be complete and contiguous');
+    }
+    this.state = replayCommitEvents(commit, commit.events.length, this.version, this.state, this.aggregate, this.replay, this.eventTypes);
+    if (this.sequence === 0 && (!this.replay.authoritative || commit.events.length !== 4 || this.replay.lastKind !== 'businessStateRecorded')) {
+      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one four-event commit');
+    }
+    this.version += commit.events.length;
+    this.sequence += 1;
+  }
+
+  finish(nextCommitSequence: number): HydratedSagaTurn {
+    if (this.sequence !== nextCommitSequence) throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Captured saga history is incomplete');
+    finalizeStoredSagaReplay(this.replay);
+    if (this.sequence > 0 && this.state.id === null) {
+      throw new SagaTurnIntegrityError('missing_instance_event', 'Stored saga stream has events but no created instance');
+    }
+    return { aggregate: this.aggregate, state: this.state, definitionIdentity: this.replay.definitionIdentity };
+  }
 }
 
 export async function hydrateSagaTurn(

@@ -1,46 +1,50 @@
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import type { CompiledSagaRoute } from '../routing/contracts';
-import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEvents, hydrateSagaTurn } from './aggregateTurn';
+import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEvents, SagaTurnReplaySession, type HydratedSagaTurn } from './aggregateTurn';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnAppendRequest, SagaTurnRepository, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
 import { deriveTurnCommitId } from '../identity/deterministicIds';
 
-export async function captureSagaHistory(snapshot: SagaTurnStreamSnapshot): Promise<readonly SagaTurnStoredCommit[]> {
-  const commits: SagaTurnStoredCommit[] = [];
-  for await (const commit of snapshot.commits) {
-    if (commits.length >= 1024 || commit.events.length > 256) {
-      throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Saga history exceeds bounded replay budget');
-    }
-    commits.push(commit);
-  }
-  if (commits.length !== snapshot.nextCommitSequence) {
-    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Saga history is incomplete');
-  }
-  return commits;
+export interface SagaTurnFold {
+  readonly hydrated: HydratedSagaTurn;
+  readonly nextEventVersion: number;
+  readonly target: { readonly route: CompiledSagaRoute; readonly stored: SagaTurnStoredCommit;
+    readonly original: HydratedSagaTurn; readonly firstEventVersion: number } | null;
 }
 
-export function capturedSnapshot(streamId: string, commits: readonly SagaTurnStoredCommit[]): SagaTurnStreamSnapshot {
-  return { streamId, nextCommitSequence: commits.length, commits: (async function* () { yield* commits; })() };
+export async function foldSagaTurn(snapshot: SagaTurnStreamSnapshot, resolved: ResolvedSagaTurnRouteGroup): Promise<SagaTurnFold> {
+  if (snapshot.streamId !== resolved.instanceId || !Number.isSafeInteger(snapshot.nextCommitSequence) ||
+    snapshot.nextCommitSequence < 0 || snapshot.nextCommitSequence > 1_000_000) {
+    throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Invalid captured saga stream boundary');
+  }
+  const routes = [resolved.startRoute, resolved.onRoute].filter((route): route is CompiledSagaRoute => route !== null);
+  const candidates = routes.map((route) => ({ route, commitId: deriveTurnCommitId({
+    sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId
+  }) }));
+  const session = new SagaTurnReplaySession(resolved.instanceId);
+  let target: SagaTurnFold['target'] = null;
+  for await (const commit of snapshot.commits) {
+    if (session.nextCommitSequence >= snapshot.nextCommitSequence) {
+      throw new SagaTurnIntegrityError('invalid_commit_sequence', 'Captured saga history exceeds high watermark');
+    }
+    const match = candidates.find((candidate) => candidate.commitId === commit.commitId);
+    if (match) {
+      if (target) throw new SagaTurnIntegrityError('duplicate_turn_commits', 'Multiple saga routes committed the same trigger');
+      target = { route: match.route, stored: commit, original: session.prefix(), firstEventVersion: session.nextEventVersion };
+    }
+    session.apply(commit);
+  }
+  return { hydrated: session.finish(snapshot.nextCommitSequence), nextEventVersion: session.nextEventVersion, target };
 }
 
 export async function proveOriginalTurn(
   repository: SagaTurnRepository, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent,
-  active: DefinitionIdentityV1, commits: readonly SagaTurnStoredCommit[]
+  active: DefinitionIdentityV1, target: SagaTurnFold['target']
 ): Promise<CompiledSagaRoute | null> {
-  const routes = [resolved.startRoute, resolved.onRoute].filter((route): route is CompiledSagaRoute => route !== null);
-  const matches = routes.map((route) => ({ route, commitId: deriveTurnCommitId({
-    sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId
-  }) })).filter(({ commitId }) => commits.some((commit) => commit.commitId === commitId));
-  if (matches.length === 0) return null;
-  if (matches.length !== 1) throw new SagaTurnIntegrityError('duplicate_turn_commits', 'Multiple saga routes committed the same trigger');
-  const { route, commitId } = matches[0]!;
-  const index = commits.findIndex((commit) => commit.commitId === commitId);
-  const stored = commits[index]!;
-  if (commits.filter((commit) => commit.commitId === commitId).length !== 1 || stored.commitSequence !== index) {
-    throw new SagaTurnIntegrityError('duplicate_turn_commits', 'Original saga commit cannot be uniquely located');
-  }
-  const prefix = capturedSnapshot(resolved.instanceId, commits.slice(0, index));
-  const original = await hydrateSagaTurn(prefix, resolved.instanceId);
+  if (!target) return null;
+  const { route, stored, original, firstEventVersion } = target;
+  const index = stored.commitSequence;
+  const commitId = stored.commitId;
   if (index > 0) assertHydratedSagaIdentity(original, resolved, active);
   if ((index === 0) !== (route.kind === 'start')) {
     throw new SagaTurnPermanentError('duplicate_proof_required', 'Original route does not match saga creation boundary');
@@ -56,7 +60,6 @@ export async function proveOriginalTurn(
     streamId: resolved.instanceId, commitId, expectedNextCommitSequence: index,
     identity: { sourceTriggerId: resolved.sourceTriggerId, sagaKey: resolved.sagaKey, instanceId: resolved.instanceId, routeId: route.routeId }, events
   };
-  const version = commits.slice(0, index).reduce((count, commit) => count + commit.events.length, 0);
-  repository.assertCommitMaterial(stored, request, version);
+  repository.assertCommitMaterial(stored, request, firstEventVersion);
   return route;
 }

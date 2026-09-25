@@ -2,7 +2,7 @@ import { deriveTurnCommitId } from '../identity/deterministicIds';
 import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import { assertIssuedSagaRegistration } from '../routing/registerSagaDefinition';
 import type { CompiledSagaRoute } from '../routing/contracts';
-import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEvents, hydrateSagaTurn } from './aggregateTurn';
+import { assertHydratedSagaIdentity, buildExistingTurnEvents, buildInitialTurnEvents } from './aggregateTurn';
 import type {
   ResolvedSagaTurnRouteGroup,
   SagaTurnAppendRequest,
@@ -14,7 +14,7 @@ import type {
   SagaTurnStoredCommit
 } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnTransientError } from './errors';
-import { captureSagaHistory, capturedSnapshot, proveOriginalTurn } from './originalTurnProof';
+import { foldSagaTurn, proveOriginalTurn } from './originalTurnProof';
 
 interface TurnCommitCandidate {
   readonly route: CompiledSagaRoute;
@@ -122,12 +122,10 @@ function retryLimit(options: SagaTurnProcessorOptions): number {
 async function processAttempt(repository: SagaTurnRepository, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, options: SagaTurnProcessorOptions) {
   const active = activeIdentity(resolved, options);
   const loaded = await repository.load(resolved.instanceId);
-  const commits = await captureSagaHistory(loaded);
-  const snapshot = capturedSnapshot(resolved.instanceId, commits);
-  const hydrated = await hydrateSagaTurn(snapshot, resolved.instanceId);
+  const { hydrated, target, nextEventVersion } = await foldSagaTurn(loaded, resolved);
   const exists = hydrated.state.id !== null;
   if (exists) assertHydratedSagaIdentity(hydrated, resolved, active);
-  const duplicate = await proveOriginalTurn(repository, resolved, source, active, commits);
+  const duplicate = await proveOriginalTurn(repository, resolved, source, active, target);
   if (duplicate) {
     const candidate = createCandidate(resolved, duplicate);
     return { status: 'reconciled', sagaKey: resolved.sagaKey, sourceTriggerId: resolved.sourceTriggerId,
@@ -150,10 +148,10 @@ async function processAttempt(repository: SagaTurnRepository, resolved: Resolved
   return appendTurn(repository, {
     streamId: resolved.instanceId,
     commitId: candidate.commitId,
-    expectedNextCommitSequence: snapshot.nextCommitSequence,
+    expectedNextCommitSequence: loaded.nextCommitSequence,
     identity: candidate.identity,
     events
-  }, resolved, candidate, commits.reduce((count, commit) => count + commit.events.length, 0));
+  }, resolved, candidate, nextEventVersion);
 }
 
 export async function processSagaTurn(
