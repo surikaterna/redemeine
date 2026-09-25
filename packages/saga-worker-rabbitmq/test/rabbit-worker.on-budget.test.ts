@@ -9,7 +9,7 @@ const orders = createAggregate('orders', { paid: 0 })
   .events({ paid: (state) => { state.paid += 1; } })
   .overrideEventNames({ paid: 'order.paid.event' }).build();
 
-it('dead-letters an over-limit on turn without appending its final intent or ACKing the source', async () => {
+function overBudgetRoutes() {
   const definition = createSaga({ identity: { namespace: 'worker', name: 'on-budget', version: 1 } })
     .initialState(() => ({ count: 0 }))
     .start<{ orderId: string }>(state => { state.count = 1; })
@@ -33,6 +33,10 @@ it('dead-letters an over-limit on turn without appending its final intent or ACK
     } });
   const table = compileRegisteredSagaRoutes([registration],
     [{ registration, triggerIndex: 0, eventTypes: ['order.created.event'] }]);
+  return { registration, table };
+}
+
+function memoryRepository() {
   const commits: SagaTurnStoredCommit[] = [];
   let appendCalls = 0;
   const repository: SagaTurnRepository = {
@@ -48,6 +52,12 @@ it('dead-letters an over-limit on turn without appending its final intent or ACK
       return { status: 'committed', commitSequence: commits.length - 1 };
     }
   };
+  return { repository, appendCount: () => appendCalls };
+}
+
+it('dead-letters an over-limit on turn without appending its final intent or ACKing the source', async () => {
+  const { registration, table } = overBudgetRoutes();
+  const { repository, appendCount } = memoryRepository();
   const channel = new FakeChannel();
   const worker = createSagaRabbitWorker(options(channel, createSagaSourceEventProcessor(table, repository,
     { registrationForRoute: bindSagaRegistrations(table, [registration]) })));
@@ -55,11 +65,11 @@ it('dead-letters an over-limit on turn without appending its final intent or ACK
   const source = body();
   const initial = message({ body: { ...source, events: [source.events[0]] } });
   await worker.handle(initial);
-  expect(appendCalls).toBe(1);
+  expect(appendCount()).toBe(1);
   expect(channel.acks).toEqual([{ message: initial, allUpTo: false }]);
   const on = message({ body: { ...source, id: 'commit-2', commitSequence: 5, events: [source.events[1]] }, messageId: 'commit-2' });
   await worker.handle(on);
-  expect(appendCalls).toBe(1);
+  expect(appendCount()).toBe(1);
   expect(channel.acks).toEqual([{ message: initial, allUpTo: false }]);
   expect(channel.nacks).toEqual([{ message: on, allUpTo: false, requeue: false }]);
   await worker.stop();
