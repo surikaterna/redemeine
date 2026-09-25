@@ -93,7 +93,8 @@ function barrierRepository(
       statuses.push(result.status);
       return result;
     } catch (error) {
-      failures.push(error);
+      failures.push({ error: String(error), expected: request,
+        actual: await base.findCommit(request.streamId, request.commitId).catch(() => null) });
       throw error;
     }
   };
@@ -280,7 +281,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       await Promise.all([publishCommit(stack, update), publishCommit(stack, update)]);
       await waitForCommitCount(harness, id, 2);
       await waitForQueueSettled(harness.queue);
-      expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), failures: control!.failures.map(String),
+      expect({ statuses: statuses.sort(), dead: await queueCounts(harness.deadQueue), failures: control!.failures,
         settlementErrors: harness.settlementErrors })
         .toMatchObject({ statuses: ['committed', 'reconciled'], dead: { ready: 0, unacknowledged: 0 }, failures: [], settlementErrors: [] });
       expect(await streamCommits(harness, id)).toHaveLength(2);
