@@ -168,10 +168,11 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       await waitForQueueSettled(harness.queue);
       expect(commits[0]?.events.map(({ type }) => type)).toEqual([
         'saga.instance_created.event',
+        'saga.definition_identity_recorded.event',
         'saga.source_event_observed.event',
         'saga.business_state_recorded.event'
       ]);
-      expect(commits[0]).toMatchObject({ commitSequence: 0, events: [{ version: 0 }, { version: 1 }, { version: 2 }] });
+      expect(commits[0]).toMatchObject({ commitSequence: 0, events: [{ version: 0 }, { version: 1 }, { version: 2 }, { version: 3 }] });
       expect(await replayState(harness, id)).toEqual({ count: 0, seen: [] });
       expect(counters).toMatchObject({ initial: 1, start: 0, handlers: new Map() });
       const indexes = await stack.db.collection(`tw_${harness.partitionId}_commits`).listIndexes().toArray();
@@ -198,7 +199,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       const commits = await waitForCommitCount(harness, id, 2);
       await waitForQueueSettled(harness.queue);
       expect(commits[1]?.events.map(({ type }) => type)).toEqual(['saga.source_event_observed.event', 'saga.business_state_recorded.event']);
-      expect(commits[1]).toMatchObject({ commitSequence: 1, events: [{ version: 3 }, { version: 4 }] });
+      expect(commits[1]).toMatchObject({ commitSequence: 1, events: [{ version: 4 }, { version: 5 }] });
       expect(await replayState(harness, id)).toEqual({ count: 3, seen: ['subsequent-paid'] });
       expect(counters.handlers.get('subsequent-paid')).toBe(1);
       await expectNoDeadLetters(harness);
@@ -231,7 +232,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
     }
   });
 
-  it('4. reconciles a sequentially redelivered source commit without rerunning the handler', async () => {
+  it('4. reconciles a sequentially redelivered source commit after recomputing equivalent content', async () => {
     const counters = createCounters();
     const { definition, table } = createRealTable('sequential-duplicate', counters);
     let acks = 0;
@@ -253,7 +254,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       await pollUntil('sequential duplicate ACK', () => acks === 3);
       await waitForQueueSettled(harness.queue);
       expect(await streamCommits(harness, id)).toHaveLength(2);
-      expect(counters.handlers.get('sequential-duplicate-event')).toBe(1);
+      expect(counters.handlers.get('sequential-duplicate-event')).toBe(2);
       await expectNoDeadLetters(harness);
     } finally {
       await harness.close();
@@ -511,7 +512,7 @@ describe('redemeine-wrdf real MongoDB and RabbitMQ qualification', () => {
       replacement = await startReplacementWorker(stack, harness, table);
       await waitForQueueSettled(harness.queue);
       expect(await streamCommits(harness, id)).toHaveLength(2);
-      expect(counters.handlers.get('ack-crash-event')).toBe(1);
+      expect(counters.handlers.get('ack-crash-event')).toBe(2);
       await expectNoDeadLetters(harness);
     } finally {
       if (replacement) await replacement.close();
