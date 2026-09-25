@@ -77,6 +77,20 @@ function checkTurn(commit: ICommit, request: SagaTurnAppendRequest, partitionId:
       timerId: start ? 'start-timer' : 'on-timer' } }]);
 }
 
+async function expectFanoutPhysicalTurns(stack: RealStack, harness: ScenarioHarness, label: string,
+  ids: readonly string[], count: number, phase: 'start' | 'on', requests: readonly SagaTurnAppendRequest[]): Promise<void> {
+  const sourceTriggerId = deriveSourceTriggerId({ partitionId: stack.sourcePartitionId,
+    streamId: `${label}-input`, commitId: `${label}-update`, eventIndex: 0 });
+  for (const id of ids) {
+    const commits = await streamCommits(harness, id);
+    expect(commits).toHaveLength(count);
+    expect(commits[count - 1]).toMatchObject({ sagaTurnIdentity: { sourceTriggerId } });
+    const request = requests.find(item => item.streamId === id);
+    if (!request) throw new Error('missing fanout request');
+    assertPhysicalTurn(commits[count - 1]!, request, harness.partitionId, phase === 'on' ? 12 : 0);
+  }
+}
+
 describe('redemeine-vpwm.3.3 physical intent turns', () => {
   let stack: RealStack;
   beforeAll(async () => { stack = await connectRealStack(); });
@@ -364,16 +378,7 @@ describe('redemeine-vpwm.3.3 physical intent turns', () => {
       expect(observed.settled.filter(item => item.messageId === `${label}-update`).map(item => [item.kind, item.requeue]))
         .toEqual([['nack', true], ['ack', undefined]]);
       expect(observed.received.filter(item => item.messageId === identity.messageId)).toEqual([identity, identity]);
-      const sourceTriggerId = deriveSourceTriggerId({ partitionId: stack.sourcePartitionId,
-        streamId: `${label}-input`, commitId: `${label}-update`, eventIndex: 0 });
-      for (const id of [firstId, lateId]) {
-        const commits = await streamCommits(harness, id);
-        expect(commits).toHaveLength(count);
-        expect(commits[count - 1]).toMatchObject({ sagaTurnIdentity: { sourceTriggerId } });
-        const request = fault!.requests.find(item => item.streamId === id);
-        if (!request) throw new Error('missing fanout request');
-        assertPhysicalTurn(commits[count - 1]!, request, harness.partitionId, phase === 'on' ? 12 : 0);
-      }
+      await expectFanoutPhysicalTurns(stack, harness, label, [firstId, lateId], count, phase, fault!.requests);
       expect(await queueCounts(harness.deadQueue)).toEqual({ ready: 0, unacknowledged: 0 });
     } finally { fault!.release(); await harness.close(); }
   });
