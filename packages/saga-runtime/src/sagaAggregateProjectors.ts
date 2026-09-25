@@ -3,6 +3,7 @@ import type {
   NormalizedSagaAggregateState,
   SagaActivityLifecycleRecordedEventPayload,
   SagaBusinessStateRecordedEventPayload,
+  SagaDefinitionIdentityRecordedEventPayload,
   SagaInstanceCreatedEventPayload,
   SagaIntentLifecycleRecordedEventPayload,
   SagaRecentWindowLimits,
@@ -28,6 +29,14 @@ export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWi
         updatedAt: event.payload.createdAt,
         transitionVersion: state.transitionVersion + 1
       });
+    },
+    definitionIdentityRecorded: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaDefinitionIdentityRecordedEventPayload>) => {
+      state.definitionIdentity = {
+        sagaKey: event.payload.sagaKey,
+        definitionVersion: event.payload.definitionVersion,
+        policySha256: event.payload.policySha256
+      };
+      state.transitionVersion += 1;
     },
     sourceEventObserved: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaSourceEventObservedEventPayload>) => {
       state.updatedAt = event.payload.record.observedAt;

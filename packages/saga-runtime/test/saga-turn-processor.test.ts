@@ -1,8 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   compileSagaRoutes,
+  bindSagaRegistrations,
   createStartEventBindings,
-  processSagaSourceEvent,
+  registerSagaDefinition,
+  processSagaSourceEvent as processRegisteredEvent,
+  type CompiledSagaRoutingTable,
+  type SagaTurnProcessorOptions,
+  type SagaTurnSourceEvent,
   SagaTurnError,
   SagaTurnIntegrityError,
   SagaTurnPermanentError,
@@ -14,8 +19,14 @@ import {
   createTurnDefinition,
   createTurnTable,
   FakeTurnRepository,
+  registrationOptions,
   sourceEvent
 } from './fixtures/turn-processor.fixture';
+
+function processSagaSourceEvent(table: CompiledSagaRoutingTable, repository: FakeTurnRepository, source: SagaTurnSourceEvent,
+  options?: Pick<SagaTurnProcessorOptions, 'maxConflictRetries'>) {
+  return processRegisteredEvent(table, repository, source, registrationOptions(table, options?.maxConflictRetries));
+}
 
 function payloadOf(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || !('payload' in value)) throw new Error('expected event payload');
@@ -57,11 +68,77 @@ describe('durable saga state-turn processor', () => {
     expect(repository.appendCalls[0]?.expectedNextCommitSequence).toBe(0);
     expect(repository.appendCalls[0]?.events.map(({ type }) => type)).toEqual([
       'saga.instance_created.event',
+      'saga.definition_identity_recorded.event',
       'saga.source_event_observed.event',
       'saga.business_state_recorded.event'
     ]);
     expect(payloadOf(repository.appendCalls[0]?.events[0]).createdAt).toBe('2026-09-21T10:00:00.000Z');
-    expect(payloadOf(repository.appendCalls[0]?.events[2]).recordedAt).toBe('2026-09-21T10:00:00.000Z');
+    expect(payloadOf(repository.appendCalls[0]?.events[3]).recordedAt).toBe('2026-09-21T10:00:00.000Z');
+    expect(payloadOf(repository.appendCalls[0]?.events[1])).toMatchObject({ schemaVersion: 1, policySha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+  });
+
+  it.each([
+    ['legacy', (events: readonly { type: string; payload: unknown }[]) => events.filter((event) => event.type !== 'saga.definition_identity_recorded.event')],
+    ['duplicate', (events: readonly { type: string; payload: unknown }[]) => [events[0]!, events[1]!, events[1]!, ...events.slice(2)]],
+    ['late', (events: readonly { type: string; payload: unknown }[]) => [events[0]!, events[2]!, events[1]!, events[3]!]],
+    ['unknown version', (events: readonly { type: string; payload: unknown }[]) => events.map((event, index) => index === 1 ? { ...event, payload: { ...payloadOf(event), schemaVersion: 2 } } : event)],
+    ['malformed digest', (events: readonly { type: string; payload: unknown }[]) => events.map((event, index) => index === 1 ? { ...event, payload: { ...payloadOf(event), policySha256: 'not-a-digest' } } : event)],
+    ['non-json digest', (events: readonly { type: string; payload: unknown }[]) => events.map((event, index) => index === 1 ? { ...event, payload: { ...payloadOf(event), policySha256: undefined } } : event)],
+    ['business version disagreement', (events: readonly { type: string; payload: unknown }[]) => events.map((event, index) => index === 3 ? { ...event, payload: { ...payloadOf(event), definitionVersion: 2 } } : event)]
+  ] as const)('refuses %s identity replay before handler or write', async (_name, alter) => {
+    const repository = new FakeTurnRepository();
+    const { counters, table, outcome } = await initialize(repository, 'identity-case');
+    const first = repository.appendCalls[0]?.events;
+    if (!first || !outcome) throw new Error('missing first commit');
+    repository.replaceEvents(outcome.instanceId, alter(first));
+    repository.appendCalls.length = 0;
+    await expect(processSagaSourceEvent(table, repository, sourceEvent({ type: 'turn.order-paid.v1.event', commitId: 'next', eventId: 'next' })))
+      .rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(counters.handler).toBe(0);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('rejects active declarative policy drift before handler or duplicate ACK', async () => {
+    const repository = new FakeTurnRepository();
+    const { table, counters } = await initialize(repository, 'policy-drift');
+    const registrations = table.definitions.map((definition) => registerSagaDefinition({
+      definition, pluginManifests: [], responseHandlerBindings: {}, parseStartInput: (input: unknown) => input,
+      canonicalCommandTypes: ['new.command']
+    }));
+    const options = { registrationForRoute: bindSagaRegistrations(table, registrations) };
+    repository.appendCalls.length = 0;
+    await expect(processRegisteredEvent(table, repository, sourceEvent({ type: 'turn.order-paid.v1.event', commitId: 'new', eventId: 'new' }), options))
+      .rejects.toMatchObject({ code: 'definition_identity_mismatch', retryable: false });
+    await expect(processRegisteredEvent(table, repository, sourceEvent(), options))
+      .rejects.toMatchObject({ code: 'definition_identity_mismatch', retryable: false });
+    expect(counters.handler).toBe(0);
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('checks identity before an existing start-only no-op', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createStartOnlyTable('noop-policy', createCounters());
+    await processSagaSourceEvent(table, repository, sourceEvent());
+    const registrations = table.definitions.map((definition) => registerSagaDefinition({
+      definition, pluginManifests: [], responseHandlerBindings: {}, parseStartInput: (input: unknown) => input,
+      canonicalCommandTypes: ['new.command']
+    }));
+    repository.appendCalls.length = 0;
+    await expect(processRegisteredEvent(table, repository, sourceEvent({ commitId: 'next', eventId: 'next' }), {
+      registrationForRoute: bindSagaRegistrations(table, registrations)
+    })).rejects.toMatchObject({ code: 'definition_identity_mismatch', retryable: false });
+    expect(repository.appendCalls).toHaveLength(0);
+  });
+
+  it('refuses an unissued registration before load, write, or ACK', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('unissued', createCounters());
+    const registration = registrationOptions(table).registrationForRoute(table.routes[0]!);
+    await expect(processRegisteredEvent(table, repository, sourceEvent(), {
+      registrationForRoute: () => ({ ...registration })
+    })).rejects.toMatchObject({ code: 'invalid_registration', retryable: false });
+    expect(repository.loadCalls).toHaveLength(0);
+    expect(repository.appendCalls).toHaveLength(0);
   });
 
   it('runs one on handler against authoritative state and persists its draft', async () => {
@@ -171,8 +248,7 @@ describe('durable saga state-turn processor', () => {
     const repository = new FakeTurnRepository();
     const { counters, table } = await initialize(repository, 'duplicate');
     counters.initial = 0;
-    const result = await processSagaSourceEvent(table, repository, sourceEvent());
-    expect(result[0]?.status).toBe('reconciled');
+    await expect(processSagaSourceEvent(table, repository, sourceEvent())).rejects.toMatchObject({ code: 'duplicate_proof_required', retryable: false });
     expect(counters).toMatchObject({ initial: 0, start: 0, handler: 0 });
     expect(repository.appendCalls).toHaveLength(1);
   });
@@ -335,7 +411,7 @@ describe('durable saga state-turn processor', () => {
     repository.appendCalls.length = 0;
     await expect(processSagaSourceEvent(table, repository, sourceEvent({
       type: 'turn.order-paid.v1.event', commitId: 'source-2', eventId: 'event-2'
-    }))).rejects.toMatchObject({ code: 'legacy_business_state_missing' });
+    }))).rejects.toMatchObject({ code: 'invalid_stored_event' });
     expect(repository.appendCalls).toHaveLength(0);
   });
 });

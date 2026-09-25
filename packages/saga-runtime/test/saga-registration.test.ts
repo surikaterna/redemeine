@@ -1,5 +1,5 @@
 import { createSaga, defineOneWay, defineRequestResponse, defineSagaPlugin } from '@redemeine/saga';
-import { bindSagaRegistrations, registerSagaDefinition, SagaStartDecisionError } from '../src/routing/registerSagaDefinition';
+import { bindSagaRegistrations, registerSagaDefinition, registerSagaTurnDefinition, SagaStartDecisionError } from '../src/routing/registerSagaDefinition';
 import { compileSagaRoutes } from '../src/routing/compileSagaRoutes';
 import { deriveSagaInstanceId } from '../src/identity/deterministicIds';
 import { serializeSagaCorrelation } from '../src/identity/canonicalCorrelation';
@@ -93,6 +93,16 @@ it('joins exact active identity and version only, with no worker execution', () 
   expect(() => bindSagaRegistrations(table, [registration, registration])).toThrow();
   expect(() => bindSagaRegistrations(table, [registerSagaDefinition({ ...options, definition: { ...definition } })])).toThrow();
   expect(() => resolve({ kind: 'start', definition, sagaKey: definition.sagaKey, definitionVersion: 2 } as Parameters<typeof resolve>[0])).toThrow();
+});
+
+it('issues a verified turn-only registration without running a start handler or trusting a copied identity', () => {
+  const turn = registerSagaTurnDefinition({ definition, pluginManifests: [plugin],
+    responseHandlerBindings: bindings, canonicalCommandTypes: [] });
+  const table = compileSagaRoutes([definition]);
+  expect(turn.definitionIdentity).toEqual(register().definitionIdentity);
+  expect(() => bindSagaRegistrations(table, [turn])).not.toThrow();
+  expect(() => bindSagaRegistrations(table, [{ ...turn, definitionIdentity: { ...turn.definitionIdentity, policySha256: '0'.repeat(64) } }]))
+    .toThrow('Untrusted');
 });
 
 it('cannot trust a fixture digest or infer callback equality from declarative identity', () => {

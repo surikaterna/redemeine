@@ -3,6 +3,7 @@ import { runSagaHandler } from '@redemeine/saga';
 import { createSagaAggregate, type SagaAggregate, type SagaAggregateState } from '../SagaAggregate';
 import { serializeSagaCorrelation } from '../identity/canonicalCorrelation';
 import { deriveSagaTurnEnvelopeId } from '../identity/deterministicIds';
+import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import type { ResolvedSagaTurnRouteGroup, SagaTurnIdentity, SagaTurnSourceEvent, SagaTurnStoredCommit, SagaTurnStreamSnapshot } from './contracts';
 import { SagaTurnError, SagaTurnIntegrityError, SagaTurnPermanentError, SagaTurnUnsupportedError } from './errors';
 import {
@@ -16,6 +17,7 @@ import {
 export interface HydratedSagaTurn {
   readonly aggregate: SagaAggregate;
   readonly state: SagaAggregateState;
+  readonly definitionIdentity: DefinitionIdentityV1 | null;
 }
 
 function requireEventTypes(aggregate: SagaAggregate): Readonly<Record<string, string>> {
@@ -69,6 +71,10 @@ export async function hydrateSagaTurn(
     }
     const through = prefix && sequence === prefix.commitSequence ? prefix.eventOffset : commit.events.length;
     state = replayCommitEvents(commit, through, version, state, aggregate, replay, eventTypes);
+    if (sequence === 0 && through === commit.events.length &&
+      (!replay.authoritative || commit.events.length !== 4 || replay.lastKind !== 'businessStateRecorded')) {
+      throw new SagaTurnPermanentError('invalid_stored_event', 'Initial saga identity and turn must share one four-event commit');
+    }
     version += through;
     sequence += 1;
     if (prefix && commit.commitSequence === prefix.commitSequence) break;
@@ -80,10 +86,11 @@ export async function hydrateSagaTurn(
   if (!prefix && sequence > 0 && state.id === null) {
     throw new SagaTurnIntegrityError('missing_instance_event', 'Stored saga stream has events but no created instance');
   }
-  return { aggregate, state };
+  return { aggregate, state, definitionIdentity: replay.definitionIdentity };
 }
 
-function assertExistingIdentity(state: SagaAggregateState, resolved: ResolvedSagaTurnRouteGroup): void {
+function assertExistingIdentity(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, active: DefinitionIdentityV1): void {
+  const state = turn.state;
   if (state.id !== resolved.instanceId || state.sagaKey !== resolved.sagaKey) {
     throw new SagaTurnIntegrityError('saga_identity_mismatch', 'Stored saga identity does not match the resolved route');
   }
@@ -94,6 +101,11 @@ function assertExistingIdentity(state: SagaAggregateState, resolved: ResolvedSag
       'Existing saga definition version cannot be migrated by this processor slice',
       { storedVersion: state.definitionVersion, activeVersion: version }
     );
+  }
+  if (!turn.definitionIdentity || turn.definitionIdentity.sagaKey !== active.sagaKey ||
+    turn.definitionIdentity.definitionVersion !== active.definitionVersion ||
+    turn.definitionIdentity.policySha256 !== active.policySha256) {
+    throw new SagaTurnPermanentError('definition_identity_mismatch', 'Stored saga policy differs from active registration');
   }
   if (!state.correlation || serializeSagaCorrelation(state.correlation) !== serializeSagaCorrelation(resolved.correlation)) {
     throw new SagaTurnIntegrityError('correlation_mismatch', 'Stored saga correlation does not match the resolved route');
@@ -142,7 +154,7 @@ function statePayload(state: unknown, resolved: ResolvedSagaTurnRouteGroup, sour
   };
 }
 
-export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent): readonly Event[] {
+export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, active: DefinitionIdentityV1): readonly Event[] {
   const route = resolved.startRoute;
   if (!route) throw new SagaTurnPermanentError('missing_start_route', 'Cannot initialize a saga from an on-only route');
   const pending: Event[] = [];
@@ -159,18 +171,19 @@ export function buildInitialTurnEvents(turn: HydratedSagaTurn, resolved: Resolve
     sagaType: route.definition.sagaType,
     createdAt: source.createDateTime
   }), identity, source.createDateTime);
+  state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordDefinitionIdentity({ schemaVersion: 1, ...active }), identity, source.createDateTime);
   state = appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.observeSourceEvent(observationPayload(source)), identity, source.createDateTime);
   appendCommand(turn.aggregate, state, pending, turn.aggregate.commandCreators.recordBusinessState(statePayload(initialState, resolved, source)), identity, source.createDateTime);
   return pending;
 }
 
-export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent): Promise<readonly Event[]> {
+export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, source: SagaTurnSourceEvent, active: DefinitionIdentityV1): Promise<readonly Event[]> {
   const route = resolved.onRoute;
   if (!route) throw new SagaTurnPermanentError('missing_on_route', 'Cannot update a saga without an on route');
   if (turn.state.businessState === null || turn.state.businessState === undefined) {
     throw new SagaTurnIntegrityError('legacy_business_state_missing', 'Existing saga has no authoritative business state');
   }
-  assertExistingIdentity(turn.state, resolved);
+  assertExistingIdentity(turn, resolved, active);
   let output;
   try {
     output = await runSagaHandler(turn.state.businessState, resolved.event, route.handler, {
@@ -195,6 +208,6 @@ export async function buildExistingTurnEvents(turn: HydratedSagaTurn, resolved: 
   return pending;
 }
 
-export function assertHydratedSagaIdentity(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup): void {
-  assertExistingIdentity(turn.state, resolved);
+export function assertHydratedSagaIdentity(turn: HydratedSagaTurn, resolved: ResolvedSagaTurnRouteGroup, active: DefinitionIdentityV1): void {
+  assertExistingIdentity(turn, resolved, active);
 }

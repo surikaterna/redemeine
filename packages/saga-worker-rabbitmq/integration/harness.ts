@@ -2,9 +2,11 @@ import { once } from 'node:events';
 import type { Event } from '@redemeine/kernel';
 import {
   type CompiledSagaRoutingTable,
+  bindSagaRegistrations,
   createSagaAggregate,
   deriveSagaInstanceId,
   normalizeSagaCorrelation,
+  registerSagaTurnDefinition,
   type SagaTurnRepository
 } from '@redemeine/saga-runtime';
 import { openMongoSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
@@ -22,6 +24,14 @@ import {
 } from '../src/index';
 import type { RealSagaState } from './fixtures';
 import { readRabbitQueueCounts } from './rabbitQueueCounts';
+
+function registeredOptions(table: CompiledSagaRoutingTable) {
+  const registrations = table.definitions.map((definition) => registerSagaTurnDefinition({
+    definition, pluginManifests: [], responseHandlerBindings: {},
+    canonicalCommandTypes: []
+  }));
+  return { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, registrations) };
+}
 
 interface SourceEvent extends IBaseEvent {
   payload: unknown;
@@ -201,7 +211,7 @@ export async function createScenario(
     },
     source: { collection: stack.sourceCollection, partitions: [stack.sourcePartitionId] },
     limits: { maxBodyBytes: 12 * 1024 * 1024, maxEvents: 20, prefetch: options.prefetch ?? 5, shutdownTimeoutMs: 5_000 },
-    processEvent: createSagaSourceEventProcessor(table, repository, { maxConflictRetries: 5 }),
+    processEvent: createSagaSourceEventProcessor(table, repository, registeredOptions(table)),
     onSettlementError: async (failure) => {
       settlementErrors.push(failure);
       await options.onSettlementError?.(failure, channel);
@@ -384,7 +394,7 @@ export async function startReplacementWorker(stack: RealStack, harness: Scenario
     },
     source: { collection: stack.sourceCollection, partitions: [stack.sourcePartitionId] },
     limits: { maxBodyBytes: 12 * 1024 * 1024, maxEvents: 20, prefetch: 5, shutdownTimeoutMs: 5_000 },
-    processEvent: createSagaSourceEventProcessor(table, harness.repository, { maxConflictRetries: 5 }),
+    processEvent: createSagaSourceEventProcessor(table, harness.repository, registeredOptions(table)),
     onSettlementError: () => undefined
   });
   await worker.start();

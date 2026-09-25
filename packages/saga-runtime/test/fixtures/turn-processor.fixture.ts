@@ -3,7 +3,11 @@ import type { Event } from '@redemeine/kernel';
 import { createSaga } from '@redemeine/saga';
 import {
   compileSagaRoutes,
+  bindSagaRegistrations,
   createStartEventBindings,
+  registerSagaDefinition,
+  type CompiledSagaRoutingTable,
+  type SagaTurnProcessorOptions,
   type SagaTurnAppendRequest,
   type SagaTurnAppendResult,
   type SagaTurnRepository,
@@ -47,6 +51,14 @@ export const orders = createAggregate('turn-orders', { seen: 0 })
 
 export function createCounters(): DefinitionCounters {
   return { initial: 0, start: 0, handler: 0 };
+}
+
+export function registrationOptions(table: CompiledSagaRoutingTable, maxConflictRetries?: number): SagaTurnProcessorOptions {
+  const registrations = table.definitions.map((definition) => registerSagaDefinition({
+    definition, pluginManifests: [], responseHandlerBindings: {},
+    parseStartInput: (input: unknown) => input, canonicalCommandTypes: []
+  }));
+  return { registrationForRoute: bindSagaRegistrations(table, registrations), ...(maxConflictRetries === undefined ? {} : { maxConflictRetries }) };
 }
 
 export function createTurnDefinition(

@@ -1,4 +1,5 @@
 import type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
+import type { DefinitionIdentityV1 } from './routing/executableIdentity';
 
 export type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 
@@ -134,6 +135,7 @@ export interface SagaAggregateState<TState = unknown> {
   sagaType: string | null;
   sagaKey?: string | null;
   definitionVersion?: number | null;
+  definitionIdentity?: DefinitionIdentityV1 | null;
   correlation?: SagaCanonicalCorrelation | null;
   businessState?: TState | null;
   lifecycleState: SagaLifecycleState;
@@ -157,6 +159,7 @@ export interface SagaAggregateState<TState = unknown> {
 export interface NormalizedSagaAggregateState<TState = unknown> extends SagaAggregateState<TState> {
   sagaKey: string | null;
   definitionVersion: number | null;
+  definitionIdentity: DefinitionIdentityV1 | null;
   correlation: SagaCanonicalCorrelation | null;
   businessState: TState | null;
 }
@@ -173,6 +176,12 @@ export interface SagaCreateInstanceCommandPayload {
   createdAt?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface SagaRecordDefinitionIdentityCommandPayload extends DefinitionIdentityV1 {
+  schemaVersion: 1;
+}
+
+export interface SagaDefinitionIdentityRecordedEventPayload extends SagaRecordDefinitionIdentityCommandPayload {}
 
 export interface SagaObserveSourceEventCommandPayload {
   eventType: string;

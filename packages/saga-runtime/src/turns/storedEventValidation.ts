@@ -6,10 +6,12 @@ import {
   type SagaCanonicalCorrelation
 } from '../identity/canonicalCorrelation';
 import { assertSagaLifecycleState, type SagaLifecycleState } from '../sagaAggregateContracts';
+import type { DefinitionIdentityV1 } from '../routing/executableIdentity';
 import { SagaTurnIntegrityError, SagaTurnPermanentError } from './errors';
 
 export type SagaStoredEventKind =
   | 'instanceCreated'
+  | 'definitionIdentityRecorded'
   | 'sourceEventObserved'
   | 'stateTransitioned'
   | 'intentLifecycleRecorded'
@@ -29,6 +31,7 @@ export interface SagaStoredReplayContext {
   lifecycleState: SagaLifecycleState | null;
   lastKind: SagaStoredEventKind | null;
   businessIdentity: string | null;
+  definitionIdentity: DefinitionIdentityV1 | null;
 }
 
 const intentStages = new Set(['created', 'scheduled', 'dispatched', 'acknowledged', 'failed', 'cancelled']);
@@ -95,6 +98,16 @@ function validateInstance(payload: Record<string, unknown>): void {
   assertSagaLifecycleState(payload.lifecycleState);
   requireTimestamp(payload, 'createdAt', 'instanceCreated.createdAt');
   optionalRecord(payload, 'metadata', 'instanceCreated.metadata');
+}
+
+function validateDefinitionIdentity(payload: Record<string, unknown>): void {
+  assertKeys(payload, ['schemaVersion', 'sagaKey', 'definitionVersion', 'policySha256'], [], 'definitionIdentityRecorded');
+  if (payload.schemaVersion !== 1) throw invalid('Unsupported definition identity version');
+  requireString(payload, 'sagaKey', 'definitionIdentityRecorded.sagaKey');
+  requireSafeInteger(payload.definitionVersion, 'definitionIdentityRecorded.definitionVersion', 1);
+  if (typeof payload.policySha256 !== 'string' || !/^[0-9a-f]{64}$/.test(payload.policySha256)) {
+    throw invalid('definitionIdentityRecorded.policySha256 must be a lowercase SHA-256 digest');
+  }
 }
 
 function validateObserved(payload: Record<string, unknown>): void {
@@ -196,6 +209,7 @@ function validateBusiness(payload: Record<string, unknown>): void {
 
 const validators: Readonly<Record<SagaStoredEventKind, (payload: Record<string, unknown>) => void>> = {
   instanceCreated: validateInstance,
+  definitionIdentityRecorded: validateDefinitionIdentity,
   sourceEventObserved: validateObserved,
   stateTransitioned: validateTransition,
   intentLifecycleRecorded: validateIntent,
@@ -204,6 +218,7 @@ const validators: Readonly<Record<SagaStoredEventKind, (payload: Record<string, 
 };
 const storedEventKinds = [
   'instanceCreated',
+  'definitionIdentityRecorded',
   'sourceEventObserved',
   'stateTransitioned',
   'intentLifecycleRecorded',
@@ -264,7 +279,8 @@ export function createSagaStoredReplayContext(): SagaStoredReplayContext {
     pendingObservations: 0,
     lifecycleState: null,
     lastKind: null,
-    businessIdentity: null
+    businessIdentity: null,
+    definitionIdentity: null
   };
 }
 
@@ -288,6 +304,10 @@ function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<s
   if (context.lastKind !== 'sourceEventObserved' || context.pendingObservations !== 1) {
     throw invalidReplay('Each authoritative business state must pair with exactly one preceding source observation');
   }
+  if (!context.definitionIdentity || context.definitionIdentity.sagaKey !== payload.sagaKey ||
+    context.definitionIdentity.definitionVersion !== payload.definitionVersion) {
+    throw invalidReplay('Business state disagrees with recorded definition identity');
+  }
   const identity = JSON.stringify([
     requireString(payload, 'sagaKey'),
     requireSafeInteger(payload.definitionVersion, 'definitionVersion', 1),
@@ -303,13 +323,22 @@ function assertBusinessOrder(context: SagaStoredReplayContext, payload: Record<s
 
 export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, stored: ValidatedStoredSagaEvent): void {
   if (stored.kind === 'instanceCreated') {
-    if (context.created) throw invalidReplay('Saga stream contains multiple instance creation events');
+    if (context.created || context.lastKind !== null) throw invalidReplay('Saga stream contains multiple instance creation events');
     context.created = true;
     const lifecycle = stored.payload.lifecycleState;
     assertSagaLifecycleState(lifecycle);
     context.lifecycleState = lifecycle;
   } else if (!context.created) {
     throw invalidReplay('Saga stream event appears before instance creation');
+  } else if (stored.kind === 'definitionIdentityRecorded') {
+    if (context.lastKind !== 'instanceCreated' || context.definitionIdentity) throw invalidReplay('Definition identity must occur exactly once immediately after creation');
+    context.definitionIdentity = {
+      sagaKey: requireString(stored.payload, 'sagaKey'),
+      definitionVersion: requireSafeInteger(stored.payload.definitionVersion, 'definitionVersion', 1),
+      policySha256: requireString(stored.payload, 'policySha256')
+    };
+  } else if (!context.definitionIdentity) {
+    throw invalidReplay('Saga stream lacks definition identity before its first turn');
   } else if (stored.kind === 'sourceEventObserved') {
     context.pendingObservations += 1;
     if (context.authoritative && context.pendingObservations > 1) {
@@ -324,6 +353,9 @@ export function assertStoredSagaReplayOrder(context: SagaStoredReplayContext, st
 }
 
 export function finalizeStoredSagaReplay(context: SagaStoredReplayContext): void {
+  if (context.created && (!context.definitionIdentity || !context.authoritative)) {
+    throw invalidReplay('Saga stream has no complete identity-bearing initial turn');
+  }
   if (context.authoritative && context.pendingObservations !== 0) {
     throw invalidReplay('Authoritative saga stream ends with a source observation that has no business state');
   }

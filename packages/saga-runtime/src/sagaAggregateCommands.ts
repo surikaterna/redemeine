@@ -7,6 +7,7 @@ import type {
   SagaBusinessStateRecordedEventPayload,
   SagaCreateInstanceCommandPayload,
   SagaObserveSourceEventCommandPayload,
+  SagaRecordDefinitionIdentityCommandPayload,
   SagaRecordActivityLifecycleCommandPayload,
   SagaRecordIntentLifecycleCommandPayload,
   SagaRecordStateTransitionCommandPayload
@@ -102,6 +103,15 @@ export function createSagaAggregateCommands<TState>(emit: SagaEventEmitter<TStat
         lifecycleState,
         createdAt: toIso8601(payload.createdAt)
       });
+    },
+    recordDefinitionIdentity: (state: SagaCommandState<TState>, payload: SagaRecordDefinitionIdentityCommandPayload) => {
+      requireCreatedInstance(state, 'recordDefinitionIdentity');
+      if (state.definitionIdentity || payload.schemaVersion !== 1 || typeof payload.sagaKey !== 'string' || !payload.sagaKey ||
+        !Number.isSafeInteger(payload.definitionVersion) || payload.definitionVersion < 1 ||
+        typeof payload.policySha256 !== 'string' || !/^[0-9a-f]{64}$/.test(payload.policySha256)) {
+        throw new TypeError('Invalid or duplicate saga definition identity');
+      }
+      return emit.definitionIdentityRecorded(payload);
     },
     observeSourceEvent: (state: SagaCommandState<TState>, payload: SagaObserveSourceEventCommandPayload) => {
       requireCreatedInstance(state, 'observeSourceEvent');

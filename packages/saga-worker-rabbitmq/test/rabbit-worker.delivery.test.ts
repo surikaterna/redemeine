@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { SagaTurnTransientError, SagaTurnUnsupportedError } from '@redemeine/saga-runtime';
+import { SagaTurnPermanentError, SagaTurnTransientError, SagaTurnUnsupportedError } from '@redemeine/saga-runtime';
 import { createSagaRabbitWorker, decodeSagaRabbitMessage } from '../src/index';
 import { body, deferred, FakeChannel, flush, limits, message, options, source } from './helpers';
 
@@ -41,7 +41,9 @@ describe('Rabbit saga worker delivery', () => {
 
   it.each([
     [new SagaTurnTransientError('temporary', 'temporary'), true],
-    [new SagaTurnUnsupportedError('unsupported_intents', 'unsupported'), false]
+    [new SagaTurnUnsupportedError('unsupported_intents', 'unsupported'), false],
+    [new SagaTurnPermanentError('duplicate_proof_required', 'Unproven historical duplicate'), false],
+    [new SagaTurnPermanentError('definition_identity_mismatch', 'Stored policy drift'), false]
   ] as const)('maps processing failures to one NACK disposition', async (error, requeue) => {
     const channel = new FakeChannel();
     const target = createSagaRabbitWorker(options(channel, async () => {

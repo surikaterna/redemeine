@@ -2,8 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import {
   compileSagaRoutes,
   createStartEventBindings,
-  processSagaSourceEvent,
-  processSagaSourceEvents,
+  processSagaSourceEvent as processRegisteredEvent,
+  processSagaSourceEvents as processRegisteredEvents,
+  type CompiledSagaRoutingTable,
+  type SagaTurnSourceEvent,
   SagaTurnTransientError
 } from '../src/index';
 import {
@@ -11,8 +13,18 @@ import {
   createTurnDefinition,
   createTurnTable,
   FakeTurnRepository,
+  registrationOptions,
   sourceEvent
 } from './fixtures/turn-processor.fixture';
+
+function processSagaSourceEvent(table: CompiledSagaRoutingTable, repository: FakeTurnRepository, source: SagaTurnSourceEvent,
+  options?: { readonly maxConflictRetries?: number }) {
+  return processRegisteredEvent(table, repository, source, registrationOptions(table, options?.maxConflictRetries));
+}
+
+function processSagaSourceEvents(table: CompiledSagaRoutingTable, repository: FakeTurnRepository, sources: readonly SagaTurnSourceEvent[]) {
+  return processRegisteredEvents(table, repository, sources, registrationOptions(table));
+}
 
 function persistedCount(request: { events: readonly { type: string; payload: unknown }[] }): number {
   const event = request.events.find(({ type }) => type === 'saga.business_state_recorded.event');
@@ -43,14 +55,16 @@ function paidSource(commitId = 'paid-commit') {
 }
 
 describe('saga turn OCC and ordered fanout', () => {
-  it('commits one concurrent duplicate and reconciles the other', async () => {
+  it('commits one concurrent duplicate and refuses the unproven other', async () => {
     const repository = new FakeTurnRepository();
     const { table } = await initialize(repository, 'concurrent-duplicate');
-    const [first, second] = await Promise.all([
+    const [first, second] = await Promise.allSettled([
       processSagaSourceEvent(table, repository, paidSource()),
       processSagaSourceEvent(table, repository, paidSource())
     ]);
-    expect([first[0]?.status, second[0]?.status].sort()).toEqual(['committed', 'reconciled']);
+    expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
+    const refused = first.status === 'rejected' ? first.reason : second.status === 'rejected' ? second.reason : null;
+    expect(refused).toMatchObject({ code: 'duplicate_proof_required', retryable: false });
     expect(repository.appendCalls).toHaveLength(2);
     expect(repository.appendCalls[0]?.commitId).toBe(repository.appendCalls[1]?.commitId);
     expect(repository.appendCalls[0]?.events).toEqual(repository.appendCalls[1]?.events);
@@ -71,7 +85,7 @@ describe('saga turn OCC and ordered fanout', () => {
     expect(first.events[0]?.headers).toBeUndefined();
   });
 
-  it('reconciles after a conflict when the same turn appeared without rerunning', async () => {
+  it('refuses after a conflict when the same turn appeared without original-prefix proof', async () => {
     const repository = new FakeTurnRepository();
     const { counters, table } = await initialize(repository, 'conflict-duplicate');
     let first = true;
@@ -81,8 +95,7 @@ describe('saga turn OCC and ordered fanout', () => {
       target.commit(request);
       return { status: 'conflict' };
     };
-    const outcome = await processSagaSourceEvent(table, repository, paidSource());
-    expect(outcome[0]?.status).toBe('reconciled');
+    await expect(processSagaSourceEvent(table, repository, paidSource())).rejects.toMatchObject({ code: 'duplicate_proof_required', retryable: false });
     expect(counters.handler).toBe(1);
     expect(repository.appendCalls).toHaveLength(1);
   });
@@ -136,7 +149,7 @@ describe('saga turn OCC and ordered fanout', () => {
       first.sagaKey, second.sagaKey, first.sagaKey, second.sagaKey
     ]);
     expect(repository.appendCalls).toHaveLength(4);
-    expect(repository.appendCalls.slice(0, 2).every(({ events }) => events.length === 3)).toBe(true);
+    expect(repository.appendCalls.slice(0, 2).every(({ events }) => events.length === 4)).toBe(true);
     expect(repository.appendCalls.slice(2).every(({ events }) => events.length === 2)).toBe(true);
     expect(firstCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });
     expect(secondCounters).toMatchObject({ initial: 1, start: 0, handler: 1 });

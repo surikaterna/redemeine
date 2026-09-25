@@ -1,6 +1,6 @@
 import { runSagaStartHandler } from '@redemeine/saga';
 import type { SagaDefinition, SagaIntentMetadata, SagaPluginManifestList, SagaResponseHandlerTokenBindings } from '@redemeine/saga';
-import type { CompiledSagaRoutingTable, CompiledSagaStartRoute } from './contracts';
+import type { CompiledSagaRoute, CompiledSagaRoutingTable } from './contracts';
 import { validateInitialSagaState, validateSagaRegistration } from './registrationValidation';
 import { validateBusinessState } from '../businessStateValidation';
 import { sagaPolicyFingerprint, type DeclaredSchemaIdentity, type DefinitionIdentityV1 } from './executableIdentity';
@@ -26,6 +26,8 @@ export interface SagaRegistration<TState extends object = object> {
   readonly assertCurrent: () => void;
   readonly executeStart: (input: unknown, metadata: SagaIntentMetadata, origin: StartTurnOrigin, turnClock: string) => Promise<{ state: TState; intents: readonly WireIntent[] }>;
 }
+
+export type SagaTurnRegistration = Pick<SagaRegistration, 'definition' | 'sagaKey' | 'definitionVersion' | 'definitionIdentity' | 'assertCurrent'>;
 
 function captureReferences<TState, TPlugins extends SagaPluginManifestList, TBindings extends SagaResponseHandlerTokenBindings, TInput>(
   definition: SagaDefinition<TState, TPlugins, TBindings, TInput>, manifests: TPlugins
@@ -132,9 +134,26 @@ export function registerSagaDefinition<
   return registration;
 }
 
-export function bindSagaRegistrations(table: CompiledSagaRoutingTable, registrations: readonly SagaRegistration[]) {
+export function registerSagaTurnDefinition(options: {
+  readonly definition: SagaDefinition;
+  readonly pluginManifests: SagaPluginManifestList;
+  readonly responseHandlerBindings: SagaResponseHandlerTokenBindings;
+  readonly canonicalCommandTypes: readonly string[];
+  readonly declaredSchemas?: readonly DeclaredSchemaIdentity[];
+}): SagaTurnRegistration {
+  const { definition, pluginManifests, responseHandlerBindings } = options;
+  validateSagaRegistration(definition, pluginManifests, responseHandlerBindings);
+  const guard = createExecutableGuard(definition, pluginManifests, responseHandlerBindings,
+    [...options.canonicalCommandTypes], options.declaredSchemas ? [...options.declaredSchemas] : []);
+  const registration = Object.freeze({ definition, sagaKey: definition.sagaKey,
+    definitionVersion: definition.identity.version, ...guard });
+  issuedRegistrations.add(registration);
+  return registration;
+}
+
+export function bindSagaRegistrations(table: CompiledSagaRoutingTable, registrations: readonly SagaTurnRegistration[]) {
   const active = new Set<object>(table.definitions);
-  const byDefinition = new Map<object, SagaRegistration>();
+  const byDefinition = new Map<object, SagaTurnRegistration>();
   const byKey = new Set<string>();
   for (const registration of registrations) {
     if (!issuedRegistrations.has(registration)) throw new TypeError('Untrusted saga registration');
@@ -150,11 +169,16 @@ export function bindSagaRegistrations(table: CompiledSagaRoutingTable, registrat
   for (const definition of active) {
     if (!byDefinition.has(definition)) throw new TypeError('Missing saga registration');
   }
-  return (route: CompiledSagaStartRoute): SagaRegistration => {
+  return (route: CompiledSagaRoute): SagaTurnRegistration => {
     const registration = byDefinition.get(route.definition);
     if (!registration || route.sagaKey !== registration.sagaKey || route.definitionVersion !== registration.definitionVersion ||
         route.definition.identity.version !== registration.definitionVersion) throw new TypeError('Unknown or changed saga version');
     registration.assertCurrent();
     return registration;
   };
+}
+
+export function assertIssuedSagaRegistration(registration: SagaTurnRegistration): void {
+  if (!issuedRegistrations.has(registration)) throw new TypeError('Untrusted saga registration');
+  registration.assertCurrent();
 }

@@ -24,6 +24,7 @@ function createInitialState<TState>(): NormalizedSagaAggregateState<TState> {
     sagaType: null,
     sagaKey: null,
     definitionVersion: null,
+    definitionIdentity: null,
     correlation: null,
     businessState: null,
     lifecycleState: 'idle',
@@ -58,6 +59,7 @@ export function normalizeSagaAggregateState<TState>(partial?: Partial<SagaAggreg
     ...partial,
     sagaKey: partial?.sagaKey ?? null,
     definitionVersion: partial?.definitionVersion ?? null,
+    definitionIdentity: partial?.definitionIdentity ?? null,
     correlation: partial?.correlation ?? null,
     businessState: partial?.businessState ?? null,
     lifecycleState,
@@ -69,6 +71,7 @@ export function normalizeSagaAggregateState<TState>(partial?: Partial<SagaAggreg
 function hydrateSagaAggregateState<TState>(state: SagaAggregateState<TState>): asserts state is NormalizedSagaAggregateState<TState> {
   state.sagaKey ??= null;
   state.definitionVersion ??= null;
+  state.definitionIdentity ??= null;
   state.correlation ??= null;
   state.businessState ??= null;
 }
@@ -83,6 +86,7 @@ function buildSagaAggregate<TAggregateName extends string, TState>(aggregateName
     .commands((emit) => createSagaAggregateCommands<TState>(emit, options.businessStateValidation))
     .overrideEventNames({
       instanceCreated: `${aggregateName}.${toSnakeCase('instanceCreated')}.event`,
+      definitionIdentityRecorded: `${aggregateName}.${toSnakeCase('definitionIdentityRecorded')}.event`,
       sourceEventObserved: `${aggregateName}.${toSnakeCase('sourceEventObserved')}.event`,
       stateTransitioned: `${aggregateName}.${toSnakeCase('stateTransitioned')}.event`,
       intentLifecycleRecorded: `${aggregateName}.${toSnakeCase('intentLifecycleRecorded')}.event`,

@@ -9,7 +9,7 @@ export async function processSagaSourceEvent(
   table: CompiledSagaRoutingTable,
   repository: SagaTurnRepository,
   sourceEvent: SagaTurnSourceEvent,
-  options: SagaTurnProcessorOptions = {}
+  options: SagaTurnProcessorOptions
 ): Promise<readonly SagaTurnRouteOutcome[]> {
   const source = normalizeSagaTurnSourceEvent(sourceEvent);
   const event = createSagaTurnAggregateEvent(source);
@@ -26,7 +26,7 @@ export async function processSagaSourceEvents(
   table: CompiledSagaRoutingTable,
   repository: SagaTurnRepository,
   sourceEvents: readonly SagaTurnSourceEvent[],
-  options: SagaTurnProcessorOptions = {}
+  options: SagaTurnProcessorOptions
 ): Promise<readonly SagaTurnRouteOutcome[]> {
   const outcomes: SagaTurnRouteOutcome[] = [];
   for (const source of sourceEvents) {

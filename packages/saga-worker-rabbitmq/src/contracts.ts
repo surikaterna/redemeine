@@ -76,7 +76,7 @@ export interface SagaRabbitWorker {
 export function createSagaSourceEventProcessor(
   table: CompiledSagaRoutingTable,
   repository: SagaTurnRepository,
-  options: SagaTurnProcessorOptions = {}
+  options: SagaTurnProcessorOptions
 ): SagaSourceEventProcessor {
   return (source) => processSagaSourceEvent(table, repository, source, options);
 }

@@ -2,6 +2,7 @@ import type { Event } from '@redemeine/kernel';
 import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
 import type { CompiledSagaRoute, CompiledSagaRoutingTable, SagaRouteSourceEvent } from '../routing/contracts';
 import type { SagaTurnAggregateEvent } from './aggregateEvent';
+import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 
 export interface SagaTurnSourceEvent extends SagaRouteSourceEvent {
   readonly createDateTime: string;
@@ -77,6 +78,7 @@ export interface SagaTurnRouteOutcome {
 
 export interface SagaTurnProcessorOptions {
   readonly maxConflictRetries?: number;
+  readonly registrationForRoute: (route: CompiledSagaRoute) => SagaTurnRegistration;
 }
 
 export interface SagaTurnRouteGroup {
