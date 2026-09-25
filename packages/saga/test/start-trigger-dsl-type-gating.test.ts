@@ -19,7 +19,7 @@ describe('createSaga start/correlateBy/triggeredBy definition DSL', () => {
 
     const definition = createSaga<{ started: boolean }>({ identity: ORDER_START_IDENTITY })
       .initialState(() => ({ started: false }))
-      .start<{ orderId: string; source: 'event' | 'direct' }>((_start, _ctx) => undefined)
+      .start<{ orderId: string; source: 'event' | 'direct' }>((_state, _start, _ctx) => undefined)
       .correlateBy((start) => start.orderId)
       .triggeredBy({
         kind: 'event',
@@ -50,7 +50,7 @@ describe('createSaga start/correlateBy/triggeredBy definition DSL', () => {
   });
 
   it('enforces builder-phase gating at compile time', () => {
-    const awaitingCorrelation = createSaga({ identity: GATED_IDENTITY }).start<{ orderId: string }>((_start, _ctx) => undefined);
+    const awaitingCorrelation = createSaga({ identity: GATED_IDENTITY }).start<{ orderId: string }>((_state, _start, _ctx) => undefined);
 
     // @ts-expect-error build is unavailable before correlateBy
     type BuildBeforeCorrelateBy = typeof awaitingCorrelation.build;

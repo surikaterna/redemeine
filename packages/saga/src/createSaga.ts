@@ -9,6 +9,8 @@ export {
   runSagaHandler,
   runSagaResponseHandler
 } from './execution/handlerExecution';
+export { runSagaStartHandler } from './execution/startExecution';
+export type { RunSagaStartInput } from './execution/startExecution';
 export type {
   SagaErrorTokenKey,
   SagaResponseHandlerPhase,
@@ -763,14 +765,14 @@ export type SagaAggregateEventByName<
   readonly metadata?: Record<string, unknown>;
 };
 
-type SagaCommandIntentFactoryFromCreator<TCreator, TCommandName extends string> =
+type SagaCommandIntentFactoryFromCreator<TCreator> =
   TCreator extends (...args: infer TArgs) => infer TEnvelope
-    ? TEnvelope extends { payload: infer TPayload }
+    ? TEnvelope extends { type: infer TType extends string; payload: infer TPayload }
       ? (...args: TArgs) => SagaPluginIntent<
         'core',
         'dispatch',
         {
-          readonly command: TCommandName;
+          readonly command: string extends TType ? string : TType;
           readonly payload: TPayload;
           readonly aggregateId: string;
         },
@@ -782,8 +784,7 @@ type SagaCommandIntentFactoryFromCreator<TCreator, TCommandName extends string> 
 /** Typed command-intent creators derived from aggregate command creators. */
 export type SagaCommandsFor<TAggregate extends SagaAggregateDefinition> = {
   [TCommandName in keyof CommandCreatorsOf<TAggregate> & string]: SagaCommandIntentFactoryFromCreator<
-    CommandCreatorsOf<TAggregate>[TCommandName],
-    TCommandName
+    CommandCreatorsOf<TAggregate>[TCommandName]
   >;
 };
 
@@ -798,9 +799,8 @@ function mergeSagaIntentMetadata(
   };
 }
 
-function createSagaDispatchIntentFromEnvelope<TCommandName extends string, TPayload>(
-  command: TCommandName,
-  envelope: { payload: TPayload },
+function createSagaDispatchIntentFromEnvelope<TType extends string, TPayload>(
+  envelope: { type: TType; payload: TPayload },
   metadata: SagaIntentMetadata,
   metadataOverride?: Partial<SagaIntentMetadata>,
   aggregateId?: string
@@ -808,19 +808,30 @@ function createSagaDispatchIntentFromEnvelope<TCommandName extends string, TPayl
   'core',
   'dispatch',
   {
-    readonly command: TCommandName;
+    readonly command: TType;
     readonly payload: TPayload;
     readonly aggregateId: string;
   },
   'fire_and_forget'
 > {
+  if (
+    envelope === null ||
+    typeof envelope.type !== 'string' ||
+    envelope.type.trim() === '' ||
+    envelope.type.trim() !== envelope.type ||
+    !Object.hasOwn(envelope, 'payload') ||
+    envelope.payload === undefined
+  ) {
+    throw new TypeError('Aggregate command creator must return a nonempty type and a defined payload');
+  }
+
   return {
     type: 'plugin-intent',
     plugin_key: 'core',
     action_name: 'dispatch',
     interaction: 'fire_and_forget',
     execution_payload: {
-      command,
+      command: envelope.type,
       payload: envelope.payload,
       aggregateId: aggregateId ?? 'unknown-aggregate-id'
     },
@@ -847,7 +858,6 @@ export function createSagaCommandsFor<TAggregate extends SagaAggregateDefinition
     (commandIntents as Record<string, UnknownArgsFunction>)[commandName] = (...args: unknown[]) => {
       const command = createCommand(...args);
       const intent = createSagaDispatchIntentFromEnvelope(
-        commandName as keyof CommandCreatorsOf<TAggregate> & string,
         command,
         metadata,
         metadataOverride,
@@ -1320,6 +1330,7 @@ export type SagaStartHandler<
   TPlugins extends SagaPluginManifestList = readonly [],
   TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
 > = (
+  state: Draft<TState>,
   start: TStartInput,
   ctx: SagaIntentContext<TPlugins, TResponseHandlerBindings>
 ) => SagaHandlerResult;
@@ -1505,7 +1516,8 @@ export interface SagaStartDslContracts<TStartInput = unknown, TCorrelationId = u
 export interface SagaDefinition<
   TState = unknown,
   TPlugins extends SagaPluginManifestList = readonly [],
-  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>
+  TResponseHandlerBindings extends SagaResponseHandlerTokenBindings = Record<never, never>,
+  TStartInput = unknown
 > {
   name: string;
   identity: SagaIdentityMetadata;
@@ -1514,7 +1526,7 @@ export interface SagaDefinition<
   sagaUrn: string;
   plugins: SagaPluginRegistryFromManifests<TPlugins>;
   initialState: SagaInitialStateFactory<TState>;
-  start?: SagaStartHandler<unknown, TState, TPlugins, TResponseHandlerBindings>;
+  start?: SagaStartHandler<TStartInput, TState, TPlugins, TResponseHandlerBindings>;
   startContracts: SagaStartDslContracts<unknown, unknown>;
   responseHandlers: SagaExecutableResponseHandlers<TState, TPlugins, TResponseHandlerBindings>;
   errorHandlers: SagaExecutableErrorHandlers<TState, TPlugins, TResponseHandlerBindings>;
@@ -1618,7 +1630,7 @@ export interface SagaBuilderCorrelated<
   triggeredBy<TTriggerInput, TKind extends string = string>(
     trigger: SagaTriggerDefinition<TStartInput, TTriggerInput, TKind>
   ): SagaBuilderCorrelated<TState, TPlugins, TResponseHandlerBindings, TStartInput, TCorrelationId>;
-  build(): SagaDefinition<TState, TPlugins, TResponseHandlerBindings>;
+  build(): SagaDefinition<TState, TPlugins, TResponseHandlerBindings, TStartInput>;
 }
 
 export interface CreateSagaOptions<TPlugins extends SagaPluginManifestList = readonly []> {
@@ -1979,7 +1991,7 @@ function createSagaBuilder<
         responseHandlers: { ...state.responseHandlers },
         errorHandlers: { ...state.errorHandlers },
         retryHandlers: { ...state.retryHandlers }
-      } as unknown) as SagaDefinition<TLocalState, TPlugins, TLocalResponseHandlerBindings>;
+      } as unknown) as SagaDefinition<TLocalState, TPlugins, TLocalResponseHandlerBindings, TStartInput>;
     }
   });
 
