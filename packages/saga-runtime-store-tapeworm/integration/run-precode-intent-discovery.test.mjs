@@ -7,6 +7,8 @@ import { removeOwned, runPrecode } from './run-precode-intent-discovery.mjs';
 const digest = (path) => createHash('sha256').update(readFileSync(new URL(path, import.meta.url))).digest('hex');
 const expected = () => ({ head: 'b'.repeat(40), testSha256: digest('./precode-intent-discovery.integration.test.ts'),
   runnerSha256: digest('./run-precode-intent-discovery.mjs') });
+const containerId = 'd'.repeat(64);
+const absent = (name) => ({ code: 1, output: '', error: `Error: No such container: ${name}` });
 
 test('cleanup checks absence of only the owned ID', async () => {
   const calls = [];
@@ -29,7 +31,8 @@ test('runner removes its container and writes receipt after Jest failure, withou
     if (program === 'git') return { code: 0, output: args[0] === 'status' ? '' : expected().head };
     if (program === 'pnpm') return { code: 1, output: '' };
     if (args[0] === 'image') return { code: 0, output: `mongo@sha256:${'a'.repeat(64)}` };
-    if (args[0] === 'run') return { code: 0, output: 'owned-id' };
+    if (args[0] === 'container') return absent(args.at(-1));
+    if (args[0] === 'run') return { code: 0, output: containerId };
     if (args[0] === 'exec') return { code: 0, output: args.some((arg) => arg.includes('buildInfo:1')) ? '8.0.14' : '1' };
     return { code: 0, output: '' };
   };
@@ -54,7 +57,8 @@ test('setup failure removes only started container and never invokes Jest', asyn
     calls.push([program, ...args]);
     if (program === 'git') return { code: 0, output: args[0] === 'status' ? '' : expected().head };
     if (args[0] === 'image') return { code: 0, output: `mongo@sha256:${'a'.repeat(64)}` };
-    if (args[0] === 'run') return { code: 0, output: 'owned-id' };
+    if (args[0] === 'container') return absent(args.at(-1));
+    if (args[0] === 'run') return { code: 0, output: containerId };
     if (args[0] === 'exec' && args.some((arg) => arg.includes('rs.initiate'))) {
       return { code: 1, output: '', error: 'init failure' };
     }
@@ -65,6 +69,58 @@ test('setup failure removes only started container and never invokes Jest', asyn
   assert.equal(receipt.cleanup.absent, true);
   assert.equal(calls.some(([program]) => program === 'pnpm'), false);
   assert.equal(calls.filter(([, action]) => action === 'rm').length, 1);
+});
+
+test('signal during docker run before ID returns removes the preflight-absent name once and verifies absence', async () => {
+  const calls = [];
+  let present = false;
+  let name;
+  const written = [];
+  const run = async (program, args, options) => {
+    calls.push([program, ...args]);
+    if (program === 'git') return { code: 0, output: args[0] === 'status' ? '' : expected().head };
+    if (args[0] === 'image') return { code: 0, output: `mongo@sha256:${'a'.repeat(64)}` };
+    if (args[0] === 'container') return present ? { code: 0, output: `/${name}` } : absent(args.at(-1));
+    if (args[0] === 'run') {
+      name = args[args.indexOf('--name') + 1];
+      present = true;
+      return new Promise((resolveRun) => {
+        options.onChild({ kill: () => { resolveRun({ code: null, output: '', error: 'interrupted' }); } });
+        queueMicrotask(() => process.emit('SIGTERM'));
+      });
+    }
+    if (args[0] === 'rm') { assert.deepEqual(args, ['rm', '-f', name]); present = false; }
+    return { code: 0, output: '' };
+  };
+  const receipt = await runPrecode({ run, expected: expected(), port: async () => 27049,
+    write: (_path, text) => { written.push(JSON.parse(text)); } });
+  await new Promise((resolveNext) => setImmediate(resolveNext));
+  assert.equal(process.exitCode, 1);
+  process.exitCode = 0;
+  assert.equal(receipt.exit, 1);
+  assert.equal(receipt.signal, 'SIGTERM');
+  assert.equal(receipt.cleanup.foundBeforeRemoval, true);
+  assert.equal(receipt.cleanup.absent, true);
+  assert.equal(written[0].status, 'FAILED');
+  assert.equal(calls.filter(([, action]) => action === 'rm').length, 1);
+  assert.equal(calls.filter(([, action]) => action === 'container').length, 3);
+  assert.equal(calls.some(([program]) => program === 'pnpm'), false);
+});
+
+test('preexisting named container aborts and never removes unrelated container', async () => {
+  const calls = [];
+  const run = async (program, args) => {
+    calls.push([program, ...args]);
+    if (program === 'git') return { code: 0, output: args[0] === 'status' ? '' : expected().head };
+    if (args[0] === 'image') return { code: 0, output: `mongo@sha256:${'a'.repeat(64)}` };
+    if (args[0] === 'container') return { code: 0, output: `/${args.at(-1)}` };
+    throw new Error('Touched unrelated container');
+  };
+  const receipt = await runPrecode({ run, expected: expected(), port: async () => 27049, write: () => {} });
+  assert.equal(receipt.status, 'FAILED');
+  assert.match(receipt.failure, /Preexisting container/);
+  assert.equal(receipt.cleanup.owned, false);
+  assert.equal(calls.some(([, action]) => action === 'run' || action === 'rm'), false);
 });
 
 test('missing approval, dirty/untracked worktree and mismatched HEAD or script hashes refuse before Docker or receipt', async () => {

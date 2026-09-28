@@ -12,7 +12,13 @@ const image = 'mongo:8.0.14';
 const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 let ownedOnExit;
 process.on('exit', () => {
-  if (ownedOnExit) spawnSync('docker', ['rm', '-f', ownedOnExit], { stdio: 'ignore' });
+  if (!ownedOnExit) return;
+  const { name, id } = ownedOnExit;
+  if (id) { spawnSync('docker', ['rm', '-f', id], { stdio: 'ignore' }); return; }
+  const probe = spawnSync('docker', ['container', 'inspect', '--format', '{{.Name}}', name], { encoding: 'utf8' });
+  if (probe.status === 0 && probe.stdout.trim() === `/${name}`) {
+    spawnSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
+  }
 });
 
 function execute(program, args, options = {}) {
@@ -100,9 +106,65 @@ export async function removeOwned(run, id) {
   return { owned: true, id, absent: true, removeExit: removed.code };
 }
 
+async function inspectName(run, name) {
+  const result = await run('docker', ['container', 'inspect', '--format', '{{.Name}}', name]);
+  if (result.code === 0) {
+    if (result.output !== `/${name}`) throw new Error(`Ambiguous container name inspection: ${name}`);
+    return true;
+  }
+  if (!result.error?.includes('No such') || !result.error.includes(name)) {
+    throw new Error(`Cannot verify container name absence: ${name}`);
+  }
+  return false;
+}
+
+async function startOwned(run, name, port, onIntent, interrupted) {
+  if (await inspectName(run, name)) throw new Error(`Preexisting container: ${name}`);
+  if (interrupted()) throw new Error('Interrupted before docker run');
+  onIntent(true);
+  try {
+    const id = requireSuccess(await run('docker', ['run', '--detach', '--rm', '--name', name,
+      '--network', 'host', image, 'mongod', '--port', String(port), '--replSet', 'rs0', '--bind_ip_all']), 'docker run');
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('Docker run did not return a full container ID');
+    return id;
+  } catch (error) {
+    if (/Conflict.*already in use/i.test(String(error))) onIntent(false);
+    throw error;
+  }
+}
+
+async function cleanupOwned(run, name, id) {
+  if (!name) return { owned: false, absent: true };
+  if (id) {
+    const removed = await removeOwned(run, id);
+    if (await inspectName(run, name)) throw new Error(`Owned container name remains: ${name}`);
+    return { ...removed, name };
+  }
+  const created = await inspectName(run, name);
+  if (created) requireSuccess(await run('docker', ['rm', '-f', name]), 'remove owned name');
+  if (await inspectName(run, name)) throw new Error(`Owned container name remains: ${name}`);
+  return { owned: true, name, absent: true, foundBeforeRemoval: created };
+}
+
+async function finishRun(run, receipt, name, id, interrupted, write, receiptPath) {
+  try { receipt.cleanup = await cleanupOwned(run, name, id); }
+  catch (error) { receipt.cleanup = { verified: false, error: String(error) }; receipt.status = 'FAILED'; }
+  if (receipt.cleanup.absent) ownedOnExit = undefined;
+  receipt.signal = interrupted ?? null;
+  if (interrupted && receipt.status !== 'FAILED') receipt.status = 'INTERRUPTED';
+  receipt.exit = receipt.status === 'PRECODE_EXPERIMENT_EXECUTED_NOT_CERTIFIED' && receipt.cleanup.absent ? 0 : 1;
+  write(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  console.info(`VPWM_RUNNER_RECEIPT=${receiptPath}`);
+}
+
 function expectedFromEnv() {
   return { head: process.env.REDEMEINE_EXPECTED_SHA, testSha256: process.env.REDEMEINE_EXPECTED_TEST_SHA256,
     runnerSha256: process.env.REDEMEINE_EXPECTED_RUNNER_SHA256 };
+}
+
+function newReceipt(identity, name, db) {
+  return { issue: 'redemeine-vpwm.4.1', ...identity, database: db, image, containerName: name,
+    digest: null, mongoVersion: null, jestExit: null, status: 'NOT_STARTED' };
 }
 
 export async function runPrecode({ run = execute, port = availablePort, write = writeFileSync, expected = expectedFromEnv() } = {}) {
@@ -111,13 +173,15 @@ export async function runPrecode({ run = execute, port = availablePort, write = 
   const db = `vpwm_precode_${randomUUID().replaceAll('-', '')}`;
   const receiptPath = resolve('/tmp/opencode', `${name}.json`);
   if (!statSync(dirname(receiptPath)).isDirectory()) throw new Error('Receipt parent missing');
-  const receipt = { issue: 'redemeine-vpwm.4.1', ...identity, database: db, image, containerName: name,
-    digest: null, mongoVersion: null, jestExit: null, status: 'NOT_STARTED' };
+  const receipt = newReceipt(identity, name, db);
   let id;
+  let intendedName;
   let active;
   let interrupted;
+  let resolveFinished;
+  const finished = new Promise((resolveDone) => { resolveFinished = resolveDone; });
   const handlers = new Map(['SIGINT', 'SIGTERM'].map((signal) =>
-    [signal, () => { interrupted = signal; active?.kill?.(signal); }]));
+    [signal, async () => { interrupted = signal; active?.kill?.(signal); await finished; process.exitCode = 1; }]));
   for (const [signal, handler] of handlers) process.on(signal, handler);
   const call = (cmd, args, options = {}) => run(cmd, args, { ...options, onChild: (child) => { active = child; } });
   try {
@@ -126,9 +190,12 @@ export async function runPrecode({ run = execute, port = availablePort, write = 
     if (!/^mongo@sha256:[0-9a-f]{64}$/.test(receipt.digest)) throw new Error('Unverified Mongo image digest');
     const selectedPort = await port();
     receipt.port = selectedPort;
-    id = requireSuccess(await call('docker', ['run', '--detach', '--rm', '--name', name,
-      '--network', 'host', image, 'mongod', '--port', String(selectedPort), '--replSet', 'rs0', '--bind_ip_all']), 'docker run');
-    ownedOnExit = id;
+    if (interrupted) throw new Error(`Interrupted: ${interrupted}`);
+    id = await startOwned(call, name, selectedPort, (intent) => {
+      intendedName = intent ? name : undefined;
+      ownedOnExit = intent ? { name } : undefined;
+    }, () => interrupted);
+    ownedOnExit = { name, id };
     receipt.containerId = id;
     receipt.mongoVersion = await initializeReplica(call, id, selectedPort, () => interrupted);
     if (interrupted) throw new Error(`Interrupted: ${interrupted}`);
@@ -141,15 +208,11 @@ export async function runPrecode({ run = execute, port = availablePort, write = 
     receipt.failure = String(error);
   } finally {
     active = undefined;
-    try { receipt.cleanup = await removeOwned(call, id); }
-    catch (error) { receipt.cleanup = { verified: false, error: String(error) }; receipt.status = 'FAILED'; }
-    if (receipt.cleanup.absent) ownedOnExit = undefined;
-    for (const [signal, handler] of handlers) process.off(signal, handler);
-    receipt.signal = interrupted ?? null;
-    if (interrupted && receipt.status !== 'FAILED') receipt.status = 'INTERRUPTED';
-    receipt.exit = receipt.status === 'PRECODE_EXPERIMENT_EXECUTED_NOT_CERTIFIED' ? 0 : 1;
-    write(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-    console.info(`VPWM_RUNNER_RECEIPT=${receiptPath}`);
+    try { await finishRun(call, receipt, intendedName, id, interrupted, write, receiptPath); }
+    finally {
+      for (const [signal, handler] of handlers) process.off(signal, handler);
+      resolveFinished();
+    }
   }
   return receipt;
 }
