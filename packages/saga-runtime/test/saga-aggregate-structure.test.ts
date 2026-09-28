@@ -103,20 +103,18 @@ describe('createSagaAggregate structure contracts', () => {
 
     let state = aggregate.apply(
       aggregate.initialState,
-      aggregate.process(
-        aggregate.initialState,
-        aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(0) })
-      )[0]
+      aggregate.process(aggregate.initialState, aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(0) }))[0]
     );
 
     for (let i = 1; i <= 5; i += 1) {
+      const toState = state.lifecycleState === 'active' ? 'idle' : 'active';
       state = aggregate.apply(
         state,
         aggregate.process(
           state,
           aggregate.commandCreators.recordStateTransition({
             fromState: state.lifecycleState,
-            toState: `state-${i}`,
+            toState,
             transitionAt: isoAt(i * 10)
           })
         )[0]
@@ -161,7 +159,7 @@ describe('createSagaAggregate structure contracts', () => {
     }
 
     expect(state.recent.transitions).toHaveLength(3);
-    expect(state.recent.transitions.map((entry) => entry.toState)).toEqual(['state-5', 'state-4', 'state-3']);
+    expect(state.recent.transitions.map((entry) => entry.toState)).toEqual(['idle', 'active', 'idle']);
     expect(state.recent.events).toHaveLength(2);
     expect(state.recent.events.map((entry) => entry.eventType)).toEqual(['event-5', 'event-4']);
     expect(state.recent.intents).toHaveLength(2);

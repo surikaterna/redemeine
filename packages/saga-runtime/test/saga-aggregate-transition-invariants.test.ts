@@ -1,21 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
-import { createSagaAggregate, SagaTransitionInvariantError, type SagaAggregateState } from '../src/createSagaAggregate';
+import { createSagaAggregate, type SagaAggregateState, SagaTransitionInvariantError } from '../src/createSagaAggregate';
 
 const isoAt = (secondsOffset: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, secondsOffset)).toISOString();
 
-const expectInvariant = (
-  execute: () => unknown,
-  code: SagaTransitionInvariantError['code'],
-  details: Record<string, unknown>
-) => {
+const expectInvariant = (execute: () => unknown, code: SagaTransitionInvariantError['code'], details: Record<string, unknown>) => {
   try {
     execute();
     throw new Error('expected invariant rejection');
   } catch (error) {
-    expect(error).toBeInstanceOf(SagaTransitionInvariantError);
-    const invariant = error as SagaTransitionInvariantError;
-    expect(invariant.code).toBe(code);
-    expect(invariant.details).toMatchObject(details);
+    if (!(error instanceof SagaTransitionInvariantError)) throw error;
+    expect(error.code).toBe(code);
+    expect(error.details).toMatchObject(details);
   }
 };
 
@@ -59,10 +54,7 @@ describe('saga aggregate transition invariants', () => {
 
     let state: SagaAggregateState = aggregate.apply(
       aggregate.initialState,
-      aggregate.process(
-        aggregate.initialState,
-        aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(1) })
-      )[0]
+      aggregate.process(aggregate.initialState, aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(1) }))[0]
     );
 
     expectInvariant(
@@ -87,6 +79,37 @@ describe('saga aggregate transition invariants', () => {
       () => aggregate.process(state, aggregate.commandCreators.recordStateTransition({ fromState: 'completed', toState: 'failed' })),
       'saga_transition_from_terminal_state',
       { command: 'recordStateTransition', sagaId: 'saga-1', currentState: 'completed', fromState: 'completed', toState: 'failed' }
+    );
+  });
+
+  it('rejects arbitrary lifecycle targets in commands and replayed events', () => {
+    const aggregate = createSagaAggregate({ aggregateName: 'saga' });
+    const created = aggregate.process(
+      aggregate.initialState,
+      aggregate.commandCreators.createInstance({ id: 'saga-1', sagaType: 'shipping', createdAt: isoAt(1) })
+    )[0];
+    if (!created) throw new Error('createInstance did not emit an event');
+    const state = aggregate.apply(aggregate.initialState, created);
+
+    // @ts-expect-error lifecycle targets are restricted to the public SagaLifecycleState union
+    aggregate.commandCreators.recordStateTransition({ fromState: 'active', toState: 'paused' });
+    expectInvariant(
+      () =>
+        aggregate.process(state, {
+          type: 'saga.record_state_transition.command',
+          payload: { fromState: 'active', toState: 'paused' }
+        }),
+      'saga_transition_invalid_lifecycle_state',
+      { value: 'paused' }
+    );
+    expectInvariant(
+      () =>
+        aggregate.apply(state, {
+          type: 'saga.state_transitioned.event',
+          payload: { record: { fromState: 'active', toState: 'paused', transitionAt: isoAt(2) } }
+        }),
+      'saga_transition_invalid_lifecycle_state',
+      { value: 'paused' }
     );
   });
 });
