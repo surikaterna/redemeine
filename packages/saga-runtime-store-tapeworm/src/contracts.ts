@@ -1,4 +1,5 @@
 import type { IBaseEvent, IPersistencePartition } from 'tapeworm';
+import type { SagaCommitReader } from './IndexedSagaCommitReader';
 
 export interface TapewormSagaEvent extends IBaseEvent {
   readonly payload: unknown;
@@ -6,16 +7,10 @@ export interface TapewormSagaEvent extends IBaseEvent {
   readonly metadata?: Record<string, unknown>;
 }
 
-export interface TapewormPartitionReadiness {
-  readonly partitionOpened: true;
-  readonly uniqueCommitIdIndexReady: true;
-  readonly uniqueStreamSequenceIndexReady: true;
-}
-
 export interface CreateTapewormSagaTurnRepositoryOptions {
   readonly partition: IPersistencePartition<TapewormSagaEvent>;
   readonly partitionId: string;
-  readonly readiness: TapewormPartitionReadiness;
+  readonly reader: SagaCommitReader;
 }
 
 export const tapewormSagaTurnIndexRequirements = Object.freeze([

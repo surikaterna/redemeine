@@ -2,6 +2,7 @@ import type { Event } from '@redemeine/kernel';
 import type { SagaCanonicalCorrelation } from '../identity/canonicalCorrelation';
 import type { CompiledSagaRoute, CompiledSagaRoutingTable, SagaRouteSourceEvent } from '../routing/contracts';
 import type { SagaTurnAggregateEvent } from './aggregateEvent';
+import type { SagaTurnRegistration } from '../routing/registerSagaDefinition';
 
 export interface SagaTurnSourceEvent extends SagaRouteSourceEvent {
   readonly createDateTime: string;
@@ -21,16 +22,27 @@ export interface SagaTurnIdentity {
 }
 
 export interface SagaTurnStoredCommit {
+  readonly partitionId: string;
   readonly streamId: string;
   readonly commitId: string;
   readonly commitSequence: number;
   readonly identity: SagaTurnIdentity;
+  readonly events: readonly SagaTurnStoredEvent[];
+}
+
+export interface SagaTurnStoredEvent {
+  readonly id: string;
+  readonly type: string;
+  readonly version: number;
+  readonly payload: unknown;
+  readonly headers?: Readonly<Record<string, unknown>>;
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface SagaTurnStreamSnapshot {
   readonly streamId: string;
   readonly nextCommitSequence: number;
-  readonly events: readonly unknown[];
+  readonly commits: AsyncIterable<SagaTurnStoredCommit>;
 }
 
 export interface SagaTurnAppendRequest {
@@ -47,8 +59,10 @@ export type SagaTurnAppendResult =
   | { readonly status: 'conflict' };
 
 export interface SagaTurnRepository {
+  readonly partitionId: string;
   load(instanceId: string): Promise<SagaTurnStreamSnapshot>;
   findCommit(streamId: string, commitId: string): Promise<SagaTurnStoredCommit | null>;
+  assertCommitMaterial(stored: SagaTurnStoredCommit, request: SagaTurnAppendRequest, firstEventVersion: number): void;
   append(request: SagaTurnAppendRequest): Promise<SagaTurnAppendResult>;
 }
 
@@ -66,6 +80,7 @@ export interface SagaTurnRouteOutcome {
 
 export interface SagaTurnProcessorOptions {
   readonly maxConflictRetries?: number;
+  readonly registrationForRoute: (route: CompiledSagaRoute) => SagaTurnRegistration;
 }
 
 export interface SagaTurnRouteGroup {

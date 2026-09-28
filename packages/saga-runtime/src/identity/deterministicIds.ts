@@ -93,3 +93,11 @@ export function deriveSagaRouteId(input: SagaRouteIdentityInput): string {
 export function deriveTurnCommitId(input: TurnCommitIdentityInput): string {
   return deriveFramedId('saga_c', 'redemeine.saga.turn-commit.v2', [input.sourceTriggerId, input.sagaKey, input.instanceId, input.routeId]);
 }
+
+/** Local command/event identity for a pure turn; never used to rewrite incoming source envelopes. */
+export function deriveSagaTurnEnvelopeId(input: TurnCommitIdentityInput, sourceTime: string, ordinal: number, kind: 'command' | 'event'): string {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0) throw new RangeError('Turn ordinal must be a non-negative safe integer');
+  return deriveFramedId('saga_e', 'redemeine.saga.turn-envelope.v1', [
+    input.sourceTriggerId, input.sagaKey, input.instanceId, input.routeId, sourceTime, ordinal.toString(), kind
+  ]);
+}

@@ -40,7 +40,8 @@
   "private": true,
   "dependencies": {
     "@redemeine/aggregate": "workspace:*",
-    "@redemeine/saga": "workspace:*"
+    "@redemeine/saga": "workspace:*",
+    "bson": "6.10.4"
   },
   "devDependencies": {
     "tsup": "^8.4.0",

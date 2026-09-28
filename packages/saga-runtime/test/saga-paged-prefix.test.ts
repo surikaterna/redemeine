@@ -1,0 +1,173 @@
+import { describe, expect, it } from '@jest/globals';
+import { hydrateSagaTurn } from '../src/turns/aggregateTurn';
+import { foldSagaTurn } from '../src/turns/originalTurnProof';
+import { resolveSagaTurnRouteGroup } from '../src/turns/routePlanning';
+import { createSagaTurnAggregateEvent } from '../src/turns/aggregateEvent';
+import { matchSagaTurnRouteGroups } from '../src/turns/routePlanning';
+import { processSagaSourceEvent } from '../src/turns/processSagaSource';
+import type { SagaTurnRepository } from '../src/turns/contracts';
+import { createCounters, createTurnTable, FakeTurnRepository, registrationOptions, sourceEvent } from './fixtures/turn-processor.fixture';
+
+describe('bounded saga prefix replay', () => {
+  it('reconciles a historical start through the production processor after 1025 later turns', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('long-processor', createCounters());
+    const source = sourceEvent();
+    const options = registrationOptions(table);
+    const started = await processSagaSourceEvent(table, repository, source, options);
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const lazy: SagaTurnRepository = {
+      partitionId: repository.partitionId,
+      load: async () => ({ streamId: id, nextCommitSequence: 1026, commits: (async function* () {
+        yield first;
+        for (let sequence = 1; sequence < 1026; sequence += 1) {
+          yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
+            events: first.events.slice(2).map((stored, offset) => ({ ...stored,
+              version: 4 + (sequence - 1) * 2 + offset })) };
+        }
+      })() }),
+      findCommit: repository.findCommit.bind(repository),
+      assertCommitMaterial: repository.assertCommitMaterial.bind(repository),
+      append: repository.append.bind(repository)
+    };
+    expect((await processSagaSourceEvent(table, lazy, source, options))[0]?.status).toBe('reconciled');
+    expect(repository.appendCalls).toHaveLength(1);
+  });
+  it('folds beyond 1024 complete commits and retains the original start prefix', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('long-fold', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const snapshot = await repository.load(id);
+    const iterator = snapshot.commits[Symbol.asyncIterator]();
+    const first = (await iterator.next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    const count = 1026;
+    const fold = await foldSagaTurn({ streamId: id, nextCommitSequence: count, commits: (async function* () {
+      yield first;
+      for (let sequence = 1; sequence < count; sequence += 1) {
+        yield { ...first, commitId: `unrelated-${sequence}`, commitSequence: sequence,
+          events: first.events.slice(2).map((stored, offset) => ({ ...stored, version: 4 + (sequence - 1) * 2 + offset })) };
+      }
+    })() }, resolved);
+    expect(fold.nextEventVersion).toBe(4 + (count - 1) * 2);
+    expect(fold.target?.firstEventVersion).toBe(0);
+    expect(fold.target?.original.state.id).toBeNull();
+    expect(fold.hydrated.state.totals.observedEvents).toBe(count);
+  });
+  it('rejects oversized historical aggregate windows before capturing a later target', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('oversized-fold', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const snapshot = await repository.load(id);
+    const first = (await snapshot.commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    const inflated = { ...first.events[2]!, payload: { record: { eventType: source.type,
+      observedAt: source.createDateTime, payload: { content: 'x'.repeat(350_000) } } } };
+    await expect(foldSagaTurn({ streamId: id, nextCommitSequence: 42, commits: (async function* () {
+      yield first;
+      for (let sequence = 1; sequence < 42; sequence += 1) {
+        yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
+          events: [inflated, first.events[3]!].map((stored, offset) => ({ ...stored, version: 4 + (sequence - 1) * 2 + offset })) };
+      }
+    })() }, resolved)).rejects.toMatchObject({ code: 'saga_state_too_large', retryable: false });
+    expect(repository.appendCalls).toHaveLength(1);
+  });
+  it('keeps complete observation/state pairs atomic across page boundaries and refuses a later incomplete turn', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('atomic-pages', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing initial commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    let completePages = 0;
+    const commits = (async function* () {
+      yield first;
+      for (let sequence = 1; sequence < 66; sequence += 1) {
+        const complete = first.events.slice(2).map((stored, offset) => ({ ...stored,
+          version: 4 + (sequence - 1) * 2 + offset }));
+        if (sequence === 64) completePages += 1;
+        yield { ...first, commitId: `other-${sequence}`, commitSequence: sequence,
+          events: sequence === 65 ? complete.slice(0, 1) : complete };
+      }
+    })();
+    await expect(foldSagaTurn({ streamId: id, nextCommitSequence: 66, commits }, resolved))
+      .rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(completePages).toBe(1);
+    expect(repository.appendCalls).toHaveLength(1);
+  });
+  it('rejects an observation-only physical commit before a state-only commit on the next page', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('split-physical', createCounters());
+    const source = sourceEvent();
+    const started = await processSagaSourceEvent(table, repository, source, registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const first = (await (await repository.load(id)).commits[Symbol.asyncIterator]().next()).value;
+    if (!first) throw new Error('missing first commit');
+    const event = createSagaTurnAggregateEvent(source);
+    const group = matchSagaTurnRouteGroups(table, source, event)[0];
+    if (!group) throw new Error('missing route');
+    const resolved = resolveSagaTurnRouteGroup(group, source, event);
+    const observation = { ...first, commitId: 'observation-only', commitSequence: 1,
+      events: [{ ...first.events[2]!, version: 4 }] };
+    const state = { ...first, commitId: 'state-only', commitSequence: 2,
+      events: [{ ...first.events[3]!, version: 5 }] };
+    let yielded = 0;
+    const snapshot = { streamId: id, nextCommitSequence: 3, commits: (async function* () {
+      for (const commit of [first, observation]) { yielded += 1; yield commit; }
+      yielded += 1;
+      yield state;
+    })() };
+    await expect(foldSagaTurn(snapshot, resolved)).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+    expect(yielded).toBe(2);
+    expect(repository.appendCalls).toHaveLength(1);
+    await expect(hydrateSagaTurn({ ...snapshot, commits: (async function* () {
+      yield first;
+      yield observation;
+      yield state;
+    })() }, id)).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+  });
+  it('projects the original prefix inside a complete stored commit without changing its event versions', async () => {
+    const repository = new FakeTurnRepository();
+    const table = createTurnTable('prefix', createCounters());
+    const started = await processSagaSourceEvent(table, repository, sourceEvent(), registrationOptions(table));
+    const id = started[0]!.instanceId;
+    const empty = await hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 0 });
+    expect(empty.state.id).toBeNull();
+    const created = await hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 1 });
+    expect(created.state.id).toBe(id);
+    expect(created.state.businessState).toBeNull();
+    const authoritative = await hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 4 });
+    expect(authoritative.state.businessState).toEqual({ count: 7 });
+    await expect(hydrateSagaTurn(await repository.load(id), id, { commitSequence: 0, eventOffset: 5 }))
+      .rejects.toMatchObject({ code: 'invalid_event_version' });
+    const snapshot = await repository.load(id);
+    const commits = [];
+    for await (const commit of snapshot.commits) commits.push(commit);
+    const original = commits[0];
+    if (!original) throw new Error('missing first commit');
+    const split = { streamId: id, nextCommitSequence: 2, commits: (async function* () {
+      yield { ...original, events: original.events.slice(0, 2) };
+      yield { ...original, commitSequence: 1, events: original.events.slice(2) };
+    })() };
+    await expect(hydrateSagaTurn(split, id)).rejects.toMatchObject({ code: 'invalid_stored_event', retryable: false });
+  });
+});

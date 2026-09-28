@@ -7,10 +7,12 @@ import type {
   SagaBusinessStateRecordedEventPayload,
   SagaCreateInstanceCommandPayload,
   SagaObserveSourceEventCommandPayload,
+  SagaRecordDefinitionIdentityCommandPayload,
   SagaRecordActivityLifecycleCommandPayload,
   SagaRecordIntentLifecycleCommandPayload,
   SagaRecordStateTransitionCommandPayload
 } from './sagaAggregateContracts';
+import type { SagaIntentRecordedEventPayload, SagaTimerFactRecordedEventPayload } from './sagaAggregateContracts';
 import { assertSagaLifecycleState, SagaTransitionInvariantError } from './sagaAggregateContracts';
 import type { createSagaAggregateProjectors } from './sagaAggregateProjectors';
 
@@ -103,6 +105,15 @@ export function createSagaAggregateCommands<TState>(emit: SagaEventEmitter<TStat
         createdAt: toIso8601(payload.createdAt)
       });
     },
+    recordDefinitionIdentity: (state: SagaCommandState<TState>, payload: SagaRecordDefinitionIdentityCommandPayload) => {
+      requireCreatedInstance(state, 'recordDefinitionIdentity');
+      if (state.definitionIdentity || payload.schemaVersion !== 1 || typeof payload.sagaKey !== 'string' || !payload.sagaKey ||
+        !Number.isSafeInteger(payload.definitionVersion) || payload.definitionVersion < 1 ||
+        typeof payload.policySha256 !== 'string' || !/^[0-9a-f]{64}$/.test(payload.policySha256)) {
+        throw new TypeError('Invalid or duplicate saga definition identity');
+      }
+      return emit.definitionIdentityRecorded(payload);
+    },
     observeSourceEvent: (state: SagaCommandState<TState>, payload: SagaObserveSourceEventCommandPayload) => {
       requireCreatedInstance(state, 'observeSourceEvent');
       return emit.sourceEventObserved({ record: { ...payload, observedAt: toIso8601(payload.observedAt) } });
@@ -125,6 +136,16 @@ export function createSagaAggregateCommands<TState>(emit: SagaEventEmitter<TStat
       assertBusinessStateIdentity(payload);
       validateBusinessState(payload.state, validationOptions);
       return emit.businessStateRecorded({ ...payload, recordedAt: toRequiredIso8601(payload.recordedAt) });
+    },
+    recordIntent: (state: SagaCommandState<TState>, payload: SagaIntentRecordedEventPayload) => {
+      requireCreatedInstance(state, 'recordIntent');
+      if (payload.schemaVersion !== 1) throw new TypeError('Unsupported intent event version');
+      return emit.intentRecorded(payload);
+    },
+    recordTimerFact: (state: SagaCommandState<TState>, payload: SagaTimerFactRecordedEventPayload) => {
+      requireCreatedInstance(state, 'recordTimerFact');
+      if (payload.schemaVersion !== 1) throw new TypeError('Unsupported timer fact version');
+      return emit.timerFactRecorded(payload);
     }
   };
 }

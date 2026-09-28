@@ -1,4 +1,8 @@
 import type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
+import type { DefinitionIdentityV1 } from './routing/executableIdentity';
+import type { WireIntent } from './intentWire';
+import type { TimerFactV1 } from './turns/lifecycleWire';
+import type { SourceTriggerIdentityInput } from './identity/deterministicIds';
 
 export type { SagaCanonicalCorrelation } from './identity/canonicalCorrelation';
 
@@ -11,6 +15,7 @@ export interface SagaRecentWindowLimits {
 
 export interface SagaObservedSourceEventRecord {
   eventType: string;
+  sourcePosition?: SourceTriggerIdentityInput;
   aggregateType?: string;
   aggregateId?: string;
   eventId?: string;
@@ -134,6 +139,7 @@ export interface SagaAggregateState<TState = unknown> {
   sagaType: string | null;
   sagaKey?: string | null;
   definitionVersion?: number | null;
+  definitionIdentity?: DefinitionIdentityV1 | null;
   correlation?: SagaCanonicalCorrelation | null;
   businessState?: TState | null;
   lifecycleState: SagaLifecycleState;
@@ -157,6 +163,7 @@ export interface SagaAggregateState<TState = unknown> {
 export interface NormalizedSagaAggregateState<TState = unknown> extends SagaAggregateState<TState> {
   sagaKey: string | null;
   definitionVersion: number | null;
+  definitionIdentity: DefinitionIdentityV1 | null;
   correlation: SagaCanonicalCorrelation | null;
   businessState: TState | null;
 }
@@ -173,6 +180,12 @@ export interface SagaCreateInstanceCommandPayload {
   createdAt?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface SagaRecordDefinitionIdentityCommandPayload extends DefinitionIdentityV1 {
+  schemaVersion: 1;
+}
+
+export interface SagaDefinitionIdentityRecordedEventPayload extends SagaRecordDefinitionIdentityCommandPayload {}
 
 export interface SagaObserveSourceEventCommandPayload {
   eventType: string;
@@ -249,6 +262,16 @@ export interface SagaActivityLifecycleRecordedEventPayload {
 }
 
 export interface SagaBusinessStateRecordedEventPayload<TState = unknown> extends SagaRecordBusinessStateCommandPayload<TState> {}
+
+export interface SagaIntentRecordedEventPayload {
+  schemaVersion: 1;
+  intent: WireIntent;
+}
+
+export interface SagaTimerFactRecordedEventPayload {
+  schemaVersion: 1;
+  fact: TimerFactV1;
+}
 
 export type SagaTransitionInvariantCode =
   | 'saga_instance_not_created'

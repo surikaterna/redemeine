@@ -29,7 +29,7 @@
     "@redemeine/kernel": "workspace:*",
     "@redemeine/saga": "workspace:*",
     "@redemeine/saga-runtime-store-tapeworm": "workspace:*",
-    "mongodb": "6.21.0",
+    "mongodb": "6.18.0",
     "tapeworm": "0.6.0",
     "tapeworm_dispatcher_mdb_rmq": "0.2.0",
     "tapeworm_persistence_store_mongodb": "3.1.0",

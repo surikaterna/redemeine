@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
-import { SagaTurnTransientError, SagaTurnUnsupportedError } from '@redemeine/saga-runtime';
+import { SagaTurnPermanentError, SagaTurnTransientError, SagaTurnUnsupportedError } from '@redemeine/saga-runtime';
+import type { Channel } from 'amqplib';
+import { observeReplacement } from '../integration/replacementObservation';
 import { createSagaRabbitWorker, decodeSagaRabbitMessage } from '../src/index';
 import { body, deferred, FakeChannel, flush, limits, message, options, source } from './helpers';
 
@@ -41,7 +43,9 @@ describe('Rabbit saga worker delivery', () => {
 
   it.each([
     [new SagaTurnTransientError('temporary', 'temporary'), true],
-    [new SagaTurnUnsupportedError('unsupported_intents', 'unsupported'), false]
+    [new SagaTurnUnsupportedError('unsupported_intents', 'unsupported'), false],
+    [new SagaTurnPermanentError('duplicate_proof_required', 'Unproven historical duplicate'), false],
+    [new SagaTurnPermanentError('definition_identity_mismatch', 'Stored policy drift'), false]
   ] as const)('maps processing failures to one NACK disposition', async (error, requeue) => {
     const channel = new FakeChannel();
     const target = createSagaRabbitWorker(options(channel, async () => {
@@ -87,6 +91,69 @@ describe('Rabbit saga worker delivery', () => {
     expect(channel.acks).toHaveLength(1);
     expect(channel.nacks).toHaveLength(0);
     expect(failures).toEqual([expect.objectContaining({ settlement: 'ack', error: channel.ackError })]);
+  });
+
+  it('settles a supplied second delivery after the first ACK throws and its channel closes', async () => {
+    const original = new class extends FakeChannel {
+      closed = false;
+      override ack(): void { throw new Error('ACK failed before broker settlement'); }
+      close(): void { this.closed = true; }
+    }();
+    const replacement = new FakeChannel();
+    const failures: unknown[] = [];
+    const deliveries: string[] = [];
+    const processEvent = async (event: { eventId: string }) => {
+      deliveries.push(event.eventId);
+      return [];
+    };
+    const first = createSagaRabbitWorker(options(original, processEvent, failures, {
+      onSettlementError: (failure) => {
+        failures.push(failure);
+        original.close();
+      }
+    }));
+    const retry = createSagaRabbitWorker(options(replacement, processEvent));
+    const input = message({ body: { ...body(), events: [body().events[0]] } });
+    await first.start();
+    await expect(first.handle(input)).rejects.toThrow('ACK failed before broker settlement');
+    expect(original.acks).toHaveLength(0);
+    expect(original.nacks).toHaveLength(0);
+    expect(failures).toEqual([expect.objectContaining({ settlement: 'ack', message: input })]);
+    expect(original.closed).toBe(true);
+    await first.stop();
+    await retry.start();
+    const redelivery = { ...input, fields: { ...input.fields, redelivered: true } };
+    await retry.handle(redelivery);
+    expect(deliveries).toEqual(['event-1', 'event-1']);
+    expect(replacement.acks).toEqual([{ message: redelivery, allUpTo: false }]);
+    expect(replacement.nacks).toHaveLength(0);
+    expect(failures).toHaveLength(1);
+    await retry.stop();
+  });
+
+  it('forwards malformed envelopes and contains delivery and ACK observer exceptions', async () => {
+    const channel = new FakeChannel();
+    const seen: string[] = [];
+    const delivered: string[] = [];
+    const observed = observeReplacement(channel as unknown as Channel, {
+      delivered: (id) => { delivered.push(id ?? 'missing'); throw new Error('delivery observer failed'); },
+      processed: () => undefined,
+      acked: () => { throw new Error('ACK observer failed'); }
+    });
+    const worker = createSagaRabbitWorker(options(channel, async (event) => {
+      seen.push(event.eventId);
+      return [];
+    }, [], { channel: observed }));
+    await worker.start();
+    const malformed = message({ body: '{invalid-json' });
+    const valid = message({ body: { ...body(), events: [body().events[0]] } });
+    channel.callbacks[0]?.(malformed);
+    channel.callbacks[0]?.(valid);
+    await worker.stop();
+    expect(delivered).toEqual(['commit-1', 'commit-1']);
+    expect(seen).toEqual(['event-1']);
+    expect(channel.nacks).toEqual([{ message: malformed, allUpTo: false, requeue: false }]);
+    expect(channel.acks).toEqual([{ message: valid, allUpTo: false }]);
   });
 
   it('attempts only NACK and reports a closed-channel NACK exception', async () => {

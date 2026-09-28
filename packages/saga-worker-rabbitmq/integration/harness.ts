@@ -2,12 +2,13 @@ import { once } from 'node:events';
 import type { Event } from '@redemeine/kernel';
 import {
   type CompiledSagaRoutingTable,
+  bindSagaRegistrations,
   createSagaAggregate,
   deriveSagaInstanceId,
   normalizeSagaCorrelation,
   type SagaTurnRepository
 } from '@redemeine/saga-runtime';
-import { createTapewormSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
+import { openMongoSagaTurnRepository, type TapewormSagaEvent } from '@redemeine/saga-runtime-store-tapeworm';
 import { type Channel, type ChannelModel, type ConfirmChannel, connect, type Options } from 'amqplib';
 import { type Db, MongoClient } from 'mongodb';
 import type { IBaseEvent, ICommit, IPersistencePartition } from 'tapeworm';
@@ -20,8 +21,14 @@ import {
   type SagaRabbitSettlementError,
   type SagaRabbitWorker
 } from '../src/index';
-import type { RealSagaState } from './fixtures';
+import { registrationForRealDefinition, type RealSagaState } from './fixtures';
 import { readRabbitQueueCounts } from './rabbitQueueCounts';
+import { observeReplacement, type ReplacementObservation } from './replacementObservation';
+
+function registeredOptions(table: CompiledSagaRoutingTable) {
+  const registrations = table.registered ?? table.definitions.map(registrationForRealDefinition);
+  return { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, registrations) };
+}
 
 interface SourceEvent extends IBaseEvent {
   payload: unknown;
@@ -167,11 +174,7 @@ export async function createScenario(
   const partitionId = `saga_${required('REDEMEINE_REAL_RUN_ID')}_${safeLabel}`;
   const persistence = new MongoPersistence(stack.db);
   const partition = typedPartition<TapewormSagaEvent>(await persistence.openPartition(partitionId));
-  const baseRepository = createTapewormSagaTurnRepository({
-    partition,
-    partitionId,
-    readiness: { partitionOpened: true, uniqueCommitIdIndexReady: true, uniqueStreamSequenceIndexReady: true }
-  });
+  const baseRepository = await openMongoSagaTurnRepository(stack.db, partitionId);
   const repository = options.repository?.(baseRepository) ?? baseRepository;
   const model = await connect(required('REDEMEINE_RABBIT_URL'));
   const channel = await model.createChannel();
@@ -205,7 +208,7 @@ export async function createScenario(
     },
     source: { collection: stack.sourceCollection, partitions: [stack.sourcePartitionId] },
     limits: { maxBodyBytes: 12 * 1024 * 1024, maxEvents: 20, prefetch: options.prefetch ?? 5, shutdownTimeoutMs: 5_000 },
-    processEvent: createSagaSourceEventProcessor(table, repository, { maxConflictRetries: 5 }),
+    processEvent: createSagaSourceEventProcessor(table, repository, registeredOptions(table)),
     onSettlementError: async (failure) => {
       settlementErrors.push(failure);
       await options.onSettlementError?.(failure, channel);
@@ -318,7 +321,9 @@ export async function replayState(harness: ScenarioHarness, instanceId: string):
   const snapshot = await harness.repository.load(instanceId);
   const aggregate = createSagaAggregate();
   let state = aggregate.initialState;
-  for (const stored of snapshot.events) state = aggregate.apply(state, stored as Event);
+  for await (const commit of snapshot.commits) {
+    for (const stored of commit.events) state = aggregate.apply(state, stored as Event);
+  }
   const businessState = state.businessState;
   if (!isRealSagaState(businessState)) throw new Error('expected replayed real saga state');
   return businessState;
@@ -342,8 +347,10 @@ export function instanceId(sagaKey: string, orderId: string): string {
 
 export function wrapRepository(base: SagaTurnRepository, append: SagaTurnRepository['append']): SagaTurnRepository {
   return {
+    partitionId: base.partitionId,
     load: (id) => base.load(id),
     findCommit: (streamId, commitId) => base.findCommit(streamId, commitId),
+    assertCommitMaterial: (stored, request, version) => base.assertCommitMaterial(stored, request, version),
     append
   };
 }
@@ -368,11 +375,13 @@ export async function waitForDeadLetter(harness: ScenarioHarness): Promise<void>
   await pollUntil(`dead letter ${harness.deadQueue}`, async () => (await queueCounts(harness.deadQueue)).ready > 0);
 }
 
-export async function startReplacementWorker(stack: RealStack, harness: ScenarioHarness, table: CompiledSagaRoutingTable): Promise<ReplacementWorker> {
+export async function startReplacementWorker(stack: RealStack, harness: ScenarioHarness, table: CompiledSagaRoutingTable,
+  observation?: ReplacementObservation): Promise<ReplacementWorker> {
   const model = await connect(required('REDEMEINE_RABBIT_URL'));
   const channel = await model.createChannel();
+  const processor = createSagaSourceEventProcessor(table, harness.repository, registeredOptions(table));
   const worker = createSagaRabbitWorker({
-    channel,
+    channel: observation ? observeReplacement(channel, observation) : channel,
     queue: {
       queue: harness.queue,
       options: {
@@ -386,7 +395,12 @@ export async function startReplacementWorker(stack: RealStack, harness: Scenario
     },
     source: { collection: stack.sourceCollection, partitions: [stack.sourcePartitionId] },
     limits: { maxBodyBytes: 12 * 1024 * 1024, maxEvents: 20, prefetch: 5, shutdownTimeoutMs: 5_000 },
-    processEvent: createSagaSourceEventProcessor(table, harness.repository, { maxConflictRetries: 5 }),
+    processEvent: async (event) => {
+      const outcomes = await processor(event);
+      try { observation?.processed(event.eventId, outcomes.map((outcome) => outcome.status)); }
+      catch { /* Observation cannot alter the processor outcome. */ }
+      return outcomes;
+    },
     onSettlementError: () => undefined
   });
   await worker.start();

@@ -3,8 +3,11 @@ import type {
   NormalizedSagaAggregateState,
   SagaActivityLifecycleRecordedEventPayload,
   SagaBusinessStateRecordedEventPayload,
+  SagaDefinitionIdentityRecordedEventPayload,
   SagaInstanceCreatedEventPayload,
   SagaIntentLifecycleRecordedEventPayload,
+  SagaIntentRecordedEventPayload,
+  SagaTimerFactRecordedEventPayload,
   SagaRecentWindowLimits,
   SagaSourceEventObservedEventPayload,
   SagaStateTransitionedEventPayload
@@ -28,6 +31,14 @@ export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWi
         updatedAt: event.payload.createdAt,
         transitionVersion: state.transitionVersion + 1
       });
+    },
+    definitionIdentityRecorded: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaDefinitionIdentityRecordedEventPayload>) => {
+      state.definitionIdentity = {
+        sagaKey: event.payload.sagaKey,
+        definitionVersion: event.payload.definitionVersion,
+        policySha256: event.payload.policySha256
+      };
+      state.transitionVersion += 1;
     },
     sourceEventObserved: (state: NormalizedSagaAggregateState<TState>, event: Event<SagaSourceEventObservedEventPayload>) => {
       state.updatedAt = event.payload.record.observedAt;
@@ -61,6 +72,13 @@ export function createSagaAggregateProjectors<TState>(windowLimits: SagaRecentWi
       state.correlation = event.payload.correlation;
       state.businessState = event.payload.state;
       state.updatedAt = event.payload.recordedAt;
+      state.transitionVersion += 1;
+    },
+    intentRecorded: (state: NormalizedSagaAggregateState<TState>, _event: Event<SagaIntentRecordedEventPayload>) => {
+      state.transitionVersion += 1;
+      state.totals.intents += 1;
+    },
+    timerFactRecorded: (state: NormalizedSagaAggregateState<TState>, _event: Event<SagaTimerFactRecordedEventPayload>) => {
       state.transitionVersion += 1;
     }
   };

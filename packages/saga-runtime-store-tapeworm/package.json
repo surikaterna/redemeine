@@ -20,7 +20,9 @@
   "private": true,
   "dependencies": {
     "@redemeine/saga-runtime": "workspace:*",
-    "tapeworm": "0.6.0"
+    "mongodb": "6.18.0",
+    "tapeworm": "0.6.0",
+    "tapeworm_persistence_store_mongodb": "3.1.0"
   },
   "devDependencies": {
     "@types/bluebird": "3.5.42",
