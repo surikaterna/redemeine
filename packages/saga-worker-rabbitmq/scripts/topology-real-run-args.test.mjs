@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { RABBIT_IMAGE } from './topology-runner-core.mjs';
 import { OWNER_LABEL } from './topology-runner-ownership.mjs';
 import { topologyRabbitRunArgs } from './topology-real-run-args.mjs';
+import ports from './topology-owned-ports.cjs';
 
 const runId = 'topology-0123456789abcdef0123456789abcdef';
 const names = { container: runId, network: `${runId}-net`, volume: `${runId}-data` };
@@ -34,4 +35,19 @@ test('real restart targets same owned container; no second volume or cookie writ
   const integration = readFileSync(new URL('../integration/topology-real.integration.test.ts', import.meta.url), 'utf8');
   assert.match(integration, /spawnSync\('docker', \['restart', container\]/);
   assert.doesNotMatch(integration, /deleteVolume|volume rm|RABBITMQ_ERLANG_COOKIE|chown|chmod/);
+});
+
+test('the owned restart port reader rejects foreign identities and ambiguous mappings', () => {
+  const id = 'a'.repeat(64);
+  const inspection = JSON.stringify({ Id: id, Name: `/${runId}`, Config: { Labels: { [OWNER_LABEL]: runId } } });
+  assert.equal(ports.ownedId(inspection, runId, id, runId), id);
+  assert.throws(() => ports.ownedId(inspection, runId, 'b'.repeat(64), runId), /identity mismatch/);
+  for (const mapping of ['127.0.0.1:100\n127.0.0.1:200', '0.0.0.0:100', '127.0.0.1:65536', '127.0.0.1:0']) {
+    assert.throws(() => ports.mappedPort(mapping), /unique localhost Rabbit port required/);
+  }
+  assert.equal(ports.mappedPort('127.0.0.1:530'), 530);
+  const runner = readFileSync(new URL('./run-topology-real.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /verified\.id !== ownership\.ids\.container/);
+  assert.match(runner, /receipt\.restartPorts = \{ amqpOld: port, amqpNew: updated\.port/);
+  assert.match(runner, /REDEMEINE_TOPOLOGY_CONTAINER_ID: ownership\.ids\.container/);
 });

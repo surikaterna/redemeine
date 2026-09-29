@@ -54,6 +54,14 @@ test('sanitizer bounds unexpected free text and categorizes app readiness withou
   assert.doesNotMatch(JSON.stringify(diagnostics), /dXNlcjpwYXNz|topology_restricted_password/);
 });
 
+test('restart receipt retains changed/unchanged numeric ports without endpoint URLs or credentials', () => {
+  const receipt = sanitizeReceipt({ restartPorts: { amqpOld: 1111, amqpNew: 3111, amqpChanged: true,
+    managementOld: 2222, managementNew: 2222, managementChanged: false, raw: credentials[1] } });
+  assert.deepEqual(receipt.restartPorts, { amqpOld: 1111, amqpNew: 3111, amqpChanged: true,
+    managementOld: 2222, managementNew: 2222, managementChanged: false, raw: '[REDACTED]' });
+  assert.ok(credentials.every((secret) => !JSON.stringify(receipt).includes(secret)));
+});
+
 test('active runner console output exposes only receipt location or fixed failure text', () => {
   const source = readFileSync(new URL('./run-topology-real.mjs', import.meta.url), 'utf8');
   assert.match(source, /console\.log\(`Topology audit receipt: \$\{receiptPath\}`\)/);

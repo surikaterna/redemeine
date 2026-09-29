@@ -6,14 +6,18 @@ import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 import { phaseStep } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
 import { waitForAmqpAfterRestart } from './amqpRestartProbe';
+import { refreshedEndpoints } from './restartEndpoints';
 
-const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
+let endpoints = { owner: process.env.REDEMEINE_TOPOLOGY_URL ?? '',
+  restricted: process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '',
+  management: process.env.REDEMEINE_TOPOLOGY_MANAGEMENT_URL ?? '' };
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
+const containerId = process.env.REDEMEINE_TOPOLOGY_CONTAINER_ID ?? '';
 const prefix = process.env.REDEMEINE_TOPOLOGY_RUN_ID ?? '';
 const brokerGate = new BrokerGate();
 
 async function management(path: string): Promise<unknown> {
-  const url = `${process.env.REDEMEINE_TOPOLOGY_MANAGEMENT_URL}${path}`;
+  const url = new URL(path, endpoints.management).toString();
   const auth = Buffer.from('topology_owner:topology_owner_password').toString('base64');
   const response = await fetch(url, { headers: { authorization: `Basic ${auth}` } });
   if (!response.ok) throw new Error(`Rabbit management inspection failed: HTTP ${response.status}`);
@@ -104,7 +108,7 @@ async function poll<T>(probe: () => Promise<T | null>, label: string): Promise<T
 }
 
 async function opened(): Promise<{ model: ChannelModel; channel: Channel }> {
-  const model = await connect(url);
+  const model = await connect(endpoints.owner);
   return { model, channel: await model.createChannel() };
 }
 
@@ -112,8 +116,10 @@ async function restart(): Promise<void> {
   await brokerGate.afterRestart(async () => {
     const result = spawnSync('docker', ['restart', container], { encoding: 'utf8', timeout: 90_000 });
     if (result.status !== 0) throw new Error('owned Rabbit restart failed');
-  }, () => waitForOwnedRabbitApp(container, 90_000), () =>
-    waitForAmqpAfterRestart(url, (error) => brokerGate.recordAmqpFailure(error)));
+  }, () => waitForOwnedRabbitApp(container, 90_000), async () => {
+    endpoints = refreshedEndpoints(endpoints, container, containerId, prefix);
+    await waitForAmqpAfterRestart(endpoints.owner, (error) => brokerGate.recordAmqpFailure(error));
+  });
 }
 
 async function requireBrokerForNegative(): Promise<void> {
@@ -198,7 +204,8 @@ async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>, 
 
 describe('owned Rabbit 4.1.4 durable topology', () => {
   beforeAll(() => {
-    if (!url || !container || !/^topology-[a-z0-9-]+$/.test(prefix)) throw new Error('owned runner environment required');
+    if (!endpoints.owner || !endpoints.restricted || !endpoints.management || !container || !containerId ||
+        !/^topology-[a-f0-9]{32}$/.test(prefix)) throw new Error('owned runner environment required');
   });
 
   it('reconnects idempotently after broker restart, routes exact headers, ACKs and dead-letters permanent failure', async () => {
@@ -253,7 +260,7 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
   it('fails closed for restricted-user ACCESS_REFUSED before consumer start', async () => {
     await phaseStep('restricted-user-setup', 'broker-available', requireBrokerForNegative);
     const restricted = await phaseStep('restricted-user-setup', 'restricted-channel', () =>
-      connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? ''));
+      connect(endpoints.restricted));
     const { channel, consume } = await phaseStep('restricted-user-setup', 'restricted-channel', async () => {
       const channel = await restricted.createChannel();
       return { channel, consume: jest.spyOn(channel, 'consume') };
