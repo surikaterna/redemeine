@@ -20,7 +20,7 @@ test('default and explicit qualification select both suites in canonical order; 
   assert.deepEqual(selectRealStackSuites('redemeine-fyp3.5.3.1'),
     { issue: 'redemeine-fyp3.5.3.1', paths: ['saga-retry-crash-real.integration.test.ts'],
       hashPaths: ['saga-retry-crash-real.integration.test.ts', 'crashChild.ts', 'crashBroker.ts',
-        'crashCountProof.ts', 'crashIpc.ts', 'crashPhaseEvidence.ts', 'crashMaterialProof.ts',
+        'crashCountProof.ts', 'crashIpc.ts', 'crashChildTrace.ts', 'crashPhaseEvidence.ts', 'crashMaterialProof.ts',
         'crashRecoveryProof.ts'] });
   assert.throws(() => selectRealStackSuites('unknown'), /Unsupported/);
 });

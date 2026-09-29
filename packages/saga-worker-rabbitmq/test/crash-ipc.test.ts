@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from '@jest/globals';
 import { awaitChildReady, awaitSignal, killOwned } from '../integration/crashIpc';
+import { observeChild } from '../integration/crashChildTrace';
 import { ChildStartupFailure } from '../integration/crashChildStages';
 import { safeFailure } from '../integration/crashPhaseEvidence';
 
@@ -63,5 +64,25 @@ describe('owned crash child IPC', () => {
     await expect(awaitChildReady(exited, [{ kind: 'ready' }], 50)).rejects.toMatchObject({
       evidence: { phase: 'unknown', errorClass: 'exit', code: 2 }
     });
+  });
+
+  it.each(['missing', 'error', 'exit', 'buffered'] as const)('does not reuse old ready for %s recovery', async (mode) => {
+    const combined = [{ kind: 'ready' }] as import('../integration/crashIpc').CrashSignal[];
+    const script = mode === 'buffered' ? 'process.send({kind:"ready"}); setInterval(() => {}, 1000)' :
+      mode === 'error' ? 'process.send({kind:"error",phase:"worker-start",errorClass:"configuration",code:406}); setInterval(() => {}, 1000)' :
+      mode === 'exit' ? 'process.exit(2)' : 'setInterval(() => {}, 1000)';
+    const recovery = owned(script);
+    const ready = observeChild(recovery, combined);
+    if (mode === 'buffered' || mode === 'error') {
+      await new Promise<void>(resolve => recovery.once('message', () => resolve()));
+    }
+    if (mode === 'buffered') await expect(ready()).resolves.toEqual({ kind: 'ready' });
+    else if (mode === 'error') await expect(ready()).rejects.toMatchObject({
+      evidence: { phase: 'worker-start', code: 406 }
+    });
+    else if (mode === 'exit') await expect(ready(200)).rejects.toMatchObject({ evidence: { errorClass: 'exit' } });
+    else await expect(ready(30)).rejects.toThrow('timed out');
+    expect(combined[0]).toEqual({ kind: 'ready' });
+    if (recovery.exitCode === null && recovery.signalCode === null) await killOwned(recovery);
   });
 });

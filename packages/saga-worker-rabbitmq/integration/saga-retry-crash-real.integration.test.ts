@@ -9,7 +9,8 @@ import { deriveSourceTriggerId } from '@redemeine/saga-runtime';
 import type { ICommit } from 'tapeworm';
 import { counts, deadQueue, input, provision, required, retryQueue } from './crashBroker';
 import { observationWindowMs, observeHeldCopy, requireKillProof, safeCounts, type CountSample } from './crashCountProof';
-import { awaitChildReady, awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
+import { awaitSignal, killOwned, type CrashSignal } from './crashIpc';
+import { observeChild } from './crashChildTrace';
 import { cleanupSucceeded, deadline, OwnedCrashScope, type CleanupOutcome, type OwnedCleanup } from './crashOwnership';
 import { PhaseEvidence } from './crashPhaseEvidence';
 import { deriveOwnedNames } from './crashNames';
@@ -25,12 +26,19 @@ jest.setTimeout(110_000);
 const issue = 'redemeine-fyp3.5.3.1';
 const childPath = resolve(process.cwd(), 'packages/saga-worker-rabbitmq/integration/crashChild.ts');
 const trace: CrashSignal[] = [];
+const childReadiness = new WeakMap<ChildProcess, () => Promise<CrashSignal>>();
 const evidence: Record<string, unknown> = { issue, trace, success: false };
 function child(mode: 'first' | 'recovery', env: NodeJS.ProcessEnv): ChildProcess {
   const processChild = fork(childPath, { execArgv: ['--import', 'tsx'], env: { ...process.env, ...env,
     REDEMEINE_CRASH_MODE: mode }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-  processChild.on('message', (message: unknown) => { if (isCrashSignal(message)) trace.push(message); });
+  childReadiness.set(processChild, observeChild(processChild, trace));
   return processChild;
+}
+
+function ready(childProcess: ChildProcess): Promise<CrashSignal> {
+  const awaitReady = childReadiness.get(childProcess);
+  if (!awaitReady) throw new Error('unowned child readiness');
+  return awaitReady();
 }
 
 async function until(label: string, predicate: () => Promise<boolean> | boolean, timeoutMs = 15_000): Promise<void> {
@@ -67,6 +75,7 @@ type Stack = { readonly client: MongoClient; readonly channel: Channel; readonly
 function material(stack: Stack, rows: readonly unknown[]) {
   return proveMaterial(rows, { sagaId: stack.sagaId, sagaKey: stack.sagaKey,
     partition: required('REDEMEINE_CRASH_SAGA_PARTITION'), eventId: 'crash-event', amount: 1,
+    sourceTime: '2026-01-01T00:00:00.000Z',
     sourcePartition: stack.original.partitionId, sourceStream: stack.original.streamId, sourceCommit: stack.original.id,
     sourceTriggerId: deriveSourceTriggerId({ partitionId: stack.original.partitionId,
       streamId: stack.original.streamId, commitId: stack.original.id, eventIndex: 0 }) });
@@ -77,7 +86,7 @@ async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEviden
   const dbName = required('REDEMEINE_CRASH_DB');
   const sagaPartition = required('REDEMEINE_CRASH_SAGA_PARTITION');
   await phases.run('source-append', () => client.db(dbName).collection(required('REDEMEINE_CRASH_COLLECTION')).insertOne(original));
-  await phases.run('child-ready', () => awaitChildReady(first, trace), 7_000);
+  await phases.run('child-ready', () => ready(first), 7_000);
   await phases.run('source-publish', () => publish(pub, stack.exchange, original, required('REDEMEINE_CRASH_COLLECTION')));
   await phases.run('initial-delivery', () => until('initial Rabbit delivery', () =>
     trace.some(event => event.kind === 'delivery' && event.messageId === original.id), 6_000), 7_000);
@@ -116,7 +125,7 @@ async function recoveryPhase(stack: Stack, recovery: ChildProcess, committed: un
     redelivered: false, attempt: null as number | null, deathCount: null as number | null,
     statuses: 0, elapsedMs: 0, physical: null as number | null, materialMatches: false };
   evidence.recovery = summary;
-  await phases.run('recovery-ready', () => awaitChildReady(recovery, trace), 7_000);
+  await phases.run('recovery-ready', () => ready(recovery), 7_000);
   summary.ready = true;
   await phases.run('recovery-original-ack', () => until('original requeue ACK', () =>
     trace.some(event => event.kind === 'ack' && event.messageId === original.id)), 17_000);

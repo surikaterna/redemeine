@@ -8,7 +8,7 @@ const crash = 'saga-retry-crash-real.integration.test.ts';
 
 export function selectRealStackSuites(slice) {
   if (slice === 'redemeine-fyp3.5.3.1') return { issue: slice, paths: [crash],
-    hashPaths: [crash, 'crashChild.ts', 'crashBroker.ts', 'crashCountProof.ts', 'crashIpc.ts',
+    hashPaths: [crash, 'crashChild.ts', 'crashBroker.ts', 'crashCountProof.ts', 'crashIpc.ts', 'crashChildTrace.ts',
       'crashPhaseEvidence.ts', 'crashMaterialProof.ts', 'crashRecoveryProof.ts'] };
   if (identitySlices.includes(slice)) return { issue: slice, paths: [identity] };
   if (slice !== undefined && slice !== 'redemeine-vpwm.3.3') throw new Error('Unsupported real-stack slice');
