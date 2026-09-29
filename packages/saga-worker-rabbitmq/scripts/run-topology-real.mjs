@@ -13,8 +13,8 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = `topology-${randomBytes(16).toString('hex')}`;
 const names = { container: runId, volume: `${runId}-data`, network: `${runId}-net` };
 const ownership = ownedResources(names, runId);
-const receiptPath = `/tmp/opencode/redemeine-fyp3.4-${runId}.json`;
-const reportPath = `/tmp/opencode/redemeine-fyp3.4-${runId}-jest.json`;
+const receiptPath = `/tmp/opencode/redemeine-fyp3.5.1-${runId}.json`;
+const reportPath = `/tmp/opencode/redemeine-fyp3.5.1-${runId}-jest.json`;
 const runner = createCommandRunner(root);
 const { run } = runner;
 const docker = (args, options) => run('docker', args, options);
@@ -70,13 +70,13 @@ async function tests(receipt, { port, managementPort }) {
       if (receipt.scenarios[0]?.status === 'passed') throw new Error('owned Rabbit restart ports unavailable');
     }
   }
-  if (result.code !== 0 || receipt.counts.failed !== 0 || receipt.counts.total !== 6) {
+  if (result.code !== 0 || receipt.counts.failed !== 0 || receipt.counts.total !== 8) {
     throw new Error('Real topology Jest failed or omitted a scenario; inspect receipt');
   }
 }
 
 async function main() {
-  const receipt = { issue: 'redemeine-fyp3.4', runId, image: RABBIT_IMAGE, startedAt: new Date().toISOString(),
+  const receipt = { issue: 'redemeine-fyp3.5.1', runId, image: RABBIT_IMAGE, startedAt: new Date().toISOString(),
     scenarios: [], counts: { passed: 0, failed: 0, total: 0 }, failure: null, exitCode: 1 };
   try {
     receipt.sha = await requireCleanHead(run);

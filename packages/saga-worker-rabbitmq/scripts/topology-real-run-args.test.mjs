@@ -31,14 +31,14 @@ test('active runner never invokes privileged cookie prep; readiness precedes Jes
   assert.match(runner, /finalizeAuditReceipt\(receipt, runner, receiptPath\)/);
 });
 
-test('fyp3.4 runner selects the owned six-scenario suite, including production names', () => {
+test('fyp3.5.1 runner selects the owned eight-scenario suite, including retry', () => {
   const runner = readFileSync(new URL('./run-topology-real.mjs', import.meta.url), 'utf8');
   const integration = readFileSync(new URL('../integration/topology-real.integration.test.ts', import.meta.url), 'utf8');
   const producer = readFileSync(new URL('../integration/productionTopologyAudit.ts', import.meta.url), 'utf8');
   assert.match(runner, /--runTestsByPath', 'packages\/saga-worker-rabbitmq\/integration\/topology-real\.integration\.test\.ts'/);
-  assert.match(runner, /receipt\.counts\.total !== 6/);
-  assert.match(runner, /issue: 'redemeine-fyp3\.4'/);
-  assert.equal((integration.match(/\bit\('/g) ?? []).length + 3 * (integration.match(/\bit\.each\(/g) ?? []).length, 6);
+  assert.match(runner, /receipt\.counts\.total !== 8/);
+  assert.match(runner, /issue: 'redemeine-fyp3\.5\.1'/);
+  assert.equal((integration.match(/\bit\('/g) ?? []).length + 3 * (integration.match(/\bit\.each\(/g) ?? []).length, 8);
   assert.match(integration, /createSagaCommitQueueTopology\(/);
   assert.match(producer, /production-kept/);
   assert.match(producer, /import \{ CommitPublisher, type RabbitConfig \} from 'tapeworm_dispatcher_mdb_rmq'/);

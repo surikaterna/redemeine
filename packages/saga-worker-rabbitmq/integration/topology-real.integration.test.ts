@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { connect, type Channel, type ChannelModel } from 'amqplib';
+import { connect, type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
-import { createSagaCommitQueueTopology, createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
+import { createSagaCommitQueueTopology, createSagaConfirmedRepublisher, createSagaRabbitWorker, provisionSagaTopology,
+  verifyRetryBroker, type SagaRabbitWorkerOptions } from '../src/index';
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 import { phaseStep, withSafeClose } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
@@ -10,6 +11,7 @@ import { refreshedEndpoints } from './restartEndpoints';
 import { inspectPersistedProductionTopology, inspectPublisherDelivery, publishTapewormCommit } from './productionTopologyAudit';
 import type { ICommit } from 'tapeworm';
 import { qualifyRestrictedTopology } from './restrictedTopologyAudit';
+import { inspectRetryBroker } from './retryBrokerAudit';
 
 let endpoints = { owner: process.env.REDEMEINE_TOPOLOGY_URL ?? '',
   restricted: process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '',
@@ -105,13 +107,14 @@ function productionConfig(channel: Channel) {
   const topology = createSagaCommitQueueTopology({
     channel, sourceExchange: `${prefix}.production-source`,
     collection: 'tw_source_commits', partitions: ['p1', 'p2'],
-    tenant: 'tenant-a', publisherTenant: 'tenant-a'
+    tenant: 'tenant-a', publisherTenant: 'tenant-a', retryDelayMs: 45_000,
+    inspectRetry: () => inspectRetryBroker(management)
   });
   return { topology, worker: { ...base.worker, queue: topology.worker.queue } };
 }
 
-async function poll<T>(probe: () => Promise<T | null>, label: string): Promise<T> {
-  const until = Date.now() + 15_000;
+async function poll<T>(probe: () => Promise<T | null>, label: string, timeoutMs = 15_000): Promise<T> {
+  const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     const result = await probe();
     if (result !== null) return result;
@@ -337,4 +340,67 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     await withSafeClose(() => inspectProductionAfterRestart(second, kept),
       () => phaseStep('production-close', 'channel-closed', () => second.model.close()));
   }, 120_000);
+
+  it('confirms a mandatory persistent retry, retains it across restart, then returns after queue TTL', async () => {
+    await phaseStep('retry-health', 'broker-available', requireBrokerForNegative);
+    const first = await opened();
+    let sentAt = 0;
+    await withSafeClose(async () => {
+      const topology = productionConfig(first.channel).topology;
+      await phaseStep('retry-provision', 'quorum-inspected', () => provisionSagaTopology(topology));
+      verifyRetryBroker(await inspectRetryBroker(management), topology.retry!);
+      const pub = await first.model.createConfirmChannel();
+      await withSafeClose(async () => {
+        await publishConfirmedCommit(pub, topology.sourceExchange,
+          { id: 'retry-held', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
+        const original = await poll(async () => await first.channel.get('rdm.saga.commits', { noAck: false }) || null, 'retry original');
+        const republisher = await createSagaConfirmedRepublisher(first.model, 5000);
+        await withSafeClose(async () => {
+          sentAt = Date.now();
+          await republisher.retry({ ...original, fields: { ...original.fields, consumerTag: 'basic.get' } } satisfies ConsumeMessage);
+          await waitForCounts('rdm.saga.commits.retry', 1, 0);
+          await waitForCounts('rdm.saga.commits', 0, 1);
+          first.channel.ack(original);
+        }, () => republisher.close());
+      }, () => pub.close());
+    }, () => first.model.close());
+    await phaseStep('retry-restart', 'same-volume-restarted', restart);
+    const second = await opened();
+    await withSafeClose(async () => {
+      const topology = productionConfig(second.channel).topology;
+      verifyRetryBroker(await inspectRetryBroker(management), topology.retry!);
+      expect((await second.channel.checkQueue('rdm.saga.commits.retry')).messageCount).toBe(1);
+      await phaseStep('retry-expiry', 'input-visible-after-ttl', async () => {
+        const returned = await poll(async () => await second.channel.get('rdm.saga.commits', { noAck: false }) || null,
+          'retry returned to input', 70_000);
+        expect(Date.now() - sentAt).toBeGreaterThanOrEqual(44_000);
+        expect(returned.properties.messageId).toBe('retry-held');
+        expect(returned.properties.deliveryMode).toBe(2);
+        second.channel.ack(returned);
+      });
+      const pub = await second.model.createConfirmChannel();
+      await withSafeClose(async () => {
+        const returned: string[] = [];
+        pub.on('return', (delivery) => returned.push(delivery.properties.messageId ?? ''));
+        await new Promise<void>((resolve, reject) => {
+          pub.publish('rdm.saga.commits.retry.exchange', 'wrong-key', Buffer.from('unroutable'),
+            { messageId: 'wrong-key', deliveryMode: 2, mandatory: true }, (error) => error ? reject(error) : resolve());
+        });
+        expect(returned).toEqual(['wrong-key']);
+      }, () => pub.close());
+    }, () => second.model.close());
+  }, 180_000);
+
+  it('rejects changed fixed retry TTL with broker 406 before any consume', async () => {
+    await phaseStep('retry-health', 'broker-available', requireBrokerForNegative);
+    const connection = await opened();
+    const consume = jest.spyOn(connection.channel, 'consume');
+    const topology = productionConfig(connection.channel).topology;
+    await phaseStep('retry-mismatch', 'reply-code-406', async () => {
+      await expectBrokerRejection(connection.channel, () => provisionSagaTopology({ ...topology,
+        retry: { ...topology.retry!, delayMs: 45_001 } }), 406);
+      expect(consume).not.toHaveBeenCalled();
+    });
+    await connection.model.close();
+  });
 });

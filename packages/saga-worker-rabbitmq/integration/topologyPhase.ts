@@ -7,7 +7,8 @@ export const PHASES = [
   'production-delivery', 'production-wrong-partition', 'production-wrong-collection', 'production-wrong-tenant',
   'production-ready', 'production-reopen', 'production-retained-topology', 'production-retained-message',
   'production-reprovision', 'production-held-ack', 'production-dlq', 'production-close',
-  'restricted-health', 'restricted-connect', 'restricted-channel', 'restricted-close'
+  'restricted-health', 'restricted-connect', 'restricted-channel', 'restricted-close',
+  'retry-health', 'retry-provision', 'retry-restart', 'retry-expiry', 'retry-mismatch'
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
@@ -16,7 +17,7 @@ export const INVARIANTS = [
   'same-volume-restarted', 'queue-retained-one', 'held-unack-one', 'queue-acked-zero', 'single-ack',
   'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available',
   'owner-channel-open', 'publisher-connected', 'publisher-confirmed', 'publisher-closed', 'publisher-observed',
-  'retained-before-provision', 'channel-closed'
+  'retained-before-provision', 'channel-closed', 'quorum-inspected', 'input-visible-after-ttl'
 ] as const;
 export type Invariant = (typeof INVARIANTS)[number];
 

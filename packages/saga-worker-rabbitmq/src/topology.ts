@@ -1,5 +1,6 @@
 import type { Channel } from 'amqplib';
 import type { SagaRabbitWorkerOptions } from './contracts';
+import { provisionRetryTopology, type SagaRetryTopology } from './retryTopology';
 
 export type SagaTopologyChannel = Pick<Channel, 'assertExchange' | 'assertQueue' | 'bindQueue' | 'checkQueue'>;
 
@@ -12,6 +13,7 @@ export interface SagaTopologyOptions {
   /** Must be the actual tenant supplied to the deployed Tapeworm Dispatcher. */
   readonly publisherTenant?: string;
   readonly tenant?: string;
+  readonly retry?: SagaRetryTopology;
 }
 
 export class SagaTopologyError extends Error {
@@ -34,7 +36,14 @@ function exactKeys(value: object, allowed: readonly string[], label: string): vo
 
 function validate(options: SagaTopologyOptions): void {
   const { worker, sourceExchange, deadQueue, deadRoutingKey, tenant, publisherTenant } = options;
-  exactKeys(options, ['channel', 'worker', 'sourceExchange', 'deadQueue', 'deadRoutingKey', 'tenant', 'publisherTenant'], 'topology');
+  exactKeys(options, ['channel', 'worker', 'sourceExchange', 'deadQueue', 'deadRoutingKey', 'tenant', 'publisherTenant', 'retry'], 'topology');
+  if (options.retry) {
+    exactKeys(options.retry, ['queue', 'exchange', 'delayMs', 'inspect'], 'retry topology');
+    if (options.retry.queue !== 'rdm.saga.commits.retry' || options.retry.exchange !== 'rdm.saga.commits.retry.exchange' ||
+        worker.queue.queue !== 'rdm.saga.commits' || deadQueue !== 'rdm.saga.commits.dlq') {
+      throw new TypeError('retry topology must use the production commit queue family');
+    }
+  }
   exactKeys(worker.source, ['collection', 'partitions'], 'source scope');
   named(sourceExchange, 'sourceExchange');
   named(deadQueue, 'deadQueue');
@@ -97,5 +106,8 @@ export async function provisionSagaTopology(options: SagaTopologyOptions): Promi
   for (const partitionId of worker.source.partitions) {
     const headers = { 'x-match': 'all', collection: worker.source.collection, partitionId, ...(tenant === undefined ? {} : { tenant }) };
     await step(`bind input queue partition ${partitionId}`, () => channel.bindQueue(inputQueue.queue, sourceExchange, '', headers));
+  }
+  if (options.retry) {
+    await step('declare and inspect quorum retry topology', () => provisionRetryTopology(channel, options.retry!));
   }
 }
