@@ -45,7 +45,7 @@ async function setup() {
   await docker(['volume', 'create', volume]);
   await docker(['run', '-d', '--name', runId, '--mount', `source=${volume},target=/var/lib/rabbitmq`,
     '-e', 'RABBITMQ_DEFAULT_USER=topology_owner', '-e', 'RABBITMQ_DEFAULT_PASS=topology_owner_password',
-    '-p', '127.0.0.1::5672', image]);
+    '-p', '127.0.0.1::5672', '-p', '127.0.0.1::15672', image]);
   await waitReady();
   await docker(['exec', runId, 'rabbitmqctl', 'add_user', 'topology_restricted', 'topology_restricted_password']);
   await docker(['exec', runId, 'rabbitmqctl', 'set_permissions', '-p', '/', 'topology_restricted', '^$', '^$', '^$']);
@@ -54,9 +54,11 @@ async function setup() {
   const version = (await docker(['exec', runId, 'rabbitmqctl', 'version'])).stdout.split('\n').at(-1);
   if (id !== containerId || version !== '4.1.4') throw new Error('Rabbit image/version mismatch');
   const mapping = (await docker(['port', runId, '5672/tcp'])).stdout;
+  const management = (await docker(['port', runId, '15672/tcp'])).stdout;
   const port = mapping.match(/127\.0\.0\.1:(\d+)/)?.[1];
-  if (!port) throw new Error('localhost-only Rabbit port mapping missing');
-  return { id, version, port };
+  const managementPort = management.match(/127\.0\.0\.1:(\d+)/)?.[1];
+  if (!port || !managementPort) throw new Error('localhost-only Rabbit port mappings missing');
+  return { id, version, port, managementPort };
 }
 
 async function cleanup() {
@@ -71,11 +73,12 @@ async function main() {
     startedAt: new Date().toISOString(), versions: receiptPackageVersions(), scenarios: [], failure: null, exitCode: 1 };
   try {
     if ((await run('git', ['status', '--porcelain'])).stdout) throw new Error('Real audit requires clean committed HEAD');
-    const { id, version, port } = await setup();
+    const { id, version, port, managementPort } = await setup();
     receipt.imageId = id;
     receipt.rabbitmq = version;
     const env = { ...process.env, REDEMEINE_TOPOLOGY_RUN_ID: runId, REDEMEINE_TOPOLOGY_CONTAINER: runId,
       REDEMEINE_TOPOLOGY_URL: `amqp://topology_owner:topology_owner_password@127.0.0.1:${port}`,
+      REDEMEINE_TOPOLOGY_MANAGEMENT_URL: `http://127.0.0.1:${managementPort}`,
       REDEMEINE_TOPOLOGY_RESTRICTED_URL: `amqp://topology_restricted:topology_restricted_password@127.0.0.1:${port}` };
     const result = await run('pnpm', ['exec', 'jest', '--config', 'jest.config.js', '--runInBand', '--json', '--outputFile', reportPath,
       '--runTestsByPath', 'packages/saga-worker-rabbitmq/integration/topology-real.integration.test.ts'], { env, allowed: true });

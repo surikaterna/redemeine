@@ -7,6 +7,31 @@ const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
 const prefix = process.env.REDEMEINE_TOPOLOGY_RUN_ID ?? '';
 
+async function management(path: string): Promise<unknown> {
+  const url = `${process.env.REDEMEINE_TOPOLOGY_MANAGEMENT_URL}${path}`;
+  const auth = Buffer.from('topology_owner:topology_owner_password').toString('base64');
+  const response = await fetch(url, { headers: { authorization: `Basic ${auth}` } });
+  if (!response.ok) throw new Error(`Rabbit management inspection failed: HTTP ${response.status}`);
+  return response.json();
+}
+
+async function inspectTopology(sourceExchange: string, inputQueue: string, deadQueue: string): Promise<void> {
+  const input = await management(`/api/queues/%2F/${encodeURIComponent(inputQueue)}`);
+  const dead = await management(`/api/queues/%2F/${encodeURIComponent(deadQueue)}`);
+  const source = await management(`/api/exchanges/%2F/${encodeURIComponent(sourceExchange)}`);
+  const dlx = await management(`/api/exchanges/%2F/${encodeURIComponent(`${prefix}.dlx`)}`);
+  expect(input).toMatchObject({ durable: true, arguments: { 'x-dead-letter-exchange': `${prefix}.dlx`, 'x-dead-letter-routing-key': 'dead' } });
+  expect(dead).toMatchObject({ durable: true });
+  expect(source).toMatchObject({ type: 'headers', durable: true });
+  expect(dlx).toMatchObject({ type: 'direct', durable: true });
+  const bindings = await management(`/api/bindings/%2F/e/${encodeURIComponent(sourceExchange)}/q/${encodeURIComponent(inputQueue)}`);
+  expect(bindings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p1' } }),
+    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p2' } })
+  ]));
+  expect(bindings).toHaveLength(2);
+}
+
 function config(channel: Channel) {
   const worker = {
     channel,
@@ -76,6 +101,7 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     const { topology } = config(first.channel);
     await provisionSagaTopology(topology);
     await provisionSagaTopology(topology);
+    await inspectTopology(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue);
     const pub = await first.model.createConfirmChannel();
     publish(pub, 'kept', 'p1');
     publish(pub, 'wrong-partition', 'p3');
@@ -90,6 +116,7 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     const second = await opened();
     const scope = config(second.channel);
     await provisionSagaTopology(scope.topology);
+    await inspectTopology(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
     expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
     let resolveProcessing: (() => void) | undefined;
     const processing = new Promise<void>((resolve) => { resolveProcessing = resolve; });
