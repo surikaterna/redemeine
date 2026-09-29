@@ -1,7 +1,7 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { expect, it, jest } from '@jest/globals';
 import { connect, type Channel, type ConfirmChannel } from 'amqplib';
 import { MongoClient } from 'mongodb';
@@ -14,7 +14,7 @@ import { createCounters, createRealTable } from './fixtures';
 jest.setTimeout(110_000);
 
 const issue = 'redemeine-fyp3.5.3.1';
-const childPath = fileURLToPath(new URL('./crashChild.ts', import.meta.url));
+const childPath = resolve(process.cwd(), 'packages/saga-worker-rabbitmq/integration/crashChild.ts');
 const trace: CrashSignal[] = [];
 const evidence: Record<string, unknown> = { issue, trace, success: false };
 const adminUser = required('REDEMEINE_RABBIT_USER');
