@@ -9,6 +9,7 @@ import { waitForAmqpAfterRestart } from './amqpRestartProbe';
 import { refreshedEndpoints } from './restartEndpoints';
 import { inspectPersistedProductionTopology, inspectPublisherDelivery, publishTapewormCommit } from './productionTopologyAudit';
 import type { ICommit } from 'tapeworm';
+import { qualifyRestrictedTopology } from './restrictedTopologyAudit';
 
 let endpoints = { owner: process.env.REDEMEINE_TOPOLOGY_URL ?? '',
   restricted: process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '',
@@ -319,19 +320,12 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
   });
 
   it('fails closed for restricted-user ACCESS_REFUSED before consumer start', async () => {
-    await phaseStep('restricted-user-setup', 'broker-available', requireBrokerForNegative);
-    const restricted = await phaseStep('restricted-user-setup', 'restricted-channel', () =>
-      connect(endpoints.restricted));
-    const { channel, consume } = await phaseStep('restricted-user-setup', 'restricted-channel', async () => {
-      const channel = await restricted.createChannel();
-      return { channel, consume: jest.spyOn(channel, 'consume') };
+    await qualifyRestrictedTopology({
+      health: requireBrokerForNegative,
+      connect: () => connect(endpoints.restricted),
+      provision: (channel) => provisionSagaTopology(config(channel).topology)
     });
-    await phaseStep('restricted-reply-403', 'reply-code-403', async () => {
-      await expectBrokerRejection(channel, () => provisionSagaTopology(config(channel).topology), 403);
-      expect(consume).not.toHaveBeenCalled();
-      await restricted.close();
-    });
-  });
+  }, 20_000);
 
   it('provisions the production names, retains confirmed commits over restart, ACKs and dead-letters', async () => {
     await phaseStep('production-health', 'broker-available', requireBrokerForNegative);

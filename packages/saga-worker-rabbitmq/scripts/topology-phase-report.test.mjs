@@ -78,6 +78,23 @@ test('blocked negative cases retain blocked_on_broker_unavailable without claimi
   assert.equal(diagnostic.code, null);
 });
 
+test('restricted bounded phases survive sanitized Jest JSON to receipt with numeric-only reply metadata', () => {
+  for (const phase of ['restricted-health', 'restricted-connect', 'restricted-channel', 'restricted-reply-403', 'restricted-close']) {
+    const invariant = phase === 'restricted-health' ? 'broker-available' :
+      phase === 'restricted-reply-403' ? 'reply-code-403' :
+        phase === 'restricted-close' ? 'channel-closed' : 'restricted-channel';
+    const detail = { phase, invariant, errorClass: phase === 'restricted-reply-403' ? 'broker-reply' : 'timeout',
+      code: phase === 'restricted-reply-403' ? 403 : null, replyCode: null, expected: 403, actual: null, source, line: 324 };
+    const result = scenarioReport({ testResults: [{ assertionResults: [{ ancestorTitles: ['owned Rabbit'],
+      title: 'restricted', status: 'failed', failureMessages: [`amqp://user:pass@host ${marker(detail)} Basic c2VjcmV0`] }] }] });
+    let text;
+    finalizeAuditReceipt({ startedAt: new Date().toISOString(), sha: 'a'.repeat(40), failure: null,
+      exitCode: 1, cleanup: { absent: true }, ...result }, { complete: () => true }, 'unused', (_, receipt) => { text = receipt; });
+    assert.deepEqual(JSON.parse(text).scenarios[0].diagnostic, detail);
+    assert.doesNotMatch(text, /user:pass|c2VjcmV0/);
+  }
+});
+
 test('failed restart and blocked negatives share fixed allowlisted restart gate without secrets', () => {
   const evidence = { restartSubphase: 'amqp-connect', restartDocker: true, restartApp: true,
     restartAmqp: false, amqpErrorClass: 'ACCESS_REFUSED', amqpCode: 403 };

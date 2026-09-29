@@ -6,7 +6,8 @@ export const PHASES = [
   'production-publisher-connect', 'production-publisher-publish', 'production-publisher-close',
   'production-delivery', 'production-wrong-partition', 'production-wrong-collection', 'production-wrong-tenant',
   'production-ready', 'production-reopen', 'production-retained-topology', 'production-retained-message',
-  'production-reprovision', 'production-held-ack', 'production-dlq', 'production-close'
+  'production-reprovision', 'production-held-ack', 'production-dlq', 'production-close',
+  'restricted-health', 'restricted-connect', 'restricted-channel', 'restricted-close'
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
