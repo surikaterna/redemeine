@@ -33,7 +33,7 @@ async function setup(receipt) {
   await createOwned(docker, ownership, 'network', ['network', 'create', '--label', label, names.network]);
   await createOwned(docker, ownership, 'volume', ['volume', 'create', '--label', label, names.volume]);
   await createOwned(docker, ownership, 'container', topologyRabbitRunArgs(names, runId));
-  await waitForRabbit(docker, runner, names.container, receipt);
+  await waitForRabbit(docker, runner, ownership, receipt);
   await docker(['exec', names.container, 'rabbitmqctl', 'add_user', 'topology_restricted', 'topology_restricted_password']);
   await docker(['exec', names.container, 'rabbitmqctl', 'set_permissions', '-p', '/', 'topology_restricted', '^$', '^$', '^$']);
   const imageId = (await docker(['image', 'inspect', '--format', '{{.Id}}', RABBIT_IMAGE])).stdout;
@@ -95,7 +95,7 @@ async function main() {
       console.log(`Topology audit receipt: ${receiptPath}`);
     } catch (error) {
       process.exitCode = 1;
-      console.error(`Topology audit receipt write failed: ${String(error)}`);
+      console.error('Topology audit receipt write failed');
     }
   }
 }

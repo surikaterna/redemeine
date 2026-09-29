@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, fsyncSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { recordAuditFailure } from './topology-runner-core.mjs';
+import { sanitizeReceipt } from './topology-runner-sanitize.mjs';
 
 export function writeAtomicReceipt(path, text) {
   const temporary = `${path}.${process.pid}.tmp`;
@@ -30,7 +31,8 @@ export function finalizeAuditReceipt(receipt, runner, path, write = writeAtomicR
   receipt.finishedAt = new Date().toISOString();
   receipt.elapsedMs = Date.parse(receipt.finishedAt) - Date.parse(receipt.startedAt);
   receipt.scenarioSha = receipt.sha ?? null;
-  receipt.sha256 = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
-  write(path, `${JSON.stringify(receipt, null, 2)}\n`);
+  const sanitized = sanitizeReceipt(receipt);
+  sanitized.sha256 = createHash('sha256').update(JSON.stringify(sanitized)).digest('hex');
+  write(path, `${JSON.stringify(sanitized, null, 2)}\n`);
   return receipt.exitCode;
 }

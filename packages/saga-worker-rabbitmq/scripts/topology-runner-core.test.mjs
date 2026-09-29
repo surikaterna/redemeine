@@ -18,7 +18,7 @@ test('offline receipt reports names, durations, failures and scenario counts', (
   ] }] }), {
     scenarios: [
       { name: 'topology > ACK', status: 'passed', durationMs: 12, failures: [] },
-      { name: 'topology > NACK', status: 'failed', durationMs: 15, failures: ['failure'] }
+      { name: 'topology > NACK', status: 'failed', durationMs: 15, failures: ['redacted-operation-failure'] }
     ], counts: { passed: 1, failed: 1, total: 2 }
   });
 });
@@ -27,9 +27,10 @@ test('cleanup failure cannot mask initiating error or produce PASS', () => {
   const receipt = { failure: null, exitCode: 0 };
   recordAuditFailure(receipt, 'initiating', new Error('network preflight rejected'));
   recordAuditFailure(receipt, 'cleanup', new Error('postcheck unverified'));
-  assert.equal(receipt.failure, 'network preflight rejected');
-  assert.equal(receipt.initiatingError, 'network preflight rejected');
-  assert.equal(receipt.cleanupError, 'postcheck unverified');
+  assert.deepEqual(receipt.failure, receipt.initiatingError);
+  assert.equal(receipt.initiatingError.phase, 'initiating');
+  assert.equal(receipt.cleanupError.phase, 'cleanup');
+  assert.equal(receipt.cleanupError.summary, 'redacted-operation-failure');
   assert.equal(receipt.exitCode, 1);
 });
 

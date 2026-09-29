@@ -18,7 +18,7 @@ test('signal after tests before cleanup forces receipt failure despite successfu
   const audit = fixture();
   audit.runner.interrupt();
   assert.equal(finalizeAuditReceipt(audit.receipt, audit.runner, 'unused', audit.write), 1);
-  assert.match(audit.persisted().interruptError, /interrupted/);
+  assert.equal(audit.persisted().interruptError.summary, 'interrupted');
   assert.equal(audit.persisted().exitCode, 1);
 });
 
@@ -28,9 +28,9 @@ test('signal during cleanup retains initiating and cleanup evidence and never pa
   const fakeCleanup = async () => { audit.runner.interrupt(); return { absent: false }; };
   audit.receipt.cleanup = await fakeCleanup();
   assert.equal(finalizeAuditReceipt(audit.receipt, audit.runner, 'unused', audit.write), 1);
-  assert.equal(audit.persisted().failure, 'test failed');
-  assert.match(audit.persisted().cleanupError, /not verified absent/);
-  assert.match(audit.persisted().interruptError, /interrupted/);
+  assert.equal(audit.persisted().failure.phase, 'initiating');
+  assert.equal(audit.persisted().cleanupError.phase, 'cleanup');
+  assert.equal(audit.persisted().interruptError.summary, 'interrupted');
 });
 
 test('signal immediately before final receipt is failure; after completion cannot change PASS', () => {
