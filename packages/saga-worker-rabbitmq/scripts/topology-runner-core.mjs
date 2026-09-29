@@ -22,7 +22,7 @@ export function createCommandRunner(cwd) {
       signalEscalations.set(child, escalation);
     }
   }
-  function run(command, args, { env = process.env, allowed = false, timeoutMs = 90_000, cleanup = false } = {}) {
+  function run(command, args, { env = process.env, allowed = false, timeoutMs = 90_000, cleanup = false, maxOutputBytes = Infinity } = {}) {
     if (interrupted && !cleanup) return Promise.reject(new Error('audit interrupted'));
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -34,8 +34,8 @@ export function createCommandRunner(cwd) {
       let escalation;
       const deadline = setTimeout(() => { timedOut = true; terminate(child, 'SIGTERM');
         escalation = setTimeout(() => terminate(child, 'SIGKILL'), 3000); }, timeoutMs);
-      child.stdout.on('data', (chunk) => { stdout += chunk; });
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-maxOutputBytes); });
+      child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-maxOutputBytes); });
       child.on('error', (error) => { spawnError = error; });
       child.on('close', (code) => {
         active.delete(child);
@@ -44,7 +44,11 @@ export function createCommandRunner(cwd) {
         clearTimeout(signalEscalations.get(child));
         signalEscalations.delete(child);
         if (spawnError) reject(spawnError);
-        else if (timedOut || (interrupted && !cleanup)) reject(new Error(`${command} timed out or interrupted`));
+        else if (timedOut || (interrupted && !cleanup)) {
+          const error = new Error(`${command} ${timedOut ? 'timed out' : 'interrupted'}`);
+          error.probe = { code, stdout: stdout.trim(), stderr: stderr.trim(), timedOut };
+          reject(error);
+        }
         else if (code === 0 || allowed) resolve({ code, stdout: stdout.trim(), stderr: stderr.trim() });
         else reject(new Error(`${command} operation failed (${code}): ${stderr.trim()}`));
       });

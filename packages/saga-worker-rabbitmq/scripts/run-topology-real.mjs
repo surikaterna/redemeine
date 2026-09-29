@@ -5,6 +5,7 @@ import { installedPackageVersion, receiptPackageVersions } from './installed-ver
 import { createCommandRunner, RABBIT_IMAGE, recordAuditFailure, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
 import { cleanupOwned, createOwned, ownedResources, OWNER_LABEL, preflightOwned } from './topology-runner-ownership.mjs';
 import { finalizeAuditReceipt } from './topology-runner-receipt.mjs';
+import { captureReadinessDiagnostics, redactDiagnostic, waitForRabbit } from './topology-runner-readiness.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = `topology-${randomBytes(16).toString('hex')}`;
@@ -17,16 +18,6 @@ const { run } = runner;
 const docker = (args, options) => run('docker', args, options);
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, runner.interrupt);
 
-async function waitReady() {
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline && !runner.interrupted) {
-    const probe = await docker(['exec', names.container, 'rabbitmq-diagnostics', '-q', 'ping'], { allowed: true });
-    if (probe.code === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error('Rabbit readiness timed out/interrupted');
-}
-
 async function mappedPort(port) {
   const mapping = (await docker(['port', names.container, `${port}/tcp`])).stdout;
   const number = mapping.match(/127\.0\.0\.1:(\d+)/)?.[1];
@@ -34,7 +25,7 @@ async function mappedPort(port) {
   return number;
 }
 
-async function setup() {
+async function setup(receipt) {
   await preflightOwned(docker, ownership);
   await docker(['pull', RABBIT_IMAGE]);
   const label = `${OWNER_LABEL}=${runId}`;
@@ -44,7 +35,7 @@ async function setup() {
     '--mount', `source=${names.volume},target=/var/lib/rabbitmq`,
     '-e', 'RABBITMQ_DEFAULT_USER=topology_owner', '-e', 'RABBITMQ_DEFAULT_PASS=topology_owner_password',
     '-p', '127.0.0.1::5672', '-p', '127.0.0.1::15672', RABBIT_IMAGE]);
-  await waitReady();
+  await waitForRabbit(docker, runner, names.container, receipt);
   await docker(['exec', names.container, 'rabbitmqctl', 'add_user', 'topology_restricted', 'topology_restricted_password']);
   await docker(['exec', names.container, 'rabbitmqctl', 'set_permissions', '-p', '/', 'topology_restricted', '^$', '^$', '^$']);
   const imageId = (await docker(['image', 'inspect', '--format', '{{.Id}}', RABBIT_IMAGE])).stdout;
@@ -77,7 +68,7 @@ async function main() {
     receipt.sha = await requireCleanHead(run);
     receipt.versions = { ...receiptPackageVersions(), amqplib: installedPackageVersion('amqplib', '2.0.1'),
       dispatcher: installedPackageVersion('tapeworm_dispatcher_mdb_rmq', '0.2.0'), tapeworm: installedPackageVersion('tapeworm', '0.6.0') };
-    const service = await setup();
+    const service = await setup(receipt);
     receipt.imageId = service.imageId;
     receipt.rabbitmq = service.version;
     await tests(receipt, service);
@@ -85,6 +76,12 @@ async function main() {
     receipt.exitCode = 0;
   } catch (error) {
     recordAuditFailure(receipt, 'initiating', error);
+    if (receipt.readiness && receipt.readiness.status !== 'ready') {
+      try { receipt.readinessDiagnostics = await captureReadinessDiagnostics(docker, ownership); }
+      catch (diagnosticError) {
+        receipt.readinessDiagnostics = { status: 'capture-failed', details: redactDiagnostic(String(diagnosticError)) };
+      }
+    }
   } finally {
     try {
       receipt.cleanup = await cleanupOwned(docker, ownership);
