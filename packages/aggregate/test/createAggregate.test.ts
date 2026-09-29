@@ -1,4 +1,4 @@
-import { createAggregate, createMixin } from '@redemeine/aggregate';
+import { createAggregate, createMixin, namingStrategies } from '@redemeine/aggregate';
 import { Event } from '@redemeine/kernel';
 
 // --- Setup Mock Data ---
@@ -123,7 +123,7 @@ it('should throw an error when processing an unknown command', () => {
       })
       .build();
 
-    const event = { type: 'test.itemAdded.event' as any, payload: 'first-item' };
+    const event = { type: 'test.item_added.event', payload: 'first-item' };
     const newState = aggregate.apply(initialState, event);
 
     expect(initialState.items.length).toBe(0); // Original state untouched
@@ -165,6 +165,7 @@ it('should throw an error when processing an unknown command', () => {
     };
 
     const aggregate = createAggregate<OrderState, 'order'>('order', orderState)
+      .naming(namingStrategies.targeted)
       .entities<{ line: OrderLine; subitems: SubOrderLine }>()
       .events({
         updated: (state: any, event: Event<{ qty?: number; metadata?: string }>) => {
@@ -248,7 +249,7 @@ it('should throw an error when processing an unknown command', () => {
     });
     expect(aggregate.types.events).toEqual({
       opened: 'test.opened.event',
-      itemAdded: 'test.item.added.event'
+      itemAdded: 'test.item_added.event'
     });
   });
 
