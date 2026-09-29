@@ -1,9 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { readFile, writeFile, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { readFile, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { installedPackageVersion, receiptPackageVersions } from './installed-versions.mjs';
 import { createCommandRunner, RABBIT_IMAGE, recordAuditFailure, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
 import { cleanupOwned, createOwned, ownedResources, OWNER_LABEL, preflightOwned } from './topology-runner-ownership.mjs';
+import { finalizeAuditReceipt } from './topology-runner-receipt.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = `topology-${randomBytes(16).toString('hex')}`;
@@ -14,7 +15,7 @@ const reportPath = `/tmp/opencode/redemeine-fyp3.3-${runId}-jest.json`;
 const runner = createCommandRunner(root);
 const { run } = runner;
 const docker = (args, options) => run('docker', args, options);
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, runner.interrupt);
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, runner.interrupt);
 
 async function waitReady() {
   const deadline = Date.now() + 90_000;
@@ -94,13 +95,13 @@ async function main() {
     await rm(reportPath, { force: true }).catch((error) => {
       recordAuditFailure(receipt, 'reportCleanup', error);
     });
-    receipt.finishedAt = new Date().toISOString();
-    receipt.elapsedMs = Date.parse(receipt.finishedAt) - Date.parse(receipt.startedAt);
-    receipt.scenarioSha = receipt.sha ?? null;
-    receipt.sha256 = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
-    await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-    console.log(`Topology audit receipt: ${receiptPath}`);
-    process.exitCode = receipt.exitCode;
+    try {
+      process.exitCode = finalizeAuditReceipt(receipt, runner, receiptPath);
+      console.log(`Topology audit receipt: ${receiptPath}`);
+    } catch (error) {
+      process.exitCode = 1;
+      console.error(`Topology audit receipt write failed: ${String(error)}`);
+    }
   }
 }
 

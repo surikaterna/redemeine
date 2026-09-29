@@ -6,11 +6,15 @@ export function createCommandRunner(cwd) {
   const active = new Set();
   const signalEscalations = new Map();
   let interrupted = false;
+  let completed = false;
+  let terminationFailure;
   function terminate(child, signal) {
     if (child.pid === undefined) return;
-    try { process.kill(-child.pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    try { process.kill(-child.pid, signal); }
+    catch (error) { if (error.code !== 'ESRCH') terminationFailure = error; }
   }
   function interrupt() {
+    if (completed || interrupted) return;
     interrupted = true;
     for (const child of active) {
       terminate(child, 'SIGTERM');
@@ -46,7 +50,11 @@ export function createCommandRunner(cwd) {
       });
     });
   }
-  return { run, interrupt, get interrupted() { return interrupted; } };
+  function complete() {
+    completed = true;
+    return !interrupted;
+  }
+  return { run, interrupt, complete, get interrupted() { return interrupted; }, get terminationFailure() { return terminationFailure; } };
 }
 
 export async function requireCleanHead(run) {
