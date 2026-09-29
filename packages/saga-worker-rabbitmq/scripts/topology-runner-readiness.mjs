@@ -19,21 +19,44 @@ function probeSummary(result, status) {
   return { status, code: result?.code ?? null, stdout: redactDiagnostic(result?.stdout), stderr: redactDiagnostic(result?.stderr) };
 }
 
-export async function waitForRabbit(docker, runner, name, receipt, { deadlineMs = 90_000, probeMs = 5_000, delayMs = 500 } = {}) {
+async function probe(docker, name, command, deadline, probeMs) {
+  if (Date.now() >= deadline) return null;
+  try {
+    const result = await docker(['exec', name, 'rabbitmq-diagnostics', '-q', command],
+      { allowed: true, timeoutMs: Math.max(1, Math.min(probeMs, deadline - Date.now())), maxOutputBytes: 2048 });
+    return { summary: probeSummary(result, 'exit'), code: result.code };
+  } catch (error) {
+    if (!error.probe) throw new Error('Rabbit readiness probe could not start');
+    return { summary: probeSummary(error.probe, error.probe.timedOut ? 'probe-timeout' : 'probe-error'), code: null };
+  }
+}
+
+async function containerExited(docker, ownership) {
+  const id = ownership.ids.container;
+  if (typeof id !== 'string' || !id) throw new Error('Rabbit owned container ID unavailable');
+  const reply = await docker(['container', 'inspect', id, '--format', '{{json .State}}'],
+    { allowed: true, timeoutMs: 5_000, maxOutputBytes: 4096 });
+  if (reply.code !== 0) throw new Error('Rabbit owned container state unavailable');
+  return ['exited', 'dead'].includes(JSON.parse(reply.stdout).Status);
+}
+
+export async function waitForRabbit(docker, runner, ownership, receipt, { deadlineMs = 90_000, probeMs = 5_000, delayMs = 500 } = {}) {
   const deadline = Date.now() + deadlineMs;
-  const readiness = { attempts: 0, lastProbe: null, status: 'waiting' };
+  const readiness = { attempts: 0, lastProbe: null, ping: null, application: null, status: 'waiting' };
   receipt.readiness = readiness;
   while (Date.now() < deadline && !runner.interrupted) {
     readiness.attempts++;
-    try {
-      const result = await docker(['exec', name, 'rabbitmq-diagnostics', '-q', 'ping'],
-        { allowed: true, timeoutMs: probeMs, maxOutputBytes: 2048 });
-      readiness.lastProbe = probeSummary(result, 'exit');
-      if (result.code === 0) { readiness.status = 'ready'; return; }
-    } catch (error) {
-      if (runner.interrupted) break;
-      readiness.lastProbe = probeSummary(error.probe, error.probe?.timedOut ? 'probe-timeout' : 'probe-error');
-      if (!error.probe) throw new Error('Rabbit readiness probe could not start');
+    const ping = await probe(docker, ownership.names.container, 'ping', deadline, probeMs);
+    if (ping) { readiness.ping = ping.summary; readiness.lastProbe = ping.summary; }
+    if (ping?.code === 0 && !runner.interrupted) {
+      const app = await probe(docker, ownership.names.container, 'check_running', deadline, probeMs);
+      if (app) { readiness.application = app.summary; readiness.lastProbe = app.summary; }
+      if (app?.code === 0 && !runner.interrupted) { readiness.status = 'ready'; return; }
+    }
+    if (runner.interrupted) break;
+    if (await containerExited(docker, ownership)) {
+      readiness.status = 'exited';
+      throw new Error('Rabbit container exited before application ready');
     }
     if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
