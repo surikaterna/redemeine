@@ -17,7 +17,8 @@ export async function management(path: string, method = 'GET', body?: object): P
   const url = new URL(path.replaceAll('/%2F/', `/${encodeURIComponent(required('REDEMEINE_CRASH_VHOST'))}/`),
     required('REDEMEINE_RABBIT_MANAGEMENT_URL'));
   const auth = Buffer.from(`${required('REDEMEINE_RABBIT_USER')}:${required('REDEMEINE_RABBIT_PASSWORD')}`).toString('base64');
-  const response = await fetch(url, { method, headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
+  const response = await fetch(url, { method, signal: AbortSignal.timeout(5_000),
+    headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {}) });
   if (!response.ok) throw new Error(`Rabbit management HTTP ${response.status}`);
   return response.status === 204 || response.status === 201 && method !== 'GET' ? null : response.json();

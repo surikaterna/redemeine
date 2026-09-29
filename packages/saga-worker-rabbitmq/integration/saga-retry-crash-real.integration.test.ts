@@ -8,6 +8,7 @@ import { MongoClient } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import { counts, deadQueue, input, management, provision, required, retryQueue } from './crashBroker';
 import { awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
+import { deadline, OwnedCrashScope, type OwnedNames, type OwnedOps } from './crashOwnership';
 import { instanceId, sourceEvent } from './harness';
 import { createCounters, createRealTable } from './fixtures';
 
@@ -20,13 +21,15 @@ const evidence: Record<string, unknown> = { issue, trace, success: false };
 const adminUser = required('REDEMEINE_RABBIT_USER');
 const adminPassword = required('REDEMEINE_RABBIT_PASSWORD');
 
-async function admin(path: string, method: string, body?: object): Promise<void> {
+async function admin(path: string, method: string, body?: object): Promise<Response> {
   const auth = Buffer.from(`${adminUser}:${adminPassword}`).toString('base64');
   const response = await fetch(new URL(path, required('REDEMEINE_RABBIT_MANAGEMENT_URL')), {
     method, headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
+    signal: AbortSignal.timeout(5_000),
     ...(body ? { body: JSON.stringify(body) } : {})
   });
   if (!response.ok && !(method === 'DELETE' && response.status === 404)) throw new Error(`admin HTTP ${response.status}`);
+  return response;
 }
 
 function child(mode: 'first' | 'recovery', env: NodeJS.ProcessEnv): ChildProcess {
@@ -46,12 +49,12 @@ async function until(label: string, predicate: () => Promise<boolean> | boolean,
 }
 
 async function publish(channel: ConfirmChannel, exchange: string, commit: ICommit, collection: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  await deadline('source broker confirm', () => new Promise<void>((resolve, reject) => {
     channel.publish(exchange, '', Buffer.from(JSON.stringify(commit)), { mandatory: true, persistent: true,
       contentType: 'application/json', messageId: commit.id,
       headers: { collection, partitionId: commit.partitionId, streamId: commit.streamId } },
     (error) => error ? reject(error) : resolve());
-  });
+  }));
 }
 
 function makeCommit(partitionId: string, amount: number): ICommit {
@@ -64,37 +67,61 @@ async function physical(client: MongoClient, dbName: string, sagaPartition: stri
   return client.db(dbName).collection(`tw_${sagaPartition}_commits`).find({ streamId: sagaId }).toArray();
 }
 
-async function setup(): Promise<{ env: NodeJS.ProcessEnv; cleanup(): Promise<void> }> {
+function ownedNames(): OwnedNames {
   const id = required('REDEMEINE_REAL_RUN_ID');
-  const vhost = `crash_${id}`;
-  const user = `crash_${id}`;
-  const password = randomBytes(24).toString('hex');
-  await admin(`/api/vhosts/${encodeURIComponent(vhost)}`, 'PUT');
-  try {
-    await admin(`/api/users/${encodeURIComponent(user)}`, 'PUT', { password, tags: 'administrator' });
-    await admin(`/api/permissions/${encodeURIComponent(vhost)}/${encodeURIComponent(user)}`, 'PUT',
-      { configure: '.*', write: '.*', read: '.*' });
-  } catch (error) {
-    await admin(`/api/vhosts/${encodeURIComponent(vhost)}`, 'DELETE');
-    await admin(`/api/users/${encodeURIComponent(user)}`, 'DELETE');
-    throw error;
-  }
+  return { vhost: `crash_${id}`, user: `crash_${id}`, db: `crash_${id}` };
+}
+
+function ownedOps(names: OwnedNames, client: MongoClient, password: string): OwnedOps {
+  const marker = `owned_${names.vhost}`;
+  const path = (kind: 'vhosts' | 'users', name: string) => `/api/${kind}/${encodeURIComponent(name)}`;
+  const probe = async (kind: 'vhosts' | 'users', name: string) => {
+    const response = await admin(path(kind, name), 'GET').catch((error: unknown) => {
+      if (error instanceof Error && error.message === 'admin HTTP 404') return null;
+      throw error;
+    });
+    return response;
+  };
+  const owned = async (kind: 'vhosts' | 'users', name: string) => {
+    const response = await probe(kind, name);
+    if (!response) return false;
+    const value: unknown = await response.json();
+    if (typeof value !== 'object' || value === null) return false;
+    return kind === 'vhosts' ? 'description' in value && value.description === marker :
+      'tags' in value && typeof value.tags === 'string' && value.tags.split(',').includes(marker);
+  };
+  return {
+    absent: async (kind, name) => kind === 'db' ?
+      !(await client.db().admin().listDatabases({ nameOnly: true, filter: { name } })).databases.some((db) => db.name === name) :
+      (await probe(kind === 'vhost' ? 'vhosts' : 'users', name)) === null,
+    createVhost: async (name) => { await admin(path('vhosts', name), 'PUT', { description: marker }); },
+    createUser: async (name) => { await admin(path('users', name), 'PUT', { password,
+      tags: `monitoring,${marker}` }); },
+    grant: async (vhost, user) => { await admin(`/api/permissions/${encodeURIComponent(vhost)}/${encodeURIComponent(user)}`,
+      'PUT', { configure: '.*', write: '.*', read: '.*' }); },
+    removeVhost: async (name) => { if (await owned('vhosts', name)) await admin(path('vhosts', name), 'DELETE');
+      if (await probe('vhosts', name)) throw new Error('owned vhost remains'); },
+    removeUser: async (name) => { if (await owned('users', name)) await admin(path('users', name), 'DELETE');
+      if (await probe('users', name)) throw new Error('owned user remains'); },
+    removeDb: async (name) => { await client.db(name).dropDatabase();
+      if ((await client.db().admin().listDatabases({ nameOnly: true, filter: { name } })).databases.some((db) => db.name === name)) {
+        throw new Error('owned database remains');
+      } }
+  };
+}
+
+function ownedEnvironment(names: OwnedNames, password: string): NodeJS.ProcessEnv {
+  const id = required('REDEMEINE_REAL_RUN_ID');
+  const { vhost, user, db } = names;
   const url = new URL(required('REDEMEINE_RABBIT_URL'));
   url.username = user;
   url.password = password;
   url.pathname = `/${vhost}`;
-  const env = { REDEMEINE_CRASH_VHOST: vhost, REDEMEINE_CRASH_URL: url.toString(),
+  return { REDEMEINE_CRASH_VHOST: vhost, REDEMEINE_CRASH_URL: url.toString(),
     REDEMEINE_RABBIT_USER: user, REDEMEINE_RABBIT_PASSWORD: password,
-    REDEMEINE_CRASH_DB: `crash_${id}`, REDEMEINE_CRASH_SAGA_PARTITION: `saga_${id}`,
+    REDEMEINE_CRASH_DB: db, REDEMEINE_CRASH_SAGA_PARTITION: `saga_${id}`,
     REDEMEINE_CRASH_PARTITION: `source_${id}`, REDEMEINE_CRASH_COLLECTION: `tw_source_${id}_commits`,
     REDEMEINE_CRASH_EXCHANGE: `source.${id}` };
-  return { env, cleanup: async () => {
-    const result = await Promise.allSettled([
-      admin(`/api/vhosts/${encodeURIComponent(vhost)}`, 'DELETE'),
-      admin(`/api/users/${encodeURIComponent(user)}`, 'DELETE')
-    ]);
-    if (result.some((item) => item.status === 'rejected')) throw new Error('owned Rabbit cleanup incomplete');
-  } };
 }
 
 type Stack = { readonly client: MongoClient; readonly channel: Channel; readonly pub: ConfirmChannel;
@@ -169,8 +196,7 @@ async function mismatchPhase(stack: Stack, recovery: ChildProcess, committed: un
 }
 
 async function cleanOwned(client: MongoClient, model: Awaited<ReturnType<typeof connect>> | undefined,
-  owned: Awaited<ReturnType<typeof setup>>, children: readonly (ChildProcess | undefined)[],
-  priorEnv: Record<string, string | undefined>): Promise<void> {
+  scope: OwnedCrashScope, children: readonly (ChildProcess | undefined)[], priorEnv: Record<string, string | undefined>): Promise<void> {
   const cleanup = { ownedChildrenReaped: false, databaseDropped: false, vhostDeleted: false, userDeleted: false };
   try {
     let reaped = true;
@@ -181,53 +207,61 @@ async function cleanOwned(client: MongoClient, model: Awaited<ReturnType<typeof 
     }
     cleanup.ownedChildrenReaped = reaped;
     const results = await Promise.allSettled([
-      model?.close() ?? Promise.resolve(),
-      client.db(required('REDEMEINE_CRASH_DB')).dropDatabase(), owned.cleanup()
+      deadline('AMQP close', () => model?.close() ?? Promise.resolve()),
+      scope.cleanup()
     ]);
-    cleanup.databaseDropped = results[1]?.status === 'fulfilled' && results[1].value === true;
-    cleanup.vhostDeleted = results[2]?.status === 'fulfilled';
-    cleanup.userDeleted = cleanup.vhostDeleted;
-    await client.close();
+    if (results[1]?.status === 'fulfilled') Object.assign(cleanup, results[1].value);
+    const mongoClosed = await deadline('Mongo close', () => client.close()).then(() => true, () => false);
     if (!cleanup.ownedChildrenReaped || !cleanup.databaseDropped || !cleanup.vhostDeleted ||
-        results[0]?.status !== 'fulfilled') throw new Error('owned crash resources remain after cleanup');
+        !cleanup.userDeleted || results[0]?.status !== 'fulfilled' || !mongoClosed) {
+      throw new Error('owned crash resources remain after cleanup');
+    }
   } finally {
     evidence.cleanup = cleanup;
     for (const [key, value] of Object.entries(priorEnv)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    await writeFile(required('REDEMEINE_CRASH_RECEIPT'), JSON.stringify(evidence), { mode: 0o600 });
+    await deadline('crash receipt write', () => writeFile(required('REDEMEINE_CRASH_RECEIPT'),
+      JSON.stringify(evidence), { mode: 0o600 }));
   }
 }
 
 it('kills the real worker after confirmed retry and before ACK, then reconciles and quarantines changed content', async () => {
-  const owned = await setup();
-  const client = new MongoClient(required('REDEMEINE_MONGO_URL'));
+  const names = ownedNames();
+  const password = randomBytes(24).toString('hex');
+  const env = ownedEnvironment(names, password);
+  const client = new MongoClient(required('REDEMEINE_MONGO_URL'),
+    { serverSelectionTimeoutMS: 5_000, socketTimeoutMS: 5_000, connectTimeoutMS: 5_000 });
+  const scopeOwner = new OwnedCrashScope(names, ownedOps(names, client, password));
   let first: ChildProcess | undefined;
   let recovery: ChildProcess | undefined;
   let model: Awaited<ReturnType<typeof connect>> | undefined;
-  const priorEnv = Object.fromEntries(Object.keys(owned.env).map((key) => [key, process.env[key]]));
+  const priorEnv = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   try {
-    Object.assign(process.env, owned.env);
-    await client.connect();
+    await deadline('Mongo connect', () => client.connect());
+    await scopeOwner.preflight();
+    await scopeOwner.setup();
+    scopeOwner.markDbAttempted();
+    Object.assign(process.env, env);
     model = await connect(required('REDEMEINE_CRASH_URL'));
     const channel = await model.createChannel();
     const pub = await model.createConfirmChannel();
     const scope = await provision(channel);
-    evidence.topology = { vhost: owned.env.REDEMEINE_CRASH_VHOST, input, retryQueue, deadQueue,
+    evidence.topology = { vhost: env.REDEMEINE_CRASH_VHOST, input, retryQueue, deadQueue,
       inspected: Boolean(await scope.retry!.inspect()) };
     const stack: Stack = { client, channel, pub, exchange: scope.sourceExchange,
       original: makeCommit(required('REDEMEINE_CRASH_PARTITION'), 1),
       sagaId: instanceId(createRealTable('crash-proof', createCounters()).definition.sagaKey, 'crash-order') };
-    first = child('first', owned.env);
+    first = child('first', env);
     const committed = await crashPhase(stack, first);
-    recovery = child('recovery', owned.env);
+    recovery = child('recovery', env);
     await recoveryPhase(stack, recovery, committed);
     await mismatchPhase(stack, recovery, committed);
     evidence.success = true;
-    await pub.close();
-    await channel.close();
+    await deadline('confirm channel close', () => pub.close());
+    await deadline('consumer channel close', () => channel.close());
   } finally {
-    await cleanOwned(client, model, owned, [first, recovery], priorEnv);
+    await cleanOwned(client, model, scopeOwner, [first, recovery], priorEnv);
   }
 }, 110_000);
