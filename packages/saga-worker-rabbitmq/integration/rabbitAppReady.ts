@@ -76,7 +76,9 @@ function errorMessage(error: unknown): string {
 function classifyAmqpFailure(error: unknown): Pick<RestartEvidence, 'amqpErrorClass' | 'amqpCode'> {
   const value = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
   const code = value.code;
-  const numeric = code === 403 || value.replyCode === 403 ? 403 : null;
+  const bounded = (candidate: unknown) => typeof candidate === 'number' && Number.isInteger(candidate) &&
+    candidate >= 0 && candidate <= 999 ? candidate : null;
+  const numeric = bounded(code) ?? bounded(value.replyCode);
   const text = errorMessage(error);
   if (code === 'ECONNREFUSED' || /ECONNREFUSED/i.test(text)) return { amqpErrorClass: 'ECONNREFUSED', amqpCode: numeric };
   if (code === 'ETIMEDOUT' || /ETIMEDOUT|timed out|timeout|deadline/i.test(text)) return { amqpErrorClass: 'ETIMEDOUT', amqpCode: numeric };

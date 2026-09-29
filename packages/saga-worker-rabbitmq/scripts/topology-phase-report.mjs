@@ -20,6 +20,10 @@ function safeNumber(value) {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 }
 
+function safeAmqpCode(value) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 999;
+}
+
 function validated(value) {
   if (!value || typeof value !== 'object' || !PHASES.has(value.phase) || !INVARIANTS.has(value.invariant) ||
       !CLASSES.has(value.errorClass) || value.source !== SOURCE || !Number.isSafeInteger(value.line) || value.line <= 0) return UNKNOWN;
@@ -33,7 +37,7 @@ function validated(value) {
 function validatedRestart(value) {
   if (!SUBPHASES.has(value.restartSubphase) || !AMQP_CLASSES.has(value.amqpErrorClass) ||
       !['restartDocker', 'restartApp', 'restartAmqp'].every((name) => typeof value[name] === 'boolean') ||
-      (value.amqpCode !== null && value.amqpCode !== 403) ||
+      (value.amqpCode !== null && !safeAmqpCode(value.amqpCode)) ||
       !['broker-restart', 'mismatch-setup', 'restricted-user-setup'].includes(value.phase)) return null;
   return { restartSubphase: value.restartSubphase, restartDocker: value.restartDocker,
     restartApp: value.restartApp, restartAmqp: value.restartAmqp, amqpErrorClass: value.amqpErrorClass,

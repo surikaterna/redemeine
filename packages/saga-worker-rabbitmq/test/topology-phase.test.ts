@@ -53,4 +53,15 @@ describe('safe topology phase markers', () => {
     expect(decode(restart).restartSubphase).toEqual(decode(blocked as SafePhaseError).restartSubphase);
     expect(blocked?.message).not.toMatch(/user:pass|ACCESS_REFUSED.*host/);
   });
+
+  it.each([530, 404, 403, 0, 999, -1, 1000, 2.5, Number.NaN, '530'])
+  ('encodes only bounded numeric AMQP codes (%s) without raw failure text', (code) => {
+    const error = Object.assign(new Error('amqp://user:pass@host Basic c2VjcmV0'), {
+      restartEvidence: { restartSubphase: 'amqp-connect', restartDocker: true, restartApp: true,
+        restartAmqp: false, amqpErrorClass: 'unknown', amqpCode: code }
+    });
+    const safe = safePhaseFailure('broker-restart', 'same-volume-restarted', error);
+    expect(decode(safe).amqpCode).toBe(typeof code === 'number' && Number.isInteger(code) && code >= 0 && code <= 999 ? code : null);
+    expect(safe.message).not.toMatch(/user:pass|Basic|c2VjcmV0/);
+  });
 });

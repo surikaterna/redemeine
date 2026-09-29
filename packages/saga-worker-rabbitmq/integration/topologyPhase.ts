@@ -46,6 +46,10 @@ function numeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
 }
 
+function amqpCode(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 999 ? value : null;
+}
+
 function replyCode(error: unknown, depth = 0): number | null {
   const value = record(error);
   if (!value || depth > 3) return null;
@@ -78,7 +82,7 @@ export function safePhaseFailure(phase: Phase, invariant: Invariant, error: unkn
     restartApp: Boolean(restart.restartApp), restartAmqp: Boolean(restart.restartAmqp),
     amqpErrorClass: ['none', 'ECONNREFUSED', 'ETIMEDOUT', 'ACCESS_REFUSED', 'auth-failure', 'channel-close', 'unknown']
       .includes(String(restart.amqpErrorClass)) ? String(restart.amqpErrorClass) : 'unknown',
-    amqpCode: restart.amqpCode === 403 ? 403 : null
+    amqpCode: amqpCode(restart.amqpCode)
   } : {};
   return new SafePhaseError({ phase, invariant, errorClass: errorClass(error), code: replyCode(error),
     replyCode: numeric(value?.replyCode), expected: numeric(value?.expectedCode) ?? numeric(matcher?.expected),

@@ -61,3 +61,44 @@ test('failed restart and blocked negatives share fixed allowlisted restart gate 
   assert.deepEqual(phaseFromJest({ failureMessages: [marker(blocked)] }), blocked);
   assert.equal(phaseFromJest({ failureMessages: [marker({ ...restart, amqpErrorClass: 'Basic c2VjcmV0' })] }).phase, 'unknown');
 });
+
+test('bounded AMQP 530/404/403 codes survive Jest JSON to private sanitized receipt', () => {
+  for (const amqpCode of [530, 404, 403]) {
+    const detail = { ...diagnostic('broker-restart', 'operation', null, null, null),
+      invariant: 'same-volume-restarted', restartSubphase: 'amqp-connect', restartDocker: true,
+      restartApp: true, restartAmqp: false, amqpErrorClass: amqpCode === 403 ? 'ACCESS_REFUSED' : 'unknown',
+      amqpCode, message: 'amqp://user:pass@host Basic c2VjcmV0' };
+    const report = scenarioReport({ testResults: [{ assertionResults: [{ ancestorTitles: ['owned Rabbit'],
+      title: 'restart', status: 'failed', failureMessages: [`password=private ${marker(detail)}`] }] }] });
+    assert.equal(report.scenarios[0].diagnostic.amqpCode, amqpCode);
+    let output;
+    assert.equal(finalizeAuditReceipt({ startedAt: new Date().toISOString(), sha: 'a'.repeat(40),
+      failure: null, exitCode: 1, cleanup: { absent: true }, ...report },
+    { complete: () => true }, 'unused', (_, result) => { output = result; }), 1);
+    const received = JSON.parse(output).scenarios[0].diagnostic;
+    assert.equal(received.amqpCode, amqpCode);
+    assert.equal(received.phase, 'broker-restart');
+    assert.equal(received.errorClass, 'operation');
+    assert.doesNotMatch(output, /user:pass|c2VjcmV0|password=private/);
+  }
+});
+
+test('invalid AMQP codes cannot forge a numeric restart failure in Jest JSON or receipt', () => {
+  for (const invalid of [-1, 1000, 1.5, '530']) {
+    const data = { ...diagnostic('broker-restart', 'operation', null, null, null),
+      invariant: 'same-volume-restarted', restartSubphase: 'amqp-connect', restartDocker: true,
+      restartApp: true, restartAmqp: false, amqpErrorClass: 'unknown', amqpCode: invalid };
+    const report = scenarioReport({ testResults: [{ assertionResults: [{ ancestorTitles: [], title: 'restart',
+      status: 'failed', failureMessages: [`Basic c2VjcmV0 ${marker(data)}`] }] }] });
+    assert.equal(report.scenarios[0].diagnostic.phase, 'unknown');
+    let output;
+    finalizeAuditReceipt({ startedAt: new Date().toISOString(), sha: 'a'.repeat(40), failure: null,
+      exitCode: 1, cleanup: { absent: true }, ...report }, { complete: () => true }, 'unused', (_, result) => { output = result; });
+    assert.equal(JSON.parse(output).scenarios[0].diagnostic.amqpCode, undefined);
+    assert.doesNotMatch(output, /c2VjcmV0/);
+  }
+  // JSON cannot represent NaN; it becomes null, never a numeric AMQP code.
+  assert.equal(phaseFromJest({ failureMessages: [marker({ ...diagnostic('broker-restart', 'operation', null, null, null),
+    invariant: 'same-volume-restarted', restartSubphase: 'amqp-connect', restartDocker: true,
+    restartApp: true, restartAmqp: false, amqpErrorClass: 'unknown', amqpCode: Number.NaN })] }).amqpCode, null);
+});

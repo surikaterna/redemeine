@@ -50,4 +50,22 @@ describe('negative-case broker gate after restart', () => {
     expect(gate.evidence.amqpCode).toBe(code);
     expect(JSON.stringify(gate.evidence)).not.toMatch(/user:pass|Basic|private/);
   });
+
+  it.each([
+    [{ code: 530 }, 530, 'unknown'],
+    [{ code: 'bad', replyCode: 404 }, 404, 'unknown'],
+    [{ code: 403 }, 403, 'ACCESS_REFUSED'],
+    [{ code: -1 }, null, 'unknown'],
+    [{ code: 1000 }, null, 'unknown'],
+    [{ code: 4.5 }, null, 'unknown'],
+    [{ code: Number.NaN }, null, 'unknown'],
+    [{ code: '530' }, null, 'unknown'],
+    [{ code: 1.5, replyCode: 404 }, 404, 'unknown']
+  ])('bounds AMQP code %j while retaining safe numeric replyCode', (codes, expected, errorClass) => {
+    const gate = new BrokerGate();
+    gate.recordAmqpFailure(Object.assign(new Error('amqp://user:pass@host Basic c2VjcmV0'), codes));
+    expect(gate.evidence.amqpCode).toBe(expected);
+    expect(gate.evidence.amqpErrorClass).toBe(errorClass);
+    expect(JSON.stringify(gate.evidence)).not.toMatch(/user:pass|Basic|c2VjcmV0/);
+  });
 });
