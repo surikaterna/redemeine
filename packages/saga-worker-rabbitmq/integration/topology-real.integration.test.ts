@@ -32,6 +32,17 @@ async function inspectTopology(sourceExchange: string, inputQueue: string, deadQ
   expect(bindings).toHaveLength(2);
 }
 
+async function inspectWhenReady(sourceExchange: string, inputQueue: string, deadQueue: string): Promise<void> {
+  await poll(async () => {
+    try {
+      await inspectTopology(sourceExchange, inputQueue, deadQueue);
+      return true;
+    } catch {
+      return null;
+    }
+  }, 'broker topology inspection');
+}
+
 function config(channel: Channel) {
   const worker = {
     channel,
@@ -91,41 +102,49 @@ async function restart(): Promise<void> {
   }, 'Rabbit restart');
 }
 
+async function publishBeforeRestart(): Promise<void> {
+  const first = await opened();
+  const { topology } = config(first.channel);
+  await provisionSagaTopology(topology);
+  await provisionSagaTopology(topology);
+  await inspectWhenReady(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue);
+  const pub = await first.model.createConfirmChannel();
+  publish(pub, 'kept', 'p1');
+  publish(pub, 'wrong-partition', 'p3');
+  publish(pub, 'wrong-collection', 'p1', 'other');
+  await pub.waitForConfirms();
+  expect((await first.channel.checkQueue(topology.worker.queue.queue)).messageCount).toBe(1);
+  await pub.close();
+  await first.channel.close();
+  await first.model.close();
+}
+
 describe('owned Rabbit 4.1.4 durable topology', () => {
   beforeAll(() => {
     if (!url || !container || !/^topology-[a-z0-9-]+$/.test(prefix)) throw new Error('owned runner environment required');
   });
 
   it('reconnects idempotently after broker restart, routes exact headers, ACKs and dead-letters permanent failure', async () => {
-    const first = await opened();
-    const { topology } = config(first.channel);
-    await provisionSagaTopology(topology);
-    await provisionSagaTopology(topology);
-    await inspectTopology(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue);
-    const pub = await first.model.createConfirmChannel();
-    publish(pub, 'kept', 'p1');
-    publish(pub, 'wrong-partition', 'p3');
-    publish(pub, 'wrong-collection', 'p1', 'other');
-    await pub.waitForConfirms();
-    expect((await first.channel.checkQueue(topology.worker.queue.queue)).messageCount).toBe(1);
-    await pub.close();
-    await first.channel.close();
-    await first.model.close();
+    await publishBeforeRestart();
     await restart();
 
     const second = await opened();
     const scope = config(second.channel);
     await provisionSagaTopology(scope.topology);
-    await inspectTopology(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
+    await inspectWhenReady(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
     expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
     let resolveProcessing: (() => void) | undefined;
+    let processingStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { processingStarted = resolve; });
     const processing = new Promise<void>((resolve) => { resolveProcessing = resolve; });
     const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
+      processingStarted?.();
       await processing;
       return [];
     } });
     await worker.start();
     await poll(async () => (await second.channel.checkQueue(scope.worker.queue.queue)).consumerCount === 1 ? true : null, 'consumer');
+    await started;
     expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
     resolveProcessing?.();
     await worker.stop();
