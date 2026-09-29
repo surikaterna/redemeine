@@ -5,6 +5,14 @@ import { cleanupOwned, createOwned, inspectOwned, ownedResources, OWNER_LABEL, p
 const runId = 'topology-0123456789abcdef0123456789abcdef';
 const names = { network: `${runId}-net`, volume: `${runId}-data`, container: runId };
 
+function absentMessage(kind, name = names[kind]) {
+  return {
+    network: `Error response from daemon: network ${name} not found`,
+    volume: `Error response from daemon: get ${name}: no such volume`,
+    container: `Error: No such container: ${name}`
+  }[kind];
+}
+
 function mockDocker() {
   const resources = new Map();
   const calls = [];
@@ -13,7 +21,7 @@ function mockDocker() {
     const name = names[kind];
     const id = kind === 'volume' ? name : `${kind}-id`;
     const labels = { [OWNER_LABEL]: owner };
-    resources.set(kind, kind === 'container' ? { Id: id, Config: { Labels: labels } } :
+    resources.set(kind, kind === 'container' ? { Id: id, Name: `/${name}`, Config: { Labels: labels } } :
       { Id: id, Name: name, Labels: labels });
   }
   async function docker(args) {
@@ -21,7 +29,7 @@ function mockDocker() {
     const [kind, action] = args;
     if (action === 'inspect') {
       const resource = resources.get(kind);
-      return resource ? { code: 0, stdout: JSON.stringify(resource) } : { code: 1, stderr: `Error: No such ${kind}: ${names[kind]}` };
+      return resource ? { code: 0, stdout: JSON.stringify(resource) } : { code: 1, stderr: absentMessage(kind) };
     }
     if (action === 'create' || kind === 'run') {
       const type = kind === 'run' ? 'container' : kind;
@@ -40,6 +48,51 @@ function mockDocker() {
   }
   return { docker, calls, resources, store, setOnCreate: (callback) => { onCreate = callback; } };
 }
+
+test('actual exact-name 404 formats are accepted only with exit 1', async () => {
+  const state = ownedResources(names, runId);
+  for (const kind of ['network', 'volume', 'container']) {
+    const docker = async () => ({ code: 1, stderr: absentMessage(kind) });
+    assert.equal(await inspectOwned(docker, state, kind), null);
+    await assert.rejects(inspectOwned(async () => ({ code: 0, stderr: absentMessage(kind), stdout: '{}' }), state, kind), /identity/);
+  }
+});
+
+test('wrong name, permission or daemon failure never becomes absence', async () => {
+  const state = ownedResources(names, runId);
+  for (const kind of ['network', 'volume', 'container']) {
+    const wrong = absentMessage(kind, `${names[kind]}-foreign`);
+    for (const stderr of [wrong, 'permission denied', 'Cannot connect to the Docker daemon']) {
+      await assert.rejects(inspectOwned(async () => ({ code: 1, stderr }), state, kind), /cannot verify/);
+    }
+  }
+  const special = ownedResources({ ...names, network: `${runId}-net.+` }, runId);
+  await assert.rejects(inspectOwned(async () => ({ code: 1, stderr: absentMessage('network', `${runId}-netXXX`) }), special, 'network'), /cannot verify/);
+});
+
+test('exit-0 inspect accepts only exact identity/name and owner label', async () => {
+  const mock = mockDocker();
+  const state = ownedResources(names, runId);
+  for (const kind of ['network', 'volume', 'container']) {
+    mock.store(kind);
+    assert.deepEqual(await inspectOwned(mock.docker, state, kind), {
+      id: kind === 'volume' ? names.volume : `${kind}-id`, owned: true
+    });
+    mock.resources.get(kind).Name = 'wrong-name';
+    await assert.rejects(inspectOwned(mock.docker, state, kind), /identity\/name mismatch/);
+    mock.store(kind, 'foreign-owner');
+    assert.equal((await inspectOwned(mock.docker, state, kind)).owned, false);
+  }
+});
+
+test('exact Docker 404 postchecks prove no owned resources remain', async () => {
+  const mock = mockDocker();
+  const state = ownedResources(names, runId);
+  await createSequence(mock, state);
+  const receipt = await cleanupOwned(mock.docker, state);
+  assert.equal(receipt.absent, true);
+  assert.deepEqual(receipt.postCleanup.map(({ resource }) => resource), [null, null, null]);
+});
 
 function argumentsFor(kind) {
   const label = `${OWNER_LABEL}=${runId}`;

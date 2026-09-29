@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createCommandRunner, RABBIT_IMAGE, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
+import { createCommandRunner, RABBIT_IMAGE, recordAuditFailure, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
 
 test('offline preflight requires clean exact SHA and immutable Rabbit digest', async () => {
   const sha = 'a'.repeat(40);
@@ -21,6 +21,16 @@ test('offline receipt reports names, durations, failures and scenario counts', (
       { name: 'topology > NACK', status: 'failed', durationMs: 15, failures: ['failure'] }
     ], counts: { passed: 1, failed: 1, total: 2 }
   });
+});
+
+test('cleanup failure cannot mask initiating error or produce PASS', () => {
+  const receipt = { failure: null, exitCode: 0 };
+  recordAuditFailure(receipt, 'initiating', new Error('network preflight rejected'));
+  recordAuditFailure(receipt, 'cleanup', new Error('postcheck unverified'));
+  assert.equal(receipt.failure, 'network preflight rejected');
+  assert.equal(receipt.initiatingError, 'network preflight rejected');
+  assert.equal(receipt.cleanupError, 'postcheck unverified');
+  assert.equal(receipt.exitCode, 1);
 });
 
 test('offline signal interrupts and reaps an owned child group before cleanup commands', async () => {

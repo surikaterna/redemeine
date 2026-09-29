@@ -57,6 +57,13 @@ export async function requireCleanHead(run) {
   return sha;
 }
 
+export function recordAuditFailure(receipt, phase, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  receipt[`${phase}Error`] = message;
+  receipt.failure ??= message;
+  receipt.exitCode = 1;
+}
+
 export function scenarioReport(report) {
   const scenarios = report.testResults.flatMap((suite) => suite.assertionResults.map((test) => ({
     name: [...test.ancestorTitles, test.title].join(' > '), status: test.status,

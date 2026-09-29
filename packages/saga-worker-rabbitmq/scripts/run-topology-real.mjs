@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { installedPackageVersion, receiptPackageVersions } from './installed-versions.mjs';
-import { createCommandRunner, RABBIT_IMAGE, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
+import { createCommandRunner, RABBIT_IMAGE, recordAuditFailure, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
 import { cleanupOwned, createOwned, ownedResources, OWNER_LABEL, preflightOwned } from './topology-runner-ownership.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -83,18 +83,16 @@ async function main() {
     if (runner.interrupted) throw new Error('Real topology audit interrupted');
     receipt.exitCode = 0;
   } catch (error) {
-    receipt.failure = error instanceof Error ? error.message : String(error);
+    recordAuditFailure(receipt, 'initiating', error);
   } finally {
     try {
       receipt.cleanup = await cleanupOwned(docker, ownership);
-      if (!receipt.cleanup.absent) { receipt.failure = 'owned resources remain after cleanup'; receipt.exitCode = 1; }
+      if (!receipt.cleanup.absent) recordAuditFailure(receipt, 'cleanup', new Error('owned resources not verified absent after cleanup'));
     } catch (error) {
-      receipt.failure = `cleanup verification failed: ${String(error)}; prior failure: ${receipt.failure}`;
-      receipt.exitCode = 1;
+      recordAuditFailure(receipt, 'cleanup', error);
     }
     await rm(reportPath, { force: true }).catch((error) => {
-      receipt.failure = `Jest report cleanup failed: ${String(error)}`;
-      receipt.exitCode = 1;
+      recordAuditFailure(receipt, 'reportCleanup', error);
     });
     receipt.finishedAt = new Date().toISOString();
     receipt.elapsedMs = Date.parse(receipt.finishedAt) - Date.parse(receipt.startedAt);

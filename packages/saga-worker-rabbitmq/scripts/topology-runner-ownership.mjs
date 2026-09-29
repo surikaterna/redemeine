@@ -9,8 +9,14 @@ export function ownedResources(names, runId) {
 }
 
 function missing(result, kind, name) {
-  return result.code === 1 && result.stderr?.includes(name) &&
-    (result.stderr.includes(`No such ${kind}`) || result.stderr.includes('No such object'));
+  if (result.code !== 1 || typeof result.stderr !== 'string') return false;
+  const exactName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const formats = {
+    network: `Error response from daemon: network ${exactName} not found`,
+    volume: `Error response from daemon: get ${exactName}: no such volume`,
+    container: `Error: No such container: ${exactName}`
+  };
+  return new RegExp(`^${formats[kind]}$`).test(result.stderr.trim());
 }
 
 export async function inspectOwned(docker, state, kind) {
@@ -20,7 +26,10 @@ export async function inspectOwned(docker, state, kind) {
   const object = JSON.parse(result.stdout);
   const id = kind === 'volume' ? object.Name : object.Id;
   const labels = kind === 'container' ? object.Config?.Labels : object.Labels;
-  if (typeof id !== 'string' || !id) throw new Error(`${kind} inspect missing identity`);
+  const actualName = kind === 'container' ? object.Name?.replace(/^\//, '') : object.Name;
+  if (typeof id !== 'string' || !id || actualName !== state.names[kind]) {
+    throw new Error(`${kind} inspect identity/name mismatch`);
+  }
   return { id, owned: labels?.[OWNER_LABEL] === state.runId };
 }
 
