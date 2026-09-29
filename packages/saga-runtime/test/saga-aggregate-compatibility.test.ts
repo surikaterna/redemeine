@@ -59,4 +59,29 @@ describe('saga aggregate compatibility', () => {
     aggregate.applyToDraft(draft, first);
     expect(draft.businessState).toEqual(businessPayload.state);
   });
+
+  it('routes processed events and persisted replay for both aggregate names', () => {
+    for (const name of ['saga', 'checkoutSaga']) {
+      const aggregate = fromRoot({ aggregateName: name });
+      const command = aggregate.commandCreators.createInstance({ id: 'one', sagaType: 'checkout', createdAt: recordedAt });
+      expect(command.type).toBe(`${name}.create_instance.command`);
+      const created = aggregate.process(aggregate.initialState, command)[0];
+      expect(created?.type).toBe(`${name}.instance_created.event`);
+      if (!created) throw new Error('createInstance did not emit an event');
+      const observed = aggregate.process(
+        aggregate.apply(aggregate.initialState, created),
+        aggregate.commandCreators.observeSourceEvent({
+          eventType: 'orders.placed.event',
+          observedAt: recordedAt
+        })
+      )[0];
+      expect(observed?.type).toBe(`${name}.source_event_observed.event`);
+      if (!observed) throw new Error('observeSourceEvent did not emit an event');
+      const replayed = [created, observed].reduce((state, event) => aggregate.apply(state, event), aggregate.initialState);
+      const draft = { ...aggregate.initialState };
+      for (const event of [created, observed]) aggregate.applyToDraft(draft, event);
+      expect(replayed).toEqual(draft);
+      expect(replayed.recent.events[0]?.eventType).toBe('orders.placed.event');
+    }
+  });
 });

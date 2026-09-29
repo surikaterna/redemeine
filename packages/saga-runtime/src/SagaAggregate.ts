@@ -76,8 +76,6 @@ function hydrateSagaAggregateState<TState>(state: SagaAggregateState<TState>): a
   state.businessState ??= null;
 }
 
-const toSnakeCase = (value: string): string => value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-
 function buildSagaAggregate<TAggregateName extends string, TState>(aggregateName: TAggregateName, options: CreateSagaAggregateOptions<TState>) {
   const windowLimits = createWindowLimits(options);
   const projectors = createSagaAggregateProjectors<TState>(windowLimits);
@@ -85,11 +83,6 @@ function buildSagaAggregate<TAggregateName extends string, TState>(aggregateName
     .events(projectors)
     .commands((emit) => createSagaAggregateCommands<TState>(emit, options.businessStateValidation))
     .overrideEventNames({
-      instanceCreated: `${aggregateName}.${toSnakeCase('instanceCreated')}.event`,
-      sourceEventObserved: `${aggregateName}.${toSnakeCase('sourceEventObserved')}.event`,
-      stateTransitioned: `${aggregateName}.${toSnakeCase('stateTransitioned')}.event`,
-      intentLifecycleRecorded: `${aggregateName}.${toSnakeCase('intentLifecycleRecorded')}.event`,
-      activityLifecycleRecorded: `${aggregateName}.${toSnakeCase('activityLifecycleRecorded')}.event`,
       businessStateRecorded: 'saga.business_state_recorded.event'
     })
     .build();
