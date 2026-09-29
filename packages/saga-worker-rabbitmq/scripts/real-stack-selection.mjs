@@ -4,8 +4,11 @@ const original = 'saga-real-stack.integration.test.ts';
 const intent = 'saga-intent-real.integration.test.ts';
 const identity = 'saga-identity-real.integration.test.ts';
 const identitySlices = ['redemeine-371j.1', 'redemeine-371j.2'];
+const crash = 'saga-retry-crash-real.integration.test.ts';
 
 export function selectRealStackSuites(slice) {
+  if (slice === 'redemeine-fyp3.5.3.1') return { issue: slice, paths: [crash],
+    hashPaths: [crash, 'crashChild.ts', 'crashBroker.ts', 'crashIpc.ts'] };
   if (identitySlices.includes(slice)) return { issue: slice, paths: [identity] };
   if (slice !== undefined && slice !== 'redemeine-vpwm.3.3') throw new Error('Unsupported real-stack slice');
   return { issue: 'redemeine-vpwm.3.3', paths: [original, intent] };

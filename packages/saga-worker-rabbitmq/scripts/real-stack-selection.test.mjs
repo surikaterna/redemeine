@@ -17,6 +17,9 @@ test('default and explicit qualification select both suites in canonical order; 
     { issue: 'redemeine-371j.1', paths: ['saga-identity-real.integration.test.ts'] });
   assert.deepEqual(selectRealStackSuites('redemeine-371j.2'),
     { issue: 'redemeine-371j.2', paths: ['saga-identity-real.integration.test.ts'] });
+  assert.deepEqual(selectRealStackSuites('redemeine-fyp3.5.3.1'),
+    { issue: 'redemeine-fyp3.5.3.1', paths: ['saga-retry-crash-real.integration.test.ts'],
+      hashPaths: ['saga-retry-crash-real.integration.test.ts', 'crashChild.ts', 'crashBroker.ts', 'crashIpc.ts'] });
   assert.throws(() => selectRealStackSuites('unknown'), /Unsupported/);
 });
 

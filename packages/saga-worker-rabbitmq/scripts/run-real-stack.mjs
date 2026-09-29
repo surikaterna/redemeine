@@ -18,6 +18,7 @@ const resources = {
 };
 const receiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}.json`;
 const jestResultPath = `/tmp/opencode/redemeine-wrdf-${suffix}-jest.json`;
+const crashReceiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}-crash.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
 const slice = process.env.REDEMEINE_REAL_SLICE;
 const selection = selectRealStackSuites(slice);
@@ -30,6 +31,7 @@ let scenarios = [];
 let codeHead = null;
 let scenarioSha256 = null;
 let resourcesAttempted = false;
+let crashEvidence = null;
 
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -184,6 +186,7 @@ async function runTests() {
     REDEMEINE_RABBIT_USER: 'saga_test',
     REDEMEINE_RABBIT_PASSWORD: 'saga_test_password'
   };
+  if (slice === 'redemeine-fyp3.5.3.1') env.REDEMEINE_CRASH_RECEIPT = crashReceiptPath;
   const result = await execute(
     'pnpm',
     [
@@ -204,13 +207,17 @@ async function runTests() {
   await collectScenarios();
   if (result.code !== 0) throw new Error(`real-stack Jest invocation failed with exit code ${result.code}`);
   assertScenarioEvidence(jestReport, selection.paths);
+  if (slice === 'redemeine-fyp3.5.3.1' &&
+      (crashEvidence?.success !== true || crashEvidence?.exitSignal !== 'SIGKILL' ||
+       Object.values(crashEvidence?.cleanup ?? {}).some(value => value !== true) ||
+       !crashEvidence?.cleanup?.vhostDeleted)) throw new Error('crash proof evidence incomplete');
 }
 
 async function assertCommittedHead() {
   const status = await execute('git', ['status', '--porcelain'], { capture: true });
   if (status.stdout) throw new Error('Qualification slice must run from a clean committed HEAD');
   codeHead = (await execute('git', ['rev-parse', 'HEAD'], { capture: true })).stdout;
-  scenarioSha256 = await scenarioHash(selection.paths,
+  scenarioSha256 = await scenarioHash(selection.hashPaths ?? selection.paths,
     name => readFile(new URL(`../integration/${name}`, import.meta.url)));
 }
 
@@ -223,12 +230,17 @@ async function collectScenarios() {
         name: [...ancestorTitles, title].join(' > '),
         status,
         durationMs: duration ?? null,
-        failures: failureMessages
+        failures: slice === 'redemeine-fyp3.5.3.1' ? failureMessages.map(() => 'sanitized crash scenario failure') : failureMessages
       }))
     );
   } catch (error) {
-    scenarios = [{ name: 'Jest infrastructure', status: 'failed', durationMs: null, failures: [String(error)] }];
+    scenarios = [{ name: 'Jest infrastructure', status: 'failed', durationMs: null,
+      failures: [slice === 'redemeine-fyp3.5.3.1' ? 'sanitized crash infrastructure failure' : String(error)] }];
   } finally {
+    if (slice === 'redemeine-fyp3.5.3.1') {
+      try { crashEvidence = JSON.parse(await readFile(crashReceiptPath, 'utf8')); } catch { /* Missing evidence is a failure. */ }
+      await rm(crashReceiptPath, { force: true });
+    }
     await rm(jestResultPath, { force: true });
   }
 }
@@ -258,7 +270,7 @@ try {
   await collectVersions();
   await runTests();
 } catch (error) {
-  failure = error instanceof Error ? error.message : String(error);
+  failure = slice === 'redemeine-fyp3.5.3.1' ? 'sanitized crash runner failure' : error instanceof Error ? error.message : String(error);
   process.exitCode = 1;
 } finally {
   try {
@@ -268,8 +280,9 @@ try {
       process.exitCode = 1;
     }
   } catch (error) {
-    cleanup = { ...cleanup, error: String(error) };
-    failure = [failure, `cleanup: ${String(error)}`].filter(Boolean).join('; ');
+    const detail = slice === 'redemeine-fyp3.5.3.1' ? 'sanitized cleanup failure' : String(error);
+    cleanup = { ...cleanup, error: detail };
+    failure = [failure, `cleanup: ${detail}`].filter(Boolean).join('; ');
     process.exitCode = 1;
   }
   const finishedAt = new Date();
@@ -288,6 +301,7 @@ try {
         durationMs: finishedAt.getTime() - startedAt.getTime(),
         testExitCode,
         scenarios,
+        crashEvidence,
         failure,
         versions,
         cleanup
