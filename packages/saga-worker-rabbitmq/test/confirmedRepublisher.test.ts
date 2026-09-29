@@ -44,6 +44,25 @@ describe('isolated mandatory confirmed republisher', () => {
     await publisher.close();
   });
 
+  it('retains original bytes, identity and unrelated headers with bounded worker retry metadata', async () => {
+    const f = fixture();
+    const publisher = await createSagaConfirmedRepublisher(f.model, 100);
+    const source = { ...f.source, properties: { ...f.source.properties,
+      correlationId: 'original-correlation', headers: { ...f.source.properties.headers,
+        partitionId: 'partition-1', streamId: 'stream-1', 'x-death': [{ queue: 'rdm.saga.commits.retry',
+          reason: 'expired', count: 1 }] } } };
+    const pending = publisher.retry(source, { 'rdm-saga-retry-attempt': 2, 'rdm-saga-failure-reason': 'temporary' });
+    expect(f.sends[0]).toMatchObject({ exchange: 'rdm.saga.commits.retry.exchange', key: 'rdm.saga.commits.retry',
+      body: source.content, options: { messageId: 'commit-1', contentType: 'application/json',
+        correlationId: 'original-correlation', mandatory: true, deliveryMode: 2,
+        headers: { ...source.properties.headers, 'rdm-saga-retry-attempt': 2,
+          'rdm-saga-failure-reason': 'temporary' } } });
+    f.confirm();
+    await pending;
+    expect(source.properties.headers).not.toHaveProperty('rdm-saga-retry-attempt');
+    await publisher.close();
+  });
+
   it.each(['returned', 'nack', 'lost'])('refuses %s despite any other signal', async (mode) => {
     const f = fixture();
     const publisher = await createSagaConfirmedRepublisher(f.model, 100);

@@ -43,10 +43,10 @@ export function retryAttempt(message: ConsumeMessage, maxAttempts: number): numb
     if (!Array.isArray(deaths) || deaths.length !== 1 || !record(deaths[0]) ||
         deaths[0].queue !== SAGA_COMMIT_RETRY_QUEUE || deaths[0].reason !== 'expired' ||
         !Number.isSafeInteger(deaths[0].count) || typeof deaths[0].count !== 'number' ||
-        deaths[0].count < 1 || deaths[0].count > maxAttempts || attempt === 0 ||
-        deaths[0].count > attempt) throw poison('retry TTL death evidence is contradictory');
+        deaths[0].count < 1 || deaths[0].count > maxAttempts ||
+        deaths[0].count !== attempt) throw poison('retry TTL death evidence is contradictory');
   }
-  if (attempt > 0 && deaths === undefined && !message.fields.redelivered) {
+  if (attempt > 0 && deaths === undefined) {
     throw poison('retry attempt lacks broker TTL evidence');
   }
   return attempt;
@@ -62,11 +62,20 @@ export async function republishFailure(
   retry: NonNullable<SagaRabbitWorkerOptions['retry']>, message: ConsumeMessage, attempt: number, error: unknown
 ): Promise<void> {
   const reason = safeReason(error);
-  if (!(error instanceof SagaTurnError)) throw new Error('unclassified saga failure; delivery remains unacknowledged', { cause: error });
-  if (error instanceof SagaTurnError && error.retryable && attempt < retry.maxAttempts) {
+  if (!(error instanceof SagaTurnError) || error.retryable) {
+    if (attempt >= retry.maxAttempts) {
+      await deadLetterFailure(retry, message, attempt, reason);
+      return;
+    }
     await retry.publisher.retry(message, { [ATTEMPT]: attempt + 1, [REASON]: reason });
     return;
   }
+  await deadLetterFailure(retry, message, attempt, reason);
+}
+
+async function deadLetterFailure(
+  retry: NonNullable<SagaRabbitWorkerOptions['retry']>, message: ConsumeMessage, attempt: number, reason: string
+): Promise<void> {
   // Invalid envelopes may not carry a messageId. Give the quarantined copy a stable
   // synthetic ID so mandatory returns can still be correlated on the confirm channel.
   const quarantined = message.properties.messageId ? message : {

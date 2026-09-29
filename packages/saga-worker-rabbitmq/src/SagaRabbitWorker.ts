@@ -201,18 +201,10 @@ class RabbitSagaWorker implements SagaRabbitWorker {
   private async handleRetry(message: ConsumeMessage, generation: number): Promise<void> {
     const retry = this.options.retry;
     if (!retry) return;
-    let attempt = 0;
-    let failure: unknown;
-    try {
-      attempt = retryAttempt(message, retry.maxAttempts);
-      const events = decodeSagaRabbitMessage(message, this.options.source, this.options.limits);
-      for (const event of events) await this.options.processEvent(event);
-    } catch (error) {
-      failure = error;
-    }
-    if (failure !== undefined) {
+    const result = await this.processRetryDelivery(message, retry.maxAttempts);
+    if (!result.ok) {
       try {
-        await republishFailure(retry, message, attempt, failure);
+        await republishFailure(retry, message, result.attempt, result.error);
       } catch (error) {
         await this.haltRetry();
         await this.reportSettlementError({ error, message, settlement: 'publish' }, error);
@@ -224,6 +216,20 @@ class RabbitSagaWorker implements SagaRabbitWorker {
     } catch (error) {
       await this.haltRetry();
       await this.reportSettlementError({ error, message, settlement: 'ack' }, error);
+    }
+  }
+
+  private async processRetryDelivery(message: ConsumeMessage, maxAttempts: number): Promise<
+    { readonly ok: true } | { readonly ok: false; readonly attempt: number; readonly error: unknown }
+  > {
+    let attempt = 0;
+    try {
+      attempt = retryAttempt(message, maxAttempts);
+      const events = decodeSagaRabbitMessage(message, this.options.source, this.options.limits);
+      for (const event of events) await this.options.processEvent(event);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, attempt, error };
     }
   }
 
