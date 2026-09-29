@@ -14,7 +14,7 @@ function missing(result, kind, name) {
   const formats = {
     network: `Error response from daemon: network ${exactName} not found`,
     volume: `Error response from daemon: get ${exactName}: no such volume`,
-    container: `Error: No such container: ${exactName}`
+    container: `(?:Error: No such container: ${exactName}|Error response from daemon: No such container: ${exactName})`
   };
   return new RegExp(`^${formats[kind]}$`).test(result.stderr.trim());
 }

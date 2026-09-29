@@ -9,7 +9,7 @@ function absentMessage(kind, name = names[kind]) {
   return {
     network: `Error response from daemon: network ${name} not found`,
     volume: `Error response from daemon: get ${name}: no such volume`,
-    container: `Error: No such container: ${name}`
+    container: `Error response from daemon: No such container: ${name}`
   }[kind];
 }
 
@@ -56,6 +56,8 @@ test('actual exact-name 404 formats are accepted only with exit 1', async () => 
     assert.equal(await inspectOwned(docker, state, kind), null);
     await assert.rejects(inspectOwned(async () => ({ code: 0, stderr: absentMessage(kind), stdout: '{}' }), state, kind), /identity/);
   }
+  const legacy = async () => ({ code: 1, stderr: `Error: No such container: ${names.container}\n` });
+  assert.equal(await inspectOwned(legacy, state, 'container'), null);
 });
 
 test('wrong name, permission or daemon failure never becomes absence', async () => {
@@ -68,6 +70,10 @@ test('wrong name, permission or daemon failure never becomes absence', async () 
   }
   const special = ownedResources({ ...names, network: `${runId}-net.+` }, runId);
   await assert.rejects(inspectOwned(async () => ({ code: 1, stderr: absentMessage('network', `${runId}-netXXX`) }), special, 'network'), /cannot verify/);
+  const wrongDaemonName = absentMessage('container', `${names.container}-foreign`);
+  await assert.rejects(inspectOwned(async () => ({ code: 1, stderr: wrongDaemonName }), state, 'container'), /cannot verify/);
+  const wrongLegacyName = `Error: No such container: ${names.container}-foreign`;
+  await assert.rejects(inspectOwned(async () => ({ code: 1, stderr: wrongLegacyName }), state, 'container'), /cannot verify/);
 });
 
 test('exit-0 inspect accepts only exact identity/name and owner label', async () => {
@@ -85,10 +91,14 @@ test('exit-0 inspect accepts only exact identity/name and owner label', async ()
   }
 });
 
-test('exact Docker 404 postchecks prove no owned resources remain', async () => {
+test('exact daemon container 404 preflight and postchecks prove no owned resources remain', async () => {
   const mock = mockDocker();
   const state = ownedResources(names, runId);
   await createSequence(mock, state);
+  assert.equal(state.preflight, true);
+  assert.deepEqual(mock.calls.slice(0, 3).map(([kind, action]) => [kind, action]), [
+    ['network', 'inspect'], ['volume', 'inspect'], ['container', 'inspect']
+  ]);
   const receipt = await cleanupOwned(mock.docker, state);
   assert.equal(receipt.absent, true);
   assert.deepEqual(receipt.postCleanup.map(({ resource }) => resource), [null, null, null]);
