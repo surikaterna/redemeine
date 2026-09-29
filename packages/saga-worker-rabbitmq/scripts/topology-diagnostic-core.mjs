@@ -11,12 +11,13 @@ export function diagnosticRunArgs(names, runId) {
     '-p', '127.0.0.1::5672', '-p', '127.0.0.1::15672', RABBIT_IMAGE];
 }
 
-export async function createDiagnosticResources(docker, ownership) {
+export async function createDiagnosticResources(docker, ownership, prepare = async () => undefined) {
   await preflightOwned(docker, ownership);
   await docker(['pull', RABBIT_IMAGE]);
   const label = `${OWNER_LABEL}=${ownership.runId}`;
   await createOwned(docker, ownership, 'network', ['network', 'create', '--label', label, ownership.names.network]);
   await createOwned(docker, ownership, 'volume', ['volume', 'create', '--label', label, ownership.names.volume]);
+  await prepare();
   await createOwned(docker, ownership, 'container', diagnosticRunArgs(ownership.names, ownership.runId));
 }
 

@@ -5,12 +5,14 @@ import { cleanupOwned, ownedResources } from './topology-runner-ownership.mjs';
 import { finalizeAuditReceipt } from './topology-runner-receipt.mjs';
 import { awaitDiagnosticStartup, captureDiagnosticLogs, createDiagnosticResources, diagnosticCause } from './topology-diagnostic-core.mjs';
 import { cleanupCookieHelper, helperOwnership, inspectCookieMetadata } from './topology-diagnostic-cookie.mjs';
+import { prepOwnership, prepareCookieBeforeRabbit } from './topology-runner-cookie-prep.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = `topology-${randomBytes(16).toString('hex')}`;
 const names = { container: runId, network: `${runId}-net`, volume: `${runId}-data` };
 const ownership = ownedResources(names, runId);
 const helper = helperOwnership(ownership);
+const prep = prepOwnership(ownership);
 const rawPath = `/tmp/opencode/redemeine-fyp3.3-${runId}-startup.log`;
 const receiptPath = `/tmp/opencode/redemeine-fyp3.3-${runId}-diagnostic.json`;
 const runner = createCommandRunner(root);
@@ -58,7 +60,9 @@ async function main() {
     runId, image: RABBIT_IMAGE, startedAt: new Date().toISOString(), failure: null, exitCode: 1 };
   try {
     receipt.sha = await requireCleanHead(runner.run);
-    await createDiagnosticResources(docker, ownership);
+    await createDiagnosticResources(docker, ownership, async () => {
+      receipt.cookiePreparation = await prepareCookieBeforeRabbit(docker, ownership, prep, receipt);
+    });
     receipt.imageId = await verifyImage();
     await awaitDiagnosticStartup(docker, runner, ownership, receipt);
     if (receipt.startup.status !== 'ready') throw new Error('Rabbit did not reach diagnostic readiness');
@@ -66,6 +70,12 @@ async function main() {
   } catch (error) {
     recordAuditFailure(receipt, 'initiating', new Error(`diagnostic startup failed: ${diagnosticCause(String(error))}`));
   } finally {
+    try {
+      receipt.cookiePrepCleanup = await cleanupCookieHelper(docker, prep);
+      if (!receipt.cookiePrepCleanup.absent) recordAuditFailure(receipt, 'cookiePrepCleanup', new Error('cookie prep helper cleanup unverified'));
+    } catch {
+      recordAuditFailure(receipt, 'cookiePrepCleanup', new Error('cookie prep helper cleanup failed'));
+    }
     await captureBeforeCleanup(receipt);
     await captureCookieMetadata(receipt);
     try {

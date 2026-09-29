@@ -6,11 +6,14 @@ import { createCommandRunner, RABBIT_IMAGE, recordAuditFailure, requireCleanHead
 import { cleanupOwned, createOwned, ownedResources, OWNER_LABEL, preflightOwned } from './topology-runner-ownership.mjs';
 import { finalizeAuditReceipt } from './topology-runner-receipt.mjs';
 import { captureReadinessDiagnostics, redactDiagnostic, waitForRabbit } from './topology-runner-readiness.mjs';
+import { cleanupCookieHelper } from './topology-diagnostic-cookie.mjs';
+import { prepOwnership, prepareCookieBeforeRabbit } from './topology-runner-cookie-prep.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runId = `topology-${randomBytes(16).toString('hex')}`;
 const names = { container: runId, volume: `${runId}-data`, network: `${runId}-net` };
 const ownership = ownedResources(names, runId);
+const prep = prepOwnership(ownership);
 const receiptPath = `/tmp/opencode/redemeine-fyp3.3-${runId}.json`;
 const reportPath = `/tmp/opencode/redemeine-fyp3.3-${runId}-jest.json`;
 const runner = createCommandRunner(root);
@@ -31,6 +34,7 @@ async function setup(receipt) {
   const label = `${OWNER_LABEL}=${runId}`;
   await createOwned(docker, ownership, 'network', ['network', 'create', '--label', label, names.network]);
   await createOwned(docker, ownership, 'volume', ['volume', 'create', '--label', label, names.volume]);
+  receipt.cookiePreparation = await prepareCookieBeforeRabbit(docker, ownership, prep, receipt);
   await createOwned(docker, ownership, 'container', ['run', '-d', '--name', names.container, '--label', label, '--network', names.network,
     '--mount', `source=${names.volume},target=/var/lib/rabbitmq`,
     '-e', 'RABBITMQ_DEFAULT_USER=topology_owner', '-e', 'RABBITMQ_DEFAULT_PASS=topology_owner_password',
@@ -83,6 +87,12 @@ async function main() {
       }
     }
   } finally {
+    try {
+      receipt.cookiePrepCleanup = await cleanupCookieHelper(docker, prep);
+      if (!receipt.cookiePrepCleanup.absent) recordAuditFailure(receipt, 'cookiePrepCleanup', new Error('cookie prep helper cleanup unverified'));
+    } catch {
+      recordAuditFailure(receipt, 'cookiePrepCleanup', new Error('cookie prep helper cleanup failed'));
+    }
     try {
       receipt.cleanup = await cleanupOwned(docker, ownership);
       if (!receipt.cleanup.absent) recordAuditFailure(receipt, 'cleanup', new Error('owned resources not verified absent after cleanup'));
