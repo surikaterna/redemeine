@@ -53,4 +53,15 @@ describe('owned crash child IPC', () => {
     });
     await expect(killOwned(child)).resolves.toBe('SIGKILL');
   });
+
+  it('recovery readiness rejects missing IPC and does not accept ready from an exited child', async () => {
+    const waiting = owned('setInterval(() => {}, 1000)');
+    await expect(awaitChildReady(waiting, [], 30)).rejects.toThrow('timed out');
+    await expect(killOwned(waiting)).resolves.toBe('SIGKILL');
+    const exited = owned('process.exit(2)');
+    await new Promise<void>(resolve => exited.once('exit', () => resolve()));
+    await expect(awaitChildReady(exited, [{ kind: 'ready' }], 50)).rejects.toMatchObject({
+      evidence: { phase: 'unknown', errorClass: 'exit', code: 2 }
+    });
+  });
 });

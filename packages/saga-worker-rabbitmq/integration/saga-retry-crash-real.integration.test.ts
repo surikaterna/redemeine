@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { expect, it, jest } from '@jest/globals';
 import { connect, type Channel, type ConfirmChannel } from 'amqplib';
 import { MongoClient } from 'mongodb';
+import { deriveSourceTriggerId } from '@redemeine/saga-runtime';
 import type { ICommit } from 'tapeworm';
 import { counts, deadQueue, input, provision, required, retryQueue } from './crashBroker';
 import { observationWindowMs, observeHeldCopy, requireKillProof, safeCounts, type CountSample } from './crashCountProof';
@@ -14,6 +15,8 @@ import { PhaseEvidence } from './crashPhaseEvidence';
 import { deriveOwnedNames } from './crashNames';
 import { createDbOwner, ownedEnvironment, ownedOps } from './crashResourceOps';
 import { runCrashLifecycle } from './crashRunLifecycle';
+import { proveMaterial, proveUnchanged } from './crashMaterialProof';
+import { proveMismatchSignals, proveRecoverySignals } from './crashRecoveryProof';
 import { instanceId, sourceEvent } from './harness';
 import { createCounters, createRealTable } from './fixtures';
 
@@ -59,7 +62,15 @@ async function physical(client: MongoClient, dbName: string, sagaPartition: stri
 }
 
 type Stack = { readonly client: MongoClient; readonly channel: Channel; readonly pub: ConfirmChannel;
-  readonly exchange: string; readonly original: ICommit; readonly sagaId: string };
+  readonly exchange: string; readonly original: ICommit; readonly sagaId: string; readonly sagaKey: string };
+
+function material(stack: Stack, rows: readonly unknown[]) {
+  return proveMaterial(rows, { sagaId: stack.sagaId, sagaKey: stack.sagaKey,
+    partition: required('REDEMEINE_CRASH_SAGA_PARTITION'), eventId: 'crash-event', amount: 1,
+    sourcePartition: stack.original.partitionId, sourceStream: stack.original.streamId, sourceCommit: stack.original.id,
+    sourceTriggerId: deriveSourceTriggerId({ partitionId: stack.original.partitionId,
+      streamId: stack.original.streamId, commitId: stack.original.id, eventIndex: 0 }) });
+}
 
 async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEvidence): Promise<unknown[]> {
   const { client, pub, original, sagaId } = stack;
@@ -80,14 +91,10 @@ async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEviden
   const committed = await phases.run('physical-commit-read', () => physical(client, dbName, sagaPartition, sagaId));
   const atKill = await phases.run('crash-assertions', async () => {
     expect(trace.find(event => event.kind === 'confirmed')).toMatchObject({ messageId: original.id, attempt: 1 });
-    expect(committed).toHaveLength(1);
-    expect(committed[0]).toMatchObject({ events: [
-      { type: 'saga.instance_created.event' }, { type: 'saga.definition_identity_recorded.event' },
-      { type: 'saga.source_event_observed.event' }, { type: 'saga.business_state_recorded.event' }
-    ] });
+    const facts = material(stack, committed);
     const proof = await observeHeldCopy(readCount, samples, confirmedAt);
     evidence.atKill = { input: safeCounts(proof.input), retry: safeCounts(proof.retry),
-      physical: committed.length, intentFacts: 0 };
+      ...facts };
     expect(evidence.atKill).toMatchObject({ physical: 1, input: { unacked: 1, ack: 0 }, retry: { ready: 1 } });
     return proof;
   }, 11_000);
@@ -95,49 +102,103 @@ async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEviden
     requireKillProof(atKill, confirmedAt);
     return killOwned(first);
   });
-  await until('original requeued', async () => (await counts(input)).ready === 1);
-  evidence.requeued = await counts(input);
+  evidence.requeued = await phases.run('original-requeue', async () => {
+    await until('original requeued', async () => (await counts(input)).ready === 1);
+    return counts(input);
+  }, 17_000);
   return committed;
 }
 
-async function recoveryPhase(stack: Stack, recovery: ChildProcess, committed: unknown[]): Promise<void> {
+async function recoveryPhase(stack: Stack, recovery: ChildProcess, committed: unknown[], phases: PhaseEvidence): Promise<void> {
   const { client, original, sagaId } = stack;
-  await awaitSignal(recovery, (event) => event.kind === 'ready');
-  await until('original requeue ACK', () => trace.some((event) => event.kind === 'ack' && event.messageId === original.id));
-  await until('TTL-returned retry ACK', () => trace.filter((event) => event.kind === 'ack' && event.messageId === original.id).length === 2,
-    40_000);
-  const deliveries = trace.filter((event) => event.kind === 'delivery' && event.messageId === original.id);
-  expect(deliveries).toEqual(expect.arrayContaining([
-    expect.objectContaining({ redelivered: true, attempt: undefined }),
-    expect.objectContaining({ attempt: 1, deaths: [expect.objectContaining({ queue: retryQueue, reason: 'expired', count: 1 })] })
-  ]));
-  expect(trace.filter((event) => event.kind === 'processed' && event.messageId === 'crash-event')
-    .map((event) => event.kind === 'processed' ? event.statuses : undefined)).toEqual([['reconciled'], ['reconciled']]);
-  expect(await physical(client, required('REDEMEINE_CRASH_DB'), required('REDEMEINE_CRASH_SAGA_PARTITION'), sagaId))
-    .toEqual(committed);
+  const started = Date.now();
+  const summary = { ready: false, originalAcks: 0, ttlAcks: 0, deliveries: 0,
+    redelivered: false, attempt: null as number | null, deathCount: null as number | null,
+    statuses: 0, elapsedMs: 0, physical: null as number | null, materialMatches: false };
+  evidence.recovery = summary;
+  await phases.run('recovery-ready', () => awaitChildReady(recovery, trace), 7_000);
+  summary.ready = true;
+  await phases.run('recovery-original-ack', () => until('original requeue ACK', () =>
+    trace.some(event => event.kind === 'ack' && event.messageId === original.id)), 17_000);
+  summary.originalAcks = trace.filter(event => event.kind === 'ack' && event.messageId === original.id).length;
+  await phases.run('recovery-ttl-ack', () => until('TTL-returned retry ACK', () =>
+    trace.filter(event => event.kind === 'ack' && event.messageId === original.id).length >= 2, 40_000), 41_000);
+  summary.ttlAcks = trace.filter(event => event.kind === 'ack' && event.messageId === original.id).length;
+  const deliveries = trace.filter((event): event is Exclude<CrashSignal, { kind: 'error' }> =>
+    event.kind === 'delivery' && event.messageId === original.id);
+  summary.deliveries = deliveries.length;
+  await phases.run('recovery-deliveries', () => {
+    expect(deliveries).toHaveLength(3);
+    expect(summary.originalAcks).toBe(1);
+    expect(summary.ttlAcks).toBe(2);
+    expect(deliveries[1]).toMatchObject({ redelivered: true, attempt: undefined });
+    summary.redelivered = true;
+  });
+  await phases.run('recovery-death-attempt', () => {
+    const returned = deliveries[2];
+    summary.attempt = returned?.attempt ?? null;
+    const deaths = returned?.deaths;
+    if (!Array.isArray(deaths) || deaths.length !== 1) throw new Error('unexpected retry death shape');
+    const death = deaths[0] as Record<string, unknown>;
+    summary.deathCount = typeof death.count === 'number' ? death.count : null;
+    expect(returned).toMatchObject({ attempt: 1, deaths: [{ queue: retryQueue, reason: 'expired', count: 1 }] });
+  });
+  await phases.run('recovery-statuses', () => {
+    const statuses = trace.filter((event): event is Exclude<CrashSignal, { kind: 'error' }> =>
+      event.kind === 'processed' && event.messageId === 'crash-event');
+    summary.statuses = statuses.length;
+    proveRecoverySignals(trace, original.id, 'crash-event', retryQueue);
+  });
+  const after = await phases.run('recovery-physical-read', () => physical(client,
+    required('REDEMEINE_CRASH_DB'), required('REDEMEINE_CRASH_SAGA_PARTITION'), sagaId));
+  summary.physical = after.length;
+  await phases.run('recovery-material', () => { material(stack, after); proveUnchanged(committed, after); });
+  summary.materialMatches = true;
+  summary.elapsedMs = Math.min(110_000, Date.now() - started);
 }
 
-async function mismatchPhase(stack: Stack, recovery: ChildProcess, committed: unknown[]): Promise<void> {
+async function mismatchPhase(stack: Stack, recovery: ChildProcess, committed: unknown[], phases: PhaseEvidence): Promise<void> {
   const { channel, pub, original, client, sagaId } = stack;
+  const summary = { published: false, confirmedDead: false, ackCount: 0, dlqReady: false,
+    copyMatches: false, settled: false, physical: null as number | null, materialMatches: false };
+  evidence.mismatch = summary;
   const dead = awaitSignal(recovery, (event) => event.kind === 'dead' && event.messageId === original.id);
-  await publish(pub, stack.exchange, makeCommit(original.partitionId, 99), required('REDEMEINE_CRASH_COLLECTION'));
-  await dead;
-  await until('changed copy ACK', () => trace.filter((event) => event.kind === 'ack' && event.messageId === original.id).length === 3);
-  const deadIndex = trace.findIndex((event) => event.kind === 'dead' && event.messageId === original.id);
-  const finalAckIndex = trace.reduce((last, event, index) =>
-    event.kind === 'ack' && event.messageId === original.id ? index : last, -1);
-  expect(deadIndex).toBeGreaterThanOrEqual(0);
-  expect(finalAckIndex).toBeGreaterThan(deadIndex);
-  await until('changed copy in DLQ', async () => (await counts(deadQueue)).ready === 1);
-  const copy = await channel.get(deadQueue, { noAck: false });
-  expect(copy && copy.properties.messageId).toBe(original.id);
-  expect(copy && JSON.parse(copy.content.toString()).events[0].payload.amount).toBe(99);
-  if (copy) channel.ack(copy);
-  await until('input settled', async () => { const value = await counts(input); return value.ready === 0 && value.unacked === 0; });
-  expect(await physical(client, required('REDEMEINE_CRASH_DB'), required('REDEMEINE_CRASH_SAGA_PARTITION'), sagaId))
-    .toEqual(committed);
-  evidence.final = { input: await counts(input), retry: await counts(retryQueue), dead: await counts(deadQueue),
-    physicalTurns: 1, originalPrefixAcks: 2, mismatchConfirmedDlq: true };
+  await phases.run('mismatch-publish', () => publish(pub, stack.exchange,
+    makeCommit(original.partitionId, 99), required('REDEMEINE_CRASH_COLLECTION')));
+  summary.published = true;
+  await phases.run('mismatch-dead', () => dead, 16_000);
+  summary.confirmedDead = true;
+  await phases.run('mismatch-ack', async () => {
+    await until('changed copy ACK', () =>
+      trace.filter((event) => event.kind === 'ack' && event.messageId === original.id).length >= 3);
+    proveMismatchSignals(trace, original.id);
+  }, 16_000);
+  summary.ackCount = trace.filter(event => event.kind === 'ack' && event.messageId === original.id).length;
+  await phases.run('mismatch-dlq', async () => {
+    await until('changed copy in DLQ', async () => (await counts(deadQueue)).ready === 1);
+    summary.dlqReady = true;
+    const copy = await channel.get(deadQueue, { noAck: false });
+    expect(copy && copy.properties.messageId).toBe(original.id);
+    expect(copy && JSON.parse(copy.content.toString()).events[0].payload.amount).toBe(99);
+    summary.copyMatches = true;
+    if (copy) channel.ack(copy);
+  }, 17_000);
+  await phases.run('mismatch-settled', () => until('input settled', async () => {
+    const value = await counts(input); return value.ready === 0 && value.unacked === 0;
+  }), 16_000);
+  summary.settled = true;
+  const finalRows = await phases.run('mismatch-material', async () => {
+    const rows = await physical(client, required('REDEMEINE_CRASH_DB'), required('REDEMEINE_CRASH_SAGA_PARTITION'), sagaId);
+    summary.physical = rows.length;
+    material(stack, rows);
+    proveUnchanged(committed, rows);
+    return rows;
+  });
+  summary.materialMatches = true;
+  evidence.final = await phases.run('mismatch-final-counts', async () => ({ input: await counts(input),
+    retry: await counts(retryQueue), dead: await counts(deadQueue),
+    physicalTurns: finalRows.length, originalPrefixAcks: trace.filter(event => event.kind === 'ack' && event.messageId === original.id).length - 1,
+    mismatchConfirmedDlq: true }), 16_000);
 }
 
 async function cleanOwned(client: MongoClient, model: Awaited<ReturnType<typeof connect>> | undefined,
@@ -208,14 +269,15 @@ it('kills the real worker after confirmed retry and before ACK, then reconciles 
     evidence.topology = { vhost: env.REDEMEINE_CRASH_VHOST, input, retryQueue, deadQueue,
       inspected: true };
     const stack = await phases.run('stack-construction', (): Stack => ({ client, channel, pub, exchange: scope.sourceExchange,
-      original: makeCommit(required('REDEMEINE_CRASH_PARTITION'), 1),
-      sagaId: instanceId(createRealTable('crash-proof', createCounters()).definition.sagaKey, 'crash-order') }));
+       original: makeCommit(required('REDEMEINE_CRASH_PARTITION'), 1),
+       sagaKey: createRealTable('crash-proof', createCounters()).definition.sagaKey,
+       sagaId: instanceId(createRealTable('crash-proof', createCounters()).definition.sagaKey, 'crash-order') }));
     first = await phases.run('child-fork', () => child('first', env));
     const committed = await crashPhase(stack, first, phases);
-    const replacement = await phases.run('recovery', () => child('recovery', env));
+    const replacement = await phases.run('recovery-fork', () => child('recovery', env));
     recovery = replacement;
-    await phases.run('recovery', () => recoveryPhase(stack, replacement, committed), 50_000);
-    await phases.run('recovery', () => mismatchPhase(stack, replacement, committed), 25_000);
+    await recoveryPhase(stack, replacement, committed, phases);
+    await mismatchPhase(stack, replacement, committed, phases);
     await deadline('confirm channel close', () => pub.close());
     await deadline('consumer channel close', () => channel.close());
   }, () => cleanOwned(client, model, scopeOwner, [first, recovery], priorEnv), async result => {

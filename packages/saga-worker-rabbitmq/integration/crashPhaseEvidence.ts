@@ -5,7 +5,11 @@ export const phases = ['mongo-connect', 'resource-preflight', 'resource-setup', 
   'amqp-open', 'consumer-channel', 'confirm-channel', 'topology-provision', 'topology-inspected',
   'stack-construction', 'child-fork', 'source-append', 'child-ready', 'source-publish',
   'initial-delivery', 'retry-confirm', 'broker-observation', 'physical-commit-read',
-  'crash-assertions', 'kill-eligibility', 'recovery', 'cleanup', 'receipt'] as const;
+  'crash-assertions', 'kill-eligibility', 'original-requeue', 'recovery-fork', 'recovery-ready', 'recovery-original-ack',
+  'recovery-ttl-ack', 'recovery-deliveries', 'recovery-death-attempt', 'recovery-statuses',
+  'recovery-physical-read', 'recovery-material', 'mismatch-publish', 'mismatch-dead',
+  'mismatch-ack', 'mismatch-dlq', 'mismatch-settled', 'mismatch-material', 'mismatch-final-counts',
+  'cleanup', 'receipt'] as const;
 export type CrashPhase = typeof phases[number];
 
 export interface FailureEvidence {
@@ -41,17 +45,19 @@ export function safeFailure(phase: CrashPhase, error: unknown, exitCode?: number
 
 export class PhaseEvidence {
   private phase: CrashPhase = 'mongo-connect';
-  readonly steps: Array<{ phase: CrashPhase; status: 'started' | 'completed' }> = [];
+  readonly steps: Array<{ phase: CrashPhase; status: 'started' | 'completed' | 'failed'; elapsedMs?: number }> = [];
   firstFailure: FailureEvidence | null = null;
 
   async run<T>(phase: CrashPhase, operation: () => T | Promise<T>, timeoutMs = 5_000): Promise<T> {
     this.phase = phase;
+    const start = Date.now();
     this.steps.push({ phase, status: 'started' });
     try {
       const result = await deadline(phase, () => Promise.resolve().then(operation), timeoutMs);
-      this.steps.push({ phase, status: 'completed' });
+      this.steps.push({ phase, status: 'completed', elapsedMs: Math.min(timeoutMs, Math.max(0, Date.now() - start)) });
       return result;
     } catch (error) {
+      this.steps.push({ phase, status: 'failed', elapsedMs: Math.min(timeoutMs, Math.max(0, Date.now() - start)) });
       this.fail(error);
       throw error;
     }
