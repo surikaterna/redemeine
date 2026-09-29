@@ -7,7 +7,7 @@ import { connect, type Channel, type ConfirmChannel } from 'amqplib';
 import { MongoClient } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import { counts, deadQueue, input, provision, required, retryQueue } from './crashBroker';
-import { awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
+import { awaitChildReady, awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
 import { cleanupSucceeded, deadline, OwnedCrashScope, type CleanupOutcome, type OwnedCleanup } from './crashOwnership';
 import { PhaseEvidence } from './crashPhaseEvidence';
 import { deriveOwnedNames } from './crashNames';
@@ -65,7 +65,7 @@ async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEviden
   const dbName = required('REDEMEINE_CRASH_DB');
   const sagaPartition = required('REDEMEINE_CRASH_SAGA_PARTITION');
   await phases.run('source-append', () => client.db(dbName).collection(required('REDEMEINE_CRASH_COLLECTION')).insertOne(original));
-  await phases.run('child-ready', () => awaitSignal(first, event => event.kind === 'ready', 6_000), 7_000);
+  await phases.run('child-ready', () => awaitChildReady(first, trace), 7_000);
   await phases.run('source-publish', () => publish(pub, stack.exchange, original, required('REDEMEINE_CRASH_COLLECTION')));
   await phases.run('initial-delivery', () => until('initial Rabbit delivery', () =>
     trace.some(event => event.kind === 'delivery' && event.messageId === original.id), 6_000), 7_000);
@@ -103,7 +103,7 @@ async function recoveryPhase(stack: Stack, recovery: ChildProcess, committed: un
     expect.objectContaining({ attempt: 1, deaths: [expect.objectContaining({ queue: retryQueue, reason: 'expired', count: 1 })] })
   ]));
   expect(trace.filter((event) => event.kind === 'processed' && event.messageId === 'crash-event')
-    .map((event) => event.statuses)).toEqual([['reconciled'], ['reconciled']]);
+    .map((event) => event.kind === 'processed' ? event.statuses : undefined)).toEqual([['reconciled'], ['reconciled']]);
   expect(await physical(client, required('REDEMEINE_CRASH_DB'), required('REDEMEINE_CRASH_SAGA_PARTITION'), sagaId))
     .toEqual(committed);
 }

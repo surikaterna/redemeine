@@ -1,4 +1,5 @@
 import { DeadlineExceededError, deadline } from './crashOwnership';
+import { ChildStartupFailure, type ChildError } from './crashChildStages';
 
 export const phases = ['mongo-connect', 'resource-preflight', 'resource-setup', 'mongo-owner-create',
   'amqp-open', 'consumer-channel', 'confirm-channel', 'topology-provision', 'topology-inspected',
@@ -11,6 +12,8 @@ export interface FailureEvidence {
   readonly errorClass: 'timeout' | 'child_exit' | 'assertion' | 'network' | 'operation';
   readonly code: number | 'ECONNREFUSED' | 'ETIMEDOUT' | 'ECONNRESET' | null;
   readonly source: 'crash-parent';
+  readonly childPhase?: ChildError['phase'];
+  readonly childClass?: ChildError['errorClass'];
 }
 
 function safeCode(error: unknown): FailureEvidence['code'] {
@@ -21,13 +24,17 @@ function safeCode(error: unknown): FailureEvidence['code'] {
 }
 
 export function safeFailure(phase: CrashPhase, error: unknown, exitCode?: number | null): FailureEvidence {
-  const code = exitCode !== null && exitCode !== undefined ? exitCode : safeCode(error);
+  const child = error instanceof ChildStartupFailure ? error.evidence : null;
+  const code = child ? child.code : exitCode !== null && exitCode !== undefined ? exitCode : safeCode(error);
   const name = error instanceof Error ? error.name : '';
-  const errorClass = error instanceof DeadlineExceededError || name === 'TimeoutError' || name === 'AbortError' ? 'timeout' :
+  const errorClass = child ? child.errorClass === 'timeout' ? 'timeout' : child.errorClass === 'network' ? 'network' :
+    child.errorClass === 'exit' ? 'child_exit' : 'operation' :
+    error instanceof DeadlineExceededError || name === 'TimeoutError' || name === 'AbortError' ? 'timeout' :
     exitCode !== null && exitCode !== undefined ? 'child_exit' :
     name === 'AssertionError' ? 'assertion' :
     typeof code === 'string' ? 'network' : 'operation';
-  return { phase, source: 'crash-parent', errorClass, code: typeof code === 'number' &&
+  return { phase, source: 'crash-parent', errorClass,
+    ...(child ? { childPhase: child.phase, childClass: child.errorClass } : {}), code: typeof code === 'number' &&
     (!Number.isSafeInteger(code) || code < 0 || code > 999) ? null : code };
 }
 

@@ -1,47 +1,17 @@
 import { bindSagaRegistrations } from '@redemeine/saga-runtime';
 import type { SagaTurnRepository } from '@redemeine/saga-runtime';
 import { openMongoSagaTurnRepository } from '@redemeine/saga-runtime-store-tapeworm';
-import { connect, type Channel, type ConsumeMessage } from 'amqplib';
+import { connect, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { MongoClient } from 'mongodb';
-import { createSagaConfirmedRepublisher, createSagaRabbitWorker, createSagaSourceEventProcessor,
-  type SagaRabbitChannel } from '../src/index';
+import { createSagaConfirmedRepublisher, createSagaRabbitWorker, createSagaSourceEventProcessor } from '../src/index';
 import { createCounters, createRealTable } from './fixtures';
-import { provision, required, retryQueue } from './crashBroker';
+import { provision, required } from './crashBroker';
 import type { CrashSignal } from './crashIpc';
+import { ChildStages } from './crashChildStages';
+import { observedConsumerChannel } from './crashObservedChannel';
 
 function send(message: CrashSignal): void {
   process.send?.(message);
-}
-
-function deaths(value: unknown): unknown {
-  if (!Array.isArray(value)) return value === undefined ? undefined : 'invalid-shape';
-  return value.map((entry: unknown) => {
-    if (typeof entry !== 'object' || entry === null || !('queue' in entry) ||
-        !('reason' in entry) || !('count' in entry)) return 'invalid-entry';
-    return { queue: entry.queue === retryQueue ? retryQueue : 'unexpected-queue',
-      reason: entry.reason === 'expired' ? 'expired' : 'unexpected-reason',
-      count: typeof entry.count === 'number' ? entry.count : 'invalid-count' };
-  });
-}
-
-function observed(channel: Channel): SagaRabbitChannel {
-  return {
-    ack: (message, allUpTo) => {
-      channel.ack(message, allUpTo);
-      send({ kind: 'ack', messageId: message.properties.messageId });
-    },
-    nack: channel.nack.bind(channel),
-    assertExchange: channel.assertExchange.bind(channel),
-    assertQueue: channel.assertQueue.bind(channel),
-    cancel: channel.cancel.bind(channel),
-    prefetch: channel.prefetch.bind(channel),
-    consume: (queue, callback, options) => channel.consume(queue, (message) => {
-      if (message) send({ kind: 'delivery', messageId: message.properties.messageId,
-        redelivered: message.fields.redelivered, attempt: message.properties.headers?.['rdm-saga-retry-attempt'],
-        deaths: deaths(message.properties.headers?.['x-death']) });
-      callback(message);
-    }, options)
-  };
 }
 
 function injectAfterAppend(base: SagaTurnRepository): SagaTurnRepository {
@@ -70,38 +40,46 @@ function barrierPublisher(republisher: Awaited<ReturnType<typeof createSagaConfi
   }, close: () => republisher.close() };
 }
 
-async function main(): Promise<void> {
+async function main(stages: ChildStages): Promise<void> {
   const first = required('REDEMEINE_CRASH_MODE') === 'first';
   const client = new MongoClient(required('REDEMEINE_MONGO_URL'));
-  await client.connect();
-  const model = await connect(required('REDEMEINE_CRASH_URL'));
-  const channel = await model.createChannel();
+  let model: ChannelModel | undefined;
   try {
-    const scope = await provision(channel);
-    const republisher = await createSagaConfirmedRepublisher(model, 5000);
-    const base = await openMongoSagaTurnRepository(client.db(required('REDEMEINE_CRASH_DB')),
-      required('REDEMEINE_CRASH_SAGA_PARTITION'));
+    await stages.run('mongo-connect', () => client.connect());
+    const openedModel = await stages.run('amqp-connect', () => connect(required('REDEMEINE_CRASH_URL')));
+    model = openedModel;
+    const channel = await stages.run('consumer-channel', () => openedModel.createChannel());
+    const scope = await stages.run('topology', () => provision(channel));
+    const republisher = await stages.run('publisher', () => createSagaConfirmedRepublisher(openedModel, 5000));
+    const base = await stages.run('partition-index', () => openMongoSagaTurnRepository(
+      client.db(required('REDEMEINE_CRASH_DB')), required('REDEMEINE_CRASH_SAGA_PARTITION')));
     const repository = first ? injectAfterAppend(base) : base;
-    const { table } = createRealTable('crash-proof', createCounters());
-    const processor = createSagaSourceEventProcessor(table, repository,
-      { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, table.registered!) });
-    const worker = createSagaRabbitWorker({ channel: observed(channel), queue: scope.worker.queue,
+    const processor = await stages.run('registration', () => {
+      const { table } = createRealTable('crash-proof', createCounters());
+      return createSagaSourceEventProcessor(table, repository,
+        { maxConflictRetries: 5, registrationForRoute: bindSagaRegistrations(table, table.registered!) });
+    });
+    const consumer = observedConsumerChannel(channel, send);
+    const worker = createSagaRabbitWorker({ channel: consumer, queue: scope.worker.queue,
       source: scope.worker.source, limits: { maxBodyBytes: 100_000, maxEvents: 2, prefetch: 1, shutdownTimeoutMs: 2000 },
       processEvent: async (event) => {
         const outcomes = await processor(event);
         send({ kind: 'processed', messageId: event.eventId, statuses: outcomes.map((outcome) => outcome.status) });
         return outcomes;
-      }, onSettlementError: () => send({ kind: 'error' }),
-      retry: { maxAttempts: 3, topology: scope.retry!, publisher: barrierPublisher(republisher, first), consumerChannel: channel } });
-    await worker.start();
+      }, onSettlementError: failure => send(stages.failure(failure.error)),
+      retry: { maxAttempts: 3, topology: scope.retry!, publisher: barrierPublisher(republisher, first), consumerChannel: consumer } });
+    await stages.run('worker-start', () => worker.start());
+    stages.phase = 'ready';
     send({ kind: 'ready' });
+    stages.phase = 'worker-running';
     await new Promise<void>((resolve) => process.once('disconnect', resolve));
     await worker.stop();
     await republisher.close();
   } finally {
-    await model.close().catch(() => undefined);
-    await client.close();
+    await model?.close().catch(() => undefined);
+    await client.close().catch(() => undefined);
   }
 }
 
-main().catch(() => { send({ kind: 'error' }); process.exitCode = 1; });
+const stages = new ChildStages();
+main(stages).catch(error => { send(stages.failure(error)); process.exitCode = 1; });
