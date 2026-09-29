@@ -1,6 +1,7 @@
 import type { Channel } from 'amqplib';
 import type { ICommit } from 'tapeworm';
 import { CommitPublisher, type RabbitConfig } from 'tapeworm_dispatcher_mdb_rmq';
+import { phaseStep, withSafeClose } from './topologyPhase';
 
 type Inspect = (path: string) => Promise<unknown>;
 
@@ -13,12 +14,11 @@ export async function publishTapewormCommit(uri: string, exchange: string): Prom
     commitSequence: 0, createDateTime: new Date().toISOString(),
     events: [{ id: 'event-production-kept', type: 'Created', version: 0, payload: { id: 'production-kept' } }]
   };
-  try {
-    await publisher.connect();
-    await publisher.publish(commit, 'tw_source_commits');
-  } finally {
-    await publisher.close();
-  }
+  await withSafeClose(async () => {
+    await phaseStep('production-publisher-connect', 'publisher-connected', () => publisher.connect());
+    // Installed 0.2.0 confirms persistence, but does not request mandatory returns.
+    await phaseStep('production-publisher-publish', 'publisher-confirmed', () => publisher.publish(commit, 'tw_source_commits'));
+  }, () => phaseStep('production-publisher-close', 'publisher-closed', () => publisher.close()));
   return commit;
 }
 
@@ -27,7 +27,7 @@ export async function inspectPublisherDelivery(channel: Channel, queue: string, 
   const message = await channel.get(queue, { noAck: false });
   expect(message).not.toBe(false);
   if (!message) throw new Error('publisher delivery absent');
-  try {
+  await withSafeClose(async () => {
     expect(message.properties.headers).toMatchObject({
       collection: 'tw_source_commits', partitionId: 'p1', streamId: commit.streamId, tenant: 'tenant-a'
     });
@@ -36,9 +36,7 @@ export async function inspectPublisherDelivery(channel: Channel, queue: string, 
     expect(JSON.parse(message.content.toString('utf8'))).toMatchObject({
       id: commit.id, partitionId: commit.partitionId, streamId: commit.streamId
     });
-  } finally {
-    channel.nack(message, false, true);
-  }
+  }, async () => { channel.nack(message, false, true); });
 }
 
 /** Called before any post-restart declaration: observation alone must prove persistence. */
@@ -47,7 +45,7 @@ export async function inspectPersistedProductionTopology(inspect: Inspect, excha
   const dead = await inspect('/api/queues/%2F/rdm.saga.commits.dlq');
   const dlx = await inspect('/api/exchanges/%2F/rdm.saga.commits.dlx');
   const source = await inspect(`/api/exchanges/%2F/${encodeURIComponent(exchange)}`);
-  expect(input).toMatchObject({ durable: true, messages_ready: 1, messages_unacknowledged: 0, arguments: {
+  expect(input).toMatchObject({ durable: true, arguments: {
     'x-dead-letter-exchange': 'rdm.saga.commits.dlx', 'x-dead-letter-routing-key': 'rdm.saga.commits.dlq' } });
   expect(dead).toMatchObject({ durable: true });
   expect(dlx).toMatchObject({ durable: true, type: 'direct' });

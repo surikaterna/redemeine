@@ -3,11 +3,12 @@ import { connect, type Channel, type ChannelModel } from 'amqplib';
 import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
 import { createSagaCommitQueueTopology, createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
-import { phaseStep } from './topologyPhase';
+import { phaseStep, withSafeClose } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
 import { waitForAmqpAfterRestart } from './amqpRestartProbe';
 import { refreshedEndpoints } from './restartEndpoints';
 import { inspectPersistedProductionTopology, inspectPublisherDelivery, publishTapewormCommit } from './productionTopologyAudit';
+import type { ICommit } from 'tapeworm';
 
 let endpoints = { owner: process.env.REDEMEINE_TOPOLOGY_URL ?? '',
   restricted: process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '',
@@ -214,6 +215,54 @@ async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>,
   });
 }
 
+async function publishProductionBeforeRestart(first: Awaited<ReturnType<typeof opened>>): Promise<ICommit> {
+  const scope = productionConfig(first.channel);
+  await phaseStep('production-provision', 'declared-and-bound', async () => {
+    await provisionSagaTopology(scope.topology);
+    await provisionSagaTopology(scope.topology);
+  });
+  await phaseStep('production-inspect', 'broker-inspected', () =>
+    inspectPersistedProductionTopology(management, scope.topology.sourceExchange));
+  const kept = await publishTapewormCommit(endpoints.owner, scope.topology.sourceExchange);
+  await phaseStep('production-delivery', 'publisher-observed', () =>
+    inspectPublisherDelivery(first.channel, scope.worker.queue.queue, kept));
+  const publisher = await phaseStep('production-open', 'owner-channel-open', () => first.model.createConfirmChannel());
+  await withSafeClose(async () => {
+    await phaseStep('production-wrong-partition', 'mandatory-return', () => publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong', collection: 'tw_source_commits', partitionId: 'p3', tenant: 'tenant-a' }, true));
+    await phaseStep('production-wrong-collection', 'mandatory-return', () => publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong-collection', collection: 'other', partitionId: 'p1', tenant: 'tenant-a' }, true));
+    await phaseStep('production-wrong-tenant', 'mandatory-return', () => publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong-tenant', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-b' }, true));
+  }, () => phaseStep('production-close', 'channel-closed', () => publisher.close()));
+  await phaseStep('production-ready', 'queue-ready-one', async () => {
+    await waitForCounts(scope.worker.queue.queue, 1, 0);
+    expect((await first.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
+  });
+  return kept;
+}
+
+async function inspectProductionAfterRestart(second: Awaited<ReturnType<typeof opened>>, kept: ICommit): Promise<void> {
+  const restored = productionConfig(second.channel);
+  await phaseStep('production-retained-topology', 'retained-before-provision', async () => {
+    await waitForCounts(restored.worker.queue.queue, 1, 0);
+    await inspectPersistedProductionTopology(management, restored.topology.sourceExchange);
+  });
+  await phaseStep('production-retained-message', 'publisher-observed', async () => {
+    await inspectPublisherDelivery(second.channel, restored.worker.queue.queue, kept);
+    await waitForCounts(restored.worker.queue.queue, 1, 0);
+  });
+  await phaseStep('production-reprovision', 'declared-and-bound', () => provisionSagaTopology(restored.topology));
+  await phaseStep('production-held-ack', 'queue-acked-zero', async () => {
+    expect((await second.channel.checkQueue(restored.worker.queue.queue)).messageCount).toBe(1);
+    await processHeldDelivery(second.channel, restored);
+  });
+  await phaseStep('production-dlq', 'dead-letter-visible', async () => {
+    await deadLetterPoison(second, restored);
+    await waitForCounts(restored.topology.deadQueue, 0, 0);
+  });
+}
+
 describe('owned Rabbit 4.1.4 durable topology', () => {
   beforeAll(() => {
     if (!endpoints.owner || !endpoints.restricted || !endpoints.management || !container || !containerId ||
@@ -285,39 +334,13 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
   });
 
   it('provisions the production names, retains confirmed commits over restart, ACKs and dead-letters', async () => {
-    await phaseStep('setup-topology', 'broker-available', requireBrokerForNegative);
-    const first = await opened();
-    const scope = productionConfig(first.channel);
-    await provisionSagaTopology(scope.topology);
-    await provisionSagaTopology(scope.topology);
-    // This observation is separate from the installed publisher's confirmation; it proves routing.
-    const kept = await publishTapewormCommit(endpoints.owner, scope.topology.sourceExchange);
-    await inspectPublisherDelivery(first.channel, scope.worker.queue.queue, kept);
-    const publisher = await first.model.createConfirmChannel();
-    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
-      { id: 'production-wrong', collection: 'tw_source_commits', partitionId: 'p3', tenant: 'tenant-a' }, true);
-    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
-      { id: 'production-wrong-collection', collection: 'other', partitionId: 'p1', tenant: 'tenant-a' }, true);
-    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
-      { id: 'production-wrong-tenant', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-b' }, true);
-    await waitForCounts(scope.worker.queue.queue, 1, 0);
-    expect((await first.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
-    await publisher.close();
-    await first.model.close();
+    await phaseStep('production-health', 'broker-available', requireBrokerForNegative);
+    const first = await phaseStep('production-open', 'owner-channel-open', opened);
+    const kept = await withSafeClose(() => publishProductionBeforeRestart(first),
+      () => phaseStep('production-close', 'channel-closed', () => first.model.close()));
     await phaseStep('broker-restart', 'same-volume-restarted', restart);
-    const second = await opened();
-    try {
-      const restored = productionConfig(second.channel);
-      await inspectPersistedProductionTopology(management, restored.topology.sourceExchange);
-      await inspectPublisherDelivery(second.channel, restored.worker.queue.queue, kept);
-      await waitForCounts(restored.worker.queue.queue, 1, 0);
-      await provisionSagaTopology(restored.topology);
-      expect((await second.channel.checkQueue(restored.worker.queue.queue)).messageCount).toBe(1);
-      await processHeldDelivery(second.channel, restored);
-      await deadLetterPoison(second, restored);
-      await waitForCounts(restored.topology.deadQueue, 0, 0);
-    } finally {
-      await second.model.close();
-    }
+    const second = await phaseStep('production-reopen', 'owner-channel-open', opened);
+    await withSafeClose(() => inspectProductionAfterRestart(second, kept),
+      () => phaseStep('production-close', 'channel-closed', () => second.model.close()));
   }, 120_000);
 });

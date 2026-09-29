@@ -1,14 +1,21 @@
 export const PHASES = [
   'setup-topology', 'inspect-topology', 'publish-routed', 'publish-wrong-partition', 'publish-wrong-tenant',
   'publish-wrong-collection', 'broker-restart', 'restore-topology', 'held-unack', 'ack-settlement',
-  'dead-letter', 'mismatch-setup', 'mismatch-reply-406', 'restricted-user-setup', 'restricted-reply-403'
+  'dead-letter', 'mismatch-setup', 'mismatch-reply-406', 'restricted-user-setup', 'restricted-reply-403',
+  'production-health', 'production-open', 'production-provision', 'production-inspect',
+  'production-publisher-connect', 'production-publisher-publish', 'production-publisher-close',
+  'production-delivery', 'production-wrong-partition', 'production-wrong-collection', 'production-wrong-tenant',
+  'production-ready', 'production-reopen', 'production-retained-topology', 'production-retained-message',
+  'production-reprovision', 'production-held-ack', 'production-dlq', 'production-close'
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
 export const INVARIANTS = [
   'declared-and-bound', 'broker-inspected', 'routed-confirmed', 'mandatory-return', 'queue-ready-one',
   'same-volume-restarted', 'queue-retained-one', 'held-unack-one', 'queue-acked-zero', 'single-ack',
-  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available'
+  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available',
+  'owner-channel-open', 'publisher-connected', 'publisher-confirmed', 'publisher-closed', 'publisher-observed',
+  'retained-before-provision', 'channel-closed'
 ] as const;
 export type Invariant = (typeof INVARIANTS)[number];
 
@@ -92,4 +99,15 @@ export function safePhaseFailure(phase: Phase, invariant: Invariant, error: unkn
 export async function phaseStep<T>(phase: Phase, invariant: Invariant, action: () => Promise<T>): Promise<T> {
   try { return await action(); }
   catch (error) { throw error instanceof SafePhaseError ? error : safePhaseFailure(phase, invariant, error); }
+}
+
+/** Cleanup remains mandatory, but never replaces the first operational failure. */
+export async function withSafeClose<T>(work: () => Promise<T>, close: () => Promise<void>): Promise<T> {
+  let result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
+  try { result = { ok: true, value: await work() }; }
+  catch (error) { result = { ok: false, error }; }
+  try { await close(); }
+  catch (error) { if (result.ok) result = { ok: false, error }; }
+  if (!result.ok) throw result.error;
+  return result.value;
 }

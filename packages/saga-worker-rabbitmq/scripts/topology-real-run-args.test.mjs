@@ -43,14 +43,16 @@ test('fyp3.4 runner selects the owned six-scenario suite, including production n
   assert.match(producer, /production-kept/);
   assert.match(producer, /import \{ CommitPublisher, type RabbitConfig \} from 'tapeworm_dispatcher_mdb_rmq'/);
   assert.match(producer, /new CommitPublisher\(rabbit, 'tenant-a'\)/);
-  assert.match(producer, /await publisher\.publish\(commit, 'tw_source_commits'\)/);
+  assert.match(producer, /phaseStep\('production-publisher-publish', 'publisher-confirmed', \(\) => publisher\.publish\(commit, 'tw_source_commits'\)\)/);
   assert.match(producer, /collection: 'tw_source_commits', partitionId: 'p1', streamId: commit\.streamId, tenant: 'tenant-a'/);
   assert.match(integration, /production-wrong-collection/);
   assert.match(integration, /production-wrong-tenant/);
-  const restored = integration.slice(integration.indexOf('const restored = productionConfig(second.channel)'));
-  assert.ok(restored.indexOf('inspectPersistedProductionTopology(management') < restored.indexOf('await provisionSagaTopology(restored.topology)'));
-  assert.ok(restored.indexOf('inspectPublisherDelivery(second.channel') < restored.indexOf('await provisionSagaTopology(restored.topology)'));
-  assert.match(producer, /messages_ready: 1, messages_unacknowledged: 0/);
+  const restored = integration.slice(integration.indexOf('async function inspectProductionAfterRestart('));
+  assert.ok(restored.indexOf('inspectPersistedProductionTopology(management') < restored.indexOf("phaseStep('production-reprovision'"));
+  assert.ok(restored.indexOf('inspectPublisherDelivery(second.channel') < restored.indexOf("phaseStep('production-reprovision'"));
+  assert.ok(restored.indexOf('await waitForCounts(restored.worker.queue.queue, 1, 0)') <
+    restored.indexOf('inspectPersistedProductionTopology(management'));
+  assert.match(integration, /await waitForCounts\(restored\.worker\.queue\.queue, 1, 0\)/);
 });
 
 test('real restart targets same owned container; no second volume or cookie writer', () => {

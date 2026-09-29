@@ -1,4 +1,4 @@
-import { phaseStep, PHASE_MARKER, SafePhaseError, safePhaseFailure } from '../integration/topologyPhase';
+import { phaseStep, PHASE_MARKER, PHASES, SafePhaseError, safePhaseFailure, withSafeClose } from '../integration/topologyPhase';
 import { BrokerGate } from '../integration/rabbitAppReady';
 
 function decode(error: SafePhaseError): Record<string, unknown> {
@@ -6,6 +6,36 @@ function decode(error: SafePhaseError): Record<string, unknown> {
 }
 
 describe('safe topology phase markers', () => {
+  it.each(PHASES.filter((phase) => phase.startsWith('production-')))(
+    'labels an injected %s failure without retaining publisher URI or credentials', async (phase) => {
+      let caught: SafePhaseError | undefined;
+      try {
+        await phaseStep(phase, 'broker-available', async () => {
+          throw Object.assign(new Error('amqp://user:pass@host Basic c2VjcmV0'), { code: 403 });
+        });
+      } catch (error) { caught = error as SafePhaseError; }
+      expect(caught).toBeInstanceOf(SafePhaseError);
+      expect(decode(caught as SafePhaseError)).toMatchObject({ phase, invariant: 'broker-available', code: 403 });
+      expect(caught?.message).not.toMatch(/user:pass|Basic|c2VjcmV0/);
+    }
+  );
+
+  it('keeps the first safe failure when resource close also fails, but reports close alone', async () => {
+    const operation = () => phaseStep('production-publisher-publish', 'publisher-confirmed', async () => {
+      throw new Error('amqp://user:pass@host publish failed');
+    });
+    const close = () => phaseStep('production-publisher-close', 'publisher-closed', async () => {
+      throw new Error('Basic c2VjcmV0 close failed');
+    });
+    await expect(withSafeClose(operation, close)).rejects.toMatchObject({
+      message: expect.stringContaining(PHASE_MARKER)
+    });
+    let caught: SafePhaseError | undefined;
+    try { await withSafeClose(operation, close); } catch (error) { caught = error as SafePhaseError; }
+    expect(decode(caught as SafePhaseError).phase).toBe('production-publisher-publish');
+    try { await withSafeClose(async () => undefined, close); } catch (error) { caught = error as SafePhaseError; }
+    expect(decode(caught as SafePhaseError).phase).toBe('production-publisher-close');
+  });
   it('wraps timeouts with fixed phase/invariant and source line, not the dynamic queue or secret', async () => {
     let thrown: unknown;
     try {

@@ -51,9 +51,9 @@ async function tests(receipt, { port, managementPort }) {
     REDEMEINE_TOPOLOGY_URL: `amqp://topology_owner:topology_owner_password@127.0.0.1:${port}`,
     REDEMEINE_TOPOLOGY_MANAGEMENT_URL: `http://127.0.0.1:${managementPort}`,
     REDEMEINE_TOPOLOGY_RESTRICTED_URL: `amqp://topology_restricted:topology_restricted_password@127.0.0.1:${port}` };
-  const result = await run('pnpm', ['exec', 'jest', '--config', 'jest.config.js', '--runInBand', '--json', '--outputFile', reportPath,
+  const result = await run('pnpm', ['exec', 'jest', '--config', 'jest.config.js', '--runInBand', '--silent', '--json', '--outputFile', reportPath,
     '--runTestsByPath', 'packages/saga-worker-rabbitmq/integration/topology-real.integration.test.ts'],
-  { env, allowed: true, timeoutMs: 240_000 });
+  { env, allowed: true, captureOutput: false, timeoutMs: 240_000 });
   receipt.testExitCode = result.code;
   const report = JSON.parse(await readFile(reportPath, 'utf8'));
   Object.assign(receipt, scenarioReport(report));

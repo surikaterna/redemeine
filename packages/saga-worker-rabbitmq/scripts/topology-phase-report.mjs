@@ -3,12 +3,19 @@ const SOURCE = 'integration/topology-real.integration.test.ts';
 const PHASES = new Set([
   'setup-topology', 'inspect-topology', 'publish-routed', 'publish-wrong-partition', 'publish-wrong-tenant',
   'publish-wrong-collection', 'broker-restart', 'restore-topology', 'held-unack', 'ack-settlement',
-  'dead-letter', 'mismatch-setup', 'mismatch-reply-406', 'restricted-user-setup', 'restricted-reply-403'
+  'dead-letter', 'mismatch-setup', 'mismatch-reply-406', 'restricted-user-setup', 'restricted-reply-403',
+  'production-health', 'production-open', 'production-provision', 'production-inspect',
+  'production-publisher-connect', 'production-publisher-publish', 'production-publisher-close',
+  'production-delivery', 'production-wrong-partition', 'production-wrong-collection', 'production-wrong-tenant',
+  'production-ready', 'production-reopen', 'production-retained-topology', 'production-retained-message',
+  'production-reprovision', 'production-held-ack', 'production-dlq', 'production-close'
 ]);
 const INVARIANTS = new Set([
   'declared-and-bound', 'broker-inspected', 'routed-confirmed', 'mandatory-return', 'queue-ready-one',
   'same-volume-restarted', 'queue-retained-one', 'held-unack-one', 'queue-acked-zero', 'single-ack',
-  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available'
+  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available',
+  'owner-channel-open', 'publisher-connected', 'publisher-confirmed', 'publisher-closed', 'publisher-observed',
+  'retained-before-provision', 'channel-closed'
 ]);
 const CLASSES = new Set(['timeout', 'broker-reply', 'assertion', 'operation', 'blocked_on_broker_unavailable']);
 const SUBPHASES = new Set(['docker-restart', 'app-ready', 'amqp-connect']);

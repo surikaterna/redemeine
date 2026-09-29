@@ -4,7 +4,8 @@ import { phaseFromJest } from './topology-phase-report.mjs';
 
 export const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine@sha256:5cbd7145b0306399ad68422c3350b6cbd1bb95704b39f5896480e5b6d4238a04';
 
-function executeCommand(state, command, args, { env = process.env, allowed = false, timeoutMs = 90_000, cleanup = false, maxOutputBytes = Infinity } = {}) {
+function executeCommand(state, command, args, { env = process.env, allowed = false, timeoutMs = 90_000, cleanup = false, maxOutputBytes = Infinity,
+  captureOutput = true } = {}) {
   if (state.interrupted && !cleanup) return Promise.reject(new Error('audit interrupted'));
   const { cwd, active, signalEscalations, terminate } = state;
   return new Promise((resolve, reject) => {
@@ -17,8 +18,8 @@ function executeCommand(state, command, args, { env = process.env, allowed = fal
     let escalation;
     const deadline = setTimeout(() => { timedOut = true; terminate(child, 'SIGTERM');
       escalation = setTimeout(() => terminate(child, 'SIGKILL'), 3000); }, timeoutMs);
-    child.stdout.on('data', (chunk) => { stdout = (stdout + chunk).slice(-maxOutputBytes); });
-    child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-maxOutputBytes); });
+    child.stdout.on('data', (chunk) => { if (captureOutput) stdout = (stdout + chunk).slice(-maxOutputBytes); });
+    child.stderr.on('data', (chunk) => { if (captureOutput) stderr = (stderr + chunk).slice(-maxOutputBytes); });
     child.on('error', (error) => { spawnError = error; });
     child.on('close', (code) => {
       active.delete(child);

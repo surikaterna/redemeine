@@ -29,6 +29,34 @@ test('known Jest marker survives categorical redaction; foreign text and secrets
   assert.doesNotMatch(text, /topology_restricted_password|user:pass|Basic c2VjcmV0|\bsecret\b/);
 });
 
+test('each production failure phase survives synthetic Jest JSON to receipt without leaking publisher output', () => {
+  const steps = [
+    ['production-health', 'broker-available'], ['production-open', 'owner-channel-open'],
+    ['production-provision', 'declared-and-bound'], ['production-inspect', 'broker-inspected'],
+    ['production-publisher-connect', 'publisher-connected'], ['production-publisher-publish', 'publisher-confirmed'],
+    ['production-publisher-close', 'publisher-closed'], ['production-delivery', 'publisher-observed'],
+    ['production-wrong-partition', 'mandatory-return'], ['production-wrong-collection', 'mandatory-return'],
+    ['production-wrong-tenant', 'mandatory-return'], ['production-ready', 'queue-ready-one'],
+    ['broker-restart', 'same-volume-restarted'],
+    ['production-reopen', 'owner-channel-open'], ['production-retained-topology', 'retained-before-provision'],
+    ['production-retained-message', 'publisher-observed'], ['production-reprovision', 'declared-and-bound'],
+    ['production-held-ack', 'queue-acked-zero'], ['production-dlq', 'dead-letter-visible'],
+    ['production-close', 'channel-closed']
+  ];
+  const failure = 'amqp://user:pass@host Basic c2VjcmV0 topology_restricted_password';
+  const assertions = steps.map(([phase, invariant]) => ({ ancestorTitles: ['owned Rabbit'], title: phase, status: 'failed',
+    failureMessages: [`${failure} ${marker({ phase, invariant, errorClass: 'broker-reply', code: 403,
+      replyCode: 403, expected: null, actual: null, source, line: 290 })} ${failure}`] }));
+  const report = scenarioReport({ testResults: [{ assertionResults: assertions }] });
+  assert.deepEqual(report.counts, { passed: 0, failed: steps.length, total: steps.length });
+  let output;
+  finalizeAuditReceipt({ startedAt: new Date().toISOString(), sha: 'a'.repeat(40), failure: null,
+    exitCode: 1, cleanup: { absent: true }, ...report }, { complete: () => true }, 'unused', (_, text) => { output = text; });
+  assert.deepEqual(JSON.parse(output).scenarios.map(({ diagnostic: { phase, invariant, code } }) => [phase, invariant, code]),
+    steps.map(([phase, invariant]) => [phase, invariant, 403]));
+  assert.doesNotMatch(output, /user:pass|c2VjcmV0|topology_restricted_password/);
+});
+
 test('unknown, malformed or spoofed marker remains unknown and cannot manufacture a passing scenario', () => {
   for (const failures of [['no marker password=private'], [`${MARKER}garbage`],
     [marker({ ...diagnostic('held-unack', 'timeout', null, null, null), phase: 'invented-secret' })]]) {
