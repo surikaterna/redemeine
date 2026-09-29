@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { receiptPackageVersions } from './installed-versions.mjs';
 import { assertScenarioEvidence, scenarioHash, selectRealStackSuites } from './real-stack-selection.mjs';
 import { runOwnedChild } from './owned-child-run.mjs';
+import { crashProcessReport, crashScenarioReport, runCrashJest } from './crash-run-report.mjs';
 
 const MONGO_IMAGE = 'mongo:7.0.16';
 const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine';
@@ -25,6 +26,7 @@ const crashReceiptPath = `/tmp/opencode/redemeine-wrdf-${suffix}-crash.json`;
 const invocation = process.env.REDEMEINE_REAL_INVOCATION ?? 'follow-up';
 const slice = process.env.REDEMEINE_REAL_SLICE;
 const selection = selectRealStackSuites(slice);
+if (slice === 'redemeine-fyp3.5.3.1') process.umask(0o077);
 const startedAt = new Date();
 let testExitCode = null;
 let failure = null;
@@ -35,6 +37,7 @@ let codeHead = null;
 let scenarioSha256 = null;
 let resourcesAttempted = false;
 let crashEvidence = null;
+let crashProcess = null;
 
 function execute(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -196,23 +199,19 @@ async function runTests() {
     REDEMEINE_RABBIT_PASSWORD: 'saga_test_password'
   };
   if (slice === 'redemeine-fyp3.5.3.1') env.REDEMEINE_CRASH_RECEIPT = crashReceiptPath;
-  const args = [
-      'exec',
-      'jest',
-      '--config',
-      'jest.config.js',
-      '--runInBand',
-      '--json',
-      '--outputFile',
-      jestResultPath,
-      '--runTestsByPath',
-      ...selection.paths.map((name) => `packages/saga-worker-rabbitmq/integration/${name}`)
-    ];
+  const args = ['exec', 'jest', '--config', 'jest.config.js', '--runInBand', '--json', '--outputFile', jestResultPath,
+    '--runTestsByPath', ...selection.paths.map(name => `packages/saga-worker-rabbitmq/integration/${name}`)];
   let result;
   try {
-    result = slice === 'redemeine-fyp3.5.3.1' ?
-      await runOwnedChild('pnpm', args, { cwd: root, env, timeoutMs: 125_000 }) :
-      await execute('pnpm', args, { cwd: root, env, allowFailure: true });
+    if (slice === 'redemeine-fyp3.5.3.1') {
+      try {
+        result = await runCrashJest('pnpm', args, { cwd: root, env, timeoutMs: 125_000 });
+        crashProcess = crashProcessReport(result);
+      } catch {
+        crashProcess = crashProcessReport(null);
+        throw new Error('owned Jest process did not close safely');
+      }
+    } else result = await execute('pnpm', args, { cwd: root, env, allowFailure: true });
     testExitCode = result.code;
   } finally {
     await collectScenarios();
@@ -238,12 +237,13 @@ let jestReport;
 async function collectScenarios() {
   try {
     jestReport = JSON.parse(await readFile(jestResultPath, 'utf8'));
-    scenarios = jestReport.testResults.flatMap(({ assertionResults }) =>
+    scenarios = slice === 'redemeine-fyp3.5.3.1' ? crashScenarioReport(jestReport) :
+      jestReport.testResults.flatMap(({ assertionResults }) =>
       assertionResults.map(({ ancestorTitles, title, status, duration, failureMessages }) => ({
         name: [...ancestorTitles, title].join(' > '),
         status,
         durationMs: duration ?? null,
-        failures: slice === 'redemeine-fyp3.5.3.1' ? failureMessages.map(() => 'sanitized crash scenario failure') : failureMessages
+        failures: failureMessages
       }))
     );
   } catch (error) {
@@ -329,6 +329,7 @@ try {
         testExitCode,
         scenarios,
         crashEvidence,
+        crashProcess,
         failure,
         versions,
         cleanup
