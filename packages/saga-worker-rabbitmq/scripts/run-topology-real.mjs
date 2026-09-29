@@ -80,6 +80,12 @@ async function main() {
         receipt.readinessDiagnostics = { status: 'capture-failed', details: redactDiagnostic(String(diagnosticError)) };
       }
     }
+    if (receipt.scenarios.some((scenario) => scenario.diagnostic?.phase === 'broker-restart')) {
+      try { receipt.restartDiagnostics = await captureReadinessDiagnostics(docker, ownership); }
+      catch (diagnosticError) {
+        receipt.restartDiagnostics = { status: 'capture-failed', details: redactDiagnostic(String(diagnosticError)) };
+      }
+    }
   } finally {
     try {
       receipt.cleanup = await cleanupOwned(docker, ownership);

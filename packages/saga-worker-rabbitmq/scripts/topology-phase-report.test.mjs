@@ -41,3 +41,11 @@ test('unknown, malformed or spoofed marker remains unknown and cannot manufactur
   assert.equal(report.counts.failed, 1);
   assert.equal(report.scenarios[0].diagnostic.phase, 'unknown');
 });
+
+test('blocked negative cases retain blocked_on_broker_unavailable without claiming 403/406', () => {
+  const data = { phase: 'restricted-user-setup', invariant: 'broker-available', errorClass: 'blocked_on_broker_unavailable',
+    code: null, replyCode: null, expected: null, actual: null, source, line: 250 };
+  const diagnostic = phaseFromJest({ failureMessages: [marker(data)] });
+  assert.deepEqual(diagnostic, data);
+  assert.equal(diagnostic.code, null);
+});

@@ -8,7 +8,7 @@ export type Phase = (typeof PHASES)[number];
 export const INVARIANTS = [
   'declared-and-bound', 'broker-inspected', 'routed-confirmed', 'mandatory-return', 'queue-ready-one',
   'same-volume-restarted', 'queue-retained-one', 'held-unack-one', 'queue-acked-zero', 'single-ack',
-  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403'
+  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available'
 ] as const;
 export type Invariant = (typeof INVARIANTS)[number];
 
@@ -19,6 +19,13 @@ export class SafePhaseError extends Error {
   constructor(details: Record<string, string | number | null>) {
     super(`${PHASE_MARKER}${Buffer.from(JSON.stringify(details)).toString('base64url')}`);
     this.name = 'SafePhaseError';
+  }
+}
+
+export class BrokerUnavailableError extends Error {
+  constructor() {
+    super('broker unavailable for isolated negative case');
+    this.name = 'BrokerUnavailableError';
   }
 }
 
@@ -38,6 +45,7 @@ function replyCode(error: unknown, depth = 0): number | null {
 
 function errorClass(error: unknown): string {
   const value = record(error);
+  if (value?.name === 'BrokerUnavailableError') return 'blocked_on_broker_unavailable';
   const message = value?.message;
   if (typeof message === 'string' && /timed out|timeout/i.test(message)) return 'timeout';
   if (replyCode(error) !== null) return 'broker-reply';

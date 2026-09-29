@@ -4,10 +4,12 @@ import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
 import { createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 import { phaseStep } from './topologyPhase';
+import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
 
 const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
 const prefix = process.env.REDEMEINE_TOPOLOGY_RUN_ID ?? '';
+const brokerGate = new BrokerGate();
 
 async function management(path: string): Promise<unknown> {
   const url = `${process.env.REDEMEINE_TOPOLOGY_MANAGEMENT_URL}${path}`;
@@ -106,18 +108,23 @@ async function opened(): Promise<{ model: ChannelModel; channel: Channel }> {
 }
 
 async function restart(): Promise<void> {
-  const result = spawnSync('docker', ['restart', container], { encoding: 'utf8', timeout: 90_000 });
-  if (result.status !== 0) throw new Error(`owned Rabbit restart failed: ${result.stderr}`);
-  await poll(async () => {
-    try {
-      const connection = await opened();
-      await connection.channel.close();
-      await connection.model.close();
-      return true;
-    } catch {
-      return null;
-    }
-  }, 'Rabbit restart');
+  await brokerGate.afterRestart(async () => {
+    const result = spawnSync('docker', ['restart', container], { encoding: 'utf8', timeout: 90_000 });
+    if (result.status !== 0) throw new Error('owned Rabbit restart failed');
+  }, () => waitForOwnedRabbitApp(container, 90_000), async () => {
+    await poll(async () => {
+      try {
+        const connection = await opened();
+        await connection.channel.close();
+        await connection.model.close();
+        return true;
+      } catch { return null; }
+    }, 'Rabbit restart');
+  });
+}
+
+async function requireBrokerForNegative(): Promise<void> {
+  await brokerGate.beforeNegative(() => waitForOwnedRabbitApp(container, 5_000));
 }
 
 async function publishBeforeRestart(): Promise<void> {
@@ -223,6 +230,7 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
   }, 120_000);
 
   it.each(['type', 'durability', 'queue-args'])('fails closed on %s mismatch without starting consumer', async (mode) => {
+    await phaseStep('mismatch-setup', 'broker-available', requireBrokerForNegative);
     const { fresh, topology, consume } = await phaseStep('mismatch-setup', 'declaration-conflict', async () => {
       const { model, channel } = await opened();
       const scoped = config(channel);
@@ -250,6 +258,7 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
   });
 
   it('fails closed for restricted-user ACCESS_REFUSED before consumer start', async () => {
+    await phaseStep('restricted-user-setup', 'broker-available', requireBrokerForNegative);
     const restricted = await phaseStep('restricted-user-setup', 'restricted-channel', () =>
       connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? ''));
     const { channel, consume } = await phaseStep('restricted-user-setup', 'restricted-channel', async () => {

@@ -8,9 +8,9 @@ const PHASES = new Set([
 const INVARIANTS = new Set([
   'declared-and-bound', 'broker-inspected', 'routed-confirmed', 'mandatory-return', 'queue-ready-one',
   'same-volume-restarted', 'queue-retained-one', 'held-unack-one', 'queue-acked-zero', 'single-ack',
-  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403'
+  'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available'
 ]);
-const CLASSES = new Set(['timeout', 'broker-reply', 'assertion', 'operation']);
+const CLASSES = new Set(['timeout', 'broker-reply', 'assertion', 'operation', 'blocked_on_broker_unavailable']);
 const UNKNOWN = Object.freeze({ phase: 'unknown', invariant: 'unknown', errorClass: 'unknown', code: null,
   replyCode: null, expected: null, actual: null, source: SOURCE, line: 0 });
 
