@@ -10,7 +10,8 @@ import { counts, deadQueue, input, provision, required, retryQueue } from './cra
 import { awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
 import { cleanupSucceeded, deadline, OwnedCrashScope, type CleanupOutcome, type OwnedCleanup } from './crashOwnership';
 import { PhaseEvidence } from './crashPhaseEvidence';
-import { createDbOwner, ownedEnvironment, ownedNames, ownedOps } from './crashResourceOps';
+import { deriveOwnedNames } from './crashNames';
+import { createDbOwner, ownedEnvironment, ownedOps } from './crashResourceOps';
 import { runCrashLifecycle } from './crashRunLifecycle';
 import { instanceId, sourceEvent } from './harness';
 import { createCounters, createRealTable } from './fixtures';
@@ -166,7 +167,8 @@ async function cleanOwned(client: MongoClient, model: Awaited<ReturnType<typeof 
 }
 
 it('kills the real worker after confirmed retry and before ACK, then reconciles and quarantines changed content', async () => {
-  const names = ownedNames();
+  const identity = deriveOwnedNames(required('REDEMEINE_REAL_RUN_ID'));
+  const names = identity.owned;
   const password = randomBytes(24).toString('hex');
   const env = ownedEnvironment(names, password);
   const client = new MongoClient(required('REDEMEINE_MONGO_URL'),
@@ -178,10 +180,13 @@ it('kills the real worker after confirmed retry and before ACK, then reconciles 
   const priorEnv = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   const phases = new PhaseEvidence();
   evidence.phases = phases.steps;
+  evidence.mongoIdentity = { db: names.db, hashPrefix: identity.digest, hash: 'sha256-96',
+    sagaPartition: identity.mongo.sagaPartition, sourceCollection: identity.mongo.sourceCollection };
   await runCrashLifecycle(async () => {
     await phases.run('mongo-connect', () => client.connect());
     await phases.run('resource-preflight', () => scopeOwner.preflight(), 16_000);
-    await phases.run('resource-setup', () => scopeOwner.setup(), 16_000);
+    try { await phases.run('resource-setup', () => scopeOwner.setup(), 16_000); }
+    finally { evidence.userOwner = scopeOwner.userOwnership; }
     scopeOwner.markDbAttempted();
     await phases.run('mongo-owner-create', () => createDbOwner(client, names));
     Object.assign(process.env, env);

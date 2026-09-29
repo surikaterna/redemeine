@@ -1,8 +1,11 @@
+import type { UserOwnerEvidence } from './crashNames';
+
 export interface OwnedNames { readonly vhost: string; readonly user: string; readonly db: string }
 export interface OwnedOps {
   absent(kind: 'vhost' | 'user' | 'db', name: string): Promise<boolean>;
   createVhost(name: string): Promise<void>;
   createUser(name: string): Promise<void>;
+  inspectUser(name: string): Promise<UserOwnerEvidence>;
   grant(vhost: string, user: string): Promise<void>;
   removeVhost(name: string): Promise<'removed' | 'absent'>;
   removeUser(name: string): Promise<'removed' | 'absent'>;
@@ -51,6 +54,7 @@ export class OwnedCrashScope {
   private vhostAttempted = false;
   private userAttempted = false;
   private dbAttempted = false;
+  userOwnership: UserOwnerEvidence | null = null;
   constructor(readonly names: OwnedNames, private readonly ops: OwnedOps, private readonly cleanupMs = 5_000) {}
 
   async preflight(): Promise<void> {
@@ -71,6 +75,8 @@ export class OwnedCrashScope {
     await deadline('create vhost', () => this.ops.createVhost(this.names.vhost));
     this.userAttempted = true;
     await deadline('create user', () => this.ops.createUser(this.names.user));
+    this.userOwnership = await deadline('verify user owner', () => this.ops.inspectUser(this.names.user));
+    if (!this.userOwnership.ownerMatch) throw new OwnerMismatchError();
     await deadline('grant permission', () => this.ops.grant(this.names.vhost, this.names.user));
   }
 

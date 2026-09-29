@@ -1,5 +1,6 @@
 import type { MongoClient } from 'mongodb';
 import { required } from './crashBroker';
+import { deriveOwnedNames, inspectUserTags, removeOwnedUser, type UserOwnerEvidence } from './crashNames';
 import { OwnerMismatchError, type OwnedNames, type OwnedOps } from './crashOwnership';
 
 const adminUser = required('REDEMEINE_RABBIT_USER');
@@ -27,13 +28,25 @@ async function probe(kind: 'vhosts' | 'users', name: string): Promise<Response |
   });
 }
 
+async function userOwnership(name: string, marker: string): Promise<UserOwnerEvidence> {
+  const tags = await readUserTags(name);
+  return inspectUserTags(tags, marker);
+}
+
+async function readUserTags(name: string): Promise<unknown | null> {
+  const response = await probe('users', name);
+  if (!response) return null;
+  const value: unknown = await response.json();
+  return typeof value === 'object' && value !== null && 'tags' in value ? value.tags : undefined;
+}
+
 async function removeRabbit(kind: 'vhosts' | 'users', name: string, marker: string): Promise<'removed' | 'absent'> {
+  if (kind === 'users') return removeOwnedUser(marker, () => readUserTags(name),
+    async () => { await admin(path(kind, name), 'DELETE'); }, async () => !await probe(kind, name));
   const response = await probe(kind, name);
   if (!response) return 'absent';
   const value: unknown = await response.json();
-  const owned = typeof value === 'object' && value !== null && (kind === 'vhosts' ?
-    'description' in value && value.description === marker :
-    'tags' in value && typeof value.tags === 'string' && value.tags.split(',').includes(marker));
+  const owned = typeof value === 'object' && value !== null && 'description' in value && value.description === marker;
   if (!owned) throw new OwnerMismatchError();
   await admin(path(kind, name), 'DELETE');
   if (await probe(kind, name)) throw new Error('owned Rabbit resource remains');
@@ -50,11 +63,6 @@ export async function createDbOwner(client: MongoClient, names: OwnedNames): Pro
     .insertOne({ _id: 'run', marker: markerFor(names) });
 }
 
-export function ownedNames(): OwnedNames {
-  const id = required('REDEMEINE_REAL_RUN_ID');
-  return { vhost: `crash_${id}`, user: `crash_${id}`, db: `crash_${id}` };
-}
-
 export function ownedOps(names: OwnedNames, client: MongoClient, password: string): OwnedOps {
   const marker = markerFor(names);
   return {
@@ -62,6 +70,7 @@ export function ownedOps(names: OwnedNames, client: MongoClient, password: strin
       (await probe(kind === 'vhost' ? 'vhosts' : 'users', name)) === null,
     createVhost: async name => { await admin(path('vhosts', name), 'PUT', { description: marker }); },
     createUser: async name => { await admin(path('users', name), 'PUT', { password, tags: `monitoring,${marker}` }); },
+    inspectUser: name => userOwnership(name, marker),
     grant: async (vhost, user) => { await admin(`/api/permissions/${encodeURIComponent(vhost)}/${encodeURIComponent(user)}`,
       'PUT', { configure: '.*', write: '.*', read: '.*' }); },
     removeVhost: name => removeRabbit('vhosts', name, marker),
@@ -80,14 +89,18 @@ export function ownedOps(names: OwnedNames, client: MongoClient, password: strin
 
 export function ownedEnvironment(names: OwnedNames, password: string): NodeJS.ProcessEnv {
   const id = required('REDEMEINE_REAL_RUN_ID');
-  const { vhost, user, db } = names;
+  const { owned, mongo } = deriveOwnedNames(id);
+  if (names.db !== owned.db || names.user !== owned.user || names.vhost !== owned.vhost) {
+    throw new TypeError('owned resource names do not match run identity');
+  }
+  const { vhost, user } = names;
   const url = new URL(required('REDEMEINE_RABBIT_URL'));
   url.username = user;
   url.password = password;
   url.pathname = `/${vhost}`;
   return { REDEMEINE_CRASH_VHOST: vhost, REDEMEINE_CRASH_URL: url.toString(),
     REDEMEINE_RABBIT_USER: user, REDEMEINE_RABBIT_PASSWORD: password,
-    REDEMEINE_CRASH_DB: db, REDEMEINE_CRASH_SAGA_PARTITION: `saga_${id}`,
-    REDEMEINE_CRASH_PARTITION: `source_${id}`, REDEMEINE_CRASH_COLLECTION: `tw_source_${id}_commits`,
+    REDEMEINE_CRASH_DB: mongo.db, REDEMEINE_CRASH_SAGA_PARTITION: mongo.sagaPartition,
+    REDEMEINE_CRASH_PARTITION: mongo.sourcePartition, REDEMEINE_CRASH_COLLECTION: mongo.sourceCollection,
     REDEMEINE_CRASH_EXCHANGE: `source.${id}` };
 }

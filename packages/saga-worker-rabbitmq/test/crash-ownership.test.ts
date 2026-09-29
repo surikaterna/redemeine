@@ -10,6 +10,7 @@ function fixture(fail: string): { ops: OwnedOps; calls: string[] } {
   return { calls, ops: {
     absent: async (kind) => { await step(`absent-${kind}`); return fail !== `collision-${kind}`; },
     createVhost: () => step('create-vhost'), createUser: () => step('create-user'),
+    inspectUser: async () => { await step('inspect-user'); return { tagShape: 'string', ownerMatch: true }; },
     grant: () => step('grant'), removeVhost: async () => { await step('remove-vhost'); return 'removed'; },
     removeUser: async () => { await step('remove-user'); return 'removed'; },
     removeDb: async () => { await step('remove-db'); return 'removed'; }
@@ -24,6 +25,14 @@ describe('owned crash scope', () => {
     expect(await scope.cleanup()).toEqual({ vhost: { status: 'not_attempted', reason: 'none' },
       user: { status: 'not_attempted', reason: 'none' }, db: { status: 'not_attempted', reason: 'none' } });
     expect(calls).toEqual(['absent-vhost', 'absent-user']);
+  });
+
+  it('refuses an existing DB even if Rabbit names are absent, without any creation or deletion', async () => {
+    const { calls, ops } = fixture('collision-db');
+    const scope = new OwnedCrashScope({ vhost: 'v', user: 'u', db: 'd' }, ops);
+    await expect(scope.preflight()).rejects.toThrow('collision');
+    await scope.cleanup();
+    expect(calls).toEqual(['absent-vhost', 'absent-user', 'absent-db']);
   });
 
   it('deletes an attempted vhost even if later user creation fails', async () => {
