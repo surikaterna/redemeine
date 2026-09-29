@@ -37,7 +37,7 @@ export interface EntityBuilder<S, Name extends string, E extends Record<string, 
   /**
    * Register state-altering event handlers for this Entity.
    * **Magic:** The `state` object inside these handlers is wrapped in Immer. You CAN mutate it directly!
-   * The targeted auto-namer maps camelCase keys to dot notation combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`).
+   * The default auto-namer maps camelCase keys to snake_case combined with the parent aggregate's namespace (e.g. `aggregate.entity.item_added.event`).
    */
   events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
     events: NewE
@@ -178,4 +178,3 @@ export function createEntity<S, Name extends string, TMeta extends Record<string
 
   return builder as unknown as EntityBuilder<S, Name, {}, {}, {}, {}, SelectorsMap<S>, TMeta>;
 }
-

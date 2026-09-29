@@ -1,55 +1,23 @@
 ---
-title: "Path-Aware Naming Conventions"
-last_updated: 2026-03-22
+title: "Aggregate Naming Conventions"
+last_updated: 2026-09-28
 status: stable
 ai_priority: high
 ---
 
-# Path-Aware Naming Conventions
+# Aggregate Naming Conventions
 
-## Summary
-A comprehensive guide to Redemeine's "Targeted Naming" engine. This document details the automated routing rules that transform standard camelCase method calls into strict, dot-notation strings for your event store. It explains the core `aggregate.entity.action` pattern (e.g., mapping an `OrderLine`'s `amendProductType` command to `order.order_line.product_type.amended.event`) and how to use the `.overrideEventNames()` fallback for legacy compatibility.
+By default, aggregate command and event keys are converted from camelCase to flat snake_case. The aggregate name and, for mounted entities, the mount path are prepended. For example, `addItem` becomes `order.add_item.command` and `itemAdded` becomes `order.item_added.event`. An `orderLines` mount with event key `productTypeAmended` uses `order.order_lines.product_type_amended.event`. Event projectors, metadata, emitted event types, and replay use the same resolved event name.
 
-## The Problem with Manual Naming
-In traditional event-sourced systems, developers frequently maintain giant constants files mapping intent strings (`ORDER_LINE_PRODUCT_TYPE_AMENDED_EVENT`) to their literal configurations. This creates endless boilerplate and disconnects intent from the actual codebase.
-
-## The "Targeted Naming" Engine
-Redemeine's `NamingStrategy` solves this by automatically inferring your command and event strings directly from the property keys provided to the builders. 
-
-When configuring `.events()` or `.commands()`, the system applies a standard conversion:
-- `camelCase` keys are converted to `snake_case`.
-- The aggregate's namespace (and any nested entity namespace) is automatically prepended.
-- A standard suffix (`.command` or `.event`) is appended.
-
-### Deep Entity Routing Example
-If you define an `OrderLine` entity and inject it into an `Order` aggregate, Redemeine generates deeply scoped routing strings on your behalf.
+This default is a breaking change for consumers expecting the former targeted dot-path event names (for example, `order.item.added.event`). In a greenfield application no stored events need migration. Consumers that require the old convention can opt in explicitly:
 
 ```typescript
-// Invoked by the client
-order.orderLines('123').amendProductType({ sku: 'NEW-SKU' });
+import { createAggregate, namingStrategies } from '@redemeine/aggregate';
+
+const order = createAggregate('order', initialState)
+  .naming(namingStrategies.targeted)
+  .events({ itemAdded: (state, event) => { state.items.push(event.payload); } })
+  .build(); // order.item.added.event
 ```
 
-Behind the scenes, Redemeine resolves the execution path:
-1. **Aggregate Prefix:** `order`
-2. **Entity Path:** `order_line` (derived from `orderLines`)
-3. **Action:** `amend_product_type` (for the command) / `product_type_amended` (for the emitted event, assuming you named the event handler `productTypeAmended`)
-
-This invocation will natively generate and route exactly:
-- **Command:** `order.order_line.amend_product_type.command`
-- **Emitted Event:** `order.order_line.product_type.amended.event`
-
-## Overriding Unconventional Paths
-In situations where you must conform to legacy event definitions existing in your event store, relying on auto-generation may be unsafe. Redemeine provides an escape hatch using `.overrideEventNames()` or `.overrideCommandNames()`.
-
-```typescript
-const LegacyMigrationAggregate = createAggregate('Customer', initialState)
-  .events({
-    profileUpdated: (state, event) => { /* ... */ }
-  })
-  .overrideEventNames({
-    profileUpdated: 'legacy_v1_customer_profile_change' // Explicit override
-  })
-  .build();
-```
-
-When an override is present, it entirely bypasses the targeted naming engine and guarantees your legacy string is used during routing and serialization.
+`namingStrategies.snakeCase` explicitly selects the new default event convention; `namingStrategies.flat` preserves the original camelCase key without conversion. The command convention remains snake_case for every preset. A custom `.naming({ event: (aggregateName, key, path) => ... })` can replace the event formatter. `.overrideEventNames({ itemAdded: 'custom.item.event' })` takes precedence over any naming strategy for that key. Update consumer event handlers and subscriptions to match the selected event type; this guide does not prescribe a stored-event migration.
