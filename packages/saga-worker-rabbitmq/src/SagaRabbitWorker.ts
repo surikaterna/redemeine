@@ -233,7 +233,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
       this.stateValue = 'stopped';
       ++this.generation;
       const retry = this.options.retry;
-      this.unsafeClose = retry ? retry.consumerChannel.close().catch(() => undefined) : Promise.resolve();
+      this.unsafeClose = retry ? Promise.resolve().then(() => retry.consumerChannel.close()).catch(() => undefined) : Promise.resolve();
     }
     return this.unsafeClose;
   }
