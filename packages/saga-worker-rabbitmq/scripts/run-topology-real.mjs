@@ -2,11 +2,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { installedPackageVersion, receiptPackageVersions } from './installed-versions.mjs';
-import { cleanupOwned, createCommandRunner, RABBIT_IMAGE, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
+import { createCommandRunner, RABBIT_IMAGE, requireCleanHead, scenarioReport } from './topology-runner-core.mjs';
+import { cleanupOwned, createOwned, ownedResources, OWNER_LABEL, preflightOwned } from './topology-runner-ownership.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const runId = `topology-${randomBytes(8).toString('hex')}`;
+const runId = `topology-${randomBytes(16).toString('hex')}`;
 const names = { container: runId, volume: `${runId}-data`, network: `${runId}-net` };
+const ownership = ownedResources(names, runId);
 const receiptPath = `/tmp/opencode/redemeine-fyp3.3-${runId}.json`;
 const reportPath = `/tmp/opencode/redemeine-fyp3.3-${runId}-jest.json`;
 const runner = createCommandRunner(root);
@@ -32,10 +34,12 @@ async function mappedPort(port) {
 }
 
 async function setup() {
+  await preflightOwned(docker, ownership);
   await docker(['pull', RABBIT_IMAGE]);
-  await docker(['network', 'create', names.network]);
-  await docker(['volume', 'create', names.volume]);
-  await docker(['run', '-d', '--name', names.container, '--network', names.network,
+  const label = `${OWNER_LABEL}=${runId}`;
+  await createOwned(docker, ownership, 'network', ['network', 'create', '--label', label, names.network]);
+  await createOwned(docker, ownership, 'volume', ['volume', 'create', '--label', label, names.volume]);
+  await createOwned(docker, ownership, 'container', ['run', '-d', '--name', names.container, '--label', label, '--network', names.network,
     '--mount', `source=${names.volume},target=/var/lib/rabbitmq`,
     '-e', 'RABBITMQ_DEFAULT_USER=topology_owner', '-e', 'RABBITMQ_DEFAULT_PASS=topology_owner_password',
     '-p', '127.0.0.1::5672', '-p', '127.0.0.1::15672', RABBIT_IMAGE]);
@@ -82,7 +86,7 @@ async function main() {
     receipt.failure = error instanceof Error ? error.message : String(error);
   } finally {
     try {
-      receipt.cleanup = await cleanupOwned(docker, names);
+      receipt.cleanup = await cleanupOwned(docker, ownership);
       if (!receipt.cleanup.absent) { receipt.failure = 'owned resources remain after cleanup'; receipt.exitCode = 1; }
     } catch (error) {
       receipt.failure = `cleanup verification failed: ${String(error)}; prior failure: ${receipt.failure}`;

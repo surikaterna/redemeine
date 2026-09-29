@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-worker-rabbitmq/test && node --test scripts/topology-runner-core.test.mjs",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-worker-rabbitmq/test && node --test scripts/topology-runner-core.test.mjs scripts/topology-runner-ownership.test.mjs",
     "test:integration:real": "node ./scripts/run-real-stack.mjs",
     "test:topology:real": "node ./scripts/run-topology-real.mjs",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",

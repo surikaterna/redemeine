@@ -57,20 +57,6 @@ export async function requireCleanHead(run) {
   return sha;
 }
 
-export async function cleanupOwned(docker, names) {
-  const removals = [];
-  removals.push(await docker(['rm', '-f', names.container], { allowed: true, cleanup: true }));
-  removals.push(await docker(['volume', 'rm', names.volume], { allowed: true, cleanup: true }));
-  removals.push(await docker(['network', 'rm', names.network], { allowed: true, cleanup: true }));
-  const inspect = await Promise.all([
-    docker(['container', 'inspect', names.container], { allowed: true, cleanup: true }),
-    docker(['volume', 'inspect', names.volume], { allowed: true, cleanup: true }),
-    docker(['network', 'inspect', names.network], { allowed: true, cleanup: true })
-  ]);
-  const absent = inspect.every(({ code }) => code !== 0);
-  return { removals: removals.map(({ code }) => code), postCleanupInspectCodes: inspect.map(({ code }) => code), absent };
-}
-
 export function scenarioReport(report) {
   const scenarios = report.testResults.flatMap((suite) => suite.assertionResults.map((test) => ({
     name: [...test.ancestorTitles, test.title].join(' > '), status: test.status,
