@@ -7,6 +7,7 @@ import { phaseStep } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
 import { waitForAmqpAfterRestart } from './amqpRestartProbe';
 import { refreshedEndpoints } from './restartEndpoints';
+import { inspectPersistedProductionTopology, inspectPublisherDelivery, publishTapewormCommit } from './productionTopologyAudit';
 
 let endpoints = { owner: process.env.REDEMEINE_TOPOLOGY_URL ?? '',
   restricted: process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '',
@@ -100,8 +101,8 @@ function config(channel: Channel) {
 function productionConfig(channel: Channel) {
   const base = config(channel);
   const topology = createSagaCommitQueueTopology({
-    channel, sourceExchange: base.topology.sourceExchange,
-    collection: base.worker.source.collection, partitions: base.worker.source.partitions,
+    channel, sourceExchange: `${prefix}.production-source`,
+    collection: 'tw_source_commits', partitions: ['p1', 'p2'],
     tenant: 'tenant-a', publisherTenant: 'tenant-a'
   });
   return { topology, worker: { ...base.worker, queue: topology.worker.queue } };
@@ -289,22 +290,17 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     const scope = productionConfig(first.channel);
     await provisionSagaTopology(scope.topology);
     await provisionSagaTopology(scope.topology);
-    const input = await management('/api/queues/%2F/rdm.saga.commits');
-    const dead = await management('/api/queues/%2F/rdm.saga.commits.dlq');
-    const dlx = await management('/api/exchanges/%2F/rdm.saga.commits.dlx');
-    expect(input).toMatchObject({ durable: true, arguments: {
-      'x-dead-letter-exchange': 'rdm.saga.commits.dlx', 'x-dead-letter-routing-key': 'rdm.saga.commits.dlq' } });
-    expect(dead).toMatchObject({ durable: true });
-    expect(dlx).toMatchObject({ durable: true, type: 'direct' });
-    const bindings = await management(`/api/bindings/%2F/e/${encodeURIComponent(scope.topology.sourceExchange)}/q/rdm.saga.commits`);
-    expect(bindings).toEqual(expect.arrayContaining(['p1', 'p2'].map((partitionId) =>
-      expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId, tenant: 'tenant-a' } }))));
-    expect(bindings).toHaveLength(2);
+    // This observation is separate from the installed publisher's confirmation; it proves routing.
+    const kept = await publishTapewormCommit(endpoints.owner, scope.topology.sourceExchange);
+    await inspectPublisherDelivery(first.channel, scope.worker.queue.queue, kept);
     const publisher = await first.model.createConfirmChannel();
     await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
-      { id: 'production-kept', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-a' }, false);
-    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
       { id: 'production-wrong', collection: 'tw_source_commits', partitionId: 'p3', tenant: 'tenant-a' }, true);
+    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong-collection', collection: 'other', partitionId: 'p1', tenant: 'tenant-a' }, true);
+    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong-tenant', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-b' }, true);
+    await waitForCounts(scope.worker.queue.queue, 1, 0);
     expect((await first.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
     await publisher.close();
     await first.model.close();
@@ -312,6 +308,9 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     const second = await opened();
     try {
       const restored = productionConfig(second.channel);
+      await inspectPersistedProductionTopology(management, restored.topology.sourceExchange);
+      await inspectPublisherDelivery(second.channel, restored.worker.queue.queue, kept);
+      await waitForCounts(restored.worker.queue.queue, 1, 0);
       await provisionSagaTopology(restored.topology);
       expect((await second.channel.checkQueue(restored.worker.queue.queue)).messageCount).toBe(1);
       await processHeldDelivery(second.channel, restored);

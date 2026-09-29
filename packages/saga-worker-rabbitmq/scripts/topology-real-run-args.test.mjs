@@ -34,12 +34,23 @@ test('active runner never invokes privileged cookie prep; readiness precedes Jes
 test('fyp3.4 runner selects the owned six-scenario suite, including production names', () => {
   const runner = readFileSync(new URL('./run-topology-real.mjs', import.meta.url), 'utf8');
   const integration = readFileSync(new URL('../integration/topology-real.integration.test.ts', import.meta.url), 'utf8');
+  const producer = readFileSync(new URL('../integration/productionTopologyAudit.ts', import.meta.url), 'utf8');
   assert.match(runner, /--runTestsByPath', 'packages\/saga-worker-rabbitmq\/integration\/topology-real\.integration\.test\.ts'/);
   assert.match(runner, /receipt\.counts\.total !== 6/);
   assert.match(runner, /issue: 'redemeine-fyp3\.4'/);
   assert.equal((integration.match(/\bit\('/g) ?? []).length + 3 * (integration.match(/\bit\.each\(/g) ?? []).length, 6);
   assert.match(integration, /createSagaCommitQueueTopology\(/);
-  assert.match(integration, /production-kept/);
+  assert.match(producer, /production-kept/);
+  assert.match(producer, /import \{ CommitPublisher, type RabbitConfig \} from 'tapeworm_dispatcher_mdb_rmq'/);
+  assert.match(producer, /new CommitPublisher\(rabbit, 'tenant-a'\)/);
+  assert.match(producer, /await publisher\.publish\(commit, 'tw_source_commits'\)/);
+  assert.match(producer, /collection: 'tw_source_commits', partitionId: 'p1', streamId: commit\.streamId, tenant: 'tenant-a'/);
+  assert.match(integration, /production-wrong-collection/);
+  assert.match(integration, /production-wrong-tenant/);
+  const restored = integration.slice(integration.indexOf('const restored = productionConfig(second.channel)'));
+  assert.ok(restored.indexOf('inspectPersistedProductionTopology(management') < restored.indexOf('await provisionSagaTopology(restored.topology)'));
+  assert.ok(restored.indexOf('inspectPublisherDelivery(second.channel') < restored.indexOf('await provisionSagaTopology(restored.topology)'));
+  assert.match(producer, /messages_ready: 1, messages_unacknowledged: 0/);
 });
 
 test('real restart targets same owned container; no second volume or cookie writer', () => {
