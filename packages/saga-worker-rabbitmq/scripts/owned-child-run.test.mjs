@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { runOwnedChild } from './owned-child-run.mjs';
-import { crashProcessReport, crashScenarioReport, runCrashJest } from './crash-run-report.mjs';
+import { crashProcessReport, crashProofComplete, crashScenarioReport, runCrashJest } from './crash-run-report.mjs';
 import { assertScenarioEvidence } from './real-stack-selection.mjs';
 
 test('deadline terminates an owned Jest-like group including its grandchild and waits for close', async () => {
@@ -62,4 +62,15 @@ test('timeout evidence has a fixed category without secret fields or a false PAS
   assert.deepEqual(outcome, { phase: 'jest-process', source: 'owned-child-run', errorClass: 'timeout', exitCode: 1,
     stdoutBytes: 4_097, stderrBytes: 4_097, stdoutTruncated: true, stderrTruncated: true });
   assert.deepEqual(crashScenarioReport(null), []);
+});
+
+test('successful Jest JSON cannot qualify unverified app resources or an initiating failure', () => {
+  const absent = { status: 'absent', reason: 'none' };
+  const proof = { success: true, firstFailure: null, cleanupFailure: null, exitSignal: 'SIGKILL',
+    cleanup: { ownedChildrenReaped: true, amqpClosed: true, mongoClosed: true,
+      resources: { db: absent, user: absent, vhost: absent } } };
+  assert.equal(crashProofComplete(proof), true);
+  assert.equal(crashProofComplete({ ...proof, firstFailure: { phase: 'child-ready', errorClass: 'operation' } }), false);
+  assert.equal(crashProofComplete({ ...proof, cleanup: { ...proof.cleanup,
+    resources: { ...proof.cleanup.resources, user: { status: 'owner_mismatch', reason: 'owner_mismatch' } } } }), false);
 });

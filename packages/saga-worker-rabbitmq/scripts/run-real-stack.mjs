@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { receiptPackageVersions } from './installed-versions.mjs';
 import { assertScenarioEvidence, scenarioHash, selectRealStackSuites } from './real-stack-selection.mjs';
 import { runOwnedChild } from './owned-child-run.mjs';
-import { crashProcessReport, crashScenarioReport, runCrashJest } from './crash-run-report.mjs';
+import { crashProcessReport, crashProofComplete, crashScenarioReport, runCrashJest } from './crash-run-report.mjs';
 
 const MONGO_IMAGE = 'mongo:7.0.16';
 const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine';
@@ -219,10 +219,9 @@ async function runTests() {
   if (result.timedOut) throw new Error('owned Jest group timed out and was killed');
   if (result.code !== 0) throw new Error(`real-stack Jest invocation failed with exit code ${result.code}`);
   assertScenarioEvidence(jestReport, selection.paths);
-  if (slice === 'redemeine-fyp3.5.3.1' &&
-      (crashEvidence?.success !== true || crashEvidence?.exitSignal !== 'SIGKILL' ||
-       Object.values(crashEvidence?.cleanup ?? {}).some(value => value !== true) ||
-       !crashEvidence?.cleanup?.vhostDeleted)) throw new Error('crash proof evidence incomplete');
+  if (slice === 'redemeine-fyp3.5.3.1' && !crashProofComplete(crashEvidence)) {
+    throw new Error('crash proof evidence incomplete');
+  }
 }
 
 async function assertCommittedHead() {

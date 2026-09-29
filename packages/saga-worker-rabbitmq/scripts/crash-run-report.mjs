@@ -34,3 +34,12 @@ export function crashScenarioReport(report) {
       failures: Array.isArray(assertion.failureMessages) ?
         assertion.failureMessages.slice(0, 8).map(() => 'sanitized crash scenario failure') : [] })) : []);
 }
+
+export function crashProofComplete(evidence) {
+  const cleanup = evidence?.cleanup;
+  const resources = cleanup?.resources;
+  return evidence?.success === true && evidence?.firstFailure === null && evidence?.cleanupFailure === null &&
+    evidence?.exitSignal === 'SIGKILL' && cleanup?.ownedChildrenReaped === true &&
+    cleanup?.amqpClosed === true && cleanup?.mongoClosed === true &&
+    resources && ['vhost', 'user', 'db'].every(key => ['removed', 'absent'].includes(resources[key]?.status));
+}
