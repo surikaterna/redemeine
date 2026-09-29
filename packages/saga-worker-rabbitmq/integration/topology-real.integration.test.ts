@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { connect, type Channel, type ChannelModel } from 'amqplib';
 import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
-import { createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
+import { createSagaCommitQueueTopology, createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 import { phaseStep } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
@@ -97,6 +97,16 @@ function config(channel: Channel) {
   };
 }
 
+function productionConfig(channel: Channel) {
+  const base = config(channel);
+  const topology = createSagaCommitQueueTopology({
+    channel, sourceExchange: base.topology.sourceExchange,
+    collection: base.worker.source.collection, partitions: base.worker.source.partitions,
+    tenant: 'tenant-a', publisherTenant: 'tenant-a'
+  });
+  return { topology, worker: { ...base.worker, queue: topology.worker.queue } };
+}
+
 async function poll<T>(probe: () => Promise<T | null>, label: string): Promise<T> {
   const until = Date.now() + 15_000;
   while (Date.now() < until) {
@@ -154,7 +164,7 @@ async function publishBeforeRestart(): Promise<void> {
   });
 }
 
-async function processHeldDelivery(channel: Channel, scope: ReturnType<typeof config>): Promise<void> {
+async function processHeldDelivery(channel: Channel, scope: { worker: SagaRabbitWorkerOptions }): Promise<void> {
   let release: (() => void) | undefined;
   let began: (() => void) | undefined;
   let processed = 0;
@@ -185,7 +195,8 @@ async function processHeldDelivery(channel: Channel, scope: ReturnType<typeof co
   });
 }
 
-async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>, scope: ReturnType<typeof config>): Promise<void> {
+async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>,
+  scope: { worker: SagaRabbitWorkerOptions; topology: { sourceExchange: string; deadQueue: string } }): Promise<void> {
   await phaseStep('dead-letter', 'dead-letter-visible', async () => {
     const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
       throw new SagaTurnPermanentError('test_poison', 'permanent', {});
@@ -271,4 +282,43 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
       await restricted.close();
     });
   });
+
+  it('provisions the production names, retains confirmed commits over restart, ACKs and dead-letters', async () => {
+    await phaseStep('setup-topology', 'broker-available', requireBrokerForNegative);
+    const first = await opened();
+    const scope = productionConfig(first.channel);
+    await provisionSagaTopology(scope.topology);
+    await provisionSagaTopology(scope.topology);
+    const input = await management('/api/queues/%2F/rdm.saga.commits');
+    const dead = await management('/api/queues/%2F/rdm.saga.commits.dlq');
+    const dlx = await management('/api/exchanges/%2F/rdm.saga.commits.dlx');
+    expect(input).toMatchObject({ durable: true, arguments: {
+      'x-dead-letter-exchange': 'rdm.saga.commits.dlx', 'x-dead-letter-routing-key': 'rdm.saga.commits.dlq' } });
+    expect(dead).toMatchObject({ durable: true });
+    expect(dlx).toMatchObject({ durable: true, type: 'direct' });
+    const bindings = await management(`/api/bindings/%2F/e/${encodeURIComponent(scope.topology.sourceExchange)}/q/rdm.saga.commits`);
+    expect(bindings).toEqual(expect.arrayContaining(['p1', 'p2'].map((partitionId) =>
+      expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId, tenant: 'tenant-a' } }))));
+    expect(bindings).toHaveLength(2);
+    const publisher = await first.model.createConfirmChannel();
+    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-kept', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-a' }, false);
+    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'production-wrong', collection: 'tw_source_commits', partitionId: 'p3', tenant: 'tenant-a' }, true);
+    expect((await first.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
+    await publisher.close();
+    await first.model.close();
+    await phaseStep('broker-restart', 'same-volume-restarted', restart);
+    const second = await opened();
+    try {
+      const restored = productionConfig(second.channel);
+      await provisionSagaTopology(restored.topology);
+      expect((await second.channel.checkQueue(restored.worker.queue.queue)).messageCount).toBe(1);
+      await processHeldDelivery(second.channel, restored);
+      await deadLetterPoison(second, restored);
+      await waitForCounts(restored.topology.deadQueue, 0, 0);
+    } finally {
+      await second.model.close();
+    }
+  }, 120_000);
 });
