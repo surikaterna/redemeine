@@ -37,12 +37,28 @@ export async function provision(channel: Channel): Promise<ReturnType<typeof top
 }
 
 export async function counts(queue: string): Promise<{ ready: number; unacked: number; ack: number }> {
-  const value = await management(`/api/queues/%2F/${encodeURIComponent(queue)}`);
-  if (typeof value !== 'object' || value === null || !('messages_ready' in value) ||
-      !('messages_unacknowledged' in value) || !('message_stats' in value)) throw new Error('queue metrics missing');
-  const stats = value.message_stats;
-  const ack = typeof stats === 'object' && stats !== null && 'ack' in stats ? stats.ack : 0;
-  if (typeof value.messages_ready !== 'number' || typeof value.messages_unacknowledged !== 'number' ||
-      typeof ack !== 'number') throw new Error('invalid queue metrics');
-  return { ready: value.messages_ready, unacked: value.messages_unacknowledged, ack };
+  return parseQueueCounts(await management(`/api/queues/%2F/${encodeURIComponent(queue)}`));
+}
+
+export type QueueCounts = { ready: number; unacked: number; ack: number };
+
+export class QueueMetricsError extends Error {}
+
+function validCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function parseQueueCounts(value: unknown): QueueCounts {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) ||
+      !('messages_ready' in value) || !('messages_unacknowledged' in value)) throw new QueueMetricsError('queue metrics missing');
+  const ready = value.messages_ready;
+  const unacked = value.messages_unacknowledged;
+  let ack: unknown = 0;
+  if ('message_stats' in value) {
+    const stats = value.message_stats;
+    if (typeof stats !== 'object' || stats === null || Array.isArray(stats)) throw new QueueMetricsError('invalid queue metrics');
+    ack = 'ack' in stats ? stats.ack : 0;
+  }
+  if (!validCount(ready) || !validCount(unacked) || !validCount(ack)) throw new QueueMetricsError('invalid queue metrics');
+  return { ready, unacked, ack };
 }

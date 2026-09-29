@@ -7,6 +7,7 @@ import { connect, type Channel, type ConfirmChannel } from 'amqplib';
 import { MongoClient } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import { counts, deadQueue, input, provision, required, retryQueue } from './crashBroker';
+import { observationWindowMs, observeHeldCopy, requireKillProof, safeCounts, type CountSample } from './crashCountProof';
 import { awaitChildReady, awaitSignal, isCrashSignal, killOwned, type CrashSignal } from './crashIpc';
 import { cleanupSucceeded, deadline, OwnedCrashScope, type CleanupOutcome, type OwnedCleanup } from './crashOwnership';
 import { PhaseEvidence } from './crashPhaseEvidence';
@@ -71,21 +72,29 @@ async function crashPhase(stack: Stack, first: ChildProcess, phases: PhaseEviden
     trace.some(event => event.kind === 'delivery' && event.messageId === original.id), 6_000), 7_000);
   await phases.run('retry-confirm', () => until('confirmed retry', () => trace.some(event =>
     event.kind === 'confirmed' && event.messageId === original.id), 15_000), 16_000);
-  expect(trace.find(event => event.kind === 'confirmed')).toMatchObject({ messageId: original.id, attempt: 1 });
-  await until('confirmed copy and held original', async () => {
-    const a = await counts(input);
-    const b = await counts(retryQueue);
-    return a.unacked === 1 && a.ack === 0 && b.ready === 1;
+  const confirmedAt = Date.now();
+  const samples: CountSample[] = [];
+  evidence.brokerObservation = { windowMs: observationWindowMs, samples };
+  const readCount = (queue: 'input' | 'retry') => counts(queue === 'input' ? input : retryQueue);
+  await phases.run('broker-observation', () => observeHeldCopy(readCount, samples, confirmedAt), 11_000);
+  const committed = await phases.run('physical-commit-read', () => physical(client, dbName, sagaPartition, sagaId));
+  const atKill = await phases.run('crash-assertions', async () => {
+    expect(trace.find(event => event.kind === 'confirmed')).toMatchObject({ messageId: original.id, attempt: 1 });
+    expect(committed).toHaveLength(1);
+    expect(committed[0]).toMatchObject({ events: [
+      { type: 'saga.instance_created.event' }, { type: 'saga.definition_identity_recorded.event' },
+      { type: 'saga.source_event_observed.event' }, { type: 'saga.business_state_recorded.event' }
+    ] });
+    const proof = await observeHeldCopy(readCount, samples, confirmedAt);
+    evidence.atKill = { input: safeCounts(proof.input), retry: safeCounts(proof.retry),
+      physical: committed.length, intentFacts: 0 };
+    expect(evidence.atKill).toMatchObject({ physical: 1, input: { unacked: 1, ack: 0 }, retry: { ready: 1 } });
+    return proof;
+  }, 11_000);
+  evidence.exitSignal = await phases.run('kill-eligibility', async () => {
+    requireKillProof(atKill, confirmedAt);
+    return killOwned(first);
   });
-  const committed = await physical(client, dbName, sagaPartition, sagaId);
-  expect(committed).toHaveLength(1);
-  expect(committed[0]).toMatchObject({ events: [
-    { type: 'saga.instance_created.event' }, { type: 'saga.definition_identity_recorded.event' },
-    { type: 'saga.source_event_observed.event' }, { type: 'saga.business_state_recorded.event' }
-  ] });
-  evidence.atKill = { input: await counts(input), retry: await counts(retryQueue), physical: committed.length, intentFacts: 0 };
-  expect(evidence.atKill).toMatchObject({ physical: 1, input: { unacked: 1, ack: 0 }, retry: { ready: 1 } });
-  evidence.exitSignal = await killOwned(first);
   await until('original requeued', async () => (await counts(input)).ready === 1);
   evidence.requeued = await counts(input);
   return committed;

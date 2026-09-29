@@ -4,7 +4,8 @@ import { ChildStartupFailure, type ChildError } from './crashChildStages';
 export const phases = ['mongo-connect', 'resource-preflight', 'resource-setup', 'mongo-owner-create',
   'amqp-open', 'consumer-channel', 'confirm-channel', 'topology-provision', 'topology-inspected',
   'stack-construction', 'child-fork', 'source-append', 'child-ready', 'source-publish',
-  'initial-delivery', 'retry-confirm', 'recovery', 'cleanup', 'receipt'] as const;
+  'initial-delivery', 'retry-confirm', 'broker-observation', 'physical-commit-read',
+  'crash-assertions', 'kill-eligibility', 'recovery', 'cleanup', 'receipt'] as const;
 export type CrashPhase = typeof phases[number];
 
 export interface FailureEvidence {
