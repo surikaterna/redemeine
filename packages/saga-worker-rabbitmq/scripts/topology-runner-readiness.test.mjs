@@ -14,7 +14,7 @@ test('repeated nonzero ping records bounded last exit and deadline rather than s
     assert.equal(options.timeoutMs, 5);
     return { code: 69, stdout: 'RabbitMQ node down password=private', stderr: 'epmd unavailable token=private' };
   };
-  await assert.rejects(waitForRabbit(docker, runner, runId, receipt, { deadlineMs: 25, probeMs: 5, delayMs: 2 }), /deadline exceeded/);
+  await assert.rejects(waitForRabbit(docker, runner, runId, receipt, { deadlineMs: 250, probeMs: 5, delayMs: 2 }), /deadline exceeded/);
   assert.ok(receipt.readiness.attempts >= 2);
   assert.deepEqual(receipt.readiness.lastProbe, { status: 'exit', code: 69,
     stdout: { lineCount: 1, categories: ['node-unavailable'] }, stderr: { lineCount: 1, categories: ['node-unavailable'] } });

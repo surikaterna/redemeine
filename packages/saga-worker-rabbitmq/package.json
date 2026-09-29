@@ -14,10 +14,11 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-worker-rabbitmq/test && node --test scripts/topology-runner-core.test.mjs scripts/topology-runner-ownership.test.mjs scripts/topology-runner-receipt.test.mjs scripts/topology-runner-readiness.test.mjs scripts/topology-diagnostic-core.test.mjs scripts/topology-diagnostic-cookie.test.mjs scripts/topology-runner-cookie-prep.test.mjs",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-worker-rabbitmq/test && node --test scripts/topology-runner-core.test.mjs scripts/topology-runner-ownership.test.mjs scripts/topology-runner-receipt.test.mjs scripts/topology-runner-readiness.test.mjs scripts/topology-diagnostic-core.test.mjs scripts/topology-diagnostic-cookie.test.mjs scripts/topology-runner-cookie-prep.test.mjs scripts/topology-preboot-core.test.mjs",
     "test:integration:real": "node ./scripts/run-real-stack.mjs",
     "test:topology:real": "node ./scripts/run-topology-real.mjs",
     "diagnose:topology:startup": "node ./scripts/run-topology-diagnostic.mjs",
+    "diagnose:topology:preboot": "node ./scripts/run-topology-preboot.mjs",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
     "lint": "tsc --noEmit"
   },
