@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { Channel, ChannelModel } from 'amqplib';
-import { boundedRestricted, qualifyRestrictedTopology } from '../integration/restrictedTopologyAudit';
+import { boundedRestricted, containLateChannelError, qualifyRestrictedTopology } from '../integration/restrictedTopologyAudit';
+import { expectBrokerRejection } from '../integration/topologyAudit';
 import { phaseStep, PHASE_MARKER, SafePhaseError } from '../integration/topologyPhase';
 
 function marker(error: unknown): Record<string, unknown> {
@@ -12,7 +13,7 @@ function marker(error: unknown): Record<string, unknown> {
 
 function fixture(reply: number | null, health = async () => undefined) {
   const channel = Object.assign(new EventEmitter(), { consume: jest.fn() }) as unknown as Channel;
-  const close = jest.fn(async () => undefined);
+  const close = jest.fn(async () => { channel.emit('close'); });
   const model = { createChannel: async () => channel, close } as unknown as ChannelModel;
   const provision = async () => {
     if (reply === null) return;
@@ -30,6 +31,8 @@ describe('restricted owned Rabbit 403 audit', () => {
     await qualifyRestrictedTopology({ health, connect: async () => model, provision });
     expect(channel.consume).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
+    expect(channel.listenerCount('error')).toBe(0);
+    expect(channel.listenerCount('close')).toBe(0);
   });
 
   it('allows health beyond the former five-second Jest budget without weakening the 403 check', async () => {
@@ -54,6 +57,7 @@ describe('restricted owned Rabbit 403 audit', () => {
     expect(marker(failure)).toMatchObject({ phase: 'restricted-reply-403', invariant: 'reply-code-403' });
     expect(channel.consume).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
+    expect(channel.listenerCount('error')).toBe(0);
   });
 
   it('times out a hung connect with sanitized phase and disposes a late model', async () => {
@@ -84,5 +88,54 @@ describe('restricted owned Rabbit 403 audit', () => {
     try { await qualifyRestrictedTopology({ health, connect: async () => model, provision }); }
     catch (error) { failure = error; }
     expect(marker(failure)).toMatchObject({ phase: 'restricted-reply-403', expected: 403, actual: 404 });
+  });
+
+  it('aborts a never-settling provision, contains late error and rejection, and removes listeners on close', async () => {
+    const channel = Object.assign(new EventEmitter(), { consume: jest.fn(), close: jest.fn(async () => {
+      channel.emit('close');
+    }) }) as unknown as Channel;
+    let rejectLate: ((error: Error) => void) | undefined;
+    const pending = new Promise<void>((_, reject) => { rejectLate = reject; });
+    const controller = new AbortController();
+    const removeSink = containLateChannelError(channel);
+    const observation = boundedRestricted(() => expectBrokerRejection(channel, () => pending, 403, controller.signal),
+      10, undefined, () => controller.abort());
+    await expect(observation).rejects.toThrow('restricted step timed out');
+    expect(channel.listenerCount('error')).toBe(1);
+    channel.emit('error', Object.assign(new Error('Basic c2VjcmV0 late'), { code: 403 }));
+    rejectLate?.(new Error('amqp://user:pass@host late rejection'));
+    await channel.close();
+    expect(channel.listenerCount('error')).toBe(0);
+    expect(channel.listenerCount('close')).toBe(0);
+    removeSink();
+  });
+
+  it('times out the full restricted audit without leaving a broker observer or claiming 403', async () => {
+    jest.useFakeTimers();
+    try {
+      const { channel, close, model, health } = fixture(null);
+      let rejectLate: ((error: Error) => void) | undefined;
+      const pending = new Promise<void>((_, reject) => { rejectLate = reject; });
+      const result = qualifyRestrictedTopology({ health, connect: async () => model, provision: () => pending })
+        .then((): unknown => undefined, (error: unknown): unknown => error);
+      await jest.advanceTimersByTimeAsync(4_000);
+      const failure = await result;
+      expect(marker(failure)).toMatchObject({ phase: 'restricted-reply-403', errorClass: 'timeout', code: null });
+      expect(channel.listenerCount('error')).toBe(0);
+      expect(channel.listenerCount('close')).toBe(0);
+      expect(channel.consume).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledTimes(1);
+      rejectLate?.(new Error('amqp://user:pass@host late reject'));
+      await jest.advanceTimersByTimeAsync(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('rejects a generic 403 without matching channel error', async () => {
+    const channel = new EventEmitter() as unknown as Channel;
+    await expect(expectBrokerRejection(channel, async () => {
+      throw Object.assign(new Error('topology_restricted_password'), { code: 403 });
+    }, 403)).rejects.toMatchObject({ expectedCode: 403, actualCode: 403, replyCode: null });
+    expect(channel.listenerCount('error')).toBe(0);
   });
 });

@@ -40,23 +40,36 @@ function brokerCode(error: unknown): number | undefined {
   return undefined;
 }
 
-export async function expectBrokerRejection(channel: Pick<Channel, 'on' | 'off'>, operation: () => Promise<void>, expectedCode: number): Promise<void> {
+export async function expectBrokerRejection(
+  channel: Pick<Channel, 'on' | 'off'>, operation: () => Promise<void>, expectedCode: number, signal?: AbortSignal
+): Promise<void> {
   const emitted: unknown[] = [];
   const onError = (error: unknown) => { emitted.push(error); };
   channel.on('error', onError);
+  let abort: (() => void) | undefined;
   try {
     let rejected: unknown;
     try {
-      await operation();
+      const task = Promise.resolve().then(operation);
+      if (signal) {
+        const stopped = new Promise<never>((_, reject) => {
+          abort = () => reject(new Error('restricted step timed out'));
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+        });
+        await Promise.race([task, stopped]);
+      } else await task;
     } catch (error) {
       rejected = error;
     }
+    if (signal?.aborted) throw new Error('restricted step timed out');
     if (brokerCode(rejected) !== expectedCode || emitted.length !== 1 || brokerCode(emitted[0]) !== expectedCode) {
       throw Object.assign(new Error('broker reply mismatch'), {
         expectedCode, actualCode: brokerCode(rejected) ?? null, replyCode: brokerCode(emitted[0]) ?? null
       });
     }
   } finally {
+    if (signal && abort) signal.removeEventListener('abort', abort);
     channel.off('error', onError);
   }
 }
