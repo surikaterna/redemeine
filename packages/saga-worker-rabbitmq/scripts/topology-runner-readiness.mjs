@@ -1,4 +1,7 @@
 import { inspectOwned } from './topology-runner-ownership.mjs';
+import appReady from './topology-app-ready.cjs';
+
+const { waitForRabbitApp } = appReady;
 
 export function redactDiagnostic(text) {
   const lines = String(text ?? '').split(/\r?\n/).filter(Boolean);
@@ -19,11 +22,10 @@ function probeSummary(result, status) {
   return { status, code: result?.code ?? null, stdout: redactDiagnostic(result?.stdout), stderr: redactDiagnostic(result?.stderr) };
 }
 
-async function probe(docker, name, command, deadline, probeMs) {
-  if (Date.now() >= deadline) return null;
+async function probe(docker, name, command, timeoutMs) {
   try {
     const result = await docker(['exec', name, 'rabbitmq-diagnostics', '-q', command],
-      { allowed: true, timeoutMs: Math.max(1, Math.min(probeMs, deadline - Date.now())), maxOutputBytes: 2048 });
+      { allowed: true, timeoutMs, maxOutputBytes: 2048 });
     return { summary: probeSummary(result, 'exit'), code: result.code };
   } catch (error) {
     if (!error.probe) throw new Error('Rabbit readiness probe could not start');
@@ -41,28 +43,21 @@ async function containerExited(docker, ownership) {
 }
 
 export async function waitForRabbit(docker, runner, ownership, receipt, { deadlineMs = 90_000, probeMs = 5_000, delayMs = 500 } = {}) {
-  const deadline = Date.now() + deadlineMs;
   const readiness = { attempts: 0, lastProbe: null, ping: null, application: null, status: 'waiting' };
   receipt.readiness = readiness;
-  while (Date.now() < deadline && !runner.interrupted) {
-    readiness.attempts++;
-    const ping = await probe(docker, ownership.names.container, 'ping', deadline, probeMs);
-    if (ping) { readiness.ping = ping.summary; readiness.lastProbe = ping.summary; }
-    if (ping?.code === 0 && !runner.interrupted) {
-      const app = await probe(docker, ownership.names.container, 'check_running', deadline, probeMs);
-      if (app) { readiness.application = app.summary; readiness.lastProbe = app.summary; }
-      if (app?.code === 0 && !runner.interrupted) { readiness.status = 'ready'; return; }
-    }
-    if (runner.interrupted) break;
-    if (await containerExited(docker, ownership)) {
-      readiness.status = 'exited';
-      throw new Error('Rabbit container exited before application ready');
-    }
-    if (Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  try {
+    await waitForRabbitApp({ probe: (command, timeoutMs) => probe(docker, ownership.names.container, command, timeoutMs),
+      isExited: () => containerExited(docker, ownership), interrupted: () => runner.interrupted,
+      onAttempt: () => { readiness.attempts++; }, onProbe: (command, result) => {
+        readiness.lastProbe = result.summary;
+        if (command === 'ping') readiness.ping = result.summary;
+        else readiness.application = result.summary;
+      }, deadlineMs, probeMs, delayMs });
+    readiness.status = 'ready';
+  } catch (error) {
+    readiness.status = runner.interrupted ? 'interrupted' : /exited/.test(error.message) ? 'exited' : 'deadline-exceeded';
+    throw error;
   }
-  readiness.status = runner.interrupted ? 'interrupted' : 'deadline-exceeded';
-  throw new Error(runner.interrupted ? 'Rabbit readiness interrupted by external signal' :
-    `Rabbit readiness deadline exceeded (last probe: ${readiness.lastProbe?.status ?? 'none'})`);
 }
 
 function knownState(value) {
