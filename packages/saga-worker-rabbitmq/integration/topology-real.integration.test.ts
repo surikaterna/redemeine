@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { connect, type Channel, type ChannelModel, type ConfirmChannel } from 'amqplib';
+import { connect, type Channel, type ChannelModel } from 'amqplib';
 import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
 import { createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
+import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 
 const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
@@ -15,6 +16,31 @@ async function management(path: string): Promise<unknown> {
   return response.json();
 }
 
+async function queueMetrics(queue: string): Promise<{ ready: number; unacked: number } | null> {
+  const data = await management(`/api/queues/%2F/${encodeURIComponent(queue)}`);
+  if (typeof data !== 'object' || data === null || !('messages_ready' in data) || !('messages_unacknowledged' in data)) return null;
+  const { messages_ready: ready, messages_unacknowledged: unacked } = data;
+  if (typeof ready !== 'number' || typeof unacked !== 'number' || !Number.isSafeInteger(ready) || !Number.isSafeInteger(unacked)) return null;
+  return { ready, unacked };
+}
+
+async function waitForCounts(queue: string, ready: number, unacked: number): Promise<void> {
+  await poll(async () => {
+    const counts = await queueMetrics(queue);
+    return counts?.ready === ready && counts.unacked === unacked ? true : null;
+  }, `queue ${queue} ready=${ready} unacked=${unacked}`);
+}
+
+async function waitForOneAck(queue: string): Promise<void> {
+  await poll(async () => {
+    const data = await management(`/api/queues/%2F/${encodeURIComponent(queue)}`);
+    if (typeof data !== 'object' || data === null || !('message_stats' in data)) return null;
+    const stats = data.message_stats;
+    if (typeof stats !== 'object' || stats === null || !('ack' in stats)) return null;
+    return stats.ack === 1 ? true : null;
+  }, `queue ${queue} single ACK`);
+}
+
 async function inspectTopology(sourceExchange: string, inputQueue: string, deadQueue: string): Promise<void> {
   const input = await management(`/api/queues/%2F/${encodeURIComponent(inputQueue)}`);
   const dead = await management(`/api/queues/%2F/${encodeURIComponent(deadQueue)}`);
@@ -26,8 +52,8 @@ async function inspectTopology(sourceExchange: string, inputQueue: string, deadQ
   expect(dlx).toMatchObject({ type: 'direct', durable: true });
   const bindings = await management(`/api/bindings/%2F/e/${encodeURIComponent(sourceExchange)}/q/${encodeURIComponent(inputQueue)}`);
   expect(bindings).toEqual(expect.arrayContaining([
-    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p1' } }),
-    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p2' } })
+    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p1', tenant: 'tenant-a' } }),
+    expect.objectContaining({ arguments: { 'x-match': 'all', collection: 'tw_source_commits', partitionId: 'p2', tenant: 'tenant-a' } })
   ]));
   expect(bindings).toHaveLength(2);
 }
@@ -58,18 +84,9 @@ function config(channel: Channel) {
   } satisfies SagaRabbitWorkerOptions;
   return {
     worker,
-    topology: { channel, worker, sourceExchange: `${prefix}.source`, deadQueue: `${prefix}.dead`, deadRoutingKey: 'dead' }
+    topology: { channel, worker, sourceExchange: `${prefix}.source`, deadQueue: `${prefix}.dead`, deadRoutingKey: 'dead',
+      tenant: 'tenant-a', publisherTenant: 'tenant-a' }
   };
-}
-
-function publish(channel: ConfirmChannel, id: string, partitionId: string, collection = 'tw_source_commits'): void {
-  const streamId = `stream-${id}`;
-  const body = { id, partitionId, streamId, commitSequence: 0, createDateTime: new Date().toISOString(),
-    events: [{ id: `event-${id}`, type: 'Created', version: 0, payload: { id } }] };
-  channel.publish(`${prefix}.source`, '', Buffer.from(JSON.stringify(body)), {
-    contentType: 'application/json', deliveryMode: 2, messageId: id,
-    headers: { collection, partitionId, streamId }
-  });
 }
 
 async function poll<T>(probe: () => Promise<T | null>, label: string): Promise<T> {
@@ -109,14 +126,56 @@ async function publishBeforeRestart(): Promise<void> {
   await provisionSagaTopology(topology);
   await inspectWhenReady(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue);
   const pub = await first.model.createConfirmChannel();
-  publish(pub, 'kept', 'p1');
-  publish(pub, 'wrong-partition', 'p3');
-  publish(pub, 'wrong-collection', 'p1', 'other');
-  await pub.waitForConfirms();
+  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'kept', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
+  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-partition', partitionId: 'p3', collection: 'tw_source_commits', tenant: 'tenant-a' }, true);
+  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-tenant', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-b' }, true);
+  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-collection', partitionId: 'p1', collection: 'other', tenant: 'tenant-a' }, true);
   expect((await first.channel.checkQueue(topology.worker.queue.queue)).messageCount).toBe(1);
   await pub.close();
   await first.channel.close();
   await first.model.close();
+}
+
+async function processHeldDelivery(channel: Channel, scope: ReturnType<typeof config>): Promise<void> {
+  let release: (() => void) | undefined;
+  let began: (() => void) | undefined;
+  let processed = 0;
+  const started = new Promise<void>((resolve) => { began = resolve; });
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
+    processed++;
+    began?.();
+    await barrier;
+    return [];
+  } });
+  await worker.start();
+  await started;
+  await waitForCounts(scope.worker.queue.queue, 0, 1);
+  expect(processed).toBe(1);
+  const before = await management(`/api/queues/%2F/${encodeURIComponent(scope.worker.queue.queue)}`);
+  expect(before).not.toMatchObject({ message_stats: { ack: 1 } });
+  release?.();
+  await worker.stop();
+  await waitForCounts(scope.worker.queue.queue, 0, 0);
+  await waitForOneAck(scope.worker.queue.queue);
+  expect(processed).toBe(1);
+  expect((await channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
+  expect(await channel.get(scope.worker.queue.queue, { noAck: true })).toBe(false);
+}
+
+async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>, scope: ReturnType<typeof config>): Promise<void> {
+  const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
+    throw new SagaTurnPermanentError('test_poison', 'permanent', {});
+  } });
+  await worker.start();
+  const publisher = await connection.model.createConfirmChannel();
+  await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+    { id: 'poison', partitionId: 'p2', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
+  const dead = await poll(async () => (await connection.channel.get(scope.topology.deadQueue, { noAck: false })) || null, 'dead-letter');
+  expect(dead.properties.messageId).toBe('poison');
+  connection.channel.ack(dead);
+  await worker.stop();
+  await publisher.close();
 }
 
 describe('owned Rabbit 4.1.4 durable topology', () => {
@@ -133,41 +192,13 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     await provisionSagaTopology(scope.topology);
     await inspectWhenReady(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
     expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
-    let resolveProcessing: (() => void) | undefined;
-    let processingStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => { processingStarted = resolve; });
-    const processing = new Promise<void>((resolve) => { resolveProcessing = resolve; });
-    const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
-      processingStarted?.();
-      await processing;
-      return [];
-    } });
-    await worker.start();
-    await poll(async () => (await second.channel.checkQueue(scope.worker.queue.queue)).consumerCount === 1 ? true : null, 'consumer');
-    await started;
-    expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
-    resolveProcessing?.();
-    await worker.stop();
-    expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
-    expect(await second.channel.get(scope.worker.queue.queue, { noAck: true })).toBe(false);
-
-    const permanent = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
-      throw new SagaTurnPermanentError('test_poison', 'permanent', {});
-    } });
-    await permanent.start();
-    const publisher = await second.model.createConfirmChannel();
-    publish(publisher, 'poison', 'p2');
-    await publisher.waitForConfirms();
-    const dead = await poll(async () => (await second.channel.get(scope.topology.deadQueue, { noAck: false })) || null, 'dead-letter');
-    expect(dead.properties.messageId).toBe('poison');
-    second.channel.ack(dead);
-    await permanent.stop();
-    await publisher.close();
+    await processHeldDelivery(second.channel, scope);
+    await deadLetterPoison(second, scope);
     await second.channel.close();
     await second.model.close();
   }, 120_000);
 
-  it.each(['type', 'durability', 'queue-args', 'permission'])('fails closed on %s mismatch without starting consumer', async (mode) => {
+  it.each(['type', 'durability', 'queue-args'])('fails closed on %s mismatch without starting consumer', async (mode) => {
     const { model, channel } = await opened();
     const scoped = config(channel);
     const name = `${prefix}.${mode}`;
@@ -180,20 +211,21 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
     await channel.close();
     await model.close();
     const fresh = await opened();
+    const consume = jest.spyOn(fresh.channel, 'consume');
     const options = config(fresh.channel);
     const topology = mode === 'type' || mode === 'durability' ? { ...options.topology, sourceExchange: name } :
       mode === 'queue-args' ? { ...options.topology, worker: { ...options.worker, queue: { ...options.worker.queue, queue: name } } } : options.topology;
-    if (mode === 'permission') {
-      const restricted = await connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '');
-      const restrictedChannel = await restricted.createChannel();
-      const restrictedOptions = config(restrictedChannel);
-      await expect(provisionSagaTopology(restrictedOptions.topology)).rejects.toThrow('consumer must not start');
-      expect(restrictedOptions.worker.channel).toBe(restrictedChannel);
-      await restricted.close();
-    } else {
-      await expect(provisionSagaTopology(topology)).rejects.toThrow('consumer must not start');
-    }
-    expect(options.worker.channel).toBe(fresh.channel);
+    await expectBrokerRejection(fresh.channel, () => provisionSagaTopology(topology), 406);
+    expect(consume).not.toHaveBeenCalled();
     await fresh.model.close();
+  });
+
+  it('fails closed for restricted-user ACCESS_REFUSED before consumer start', async () => {
+    const restricted = await connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '');
+    const channel = await restricted.createChannel();
+    const consume = jest.spyOn(channel, 'consume');
+    await expectBrokerRejection(channel, () => provisionSagaTopology(config(channel).topology), 403);
+    expect(consume).not.toHaveBeenCalled();
+    await restricted.close();
   });
 });
