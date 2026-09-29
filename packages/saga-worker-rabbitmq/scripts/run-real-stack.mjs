@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { receiptPackageVersions } from './installed-versions.mjs';
 import { assertScenarioEvidence, scenarioHash, selectRealStackSuites } from './real-stack-selection.mjs';
+import { runOwnedChild } from './owned-child-run.mjs';
 
 const MONGO_IMAGE = 'mongo:7.0.16';
 const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const suffix = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
+const suffix = `${Date.now()}-${process.pid}-${process.env.REDEMEINE_REAL_SLICE === 'redemeine-fyp3.5.3.1' ?
+  randomBytes(16).toString('hex') : Math.random().toString(16).slice(2, 8)}`;
 const runId = `wrdf-${suffix}`;
 const resources = {
   network: `${runId}-net`,
@@ -57,6 +60,12 @@ function execute(command, args, options = {}) {
 }
 
 async function docker(args, options = {}) {
+  if (slice === 'redemeine-fyp3.5.3.1') {
+    const result = await runOwnedChild('docker', args, { cwd: root, env: process.env,
+      capture: options.capture ?? true, timeoutMs: args[0] === 'pull' ? 90_000 : 20_000 });
+    if (result.timedOut || result.code !== 0 && !options.allowFailure) throw new Error('owned Docker operation failed or timed out');
+    return result;
+  }
   return execute('docker', args, { ...options, capture: options.capture ?? true });
 }
 
@@ -187,9 +196,7 @@ async function runTests() {
     REDEMEINE_RABBIT_PASSWORD: 'saga_test_password'
   };
   if (slice === 'redemeine-fyp3.5.3.1') env.REDEMEINE_CRASH_RECEIPT = crashReceiptPath;
-  const result = await execute(
-    'pnpm',
-    [
+  const args = [
       'exec',
       'jest',
       '--config',
@@ -200,11 +207,17 @@ async function runTests() {
       jestResultPath,
       '--runTestsByPath',
       ...selection.paths.map((name) => `packages/saga-worker-rabbitmq/integration/${name}`)
-    ],
-    { cwd: root, env, allowFailure: true }
-  );
-  testExitCode = result.code;
-  await collectScenarios();
+    ];
+  let result;
+  try {
+    result = slice === 'redemeine-fyp3.5.3.1' ?
+      await runOwnedChild('pnpm', args, { cwd: root, env, timeoutMs: 125_000 }) :
+      await execute('pnpm', args, { cwd: root, env, allowFailure: true });
+    testExitCode = result.code;
+  } finally {
+    await collectScenarios();
+  }
+  if (result.timedOut) throw new Error('owned Jest group timed out and was killed');
   if (result.code !== 0) throw new Error(`real-stack Jest invocation failed with exit code ${result.code}`);
   assertScenarioEvidence(jestReport, selection.paths);
   if (slice === 'redemeine-fyp3.5.3.1' &&
@@ -250,17 +263,31 @@ async function removeResources() {
     cleanup = { containersRemaining: [], volumesRemaining: [], networksRemaining: [] };
     return;
   }
-  await docker(['rm', '-f', resources.mongo, resources.rabbit], { allowFailure: true });
-  await docker(['volume', 'rm', resources.mongoVolume, resources.rabbitVolume], { allowFailure: true });
-  await docker(['network', 'rm', resources.network], { allowFailure: true });
-  const containers = await docker(['ps', '-a', '--filter', `name=${runId}`, '--format', '{{.Names}}']);
-  const volumes = await docker(['volume', 'ls', '--filter', `name=${runId}`, '--format', '{{.Name}}']);
-  const networks = await docker(['network', 'ls', '--filter', `name=${runId}`, '--format', '{{.Name}}']);
+  const crash = slice === 'redemeine-fyp3.5.3.1';
+  const removals = [
+    ['rm', '-f', resources.mongo, resources.rabbit],
+    ['volume', 'rm', resources.mongoVolume, resources.rabbitVolume],
+    ['network', 'rm', resources.network]
+  ];
+  let removalFailed = false;
+  for (const args of removals) {
+    if (crash) {
+      try { await docker(args, { allowFailure: true }); } catch { removalFailed = true; }
+    } else await docker(args, { allowFailure: true });
+  }
+  const checks = await Promise.allSettled([
+    docker(['ps', '-a', '--filter', `name=${runId}`, '--format', '{{.Names}}']),
+    docker(['volume', 'ls', '--filter', `name=${runId}`, '--format', '{{.Name}}']),
+    docker(['network', 'ls', '--filter', `name=${runId}`, '--format', '{{.Name}}'])
+  ]);
+  if (checks.some(item => item.status !== 'fulfilled')) throw new Error('owned resource absence could not be verified');
+  const [containers, volumes, networks] = checks.map(item => item.value);
   cleanup = {
     containersRemaining: containers.stdout ? containers.stdout.split('\n') : [],
     volumesRemaining: volumes.stdout ? volumes.stdout.split('\n') : [],
     networksRemaining: networks.stdout ? networks.stdout.split('\n') : []
   };
+  if (removalFailed) throw new Error('owned resource removal was inconclusive');
 }
 
 try {
@@ -308,7 +335,8 @@ try {
       },
       null,
       2
-    )}\n`
+    )}\n`,
+    slice === 'redemeine-fyp3.5.3.1' ? { mode: 0o600, signal: AbortSignal.timeout(5_000) } : undefined
   );
   console.log(`Real-stack receipt: ${receiptPath}`);
 }
