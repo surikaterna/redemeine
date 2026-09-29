@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { safeFailure, failureCategory } from './topology-runner-sanitize.mjs';
+import { phaseFromJest } from './topology-phase-report.mjs';
 
 export const RABBIT_IMAGE = 'rabbitmq:4.1.4-management-alpine@sha256:5cbd7145b0306399ad68422c3350b6cbd1bb95704b39f5896480e5b6d4238a04';
 
@@ -90,7 +91,8 @@ export function recordAuditFailure(receipt, phase, error) {
 export function scenarioReport(report) {
   const scenarios = report.testResults.flatMap((suite) => suite.assertionResults.map((test) => ({
     name: [...test.ancestorTitles, test.title].join(' > '), status: test.status,
-    durationMs: test.duration ?? null, failures: test.failureMessages.map(failureCategory)
+    durationMs: test.duration ?? null, failures: test.failureMessages.map(failureCategory),
+    ...(test.status === 'failed' ? { diagnostic: phaseFromJest(test) } : {})
   })));
   const passed = scenarios.filter(({ status }) => status === 'passed').length;
   const failed = scenarios.filter(({ status }) => status !== 'passed').length;

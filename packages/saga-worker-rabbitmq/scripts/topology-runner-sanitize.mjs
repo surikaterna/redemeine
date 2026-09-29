@@ -21,7 +21,8 @@ export function safeFailure(error, phase) {
 const TRUSTED_FIELDS = new Set([
   'issue', 'mode', 'runId', 'image', 'imageId', 'sha', 'sha256', 'scenarioSha', 'startedAt', 'finishedAt',
   'mongodbDriver', 'amqplib', 'dispatcher', 'tapeworm', 'rabbitmq', 'name', 'status', 'kind', 'action', 'id',
-  'health', 'type', 'rawLogPath', 'phase', 'operation', 'summary', 'causeCategory', 'stderrCategory', 'cause'
+  'health', 'type', 'rawLogPath', 'phase', 'operation', 'summary', 'causeCategory', 'stderrCategory', 'cause',
+  'errorClass', 'invariant', 'source'
 ]);
 
 function safeString(text, key) {

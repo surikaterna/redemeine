@@ -18,7 +18,9 @@ test('offline receipt reports names, durations, failures and scenario counts', (
   ] }] }), {
     scenarios: [
       { name: 'topology > ACK', status: 'passed', durationMs: 12, failures: [] },
-      { name: 'topology > NACK', status: 'failed', durationMs: 15, failures: ['redacted-operation-failure'] }
+      { name: 'topology > NACK', status: 'failed', durationMs: 15, failures: ['redacted-operation-failure'],
+        diagnostic: { phase: 'unknown', invariant: 'unknown', errorClass: 'unknown', code: null, replyCode: null,
+          expected: null, actual: null, source: 'integration/topology-real.integration.test.ts', line: 0 } }
     ], counts: { passed: 1, failed: 1, total: 2 }
   });
 });
