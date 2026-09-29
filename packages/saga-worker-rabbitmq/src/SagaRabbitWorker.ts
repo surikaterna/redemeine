@@ -7,6 +7,8 @@ import type {
   SagaRabbitWorkerState
 } from './contracts';
 import { decodeSagaRabbitMessage } from './decodeMessage';
+import { RETRY_INPUT_QUEUE, assertRetryConfiguration, republishFailure, retryAttempt } from './retryDisposition';
+import { verifyRetryBroker } from './retryTopology';
 
 type Settlement = { readonly type: 'ack' } | { readonly type: 'nack'; readonly requeue: boolean };
 
@@ -48,6 +50,11 @@ function assertConfiguration(options: SagaRabbitWorkerOptions): void {
   positiveInteger(limits.maxEvents, 'maxEvents');
   positiveInteger(limits.prefetch, 'prefetch');
   positiveInteger(limits.shutdownTimeoutMs, 'shutdownTimeoutMs');
+  if (options.retry) {
+    assertRetryConfiguration(options.retry);
+    if (queue.queue !== RETRY_INPUT_QUEUE) throw new TypeError('retry requires commit intake queue');
+    if (!Object.is(options.retry.consumerChannel, options.channel)) throw new TypeError('retry close channel must be consumer channel');
+  }
 }
 
 class RabbitSagaWorker implements SagaRabbitWorker {
@@ -58,6 +65,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
   private activeConsumer: { readonly tag: string; readonly generation: number } | null = null;
   private startPromise: Promise<string> | null = null;
   private stopPromise: Promise<void> | null = null;
+  private unsafeClose: Promise<void> | null = null;
 
   constructor(private readonly options: SagaRabbitWorkerOptions) {}
 
@@ -66,6 +74,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
   }
 
   start(): Promise<string> {
+    if (this.unsafeClose) return Promise.reject(new Error('retry worker requires a fresh channel after shutdown'));
     if (this.stateValue === 'running' && this.activeConsumer) return Promise.resolve(this.activeConsumer.tag);
     if (this.stateValue === 'starting' && this.startPromise) return this.startPromise;
     if (this.stateValue === 'stopping' && this.stopPromise) return this.stopPromise.then(() => this.start());
@@ -86,23 +95,31 @@ class RabbitSagaWorker implements SagaRabbitWorker {
 
   stop(): Promise<void> {
     if (this.stateValue === 'stopping' && this.stopPromise) return this.stopPromise;
-    if (this.stateValue === 'stopped') return this.drainInFlight();
+    if (this.stateValue === 'stopped') {
+      return this.options.retry ? this.haltRetry() : this.drainInFlight();
+    }
     const active = this.activeConsumer;
     const starting = this.startPromise;
     this.activeConsumer = null;
     this.stateValue = 'stopping';
     ++this.generation;
+    if (this.options.retry) void this.haltRetry();
     this.stopPromise = this.stopGeneration(active?.tag, starting);
     return this.stopPromise;
   }
 
   async handle(message: ConsumeMessage): Promise<void> {
+    if (this.options.retry) return this.handleRetry(message, this.generation);
     const settlement = await this.determineSettlement(message);
     await this.settle(message, settlement);
   }
 
   private async startGeneration(generation: number): Promise<string> {
     try {
+      if (this.options.retry) {
+        verifyRetryBroker(await this.options.retry.topology.inspect(), this.options.retry.topology);
+        this.requireStarting(generation);
+      }
       await this.declareTopology(generation);
       const reply = await this.options.channel.consume(
         this.options.queue.queue,
@@ -119,6 +136,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
       return reply.consumerTag;
     } catch (error) {
       if (this.isStarting(generation)) this.stateValue = 'stopped';
+      if (this.options.retry) await this.haltRetry();
       throw error;
     }
   }
@@ -142,6 +160,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
   private async stopGeneration(tag: string | undefined, starting: Promise<string> | null): Promise<void> {
     let cancelError: unknown;
     try {
+      if (this.options.retry) await this.haltRetry();
       if (tag) await this.options.channel.cancel(tag);
     } catch (error) {
       cancelError = error;
@@ -179,6 +198,46 @@ class RabbitSagaWorker implements SagaRabbitWorker {
     }
   }
 
+  private async handleRetry(message: ConsumeMessage, generation: number): Promise<void> {
+    const retry = this.options.retry;
+    if (!retry) return;
+    let attempt = 0;
+    let failure: unknown;
+    try {
+      attempt = retryAttempt(message, retry.maxAttempts);
+      const events = decodeSagaRabbitMessage(message, this.options.source, this.options.limits);
+      for (const event of events) await this.options.processEvent(event);
+    } catch (error) {
+      failure = error;
+    }
+    if (failure !== undefined) {
+      try {
+        await republishFailure(retry, message, attempt, failure);
+      } catch (error) {
+        await this.haltRetry();
+        await this.reportSettlementError({ error, message, settlement: 'publish' }, error);
+      }
+    }
+    try {
+      if (generation !== this.generation || this.unsafeClose) return;
+      this.options.channel.ack(message, false);
+    } catch (error) {
+      await this.haltRetry();
+      await this.reportSettlementError({ error, message, settlement: 'ack' }, error);
+    }
+  }
+
+  private haltRetry(): Promise<void> {
+    if (!this.unsafeClose) {
+      this.activeConsumer = null;
+      this.stateValue = 'stopped';
+      ++this.generation;
+      const retry = this.options.retry;
+      this.unsafeClose = retry ? retry.consumerChannel.close().catch(() => undefined) : Promise.resolve();
+    }
+    return this.unsafeClose;
+  }
+
   private settle(message: ConsumeMessage, settlement: Settlement): void | Promise<never> {
     try {
       if (settlement.type === 'ack') this.options.channel.ack(message, false);
@@ -208,6 +267,10 @@ class RabbitSagaWorker implements SagaRabbitWorker {
       return;
     }
     if (!this.acceptsDelivery(generation) || this.inFlight.size >= this.options.limits.prefetch) {
+      if (this.options.retry) {
+        this.trackTask(this.haltRetry());
+        return;
+      }
       const failedSettlement = this.settle(message, { type: 'nack', requeue: true });
       if (failedSettlement) this.trackTask(failedSettlement);
       return;
@@ -235,6 +298,7 @@ class RabbitSagaWorker implements SagaRabbitWorker {
 
   private onBrokerCancellation(generation: number): void {
     if (generation !== this.generation) return;
+    if (this.options.retry) { this.trackTask(this.haltRetry()); return; }
     this.brokerCancelledGeneration = generation;
     this.activeConsumer = null;
     this.stateValue = 'stopped';

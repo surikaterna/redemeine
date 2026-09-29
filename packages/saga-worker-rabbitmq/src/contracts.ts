@@ -7,6 +7,8 @@ import type {
 } from '@redemeine/saga-runtime';
 import { assertIssuedSagaRegistration, processSagaSourceEvent } from '@redemeine/saga-runtime';
 import type { Channel, ConsumeMessage, Options } from 'amqplib';
+import type { SagaConfirmedRepublisher } from './confirmedRepublisher';
+import type { SagaRetryTopology } from './retryTopology';
 
 export type SagaRabbitChannel = Pick<
   Channel,
@@ -51,7 +53,7 @@ export type SagaRabbitWorkerState = 'stopped' | 'starting' | 'running' | 'stoppi
 export interface SagaRabbitSettlementError {
   readonly error: unknown;
   readonly message: ConsumeMessage;
-  readonly settlement: 'ack' | 'nack';
+  readonly settlement: 'ack' | 'nack' | 'publish';
   readonly requeue?: boolean;
 }
 
@@ -64,6 +66,13 @@ export interface SagaRabbitWorkerOptions {
   readonly limits: SagaRabbitWorkerLimits;
   readonly processEvent: SagaSourceEventProcessor;
   readonly onSettlementError: (failure: SagaRabbitSettlementError) => void | Promise<void>;
+  /** Explicit opt-in. A fresh channel and publisher are required on each restart. */
+  readonly retry?: {
+    readonly maxAttempts: number;
+    readonly topology: SagaRetryTopology;
+    readonly publisher: SagaConfirmedRepublisher;
+    readonly consumerChannel: SagaRabbitChannel & Pick<Channel, 'close'>;
+  };
 }
 
 export interface SagaRabbitWorker {
