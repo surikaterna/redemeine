@@ -47,6 +47,11 @@ test('sanitizer bounds unexpected free text and categorizes app readiness withou
   assert.equal(candidate.arbitrary, '[REDACTED]');
   assert.equal(candidate.image.startsWith('rabbitmq:'), true);
   assert.equal(sanitizeReceipt({ unexpected: 'unmarked-private-value' }).unexpected, '[REDACTED]');
+  const diagnostics = sanitizeReceipt({ restartDiagnostics: { logs: { categories: ['startup', 'Basic dXNlcjpwYXNz'] } },
+    restartFinalAppCheck: { status: 'timeout', lastCategory: 'redacted-operation-failure', raw: credentials[0] } });
+  assert.deepEqual(diagnostics.restartDiagnostics.logs.categories, ['startup', '[REDACTED]']);
+  assert.equal(diagnostics.restartFinalAppCheck.raw, '[REDACTED]');
+  assert.doesNotMatch(JSON.stringify(diagnostics), /dXNlcjpwYXNz|topology_restricted_password/);
 });
 
 test('active runner console output exposes only receipt location or fixed failure text', () => {

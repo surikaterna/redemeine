@@ -46,7 +46,7 @@ export async function waitForRabbit(docker, runner, ownership, receipt, { deadli
   const readiness = { attempts: 0, lastProbe: null, ping: null, application: null, status: 'waiting' };
   receipt.readiness = readiness;
   try {
-    await waitForRabbitApp({ probe: (command, timeoutMs) => probe(docker, ownership.names.container, command, timeoutMs),
+    await waitForRabbitApp({ probe: (command, timeoutMs) => probe(docker, ownership.ids.container, command, timeoutMs),
       isExited: () => containerExited(docker, ownership), interrupted: () => runner.interrupted,
       onAttempt: () => { readiness.attempts++; }, onProbe: (command, result) => {
         readiness.lastProbe = result.summary;

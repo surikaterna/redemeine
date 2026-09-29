@@ -7,13 +7,18 @@ describe('negative-case broker gate after restart', () => {
     const sequence: string[] = [];
     await expect(gate.afterRestart(async () => { sequence.push('restart'); },
       async () => { sequence.push('app-ready'); },
-      async () => { sequence.push('amqp-failed'); throw new Error('amqp://user:pass@host unavailable'); }))
-      .rejects.toThrow('amqp://user:pass@host unavailable');
+      async () => { sequence.push('amqp-failed'); const failure = Object.assign(new Error('amqp://user:pass@host'), { code: 'ECONNREFUSED' });
+        gate.recordAmqpFailure(failure); throw failure; }))
+      .rejects.toMatchObject({ message: 'broker restart unavailable', restartEvidence: {
+        restartSubphase: 'amqp-connect', restartDocker: true, restartApp: true, restartAmqp: false,
+        amqpErrorClass: 'ECONNREFUSED', amqpCode: null
+      } });
     const check = jest.fn(async () => { sequence.push('negative-check'); });
     await expect(phaseStep('mismatch-setup', 'broker-available', () => gate.beforeNegative(check)))
       .rejects.toThrow(PHASE_MARKER);
     expect(check).not.toHaveBeenCalled();
     expect(sequence).toEqual(['restart', 'app-ready', 'amqp-failed']);
+    expect(gate.evidence.amqpErrorClass).toBe('ECONNREFUSED');
   });
 
   it('fails closed before negative setup if the app becomes unavailable', async () => {
@@ -22,5 +27,27 @@ describe('negative-case broker gate after restart', () => {
     const setup = jest.fn(async () => undefined);
     await expect(gate.beforeNegative(setup)).rejects.toBeInstanceOf(BrokerUnavailableError);
     expect(setup).not.toHaveBeenCalled();
+  });
+
+  it('records the app-ready subphase when restart succeeds but app does not start', async () => {
+    const gate = new BrokerGate();
+    await expect(gate.afterRestart(async () => undefined, async () => { throw new Error('app deadline'); },
+      async () => { throw new Error('must not attempt AMQP'); })).rejects.toMatchObject({
+      restartEvidence: { restartSubphase: 'app-ready', restartDocker: true, restartApp: false, restartAmqp: false }
+    });
+    await expect(gate.beforeNegative(async () => undefined)).rejects.toBeInstanceOf(BrokerUnavailableError);
+  });
+
+  it.each([
+    ['ETIMEDOUT', Object.assign(new Error('amqp://user:pass@host timed out'), { code: 'ETIMEDOUT' }), null],
+    ['ACCESS_REFUSED', Object.assign(new Error('Basic auth'), { code: 403 }), 403],
+    ['auth-failure', new Error('login authentication failed amqp://user:pass@host'), null],
+    ['channel-close', new Error('channel closed Basic private'), null]
+  ])('allowlists %s without keeping AMQP credentials', (expected, error, code) => {
+    const gate = new BrokerGate();
+    gate.recordAmqpFailure(error);
+    expect(gate.evidence.amqpErrorClass).toBe(expected);
+    expect(gate.evidence.amqpCode).toBe(code);
+    expect(JSON.stringify(gate.evidence)).not.toMatch(/user:pass|Basic|private/);
   });
 });

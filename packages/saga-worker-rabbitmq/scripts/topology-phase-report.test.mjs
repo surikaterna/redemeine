@@ -49,3 +49,15 @@ test('blocked negative cases retain blocked_on_broker_unavailable without claimi
   assert.deepEqual(diagnostic, data);
   assert.equal(diagnostic.code, null);
 });
+
+test('failed restart and blocked negatives share fixed allowlisted restart gate without secrets', () => {
+  const evidence = { restartSubphase: 'amqp-connect', restartDocker: true, restartApp: true,
+    restartAmqp: false, amqpErrorClass: 'ACCESS_REFUSED', amqpCode: 403 };
+  const restart = { ...diagnostic('broker-restart', 'operation', null, null, null),
+    invariant: 'same-volume-restarted', ...evidence };
+  const blocked = { ...diagnostic('mismatch-setup', 'blocked_on_broker_unavailable', null, null, null),
+    invariant: 'broker-available', ...evidence };
+  assert.deepEqual(phaseFromJest({ failureMessages: [`Basic c2VjcmV0 ${marker(restart)}`] }), restart);
+  assert.deepEqual(phaseFromJest({ failureMessages: [marker(blocked)] }), blocked);
+  assert.equal(phaseFromJest({ failureMessages: [marker({ ...restart, amqpErrorClass: 'Basic c2VjcmV0' })] }).phase, 'unknown');
+});

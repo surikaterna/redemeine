@@ -15,15 +15,24 @@ export type Invariant = (typeof INVARIANTS)[number];
 export const PHASE_MARKER = 'REDEMEINE_TOPOLOGY_PHASE:';
 const SOURCE = 'integration/topology-real.integration.test.ts';
 
+export interface RestartEvidence {
+  readonly restartSubphase: 'docker-restart' | 'app-ready' | 'amqp-connect';
+  readonly restartDocker: boolean;
+  readonly restartApp: boolean;
+  readonly restartAmqp: boolean;
+  readonly amqpErrorClass: 'none' | 'ECONNREFUSED' | 'ETIMEDOUT' | 'ACCESS_REFUSED' | 'auth-failure' | 'channel-close' | 'unknown';
+  readonly amqpCode: number | null;
+}
+
 export class SafePhaseError extends Error {
-  constructor(details: Record<string, string | number | null>) {
+  constructor(details: Record<string, string | number | boolean | null>) {
     super(`${PHASE_MARKER}${Buffer.from(JSON.stringify(details)).toString('base64url')}`);
     this.name = 'SafePhaseError';
   }
 }
 
 export class BrokerUnavailableError extends Error {
-  constructor() {
+  constructor(readonly restartEvidence?: RestartEvidence) {
     super('broker unavailable for isolated negative case');
     this.name = 'BrokerUnavailableError';
   }
@@ -46,6 +55,7 @@ function replyCode(error: unknown, depth = 0): number | null {
 function errorClass(error: unknown): string {
   const value = record(error);
   if (value?.name === 'BrokerUnavailableError') return 'blocked_on_broker_unavailable';
+  if (value?.name === 'BrokerRestartTimeoutError') return 'timeout';
   const message = value?.message;
   if (typeof message === 'string' && /timed out|timeout/i.test(message)) return 'timeout';
   if (replyCode(error) !== null) return 'broker-reply';
@@ -62,9 +72,17 @@ function sourceLine(error: unknown): number {
 export function safePhaseFailure(phase: Phase, invariant: Invariant, error: unknown): SafePhaseError {
   const value = record(error);
   const matcher = record(value?.matcherResult);
+  const restart = record(value?.restartEvidence);
+  const restartFields = restart && ['docker-restart', 'app-ready', 'amqp-connect'].includes(String(restart.restartSubphase)) ? {
+    restartSubphase: String(restart.restartSubphase), restartDocker: Boolean(restart.restartDocker),
+    restartApp: Boolean(restart.restartApp), restartAmqp: Boolean(restart.restartAmqp),
+    amqpErrorClass: ['none', 'ECONNREFUSED', 'ETIMEDOUT', 'ACCESS_REFUSED', 'auth-failure', 'channel-close', 'unknown']
+      .includes(String(restart.amqpErrorClass)) ? String(restart.amqpErrorClass) : 'unknown',
+    amqpCode: restart.amqpCode === 403 ? 403 : null
+  } : {};
   return new SafePhaseError({ phase, invariant, errorClass: errorClass(error), code: replyCode(error),
     replyCode: numeric(value?.replyCode), expected: numeric(value?.expectedCode) ?? numeric(matcher?.expected),
-    actual: numeric(value?.actualCode) ?? numeric(matcher?.actual), source: SOURCE, line: sourceLine(error) });
+    actual: numeric(value?.actualCode) ?? numeric(matcher?.actual), source: SOURCE, line: sourceLine(error), ...restartFields });
 }
 
 export async function phaseStep<T>(phase: Phase, invariant: Invariant, action: () => Promise<T>): Promise<T> {

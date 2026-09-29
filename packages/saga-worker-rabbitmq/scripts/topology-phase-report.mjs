@@ -11,6 +11,8 @@ const INVARIANTS = new Set([
   'dead-letter-visible', 'declaration-conflict', 'reply-code-406', 'restricted-channel', 'reply-code-403', 'broker-available'
 ]);
 const CLASSES = new Set(['timeout', 'broker-reply', 'assertion', 'operation', 'blocked_on_broker_unavailable']);
+const SUBPHASES = new Set(['docker-restart', 'app-ready', 'amqp-connect']);
+const AMQP_CLASSES = new Set(['none', 'ECONNREFUSED', 'ETIMEDOUT', 'ACCESS_REFUSED', 'auth-failure', 'channel-close', 'unknown']);
 const UNKNOWN = Object.freeze({ phase: 'unknown', invariant: 'unknown', errorClass: 'unknown', code: null,
   replyCode: null, expected: null, actual: null, source: SOURCE, line: 0 });
 
@@ -21,9 +23,21 @@ function safeNumber(value) {
 function validated(value) {
   if (!value || typeof value !== 'object' || !PHASES.has(value.phase) || !INVARIANTS.has(value.invariant) ||
       !CLASSES.has(value.errorClass) || value.source !== SOURCE || !Number.isSafeInteger(value.line) || value.line <= 0) return UNKNOWN;
+  const restart = value.restartSubphase === undefined ? {} : validatedRestart(value);
+  if (restart === null) return UNKNOWN;
   return { phase: value.phase, invariant: value.invariant, errorClass: value.errorClass,
     code: safeNumber(value.code), replyCode: safeNumber(value.replyCode), expected: safeNumber(value.expected),
-    actual: safeNumber(value.actual), source: SOURCE, line: value.line };
+    actual: safeNumber(value.actual), source: SOURCE, line: value.line, ...restart };
+}
+
+function validatedRestart(value) {
+  if (!SUBPHASES.has(value.restartSubphase) || !AMQP_CLASSES.has(value.amqpErrorClass) ||
+      !['restartDocker', 'restartApp', 'restartAmqp'].every((name) => typeof value[name] === 'boolean') ||
+      (value.amqpCode !== null && value.amqpCode !== 403) ||
+      !['broker-restart', 'mismatch-setup', 'restricted-user-setup'].includes(value.phase)) return null;
+  return { restartSubphase: value.restartSubphase, restartDocker: value.restartDocker,
+    restartApp: value.restartApp, restartAmqp: value.restartAmqp, amqpErrorClass: value.amqpErrorClass,
+    amqpCode: safeNumber(value.amqpCode) };
 }
 
 export function phaseFromJest(assertion) {

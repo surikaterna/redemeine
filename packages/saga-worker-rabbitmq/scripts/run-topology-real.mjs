@@ -85,6 +85,12 @@ async function main() {
       catch (diagnosticError) {
         receipt.restartDiagnostics = { status: 'capture-failed', details: redactDiagnostic(String(diagnosticError)) };
       }
+      const check = {};
+      if (receipt.restartDiagnostics.status === 'verified-owner') {
+        try { await waitForRabbit(docker, runner, ownership, check, { deadlineMs: 5_000, probeMs: 5_000, delayMs: 100 }); }
+        catch { /* A diagnostic check never changes the first scenario failure. */ }
+      }
+      receipt.restartFinalAppCheck = check.readiness ?? { status: 'unverified-owner' };
     }
   } finally {
     try {

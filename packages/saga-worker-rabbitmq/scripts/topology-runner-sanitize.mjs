@@ -22,10 +22,13 @@ const TRUSTED_FIELDS = new Set([
   'issue', 'mode', 'runId', 'image', 'imageId', 'sha', 'sha256', 'scenarioSha', 'startedAt', 'finishedAt',
   'mongodbDriver', 'amqplib', 'dispatcher', 'tapeworm', 'rabbitmq', 'name', 'status', 'kind', 'action', 'id',
   'health', 'type', 'rawLogPath', 'phase', 'operation', 'summary', 'causeCategory', 'stderrCategory', 'cause',
-  'errorClass', 'invariant', 'source'
+  'errorClass', 'invariant', 'source', 'restartSubphase', 'amqpErrorClass'
 ]);
+const SAFE_CATEGORIES = new Set(['connection-refused', 'node-unavailable', 'timeout', 'boot-failure',
+  'error', 'warning', 'startup', 'other-redacted']);
 
 function safeString(text, key) {
+  if (key === 'categories') return SAFE_CATEGORIES.has(text) ? text : '[REDACTED]';
   if (['failure', 'failures', 'failureMessages', 'error', 'stderr', 'stdout'].includes(key) || key.endsWith('Error')) {
     return failureCategory(text);
   }

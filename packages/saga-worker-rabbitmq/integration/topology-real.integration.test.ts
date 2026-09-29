@@ -5,6 +5,7 @@ import { createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOpt
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
 import { phaseStep } from './topologyPhase';
 import { BrokerGate, waitForOwnedRabbitApp } from './rabbitAppReady';
+import { waitForAmqpAfterRestart } from './amqpRestartProbe';
 
 const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
@@ -111,16 +112,8 @@ async function restart(): Promise<void> {
   await brokerGate.afterRestart(async () => {
     const result = spawnSync('docker', ['restart', container], { encoding: 'utf8', timeout: 90_000 });
     if (result.status !== 0) throw new Error('owned Rabbit restart failed');
-  }, () => waitForOwnedRabbitApp(container, 90_000), async () => {
-    await poll(async () => {
-      try {
-        const connection = await opened();
-        await connection.channel.close();
-        await connection.model.close();
-        return true;
-      } catch { return null; }
-    }, 'Rabbit restart');
-  });
+  }, () => waitForOwnedRabbitApp(container, 90_000), () =>
+    waitForAmqpAfterRestart(url, (error) => brokerGate.recordAmqpFailure(error)));
 }
 
 async function requireBrokerForNegative(): Promise<void> {
