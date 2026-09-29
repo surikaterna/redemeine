@@ -3,6 +3,7 @@ import { connect, type Channel, type ChannelModel } from 'amqplib';
 import { SagaTurnPermanentError } from '@redemeine/saga-runtime';
 import { createSagaRabbitWorker, provisionSagaTopology, type SagaRabbitWorkerOptions } from '../src/index';
 import { expectBrokerRejection, publishConfirmedCommit } from './topologyAudit';
+import { phaseStep } from './topologyPhase';
 
 const url = process.env.REDEMEINE_TOPOLOGY_URL ?? '';
 const container = process.env.REDEMEINE_TOPOLOGY_CONTAINER ?? '';
@@ -120,20 +121,31 @@ async function restart(): Promise<void> {
 }
 
 async function publishBeforeRestart(): Promise<void> {
-  const first = await opened();
+  const first = await phaseStep('setup-topology', 'declared-and-bound', async () => {
+    const openedChannel = await opened();
+    const { topology } = config(openedChannel.channel);
+    await provisionSagaTopology(topology);
+    await provisionSagaTopology(topology);
+    return openedChannel;
+  });
   const { topology } = config(first.channel);
-  await provisionSagaTopology(topology);
-  await provisionSagaTopology(topology);
-  await inspectWhenReady(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue);
-  const pub = await first.model.createConfirmChannel();
-  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'kept', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
-  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-partition', partitionId: 'p3', collection: 'tw_source_commits', tenant: 'tenant-a' }, true);
-  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-tenant', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-b' }, true);
-  await publishConfirmedCommit(pub, topology.sourceExchange, { id: 'wrong-collection', partitionId: 'p1', collection: 'other', tenant: 'tenant-a' }, true);
-  expect((await first.channel.checkQueue(topology.worker.queue.queue)).messageCount).toBe(1);
-  await pub.close();
-  await first.channel.close();
-  await first.model.close();
+  await phaseStep('inspect-topology', 'broker-inspected', () =>
+    inspectWhenReady(topology.sourceExchange, topology.worker.queue.queue, topology.deadQueue));
+  const pub = await phaseStep('publish-routed', 'routed-confirmed', () => first.model.createConfirmChannel());
+  await phaseStep('publish-routed', 'routed-confirmed', () => publishConfirmedCommit(pub, topology.sourceExchange,
+    { id: 'kept', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-a' }, false));
+  await phaseStep('publish-wrong-partition', 'mandatory-return', () => publishConfirmedCommit(pub, topology.sourceExchange,
+    { id: 'wrong-partition', partitionId: 'p3', collection: 'tw_source_commits', tenant: 'tenant-a' }, true));
+  await phaseStep('publish-wrong-tenant', 'mandatory-return', () => publishConfirmedCommit(pub, topology.sourceExchange,
+    { id: 'wrong-tenant', partitionId: 'p1', collection: 'tw_source_commits', tenant: 'tenant-b' }, true));
+  await phaseStep('publish-wrong-collection', 'mandatory-return', () => publishConfirmedCommit(pub, topology.sourceExchange,
+    { id: 'wrong-collection', partitionId: 'p1', collection: 'other', tenant: 'tenant-a' }, true));
+  await phaseStep('publish-routed', 'queue-ready-one', async () => {
+    expect((await first.channel.checkQueue(topology.worker.queue.queue)).messageCount).toBe(1);
+    await pub.close();
+    await first.channel.close();
+    await first.model.close();
+  });
 }
 
 async function processHeldDelivery(channel: Channel, scope: ReturnType<typeof config>): Promise<void> {
@@ -148,34 +160,40 @@ async function processHeldDelivery(channel: Channel, scope: ReturnType<typeof co
     await barrier;
     return [];
   } });
-  await worker.start();
-  await started;
-  await waitForCounts(scope.worker.queue.queue, 0, 1);
-  expect(processed).toBe(1);
-  const before = await management(`/api/queues/%2F/${encodeURIComponent(scope.worker.queue.queue)}`);
-  expect(before).not.toMatchObject({ message_stats: { ack: 1 } });
-  release?.();
-  await worker.stop();
-  await waitForCounts(scope.worker.queue.queue, 0, 0);
-  await waitForOneAck(scope.worker.queue.queue);
-  expect(processed).toBe(1);
-  expect((await channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
-  expect(await channel.get(scope.worker.queue.queue, { noAck: true })).toBe(false);
+  await phaseStep('held-unack', 'held-unack-one', async () => {
+    await worker.start();
+    await started;
+    await waitForCounts(scope.worker.queue.queue, 0, 1);
+    expect(processed).toBe(1);
+    const before = await management(`/api/queues/%2F/${encodeURIComponent(scope.worker.queue.queue)}`);
+    expect(before).not.toMatchObject({ message_stats: { ack: 1 } });
+  });
+  await phaseStep('ack-settlement', 'queue-acked-zero', async () => {
+    release?.();
+    await worker.stop();
+    await waitForCounts(scope.worker.queue.queue, 0, 0);
+    await waitForOneAck(scope.worker.queue.queue);
+    expect(processed).toBe(1);
+    expect((await channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(0);
+    expect(await channel.get(scope.worker.queue.queue, { noAck: true })).toBe(false);
+  });
 }
 
 async function deadLetterPoison(connection: Awaited<ReturnType<typeof opened>>, scope: ReturnType<typeof config>): Promise<void> {
-  const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
-    throw new SagaTurnPermanentError('test_poison', 'permanent', {});
-  } });
-  await worker.start();
-  const publisher = await connection.model.createConfirmChannel();
-  await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
-    { id: 'poison', partitionId: 'p2', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
-  const dead = await poll(async () => (await connection.channel.get(scope.topology.deadQueue, { noAck: false })) || null, 'dead-letter');
-  expect(dead.properties.messageId).toBe('poison');
-  connection.channel.ack(dead);
-  await worker.stop();
-  await publisher.close();
+  await phaseStep('dead-letter', 'dead-letter-visible', async () => {
+    const worker = createSagaRabbitWorker({ ...scope.worker, processEvent: async () => {
+      throw new SagaTurnPermanentError('test_poison', 'permanent', {});
+    } });
+    await worker.start();
+    const publisher = await connection.model.createConfirmChannel();
+    await publishConfirmedCommit(publisher, scope.topology.sourceExchange,
+      { id: 'poison', partitionId: 'p2', collection: 'tw_source_commits', tenant: 'tenant-a' }, false);
+    const dead = await poll(async () => (await connection.channel.get(scope.topology.deadQueue, { noAck: false })) || null, 'dead-letter');
+    expect(dead.properties.messageId).toBe('poison');
+    connection.channel.ack(dead);
+    await worker.stop();
+    await publisher.close();
+  });
 }
 
 describe('owned Rabbit 4.1.4 durable topology', () => {
@@ -185,47 +203,63 @@ describe('owned Rabbit 4.1.4 durable topology', () => {
 
   it('reconnects idempotently after broker restart, routes exact headers, ACKs and dead-letters permanent failure', async () => {
     await publishBeforeRestart();
-    await restart();
+    await phaseStep('broker-restart', 'same-volume-restarted', restart);
 
-    const second = await opened();
-    const scope = config(second.channel);
-    await provisionSagaTopology(scope.topology);
-    await inspectWhenReady(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
-    expect((await second.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
+    const second = await phaseStep('restore-topology', 'queue-retained-one', async () => {
+      const connection = await opened();
+      const scope = config(connection.channel);
+      await provisionSagaTopology(scope.topology);
+      await inspectWhenReady(scope.topology.sourceExchange, scope.worker.queue.queue, scope.topology.deadQueue);
+      expect((await connection.channel.checkQueue(scope.worker.queue.queue)).messageCount).toBe(1);
+      return connection;
+    });
+    const scope = await phaseStep('restore-topology', 'queue-retained-one', async () => config(second.channel));
     await processHeldDelivery(second.channel, scope);
     await deadLetterPoison(second, scope);
-    await second.channel.close();
-    await second.model.close();
+    await phaseStep('dead-letter', 'dead-letter-visible', async () => {
+      await second.channel.close();
+      await second.model.close();
+    });
   }, 120_000);
 
   it.each(['type', 'durability', 'queue-args'])('fails closed on %s mismatch without starting consumer', async (mode) => {
-    const { model, channel } = await opened();
-    const scoped = config(channel);
-    const name = `${prefix}.${mode}`;
-    if (mode === 'type') await channel.assertExchange(name, 'fanout', { durable: true });
-    if (mode === 'durability') await channel.assertExchange(name, 'headers', { durable: false });
-    if (mode === 'queue-args') {
-      await channel.assertExchange(scoped.topology.sourceExchange, 'headers', { durable: true });
-      await channel.assertQueue(name, { durable: true, arguments: { 'x-message-ttl': 1000 } });
-    }
-    await channel.close();
-    await model.close();
-    const fresh = await opened();
-    const consume = jest.spyOn(fresh.channel, 'consume');
-    const options = config(fresh.channel);
-    const topology = mode === 'type' || mode === 'durability' ? { ...options.topology, sourceExchange: name } :
-      mode === 'queue-args' ? { ...options.topology, worker: { ...options.worker, queue: { ...options.worker.queue, queue: name } } } : options.topology;
-    await expectBrokerRejection(fresh.channel, () => provisionSagaTopology(topology), 406);
-    expect(consume).not.toHaveBeenCalled();
-    await fresh.model.close();
+    const { fresh, topology, consume } = await phaseStep('mismatch-setup', 'declaration-conflict', async () => {
+      const { model, channel } = await opened();
+      const scoped = config(channel);
+      const name = `${prefix}.${mode}`;
+      if (mode === 'type') await channel.assertExchange(name, 'fanout', { durable: true });
+      if (mode === 'durability') await channel.assertExchange(name, 'headers', { durable: false });
+      if (mode === 'queue-args') {
+        await channel.assertExchange(scoped.topology.sourceExchange, 'headers', { durable: true });
+        await channel.assertQueue(name, { durable: true, arguments: { 'x-message-ttl': 1000 } });
+      }
+      await channel.close();
+      await model.close();
+      const fresh = await opened();
+      const consume = jest.spyOn(fresh.channel, 'consume');
+      const options = config(fresh.channel);
+      const topology = mode === 'type' || mode === 'durability' ? { ...options.topology, sourceExchange: name } :
+        mode === 'queue-args' ? { ...options.topology, worker: { ...options.worker, queue: { ...options.worker.queue, queue: name } } } : options.topology;
+      return { fresh, topology, consume };
+    });
+    await phaseStep('mismatch-reply-406', 'reply-code-406', async () => {
+      await expectBrokerRejection(fresh.channel, () => provisionSagaTopology(topology), 406);
+      expect(consume).not.toHaveBeenCalled();
+      await fresh.model.close();
+    });
   });
 
   it('fails closed for restricted-user ACCESS_REFUSED before consumer start', async () => {
-    const restricted = await connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? '');
-    const channel = await restricted.createChannel();
-    const consume = jest.spyOn(channel, 'consume');
-    await expectBrokerRejection(channel, () => provisionSagaTopology(config(channel).topology), 403);
-    expect(consume).not.toHaveBeenCalled();
-    await restricted.close();
+    const restricted = await phaseStep('restricted-user-setup', 'restricted-channel', () =>
+      connect(process.env.REDEMEINE_TOPOLOGY_RESTRICTED_URL ?? ''));
+    const { channel, consume } = await phaseStep('restricted-user-setup', 'restricted-channel', async () => {
+      const channel = await restricted.createChannel();
+      return { channel, consume: jest.spyOn(channel, 'consume') };
+    });
+    await phaseStep('restricted-reply-403', 'reply-code-403', async () => {
+      await expectBrokerRejection(channel, () => provisionSagaTopology(config(channel).topology), 403);
+      expect(consume).not.toHaveBeenCalled();
+      await restricted.close();
+    });
   });
 });

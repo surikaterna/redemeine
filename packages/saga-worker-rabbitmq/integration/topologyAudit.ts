@@ -52,7 +52,9 @@ export async function expectBrokerRejection(channel: Pick<Channel, 'on' | 'off'>
       rejected = error;
     }
     if (brokerCode(rejected) !== expectedCode || emitted.length !== 1 || brokerCode(emitted[0]) !== expectedCode) {
-      throw new Error(`expected broker reply code ${expectedCode} in rejection and channel error; got ${String(brokerCode(rejected))}/${emitted.map(brokerCode).join(',')}`);
+      throw Object.assign(new Error('broker reply mismatch'), {
+        expectedCode, actualCode: brokerCode(rejected) ?? null, replyCode: brokerCode(emitted[0]) ?? null
+      });
     }
   } finally {
     channel.off('error', onError);

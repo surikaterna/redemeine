@@ -36,7 +36,9 @@ describe('offline topology audit observers', () => {
     await expectBrokerRejection(channel, rejectWith(406), 406);
     await expectBrokerRejection(channel, rejectWith(403), 403);
     expect(channel.listenerCount('error')).toBe(0);
-    await expect(expectBrokerRejection(channel, rejectWith(406), 403)).rejects.toThrow('expected broker reply code 403');
+    await expect(expectBrokerRejection(channel, rejectWith(406), 403)).rejects.toMatchObject({
+      message: 'broker reply mismatch', expectedCode: 403, actualCode: 406, replyCode: 406
+    });
     expect(channel.listenerCount('error')).toBe(0);
   });
 });
