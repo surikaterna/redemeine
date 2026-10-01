@@ -11,7 +11,7 @@ export function parseArgs(argv: string[]) {
   const name = args[1];
   const options: Record<string, string | boolean> = {};
 
-  for (let i = 2; i < args.length; i++) {
+  for (let i = command === 'extract-schemas' ? 1 : 2; i < args.length; i++) {
     if (args[i].startsWith('--')) {
       const key = args[i].replace('--', '');
       const next = args[i + 1];
