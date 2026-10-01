@@ -1,5 +1,8 @@
 # Projection business-state schemas
 
+For multiple aggregate/projection definitions and four name-keyed Maps, see
+[schema registry generation](./schema-registry-generation.md).
+
 Generate schemas from an exported **built** projection's resolved `initialState`
 factory return type, without executing the projection:
 

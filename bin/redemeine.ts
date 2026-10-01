@@ -2,6 +2,7 @@
 
 import { colors, parseArgs } from '../src/cli/utils';
 import { extractSchemasCommand } from '../src/cli/extractSchemasCommand';
+import { extractSchemaRegistriesCommand } from '../src/cli/extractSchemaRegistriesCommand';
 import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from '../src/cli/templates';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -215,16 +216,26 @@ async function extractSchemas(options: Record<string, string | boolean>) {
 
 async function main() {
   const { command, name, options } = parseArgs(process.argv);
+  const help = 'Available commands: init <name>, add-entity <name> --to <aggregateName>, extract-schemas --entry <path> --export <name> --out <path>, extract-schema-registries --manifest <path> --out <path>';
+  if (command === 'help') {
+    console.log(colors.cyan(help));
+    return;
+  }
 
-  if (command !== 'help' && !['init', 'add-entity', 'extract-schemas'].includes(command)) {
+  if (command !== 'help' && !['init', 'add-entity', 'extract-schemas', 'extract-schema-registries'].includes(command)) {
     console.log(colors.red(`Unknown command: ${command || '<empty>'}`));
-    console.log(colors.cyan('Available commands: init <name>, add-entity <name> --to <aggregateName>, extract-schemas --entry <path> --export <name> --out <path>'));
+    console.log(colors.cyan(help));
     process.exit(1);
   }
 
   // extract-schemas does not need preFlightCheck
   if (command === 'extract-schemas') {
     await extractSchemas(options);
+    return;
+  }
+  if (command === 'extract-schema-registries') {
+    extractSchemaRegistriesCommand(options);
+    console.log(colors.green(`Schema registries written to ${options.out}`));
     return;
   }
 
