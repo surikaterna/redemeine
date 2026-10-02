@@ -1,0 +1,27 @@
+{
+  "name": "@redemeine/cli",
+  "version": "0.1.0",
+  "description": "Domain scaffolding and compiler-only schema extraction for Redemeine",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "redemeine": "./dist/bin.js" },
+  "exports": {
+    ".": { "types": "./dist/reflector.d.ts", "import": "./dist/reflector.js" },
+    "./reflector": { "types": "./dist/reflector.d.ts", "import": "./dist/reflector.js" }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/cli/test",
+    "test:packed": "node test/packedSmoke.mjs",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@redemeine/kernel": "0.2.0-pre.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": { "@types/node": "^24.13.2", "tsup": "^8.5.1" }
+}
