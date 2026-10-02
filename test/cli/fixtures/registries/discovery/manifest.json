@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "tsconfig": "./tsconfig.json",
+  "discover": [
+    { "kind": "aggregate", "entry": "./mixed.ts" },
+    { "kind": "projection", "entry": "./mixed.ts", "names": {
+      "publicView": "public", "runtimeView": "runtime", "publicCommit": "public-commit",
+      "runtimeCommit": "runtime-commit", "mirror": "mirror", "annotation": "annotation", "cast": "cast"
+    } }
+  ]
+}
