@@ -45,13 +45,13 @@ export function generateOutput(
 
     output += 'export const commandSchemas = {\n';
     for (const [name, zodCode] of commandEntries) {
-        output += `  ${name}: ${zodCode},\n`;
+        output += `  [${JSON.stringify(name)}]: ${zodCode},\n`;
     }
     output += '} as const;\n\n';
 
     output += 'export const eventSchemas = {\n';
     for (const [name, zodCode] of eventEntries) {
-        output += `  ${name}: ${zodCode},\n`;
+        output += `  [${JSON.stringify(name)}]: ${zodCode},\n`;
     }
     output += '} as const;\n\n';
 

@@ -1,4 +1,5 @@
 import * as ts from 'typescript';
+import { existingSchemaImport } from './schemaImport';
 
 /**
  * Converts TypeScript types to Zod schema source code strings.
@@ -15,7 +16,8 @@ export class TypeToZodConverter {
         private checker: ts.TypeChecker,
         private program: ts.Program,
         private dateHandling: 'string' | 'date' = 'string',
-        private typeOverrides: Record<string, string> = {}
+        private typeOverrides: Record<string, string> = {},
+        private outFile?: string
     ) {}
 
     convert(type: ts.Type, depth = 0): string {
@@ -71,11 +73,12 @@ export class TypeToZodConverter {
         if (!declarations) return null;
 
         for (const decl of declarations) {
-            const schemaVar = this.detectZodInfer(decl);
-            if (schemaVar) {
-                this.knownSchemas.set(typeName, schemaVar);
-                this.trackImport(schemaVar, decl.getSourceFile());
-                return schemaVar;
+            const query = this.detectZodInfer(decl);
+            if (query) {
+                const schema = existingSchemaImport(this.checker, this.program, query, this.outFile, `_existingSchema${this.imports.size}`);
+                this.knownSchemas.set(typeName, schema.name);
+                this.imports.add(schema.statement);
+                return schema.name;
             }
         }
 
@@ -83,32 +86,20 @@ export class TypeToZodConverter {
     }
 
     /** Detect `z.infer<typeof X>` pattern in a type alias declaration. */
-    private detectZodInfer(decl: ts.Declaration): string | null {
+    private detectZodInfer(decl: ts.Declaration): ts.EntityName | null {
         if (!ts.isTypeAliasDeclaration(decl) || !decl.type) return null;
         if (!ts.isTypeReferenceNode(decl.type)) return null;
 
         const typeRef = decl.type;
+        const reference = this.checker.getSymbolAtLocation(typeRef.typeName);
+        const resolved = reference && (reference.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(reference) : reference);
+        if (!resolved?.declarations?.some(node => /[/\\]zod[/\\]/.test(node.getSourceFile().fileName))) return null;
         if (!typeRef.typeArguments || typeRef.typeArguments.length !== 1) return null;
 
         const typeArg = typeRef.typeArguments[0];
         if (!typeArg || !ts.isTypeQueryNode(typeArg)) return null;
 
-        const exprName = typeArg.exprName;
-        if (ts.isIdentifier(exprName)) return exprName.text;
-        if (ts.isQualifiedName(exprName)) return exprName.right.text;
-        return null;
-    }
-
-    /** Track an import for a schema variable from another source file. */
-    private trackImport(schemaVarName: string, sourceFile: ts.SourceFile): void {
-        const currentFiles = this.program.getRootFileNames();
-        const sourcePath = sourceFile.fileName;
-        const isExternal = !currentFiles.some(f => f === sourcePath);
-        if (isExternal) {
-            this.imports.add(
-                `import { ${schemaVarName} } from '${sourcePath.replace(/\.ts$/, '')}';`
-            );
-        }
+        return typeArg.exprName;
     }
 
     /** Structural (non-named) type conversion. */
@@ -151,7 +142,7 @@ export class TypeToZodConverter {
     }
 
     private convertLiteral(type: ts.Type): string | null {
-        if (type.isStringLiteral()) return `z.literal('${type.value}')`;
+        if (type.isStringLiteral()) return `z.literal(${JSON.stringify(type.value)})`;
         if (type.isNumberLiteral()) return `z.literal(${type.value})`;
         if (type.flags & ts.TypeFlags.BooleanLiteral) {
             const name = this.checker.typeToString(type);
@@ -170,7 +161,7 @@ export class TypeToZodConverter {
         }
 
         if (nonNull.every(t => t.isStringLiteral())) {
-            const vals = nonNull.map(t => `'${(t as ts.StringLiteralType).value}'`);
+            const vals = nonNull.map(t => JSON.stringify((t as ts.StringLiteralType).value));
             const base = `z.enum([${vals.join(', ')}])`;
             return hasNull ? `${base}.nullable()` : base;
         }
@@ -228,7 +219,7 @@ export class TypeToZodConverter {
 
         let zodCode = this.convert(effectiveType, depth + 1);
         if (isOptional) zodCode += '.optional()';
-        return `  ${prop.name}: ${zodCode}`;
+        return `  [${JSON.stringify(prop.name)}]: ${zodCode}`;
     }
 
     private isDateType(type: ts.Type): boolean {

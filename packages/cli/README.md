@@ -14,7 +14,7 @@ Before publication, build and pack this workspace package, install its local
 tarball together with the scoped runtime tarballs, then use the installed bin.
 The repository's `pnpm --filter @redemeine/cli test:packed` exercises that route.
 First build the packages with `pnpm --filter @redemeine/kernel --filter @redemeine/aggregate --filter @redemeine/projection --filter @redemeine/cli build`.
-The packed test prints its retained `/tmp/opencode/standalone-cli-vk7d-*` directory,
+The packed test prints its retained `<os-temp>/opencode/standalone-cli-vk7d-*` directory,
 including tarballs, inventories and the isolated runnable consumer. It uses local
 scoped tarballs and pinned external dependencies, never a registry CLI executable.
 
@@ -40,6 +40,28 @@ Use Zod 4 and strict TypeScript. Generated tests explicitly import Vitest; adapt
 those imports manually if your project uses Jest. Keep the builder export
 `ordersAggregate` for composition and built export `orders` for discovery.
 Compiler-only extraction does not execute application source.
+Scaffold preflight checks dependency presence, not installed version ranges: it
+prints the Zod 4 requirement but never silently upgrades an existing Zod 3 entry.
+Upgrade incompatible project dependencies explicitly before compiling the scaffold.
+
+`describeContract` accepts compatible independent Zod 4 installations (Zod's
+trait-based instance check supports this); Zod 3 and non-Zod values are unsupported.
+Command/event keys, including `__proto__`, are preserved as own data properties.
+`generateSchemaFiles` prevalidates all requested filenames before creating output:
+individual names cannot be empty, dot segments, paths, drive names, or contain
+control characters. Duplicate destinations, symlinks and hard-linked existing
+files are refused. `aggregateName` is metadata/prefix matching, not a filename.
+Bundle-only generation still supports names unsuitable for individual files.
+Validation is not a transaction or protection against concurrent filesystem changes.
+
+Legacy `extractZodSchemas` reuses a recognized `z.infer` schema only through its
+exported value: public dependency imports retain their module specifier, and local
+source imports are relative to the generated file. Private/unroutable schema values
+fail before output writes; export the value or supply `typeOverrides`. It never
+emits dependency implementation paths. When TypeScript erases alias metadata,
+the existing structural conversion applies; runtime refinements are not inferred.
+Keep relative source/generated files together when relocating output, and compile
+computed-key output with a modern target (ES2015 or newer).
 
 ```ts
 import { extractSchemaRegistries, describeContract } from '@redemeine/cli/reflector';

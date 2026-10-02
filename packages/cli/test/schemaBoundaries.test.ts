@@ -1,5 +1,6 @@
 import { Contract } from '@redemeine/kernel';
 import { z } from 'zod';
+import { z as zod3 } from 'zod/v3';
 import { describeContract } from '../src/describeContract';
 import { extractSchemasCommand } from '../src/extractSchemasCommand';
 import * as aggregateExtraction from '../src/extractZodSchemas';
@@ -23,6 +24,12 @@ test.each(['command', 'event', 'state'])('contract %s boundary rejects non-Zod s
   const contract = new Contract();
   if (kind === 'state') Reflect.set(contract, 'stateSchema', {});
   else Reflect.apply(kind === 'command' ? contract.addCommand : contract.addEvent, contract, ['invalid', {}]);
+  expect(() => describeContract(contract)).toThrow('Contract schemas must be Zod 4 schemas.');
+});
+
+test('Zod 3 is explicitly unsupported rather than structurally accepted as Zod 4', () => {
+  const contract = new Contract();
+  Reflect.apply(contract.addCommand, contract, ['legacy', zod3.string()]);
   expect(() => describeContract(contract)).toThrow('Contract schemas must be Zod 4 schemas.');
 });
 

@@ -88,6 +88,21 @@ test('no-install preflight never spawns', async () => {
   expect(spy).not.toHaveBeenCalled();
 });
 
+test('preflight is advisory and preserves an existing incompatible Zod dependency', async () => {
+  const original = process.cwd();
+  const content = JSON.stringify({ dependencies: { '@redemeine/aggregate': '*', '@redemeine/kernel': '*', zod: '^3.0.0' }, devDependencies: { '@redemeine/cli': '*', typescript: '*', vitest: '*' } });
+  writeFileSync(join(root, 'package.json'), content);
+  const spawn = jest.spyOn(childProcess, 'spawn');
+  const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    process.chdir(root);
+    await preflight(true);
+  } finally { process.chdir(original); }
+  expect(spawn).not.toHaveBeenCalled();
+  expect(log).toHaveBeenCalledWith(expect.stringContaining('Use Zod 4'));
+  expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(content);
+});
+
 test('non-TTY preflight never prompts or spawns', async () => {
   const spawn = jest.spyOn(childProcess, 'spawn');
   const prompt = jest.spyOn(readline, 'createInterface');

@@ -6,11 +6,11 @@ export function describeContract(contract: Contract, aggregateName: string = 'ag
     const events: Record<string, unknown> = {};
 
     for (const [type, schema] of contract.commands.entries()) {
-        commands[type] = jsonSchema(schema);
+        Object.defineProperty(commands, type, { value: jsonSchema(schema), enumerable: true, configurable: true, writable: true });
     }
 
     for (const [type, schema] of contract.events.entries()) {
-        events[type] = jsonSchema(schema);
+        Object.defineProperty(events, type, { value: jsonSchema(schema), enumerable: true, configurable: true, writable: true });
     }
 
     let state = {};

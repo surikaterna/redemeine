@@ -3,9 +3,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { reviewRegressions } from './packedReviewRegressions.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const run = mkdtempSync('/tmp/opencode/standalone-cli-vk7d-');
+const tempParent = join(tmpdir(), 'opencode');
+mkdirSync(tempParent, { recursive: true });
+const run = mkdtempSync(join(tempParent, 'standalone-cli-vk7d-'));
 const consumer = join(run, 'consumer');
 mkdirSync(consumer);
 const env = { ...process.env, NODE_PATH: '', npm_config_cache: join(run, 'cache') };
@@ -31,7 +35,7 @@ const tarballs = Object.fromEntries(['kernel', 'aggregate', 'projection', 'cli']
 const dependencies = Object.fromEntries(Object.entries(tarballs).map(([name, path]) => [`@redemeine/${name}`, `file:${path}`]));
 writeFileSync(join(consumer, 'package.json'), JSON.stringify({
   name: 'packed-cli-consumer', private: true, type: 'module',
-  dependencies: { ...dependencies, typescript: '5.9.3', zod: '4.4.3', vitest: '3.2.4', '@types/node': '24.13.2' },
+  dependencies: { ...dependencies, typescript: '5.9.3', zod: '4.4.3', 'independent-zod': 'npm:zod@4.3.6', vitest: '3.2.4', '@types/node': '24.13.2' },
   overrides: { '@redemeine/kernel': `file:${tarballs.kernel}` },
 }));
 console.log(command('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']));
@@ -39,6 +43,7 @@ console.log(command('npm', ['ls', '--all']));
 for (const name of Object.keys(tarballs)) assert(realpathSync(join(consumer, 'node_modules/@redemeine', name)).startsWith(consumer));
 console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 'redemeine', 'help']));
 const bin = join(consumer, 'node_modules/.bin/redemeine');
+reviewRegressions(consumer, command);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   target: 'ES2022', lib: ['ES2022', 'ESNext.Disposable'], module: 'ESNext', moduleResolution: 'Bundler', strict: true,

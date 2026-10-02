@@ -56,7 +56,7 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     const stateType = extractStateType(checker, aggType, sourceFile);
 
     const converter = new TypeToZodConverter(
-        checker, program, options.dateHandling ?? 'string', options.typeOverrides
+        checker, program, options.dateHandling ?? 'string', options.typeOverrides, options.outFile
     );
 
     const output = generateOutput(
