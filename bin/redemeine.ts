@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { colors, parseArgs } from '../src/cli/utils';
-import { extractZodSchemas } from '../src/cli/extractZodSchemas';
+import { extractSchemasCommand } from '../src/cli/extractSchemasCommand';
 import { contractTemplate, aggregateTemplate, selectorsTemplate, entityTemplate, aggregateSpecTemplate, testUtilsTemplate } from '../src/cli/templates';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -204,45 +204,11 @@ function addEntity(name: string, aggregateName?: string | boolean) {
 }
 
 async function extractSchemas(options: Record<string, string | boolean>) {
-  const entry = options.entry;
-  const exportName = options.export;
-  const out = options.out;
-
-  if (!entry || typeof entry !== 'string') {
-    console.log(colors.red('Error: --entry <path> is required.'));
-    process.exit(1);
-  }
-  if (!exportName || typeof exportName !== 'string') {
-    console.log(colors.red('Error: --export <name> is required.'));
-    process.exit(1);
-  }
-  if (!out || typeof out !== 'string') {
-    console.log(colors.red('Error: --out <path> is required.'));
-    process.exit(1);
-  }
-
-  const tsconfig = typeof options.tsconfig === 'string'
-    ? path.resolve(process.cwd(), options.tsconfig)
-    : path.resolve(process.cwd(), 'tsconfig.json');
-
-  const dateHandling = typeof options['date-handling'] === 'string'
-    ? (options['date-handling'] as 'string' | 'date')
-    : 'string';
-
-  const noState = options['no-state'] === true || options['no-state'] === 'true';
-
   try {
-    extractZodSchemas({
-      tsconfig,
-      entry: path.resolve(process.cwd(), entry),
-      aggregateExport: exportName,
-      outFile: path.resolve(process.cwd(), out),
-      dateHandling,
-      includeState: !noState,
-    });
-    console.log(colors.green(`Zod schemas written to ${out}`));
-  } catch (err: any) {
-    console.log(colors.red(`extract-schemas failed: ${err.message}`));
+    extractSchemasCommand(options);
+    console.log(colors.green(`Zod schemas written to ${options.out}`));
+  } catch (err: unknown) {
+    console.log(colors.red(`extract-schemas failed: ${err instanceof Error ? err.message : String(err)}`));
     process.exit(1);
   }
 }
