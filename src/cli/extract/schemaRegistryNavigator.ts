@@ -31,7 +31,7 @@ function resolvedObject(checker: ts.TypeChecker, type: ts.Type, path: string): v
   }
 }
 
-function registryName(checker: ts.TypeChecker, type: ts.Type, selection: SchemaRegistrySelection): string {
+export function registryName(checker: ts.TypeChecker, type: ts.Type, selection: SchemaRegistrySelection): string {
   const key = selection.kind === 'aggregate' ? 'aggregateType' : 'name';
   const identity = property(checker, type, key, selection.export);
   const parts = identity.isUnion() ? identity.types : [identity];

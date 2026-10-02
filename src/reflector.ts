@@ -7,4 +7,4 @@ export { extractProjectionSchemas } from './cli/extractProjectionSchemas';
 export type { ExtractProjectionOptions } from './cli/extractProjectionSchemas';
 export { extractSchemaRegistries } from './cli/extractSchemaRegistries';
 export type { ExtractSchemaRegistriesOptions } from './cli/extractSchemaRegistries';
-export type { SchemaRegistrySelection } from './cli/schemaRegistryManifest';
+export type { SchemaRegistrySelection, SchemaRegistryDiscovery } from './cli/schemaRegistryManifest';

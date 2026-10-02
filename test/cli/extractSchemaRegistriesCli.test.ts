@@ -46,9 +46,20 @@ test('missing output is rejected', () => {
   expect(cli(['--manifest', join(fixtures, 'manifest.json')]).status).not.toBe(0);
 });
 
+test('discovery-only CLI resolves entries from manifest directory with alternate cwd and no execution', () => {
+  const result = cli(['--manifest', join(fixtures, 'discovery/manifest.json'), '--out', 'discovered.ts'], directory);
+  expect(result.status).toBe(0);
+  expect(result.stdout).not.toMatch(/Installing|DISCOVERY SOURCE EXECUTED/);
+  const output = readFileSync(join(directory, 'discovered.ts'), 'utf8');
+  expect(output).toContain('["account"');
+  expect(output).toContain('["runtime-commit"');
+});
+
 const invalid = [null, [], {}, { version: 2, tsconfig: 'tsconfig.json', definitions: [] },
   { version: 1, definitions: [] }, { version: 1, tsconfig: 'tsconfig.json', definitions: [], extra: true },
-  { version: 1, tsconfig: 'tsconfig.json', definitions: [{ kind: 'projection', entry: 'a', export: 'b', name: '' }] }];
+  { version: 1, tsconfig: 'tsconfig.json', definitions: [{ kind: 'projection', entry: 'a', export: 'b', name: '' }] },
+  { version: 1, tsconfig: 'tsconfig.json', discover: [{ kind: 'projection', entry: 'a', names: { view: '' } }] },
+  { version: 1, tsconfig: 'tsconfig.json', discover: [{ kind: 'aggregate', entry: 'a', exclude: ['x', 'x'] }] }];
 test.each(invalid.map((value) => [value]))('rejects manifest shape %j before writing', (value) => {
   const manifest = join(directory, 'invalid.json');
   writeFileSync(manifest, JSON.stringify(value));
