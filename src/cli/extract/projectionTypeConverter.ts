@@ -4,7 +4,7 @@ import * as ts from 'typescript';
 export class ProjectionTypeConverter {
   private readonly active = new Set<ts.Type>();
 
-  constructor(private readonly checker: ts.TypeChecker) {}
+  constructor(private readonly checker: ts.TypeChecker, private readonly sortProperties = false) {}
 
   convert(type: ts.Type, path: string): string {
     if (this.active.has(type)) return this.fail(type, path, 'recursive state is unsupported');
@@ -89,7 +89,8 @@ export class ProjectionTypeConverter {
   }
 
   private convertProperties(type: ts.Type, path: string): string {
-    const properties = this.checker.getPropertiesOfType(type);
+    const properties = [...this.checker.getPropertiesOfType(type)];
+    if (this.sortProperties) properties.sort((a, b) => a.getName() < b.getName() ? -1 : a.getName() > b.getName() ? 1 : 0);
     const indexes = this.checker.getIndexInfosOfType(type);
     const index = indexes[0];
     if (indexes.length) {

@@ -5,3 +5,6 @@ export { extractZodSchemas } from './cli/extractZodSchemas';
 export type { ExtractZodOptions } from './cli/extractZodSchemas';
 export { extractProjectionSchemas } from './cli/extractProjectionSchemas';
 export type { ExtractProjectionOptions } from './cli/extractProjectionSchemas';
+export { extractSchemaRegistries } from './cli/extractSchemaRegistries';
+export type { ExtractSchemaRegistriesOptions } from './cli/extractSchemaRegistries';
+export type { SchemaRegistrySelection, SchemaRegistryDiscovery } from './cli/schemaRegistryManifest';

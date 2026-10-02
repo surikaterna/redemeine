@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "tsconfig": "./tsconfig.json",
+  "definitions": [
+    { "kind": "aggregate", "entry": "./definitions.ts", "export": "orders" },
+    { "kind": "aggregate", "entry": "./definitions.ts", "export": "counter" },
+    { "kind": "projection", "entry": "./definitions.ts", "export": "view", "name": "orders" },
+    { "kind": "projection", "entry": "./definitions.ts", "export": "primitive", "name": "primitive" }
+  ]
+}
