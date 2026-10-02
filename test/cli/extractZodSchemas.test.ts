@@ -142,7 +142,7 @@ describe('typeConverter', () => {
     it('should convert deletedAt as z.string() (strict:false widens null away)', () => {
         // With strict:false in tsconfig, `string | null` is widened to `string`
         const result = converter.convert(stateType);
-        expect(result).toContain('deletedAt: z.string()');
+        expect(result).toContain('["deletedAt"]: z.string()');
     });
 
     it('should handle boolean in state type', () => {

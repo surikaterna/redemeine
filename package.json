@@ -16,9 +16,6 @@
   "files": [
     "dist"
   ],
-  "bin": {
-    "redemeine": "./dist/cjs/bin/redemeine.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/types/redemeine.d.ts",
@@ -34,6 +31,7 @@
     }
   },
   "scripts": {
+    "cli:source": "tsx bin/redemeine.ts",
     "build": "pnpm run build:turbo",
     "build:turbo": "turbo run build --continue",
     "build:legacy": "node ./bin/build-dual.js",

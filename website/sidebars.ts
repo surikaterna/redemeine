@@ -36,7 +36,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Recipes',
-      items: ['recipes/testing-aggregates', 'recipes/testing-projections'],
+      items: ['recipes/cli-domain-workflow', 'recipes/testing-aggregates', 'recipes/testing-projections'],
     },
   ],
 

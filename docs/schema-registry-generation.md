@@ -36,7 +36,7 @@ There is no directory crawling or handler-shape inference.
 ## API
 
 ```ts
-import { extractSchemaRegistries } from 'redemeine/reflector';
+import { extractSchemaRegistries } from '@redemeine/cli/reflector';
 
 extractSchemaRegistries({
   tsconfig: './tsconfig.json',

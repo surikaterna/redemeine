@@ -7,7 +7,7 @@ import { moduleValues, selectedSymbol } from '../../src/cli/extract/schemaRegist
 import { discoverRegistrySelections } from '../../src/cli/extract/schemaRegistryDiscovery';
 import { navigateRegistries } from '../../src/cli/extract/schemaRegistryNavigator';
 import { generateSchemaRegistryOutput } from '../../src/cli/extract/schemaRegistryOutputGenerator';
-import * as aggregateNavigator from '../../src/cli/extract/aggregateNavigator';
+import * as aggregateNavigator from '../../packages/cli/src/extract/aggregateNavigator';
 import { extractSchemaRegistries } from '../../src/reflector';
 
 const fixtures = resolve(__dirname, 'fixtures/registries/discovery');

@@ -40,6 +40,8 @@ Redemeine's "Type-Transparent" architecture is designed around end-to-end safety
 
 Once you've mastered the basics, explore task-oriented guides for solving common problems.
 
+* [**CLI Domain Workflow**](/docs/recipes/cli-domain-workflow) — Standalone scaffolding, safe entity mounts, and schema regeneration (local tarballs before publication).
+
 * [**Testing Aggregates**](/docs/recipes/testing-aggregates) — A "Given / When / Then" blueprint for testing pure business logic.
 * [**Testing Projections**](/docs/recipes/testing-projections) — Practical patterns for `.from()`/`.join()`, identity routing, and pure handler tests.
 * [**Projection Runtime v3 Runbook + Release Gates**](/docs/architecture/projection-runtime-vnext-runbook) — Operational guide for catch-up/cutover/live modes, validation matrix execution, worker-lite limitations, diagnostics triage, rollback expectations, and command-based release sign-off gates.
