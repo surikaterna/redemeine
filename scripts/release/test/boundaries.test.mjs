@@ -5,9 +5,17 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { x } from 'tar';
-import { cli, manifest, put, workspace } from './fixtures.mjs';
+import { cli, manifest, put, repo, rootManifest, workspace } from './fixtures.mjs';
 
 const sources = ['default-and-global-config', 'workspace-custom-and-global', 'lowercase-env-paths', 'uppercase-env-paths'];
+const workflowEnvironment = {
+  pnpm_config_ignore_pnpmfile: 'true',
+  npm_config_ignore_pnpmfile: 'true',
+  pnpm_config_ignore_scripts: 'true',
+  npm_config_ignore_scripts: 'true',
+  pnpm_config_verify_deps_before_run: 'false'
+};
+const workflowGuards = ['--config.ignore-pnpmfile=true', '--config.ignore-scripts=true'];
 
 async function hookFixture(t, source) {
   const outside = await mkdtemp(resolve(tmpdir(), 'release-hook-paths-'));
@@ -105,6 +113,95 @@ for (const source of sources) {
     }
     assert.deepEqual(result.report.workspaces.map((entry) => entry.name).sort(), ['@fixture/hooks', 'fixture-root', 'fixture-website']);
     assert.equal(result.report.artifacts.length, 1);
+    await assert.rejects(access(state.marker), { code: 'ENOENT' });
+    await assert.rejects(access(state.lifecycleMarker), { code: 'ENOENT' });
+  });
+}
+
+async function workflowCommands(state, guarded) {
+  const { fixture, env } = state;
+  if (guarded) {
+    const workflow = await readFile(resolve(repo, '.github/workflows/release-artifact-audit.yml'), 'utf8');
+    for (const [key, value] of Object.entries(workflowEnvironment)) assert(workflow.includes(`  ${key}: '${value}'`));
+    const invocations = [...workflow.matchAll(/run: (pnpm .+)/g)].map((match) => match[1]);
+    assert.equal(invocations.length, 6);
+    for (const invocation of invocations) assert(invocation.startsWith(`pnpm ${workflowGuards.join(' ')} `), invocation);
+  }
+  const commands = [
+    ['install', '--frozen-lockfile', '--ignore-scripts', '--offline'],
+    ['run', 'probe'],
+    ['exec', 'node', '--version']
+  ];
+  for (const args of commands) {
+    const result = spawnSync('pnpm', [...(guarded ? workflowGuards : []), ...args], {
+      cwd: fixture.root,
+      encoding: 'utf8',
+      timeout: 120000,
+      env: { ...process.env, ...env, ...(guarded ? workflowEnvironment : {}) }
+    });
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    if (guarded) assert.equal(await readFile(state.marker, 'utf8').catch(() => ''), '', `guarded ${args.join(' ')}`);
+  }
+}
+
+function prepareWorkflowLock(state, guarded) {
+  // Hook-enabled and hook-disabled installs require different pnpmfile checksums.
+  const result = spawnSync('pnpm', [...(guarded ? workflowGuards : []), 'install', '--no-frozen-lockfile', '--ignore-scripts', '--offline'], {
+    cwd: state.fixture.root,
+    encoding: 'utf8',
+    timeout: 120000,
+    env: { ...process.env, ...state.env, ...(guarded ? workflowEnvironment : {}) }
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+}
+
+async function proveImplicitInstall(state) {
+  prepareWorkflowLock(state, true);
+  const result = spawnSync('pnpm', [...workflowGuards, 'run', 'probe'], {
+    cwd: state.fixture.root,
+    encoding: 'utf8',
+    timeout: 120000,
+    env: { ...process.env, ...state.env, ...workflowEnvironment, pnpm_config_verify_deps_before_run: 'install' }
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const executions = (await readFile(state.marker, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert(executions.length > 0);
+  assert(executions.every((entry) => entry.argv.includes('install') && !entry.argv.includes('--config.ignore-pnpmfile=true')));
+  await access(state.lifecycleMarker);
+  await rm(state.marker);
+  await rm(state.lifecycleMarker);
+}
+
+for (const source of sources) {
+  test(`workflow install/run/exec suppress pnpmfiles: ${source}`, async (t) => {
+    const state = await hookFixture(t, source);
+    await put(resolve(state.fixture.root, 'package.json'), {
+      name: 'fixture-root',
+      private: true,
+      version: '1.0.0',
+      packageManager: rootManifest.packageManager,
+      scripts: { probe: 'node --version' }
+    });
+    prepareWorkflowLock(state, false);
+    await rm(state.marker, { force: true });
+    await workflowCommands(state, false);
+    const executions = (await readFile(state.marker, 'utf8')).trim().split('\n').map(JSON.parse);
+    for (const name of state.names) {
+      for (const command of ['install', 'run', 'exec']) assert(executions.some((entry) => entry.name === name && entry.argv.includes(command)));
+    }
+    await rm(state.marker);
+    if (source === sources[0]) await proveImplicitInstall(state);
+    const setup = spawnSync('corepack', ['install'], {
+      cwd: state.fixture.root,
+      encoding: 'utf8',
+      timeout: 120000,
+      env: { ...process.env, ...state.env, ...workflowEnvironment }
+    });
+    assert.equal(setup.status, 0, setup.stdout + setup.stderr);
+    await assert.rejects(access(state.marker), { code: 'ENOENT' });
+    prepareWorkflowLock(state, true);
+    assert.equal(await readFile(state.marker, 'utf8').catch(() => ''), '', 'guarded lock preparation');
+    await workflowCommands(state, true);
     await assert.rejects(access(state.marker), { code: 'ENOENT' });
     await assert.rejects(access(state.lifecycleMarker), { code: 'ENOENT' });
   });

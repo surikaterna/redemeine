@@ -25,7 +25,9 @@ pnpm run release:check --output /tmp/redemeine-artifact-audit-unique
 Start without local build outputs/Turbo cache. Do not provide Turbo credentials;
 use `TURBO_CACHE=local:rw` as an additional remote-cache restriction. On constrained
 machines set `TURBO_CONCURRENCY=1` and run expensive commands sequentially.
-Installation disables lifecycles; builds are explicit reviewed steps. Do not
+These local setup commands require trusted repository/pnpm configuration:
+`--ignore-scripts` alone does not disable pnpmfiles. Installation disables
+lifecycles; builds are explicit reviewed steps. Do not
 globally enable scripts to fix a build. Any necessary esbuild lifecycle exception
 must be narrow, recorded and reviewed (the workspace already allows esbuild).
 
@@ -50,6 +52,19 @@ direct entrypoint when testing configurations containing untrusted hooks:
 ```bash
 node scripts/release/check.mjs --output /tmp/redemeine-artifact-audit-another-unique
 ```
+
+The nonpublishing workflow applies both flags to **all six outer pnpm calls**
+(install, run and exec), with canonical npm/pnpm guard environment values already
+set before setup/install. Corepack provisions the root-pinned manager; provisioning
+is not an audit subprocess or permission to select an untrusted executable.
+`pnpm_config_verify_deps_before_run=false` prevents pnpm 11.9 run/exec from
+spawning an implicit install without the outer command's guard flags; the workflow
+already performs an explicit frozen install. Tests reproduce that hidden install
+with harmless hooks when the setting is absent.
+Tests deliberately enable harmless pnpmfile marker hooks in isolated positive
+controls, separately from guarded calls. Explicit build/test code still executes:
+this workflow is not a sandbox for arbitrary PR source or hostile tool/config
+selection. No live publication credentials are needed or supplied.
 
 Archive inspection performs no extraction or package execution. Source workspace
 specs remain unchanged. URL fragment (`#`), query (`?`) and percent-encoded
@@ -78,6 +93,17 @@ has the real packed manifest plus `dist.tarball` (relative tgz path) and strong
 `dist.integrity`. An empty `versions` explicitly models absence. Missing fixture
 data fails, with **no network fallback**. Tests generate and inspect actual bytes,
 including actual scripts-disabled pnpm packs and lifecycle marker traps.
+The explicitly selected fixture root is trusted and must remain stable during
+the audit. The root, index, metadata and tarball paths are resolved with `realpath`;
+file/parent symlinks escaping that root fail **before reading or copying bytes**.
+Contained symlinks (including a symlinked root) remain valid. This is filesystem
+containment for offline replay, not protection against concurrent filesystem
+mutation by another process.
+
+An absent version or registry HTTP 404 cannot clear an explicitly known-bad
+candidate: the deny-list check precedes the absent-version return (exit **1**).
+Missing/unreadable fixture data instead makes the audit incomplete (exit **2**),
+not clean. Original registry bytes are still inspected when available.
 
 This is not full npm resolution, consumer installation, external transitive audit,
 declaration compatibility, optional-peer runtime proof, provenance/channel proof

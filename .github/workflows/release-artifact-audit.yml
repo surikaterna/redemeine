@@ -12,6 +12,11 @@ defaults:
     shell: bash
 
 env:
+  pnpm_config_ignore_pnpmfile: 'true'
+  npm_config_ignore_pnpmfile: 'true'
+  pnpm_config_ignore_scripts: 'true'
+  npm_config_ignore_scripts: 'true'
+  pnpm_config_verify_deps_before_run: 'false'
   TURBO_REMOTE_CACHE: '0'
   TURBO_CACHE: 'local:rw'
   TURBO_TELEMETRY_DISABLED: '1'
@@ -28,9 +33,9 @@ jobs:
         with:
           node-version: '24.20.0'
       - run: corepack enable && corepack install
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm run test:release
-      - run: pnpm exec biome check scripts/release package.json
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true run test:release
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true exec biome check scripts/release package.json
 
   real-audit:
     if: github.event_name == 'workflow_dispatch'
@@ -43,11 +48,11 @@ jobs:
         with:
           node-version: '24.20.0'
       - run: corepack enable && corepack install
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
       - name: Build fresh
-        run: pnpm exec turbo run build --force 2>&1 | tee "$RUNNER_TEMP/build.log"
+        run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true exec turbo run build --force 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Read-only real audit (known defects fail naturally)
-        run: pnpm run release:check --output "$RUNNER_TEMP/release-audit" 2>&1 | tee "$RUNNER_TEMP/audit.log"
+        run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true run release:check --output "$RUNNER_TEMP/release-audit" 2>&1 | tee "$RUNNER_TEMP/audit.log"
       - name: Retain failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

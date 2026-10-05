@@ -1,10 +1,10 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import semver from 'semver';
 import ssri from 'ssri';
 import { inspect, safePath } from './artifacts.mjs';
 import { fields } from './specs.mjs';
-import { diagnostic, hash, json, object } from './workspace.mjs';
+import { diagnostic, hash, object } from './workspace.mjs';
 
 async function get(url, registry, limit) {
   const parsed = new URL(url);
@@ -30,7 +30,8 @@ async function get(url, registry, limit) {
 export async function registryClient(policy, fixture, output, report) {
   const metadata = new Map();
   const artifacts = new Map();
-  const fixtureIndex = fixture ? await json(resolve(fixture, 'index.json')) : null;
+  if (fixture) fixture = await realpath(fixture);
+  const fixtureIndex = fixture ? JSON.parse((await fixtureBytes(fixture, 'index.json')).toString('utf8')) : null;
   if (fixture && !object(fixtureIndex)) throw new Error('Invalid fixture registry index');
   const directory = resolve(output, 'registry');
   await mkdir(directory);
@@ -41,9 +42,12 @@ export async function registryClient(policy, fixture, output, report) {
   };
 }
 
-async function fixtureBytes(state, path) {
+async function fixtureBytes(root, path) {
   if (!safePath(path)) throw new Error('Invalid fixture file path');
-  const bytes = await readFile(resolve(state.fixture, path));
+  const target = await realpath(resolve(root, path));
+  const rel = relative(root, target);
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new Error('Fixture file escapes root');
+  const bytes = await readFile(target);
   if (bytes.length > 32 * 1024 * 1024) throw new Error('Fixture size limit');
   return bytes;
 }
@@ -52,7 +56,7 @@ async function loadMetadata(state, name) {
   if (state.metadata.has(name)) return state.metadata.get(name);
   const { fixture, fixtureIndex, policy, report } = state;
   const bytes = fixture
-    ? await fixtureBytes(state, fixtureIndex[name])
+    ? await fixtureBytes(fixture, fixtureIndex[name])
     : await get(`${policy.registry}${encodeURIComponent(name)}`, policy.registry, 16 * 1024 * 1024);
   const data = bytes ? JSON.parse(bytes.toString('utf8')) : { name, versions: {}, auditMissing: true };
   if (!object(data) || data.name !== name || !object(data.versions)) throw new Error(`Registry metadata identity/shape mismatch: ${name}`);
@@ -113,7 +117,9 @@ async function loadArtifact(state, name, version, chain) {
   const expected = metadata.versions[version];
   if (!expected || !object(expected.dist) || typeof expected.dist.integrity !== 'string' || typeof expected.dist.tarball !== 'string')
     throw new Error(`Missing registry version/dist integrity: ${key}`);
-  const bytes = state.fixture ? await fixtureBytes(state, expected.dist.tarball) : await get(expected.dist.tarball, state.policy.registry, 32 * 1024 * 1024);
+  const bytes = state.fixture
+    ? await fixtureBytes(state.fixture, expected.dist.tarball)
+    : await get(expected.dist.tarball, state.policy.registry, 32 * 1024 * 1024);
   if (!bytes || !ssri.checkData(bytes, expected.dist.integrity, { error: false, strict: true }))
     throw new Error(`Registry integrity mismatch/missing strong integrity: ${key}`);
   const filename = `${encodeURIComponent(name)}-${version}.tgz`;
