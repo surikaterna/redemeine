@@ -1,0 +1,60 @@
+name: Nonpublishing artifact audit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TURBO_REMOTE_CACHE: '0'
+  TURBO_CACHE: 'local:rw'
+  TURBO_TELEMETRY_DISABLED: '1'
+  TURBO_CONCURRENCY: '1'
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm run test:release
+      - run: pnpm exec biome check scripts/release package.json
+
+  real-audit:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build fresh
+        run: pnpm exec turbo run build --force 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Read-only real audit (known defects fail naturally)
+        run: pnpm run release:check --output "$RUNNER_TEMP/release-audit" 2>&1 | tee "$RUNNER_TEMP/audit.log"
+      - name: Retain failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nonpublishing-artifact-evidence
+          path: |
+            ${{ runner.temp }}/release-audit/
+            ${{ runner.temp }}/build.log
+            ${{ runner.temp }}/audit.log
+          retention-days: 14

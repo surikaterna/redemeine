@@ -126,9 +126,15 @@ testAggregate(Counter)
 
 ## Development
 
+Use **Node 24** (qualification pin: **24.20.0**) and the exact pnpm version/integrity
+in root `packageManager` (**11.9.0**). Corepack can provision that pin. Bun is not
+a contributor prerequisite, installer, or packer. Keep `pnpm-lock.yaml` authoritative.
+
 ```bash
+corepack enable
+corepack install
 # Install dependencies
-pnpm install
+pnpm install --frozen-lockfile --ignore-scripts
 
 # Build all packages
 pnpm exec turbo run build
@@ -138,7 +144,14 @@ pnpm exec turbo run typecheck
 
 # Run tests
 pnpm exec turbo run test
+
+# Nonpublishing artifact fixtures (no registry network)
+pnpm run test:release
 ```
+
+See the [artifact audit recipe](docs/recipes/release-artifact-audit.md) for fresh
+build/static audit commands, expected current failures, and Bun-free qualification.
+The existing publishing workflow is **not protected by this advisory gate yet**.
 
 ## Architecture
 
@@ -146,7 +159,7 @@ Built as a pnpm + Turbo monorepo with:
 - **ESM-first** (`type: "module"`)
 - **tsup** for bundled builds with DTS generation
 - **Strict TypeScript** (`strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`)
-- **Changesets** for versioning and publishing
+- **Changesets** for change intent and version planning; pnpm for workspace management and packing
 
 ## License
 

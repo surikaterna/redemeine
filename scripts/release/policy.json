@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "registry": "https://registry.npmjs.org/",
+  "internalScopes": ["@redemeine"],
+  "holds": {
+    "@redemeine/testing": {
+      "owner": "redemeine maintainers",
+      "reason": "Unapproved private projection-runtime-core and projection-runtime-store-inmemory runtime closure"
+    }
+  },
+  "knownBad": {
+    "@redemeine/aggregate": ["0.2.0-pre.0"],
+    "@redemeine/mirage": ["0.2.0-pre.0"],
+    "@redemeine/testing": ["0.2.0-pre.0"]
+  }
+}
