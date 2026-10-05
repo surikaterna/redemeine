@@ -59,8 +59,8 @@ function pnpmEnvironment() {
 
 export async function prerequisites(root, report) {
   const manifest = await json(resolve(root, 'package.json'));
-  const pin = /^pnpm@(\d+\.\d+\.\d+)(?:\+sha512\.[a-f0-9]+)?$/.exec(manifest.packageManager);
-  if (process.versions.node.split('.')[0] !== '24' || !pin) throw new Error('Requires Node 24 and an exact root packageManager pnpm pin');
+  const pin = /^pnpm@(\d+\.\d+\.\d+)\+sha512\.[a-f0-9]{128}$/.exec(manifest.packageManager);
+  if (process.versions.node.split('.')[0] !== '24' || !pin) throw new Error('Requires Node 24 and an exact root packageManager pnpm pin with SHA512 integrity');
   const pnpm = run(report, root, 'pnpm', ['--version']);
   if (pnpm !== pin[1]) throw new Error(`pnpm version ${pnpm} differs from ${pin[1]}`);
   const require = createRequire(import.meta.url);

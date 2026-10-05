@@ -5,7 +5,7 @@ import { access, readFile, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { sri } from '../workspace.mjs';
-import { addRegistry, cli, manifest, packageArchive, policy, put, repo, workspace } from './fixtures.mjs';
+import { addRegistry, cli, manifest, packageArchive, policy, put, repo, rootManifest, workspace } from './fixtures.mjs';
 
 function clean(t, fixture) {
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -29,6 +29,9 @@ test('actual pnpm discovery, build outputs, star/caret/tilde/alias rewrites; pri
   const result = await cli(f);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.report.workspaces.length, 6);
+  assert(result.report.workspaces.some((w) => w.name === 'fixture-root' && w.sourcePath === '.' && w.selection === 'private'));
+  assert(result.report.workspaces.some((w) => w.name === 'fixture-website' && w.sourcePath === 'website'));
+  assert(!result.report.workspaces.some((w) => w.name === 'excluded'));
   assert.equal(result.report.artifacts.length, 3);
   assert.equal(result.report.invocations.filter((i) => i.args.includes('pack')).length, 3);
   assert(result.report.invocations.filter((i) => i.args.includes('pack')).every((i) => i.ignoreScripts));
@@ -198,21 +201,50 @@ test('actual pack catches missing exports and dev-only residual without calling 
   assert(result.report.diagnostics.some((d) => d.code === 'SPEC' && d.devOnly && d.message.startsWith('Dev-only hygiene')));
 });
 
-test('strong registry integrity is mandatory; valid SHA1 alone is incomplete', async (t) => {
-  const f = await workspace([manifest('@fixture/a', { dependencies: { '@fixture/b': '1.0.0' } })]);
-  clean(t, f);
-  await addRegistry(f, '@fixture/b', [manifest('@fixture/b')]);
-  const path = resolve(f.registry, f.index['@fixture/b']);
-  const metadata = JSON.parse(await readFile(path, 'utf8'));
-  const dist = metadata.versions['1.0.0'].dist;
-  dist.integrity = `sha1-${createHash('sha1')
-    .update(await readFile(resolve(f.registry, dist.tarball)))
-    .digest('base64')}`;
-  await put(path, metadata);
-  const result = await cli(f);
-  assert.equal(result.status, 2, result.stderr);
-  assert(codes(result).includes('REGISTRY_INCOMPLETE'));
-});
+for (const [label, algorithms, corruptStrong, expected] of [
+  ['SHA1 alone', ['sha1'], false, 2],
+  ['SHA256', ['sha256'], false, 0],
+  ['SHA384', ['sha384'], false, 0],
+  ['SHA1 plus SHA512', ['sha1', 'sha512'], false, 0],
+  ['valid SHA1 plus mismatched SHA512', ['sha1', 'sha512'], true, 2],
+  ['malformed SHA512', [], false, 2]
+]) {
+  test(`strong registry integrity: ${label}`, async (t) => {
+    const f = await workspace([manifest('@fixture/a', { dependencies: { '@fixture/b': '1.0.0' } })]);
+    clean(t, f);
+    await addRegistry(f, '@fixture/b', [manifest('@fixture/b')]);
+    const path = resolve(f.registry, f.index['@fixture/b']);
+    const metadata = JSON.parse(await readFile(path, 'utf8'));
+    const dist = metadata.versions['1.0.0'].dist;
+    const bytes = await readFile(resolve(f.registry, dist.tarball));
+    dist.integrity = algorithms.map((algorithm) => `${algorithm}-${createHash(algorithm).update(bytes).digest('base64')}`).join(' ') || 'sha512-invalid';
+    if (corruptStrong) dist.integrity = dist.integrity.replace(/sha512-\S+/, `sha512-${Buffer.alloc(64).toString('base64')}`);
+    await put(path, metadata);
+    const result = await cli(f);
+    assert.equal(result.status, expected, result.stderr);
+    assert.equal(result.report.complete, expected === 0);
+    assert.equal(codes(result).includes('REGISTRY_INCOMPLETE'), expected === 2);
+    const original = result.report.artifacts.find((a) => a.origin === 'fixture-registry');
+    if (expected === 0) assert.equal(original.integrity, sri(bytes));
+    else assert.equal(original, undefined);
+  });
+}
+
+for (const suffix of ['', '+sha512.', '+sha512.a', `+sha512.${'a'.repeat(129)}`, `+sha512.${'g'.repeat(128)}`]) {
+  test(`packageManager requires full SHA512 pin: ${suffix || 'absent'}`, async (t) => {
+    const f = await workspace([manifest('@fixture/a')]);
+    clean(t, f);
+    const path = resolve(f.root, 'package.json');
+    const root = JSON.parse(await readFile(path, 'utf8'));
+    await put(path, { ...root, packageManager: rootManifest.packageManager.split('+')[0] + suffix });
+    const result = await cli(f);
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.report.complete, false);
+    assert(result.report.diagnostics.some((d) => d.code === 'INPUT_INCOMPLETE' && /SHA512 integrity/.test(d.message)));
+    assert.deepEqual(result.report.invocations, []);
+    assert.deepEqual(result.report.artifacts, []);
+  });
+}
 
 test('required owned registry 404 is incomplete', async (t) => {
   const f = await workspace([manifest('@fixture/a', { dependencies: { '@fixture/b': '1.0.0' } })]);
