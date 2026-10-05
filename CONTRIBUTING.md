@@ -32,15 +32,24 @@ Our workflow follows the standard GitHub Flow model:
 
 1. **Fork** the repository and create your feature branch from `main`.
 2. **Clone** your fork locally.
-3. Install dependencies with pnpm:
+3. Use Node **24** (qualification pin **24.20.0**) and root-pinned pnpm **11.9.0**.
+   Bun and mise are not prerequisites. pnpm owns dependency installation and the
+   sole repository lockfile; do not use `npm install` or `bun install` here.
    ```bash
-   pnpm install
+   corepack enable
+   corepack install
+   pnpm install --frozen-lockfile --ignore-scripts
    ```
 4. Run tests frequently:
     ```bash
     pnpm exec turbo run test --continue
     ```
 5. Commit your changes and open a **Pull Request**.
+
+Build before the nonpublishing artifact audit; it never builds implicitly. See
+the [Node-only audit recipe](docs/recipes/release-artifact-audit.md) for commands,
+lifecycle restrictions, expected known defects and the clean-container procedure.
+Node 22 consumer compatibility is separate from this Node 24 contributor baseline.
 
 ---
 

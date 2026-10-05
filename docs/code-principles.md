@@ -26,4 +26,4 @@ These principles are mandatory for repository code changes.
 - [ ] Barrels (if used) preserve boundaries and dependency direction.
 - [ ] Comments added only for intent/invariants/tradeoffs.
 - [ ] Tests added/updated based on risk.
-- [ ] `npm run lint` and `npm test` pass.
+- [ ] `pnpm run lint` and `pnpm test` pass.
