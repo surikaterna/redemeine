@@ -22,7 +22,7 @@ async function releaseWorkflow() {
   // Reuse Jest's locked YAML parser without adding a release/runtime dependency.
   let require = createRequire(import.meta.url);
   for (const name of ['jest', 'jest-cli', 'jest-config']) require = createRequire(require.resolve(name));
-  const text = await readFile(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8');
+  const text = await readFile(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
   return { text, workflow: require('js-yaml').load(text) };
 }
 
