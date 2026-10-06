@@ -5,8 +5,8 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { checkContent } from './artifacts.mjs';
 import { registryClient } from './registry.mjs';
-import { checkImports, checkManifest, chooseVersion, dependencyOrder, eligible, selectCandidates, verifyFiles } from './simple-check.mjs';
 import { approve, publishArgs } from './simple.mjs';
+import { checkImports, checkManifest, chooseVersion, dependencyOrder, eligible, selectCandidates, verifyFiles } from './simple-check.mjs';
 import { hash } from './workspace.mjs';
 
 const policy = { holds: { '@redemeine/cli': {} }, knownBad: { '@redemeine/aggregate': ['0.2.0-pre.0'] }, internalScopes: ['@redemeine'] };
@@ -15,19 +15,29 @@ const workspaces = [workspace('@redemeine/future'), workspace('@redemeine/cli'),
 const artifact = (name, dependencies = {}) => ({ manifest: { name, version: '1.0.0', dependencies }, candidate: true });
 
 test('future nonprivate workspace is eligible without a name allowlist; CLI and private remain excluded', () => {
-  assert.deepEqual(eligible(workspaces, policy).map((w) => w.name), ['@redemeine/future']);
+  assert.deepEqual(
+    eligible(workspaces, policy).map((w) => w.name),
+    ['@redemeine/future']
+  );
 });
 
 test('already-published versions are skipped, including broken historical versions not needed by the new graph', async () => {
   const inventory = [...workspaces, workspace('@redemeine/aggregate', '0.2.0-pre.0')];
   const client = { metadata: async (name) => ({ versions: name === '@redemeine/aggregate' ? { '0.2.0-pre.0': {} } : {} }) };
   const selected = await selectCandidates(inventory, policy, client);
-  assert.deepEqual(selected.candidates.map((w) => w.name), ['@redemeine/future']);
+  assert.deepEqual(
+    selected.candidates.map((w) => w.name),
+    ['@redemeine/future']
+  );
   assert.deepEqual(selected.skipped, ['@redemeine/aggregate@0.2.0-pre.0']);
 });
 
 test('healthy numeric dependencies pass; workspace, local, private runtime and bad versions fail', () => {
-  checkManifest({ name: '@redemeine/future', version: '1.0.0', dependencies: { immer: '^10.2.0' }, devDependencies: { '@redemeine/private': '1.0.0' } }, workspaces, policy);
+  checkManifest(
+    { name: '@redemeine/future', version: '1.0.0', dependencies: { immer: '^10.2.0' }, devDependencies: { '@redemeine/private': '1.0.0' } },
+    workspaces,
+    policy
+  );
   for (const spec of ['workspace:*', 'file:../kernel', 'link:../kernel', 'npm:other@1.0.0', 'https://example.invalid/a.tgz']) {
     assert.throws(() => checkManifest({ dependencies: { x: spec } }, workspaces, policy), /Non-registry/);
   }
@@ -73,7 +83,18 @@ test('approval is exact and explicit, and publisher arguments point at a file wi
   assert.throws(() => approve(plan, '@redemeine/future@0.9.0', 'pre'), /Approval/);
   assert.throws(() => approve(plan, '@redemeine/future@1.0.0', undefined), /explicitly/);
   const args = publishArgs('/tmp/checked.tgz', 'pre');
-  assert.deepEqual(args, ['publish', '/tmp/checked.tgz', '--ignore-scripts', '--access', 'public', '--provenance=false', '--tag', 'pre', '--registry', 'https://registry.npmjs.org/']);
+  assert.deepEqual(args, [
+    'publish',
+    '/tmp/checked.tgz',
+    '--ignore-scripts',
+    '--access',
+    'public',
+    '--provenance=false',
+    '--tag',
+    'pre',
+    '--registry',
+    'https://registry.npmjs.org/'
+  ]);
   plan.artifacts[0].manifest.version = '1.0.1-pre.0';
   assert.throws(() => approve(plan, '@redemeine/future@1.0.1-pre.0', 'latest'), /Exit Changesets/);
 });
@@ -86,7 +107,9 @@ test('changed artifact bytes cannot reach publication', async () => {
     await verifyFiles(directory, plan);
     await writeFile(resolve(directory, 'candidate.tgz'), 'changed');
     await assert.rejects(verifyFiles(directory, plan), /Changed artifact/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('workflow has no release-event or recursive publisher bypass and isolates npm credentials', async () => {

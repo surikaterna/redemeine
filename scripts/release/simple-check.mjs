@@ -56,12 +56,16 @@ export function checkImports(text, file, privateNames) {
 
 async function checkPayload(file, privateNames, license) {
   const contents = [];
-  await t({ file, strict: true, onReadEntry(entry) {
-    if (entry.type !== 'File') return;
-    const chunks = [];
-    entry.on('data', (chunk) => chunks.push(chunk));
-    entry.on('end', () => contents.push([entry.path, Buffer.concat(chunks)]));
-  } });
+  await t({
+    file,
+    strict: true,
+    onReadEntry(entry) {
+      if (entry.type !== 'File') return;
+      const chunks = [];
+      entry.on('data', (chunk) => chunks.push(chunk));
+      entry.on('end', () => contents.push([entry.path, Buffer.concat(chunks)]));
+    }
+  });
   const packedLicense = contents.find(([path]) => path === 'package/LICENSE');
   assert.ok(packedLicense, 'Missing root LICENSE');
   assert.deepEqual(packedLicense[1], license, 'LICENSE differs from root');
@@ -76,7 +80,11 @@ export async function checkArtifact(file, expected, workspaces, policy, license)
   assert.deepEqual(report.diagnostics, [], 'Invalid packed content');
   assert.ok(artifact);
   checkManifest(artifact.manifest, workspaces, policy);
-  await checkPayload(file, workspaces.filter((w) => w.manifest.private).map((w) => w.name), license);
+  await checkPayload(
+    file,
+    workspaces.filter((w) => w.manifest.private).map((w) => w.name),
+    license
+  );
   return artifact;
 }
 
@@ -90,7 +98,8 @@ export function chooseVersion(name, range, artifacts, metadata, policy) {
 }
 
 export function ownedEdges(artifact, workspaces, policy) {
-  return runtimeFields.flatMap((field) => Object.entries(artifact.manifest[field] || {}))
+  return runtimeFields
+    .flatMap((field) => Object.entries(artifact.manifest[field] || {}))
     .filter(([name]) => workspaces.some((w) => w.name === name) || policy.internalScopes.some((scope) => name.startsWith(`${scope}/`)));
 }
 
@@ -98,8 +107,11 @@ export function dependencyOrder(artifacts, workspaces, policy) {
   const pending = [...artifacts];
   const ordered = [];
   while (pending.length) {
-    const index = pending.findIndex((a) => ownedEdges(a, workspaces, policy).every(([name, range]) =>
-      ordered.some((dep) => dep.manifest.name === name && semver.satisfies(dep.manifest.version, range))));
+    const index = pending.findIndex((a) =>
+      ownedEdges(a, workspaces, policy).every(([name, range]) =>
+        ordered.some((dep) => dep.manifest.name === name && semver.satisfies(dep.manifest.version, range))
+      )
+    );
     assert.ok(index >= 0, `Cyclic or missing owned dependency: ${pending.map(key).join(', ')}`);
     ordered.push(...pending.splice(index, 1));
   }

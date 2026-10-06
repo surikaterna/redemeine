@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/suspicious/noUndeclaredEnvVars: Release commands run directly, never as cached Turbo tasks. */
 import assert from 'node:assert/strict';
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import semver from 'semver';
@@ -69,9 +69,15 @@ async function consumer(state, image, connection, plan) {
   await mkdir(job);
   await copyFile(new URL('./simple-consume.mjs', import.meta.url), resolve(job, 'consume.mjs'));
   await copyFile(new URL('./fixtures/testing-consumer.ts', import.meta.url), resolve(job, 'testing-consumer.ts'));
-  await writeFile(resolve(job, 'job.json'), JSON.stringify({
-    endpoint: connection.endpoint, artifacts: plan.artifacts, owned: plan.owned, roots: plan.artifacts.filter((a) => a.candidate)
-  }));
+  await writeFile(
+    resolve(job, 'job.json'),
+    JSON.stringify({
+      endpoint: connection.endpoint,
+      artifacts: plan.artifacts,
+      owned: plan.owned,
+      roots: plan.artifacts.filter((a) => a.candidate)
+    })
+  );
   const id = await createContainer(state, image.id, connection.internal, ['--memory', '2g', '--entrypoint', 'node'], ['/job/consume.mjs']);
   await docker(['cp', job, `${id}:/job`]);
   await inspectOwned(state, id, connection.internal, image.id);
@@ -110,7 +116,13 @@ async function check(output, policy, workspaces) {
   await mkdir(output);
   const { artifacts, skipped } = await collect(output, workspaces, policy);
   const plan = { artifacts, skipped, owned: { names: workspaces.map((w) => w.name), scopes: policy.internalScopes } };
-  console.log('Candidates (approval must match exactly):', artifacts.filter((a) => a.candidate).map(key).join(' '));
+  console.log(
+    'Candidates (approval must match exactly):',
+    artifacts
+      .filter((a) => a.candidate)
+      .map(key)
+      .join(' ')
+  );
   console.log('Already published (no mutation):', skipped.join(' '));
   await smoke(output, plan);
   await verifyFiles(output, plan);
@@ -126,7 +138,11 @@ export function approve(plan, approved, tag) {
   assert.ok(candidates.length, 'No unpublished candidates');
   assert.deepEqual(approved.trim().split(/\s+/).sort(), candidates.map(key).sort(), 'Approval must list the exact candidate versions');
   assert.ok(tag === 'pre' || tag === 'latest', 'Choose pre or latest explicitly');
-  if (tag === 'latest') assert.ok(candidates.every((a) => !semver.prerelease(a.manifest.version)), 'Exit Changesets prerelease mode before stable publication');
+  if (tag === 'latest')
+    assert.ok(
+      candidates.every((a) => !semver.prerelease(a.manifest.version)),
+      'Exit Changesets prerelease mode before stable publication'
+    );
 }
 
 export function publishArgs(file, tag) {
@@ -167,7 +183,10 @@ async function publish(output, plan, policy) {
   const client = await remoteClient(output, policy, 'before-publish');
   const candidates = plan.artifacts.filter((a) => a.candidate);
   for (const artifact of candidates) {
-    assert.ok(!(await client.metadata(artifact.manifest.name)).versions[artifact.manifest.version], `Version appeared after qualification: ${key(artifact)}; stop for manual review`);
+    assert.ok(
+      !(await client.metadata(artifact.manifest.name)).versions[artifact.manifest.version],
+      `Version appeared after qualification: ${key(artifact)}; stop for manual review`
+    );
   }
   for (const artifact of candidates) {
     await verifyFiles(output, plan);
@@ -190,7 +209,10 @@ async function promote(output, plan, policy) {
   approve(plan, process.env.APPROVED_VERSIONS || '', process.env.RELEASE_TAG);
   const requested = (process.env.PROMOTE_LATEST || '').trim().split(/\s+/).filter(Boolean);
   assert.ok(requested.length && new Set(requested).size === requested.length, 'Explicit unique latest versions required');
-  assert.ok(requested.every((entry) => plan.artifacts.some((a) => a.candidate && key(a) === entry)), 'Promotion outside approved candidates');
+  assert.ok(
+    requested.every((entry) => plan.artifacts.some((a) => a.candidate && key(a) === entry)),
+    'Promotion outside approved candidates'
+  );
   const client = await remoteClient(output, policy, 'before-promotion');
   for (const entry of requested) {
     const artifact = plan.artifacts.find((a) => key(a) === entry);
@@ -208,7 +230,10 @@ async function promote(output, plan, policy) {
 
 async function main() {
   const [operation, destination] = process.argv.slice(2);
-  assert.ok(['check', 'publish', 'verify-public', 'promote'].includes(operation) && destination, 'Usage: simple.mjs check|publish|verify-public|promote OUTPUT');
+  assert.ok(
+    ['check', 'publish', 'verify-public', 'promote'].includes(operation) && destination,
+    'Usage: simple.mjs check|publish|verify-public|promote OUTPUT'
+  );
   process.env.pnpm_config_verify_deps_before_run = 'false';
   const policy = await prerequisites(root, report);
   assert.equal(process.versions.node, '24.20.0');
@@ -223,5 +248,8 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main().catch((error) => { console.error(error); process.exitCode = 1; });
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

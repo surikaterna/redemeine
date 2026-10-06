@@ -61,9 +61,9 @@ export type ProjectionRuntime = {
 };
 
 /**
- * Loads projection runtime modules without module-level caching.
- * Each depot gets its own import attempt via the caller's closure,
- * preventing a failed import from poisoning subsequent depot creations.
+ * Adds no application-level import cache; module initialization follows host/bundler semantics.
+ * A failed evaluation may remain cached, so later depot creation does not guarantee recovery.
+ * Successfully loaded constructors are shared, but each depot owns its runtime state.
  */
 export async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   try {

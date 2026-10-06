@@ -16,12 +16,14 @@ it('preserves the load failure cause and does not fall back to workspace source'
   });
 });
 
-it('can load runtime modules for a later depot after a failed attempt', async () => {
+it('loads constructors in an independent healthy module context without sharing store instances', async () => {
   const { loadProjectionRuntimeModule } = await import('../src/projectionRuntime');
   const runtime = await loadProjectionRuntimeModule();
+  const laterRuntime = await loadProjectionRuntimeModule();
 
+  expect(laterRuntime.core.ProjectionDaemon).toBe(runtime.core.ProjectionDaemon);
   expect(new runtime.inmemory.InMemoryProjectionStore()).not.toBe(
-    new runtime.inmemory.InMemoryProjectionStore()
+    new laterRuntime.inmemory.InMemoryProjectionStore()
   );
   expect(runtime.core.ProjectionDaemon).toBeDefined();
 });

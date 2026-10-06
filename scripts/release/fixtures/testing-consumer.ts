@@ -20,7 +20,9 @@ const counter = createAggregate('counter', { id: '', total: 0 })
 
 const projection = createProjection('counter-view', (id: string) => ({ id, total: 0 }))
   .from(counter, {
-    added: (state, event) => { state.total += event.payload.amount; }
+    added: (state, event) => {
+      state.total += event.payload.amount;
+    }
   })
   .build();
 
@@ -57,12 +59,16 @@ async function checkSaga() {
   })
     .initialState(() => ({ total: 0 }))
     .on(counter, {
-      added: (state, event) => { state.total += event.payload.amount; }
+      added: (state, event) => {
+        state.total += event.payload.amount;
+      }
     })
     .build();
   const fixture = testSaga(saga);
   await fixture.receiveEvent({
-    type: 'counter.added.event', aggregateType: 'counter', aggregateId: 'counter-1',
+    type: 'counter.added.event',
+    aggregateType: 'counter',
+    aggregateId: 'counter-1',
     payload: { id: 'counter-1', amount: 7 }
   });
   fixture.expectState({ total: 7 }).expectIntents([]);
@@ -73,8 +79,12 @@ const hydrated = await createMirage(counter, 'counter-1', { events });
 assert.deepEqual(extractState(hydrated), { id: 'counter-1', total: 2 });
 const projected = testProjection(projection).withState({ id: 'counter-1', total: 0 });
 projected.applyEvent({
-  aggregateType: 'counter', aggregateId: 'counter-1', type: 'counter.added.event',
-  payload: { id: 'counter-1', amount: 4 }, sequence: 1, timestamp: '2026-10-06T00:00:00Z'
+  aggregateType: 'counter',
+  aggregateId: 'counter-1',
+  type: 'counter.added.event',
+  payload: { id: 'counter-1', amount: 4 },
+  sequence: 1,
+  timestamp: '2026-10-06T00:00:00Z'
 });
 assert.deepEqual(projected.getState(), { id: 'counter-1', total: 4 });
 await checkDepotIsolation();
