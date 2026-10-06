@@ -1,7 +1,7 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-const reserved = new Set(('break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static implements interface package private protected public await abstract as asserts any boolean constructor declare get global infer is keyof module namespace never number object of readonly require set string symbol type undefined unique unknown from async prototype __proto__').split(' '));
+const reserved = new Set(('break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static implements interface package private protected public await abstract as asserts any boolean constructor declare get global infer is keyof module namespace never number object of readonly require set string symbol type undefined unique unknown from async prototype __proto__ eval arguments').split(' '));
 
 export function validName(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-z][A-Za-z0-9]*$/.test(value) || reserved.has(value)) {

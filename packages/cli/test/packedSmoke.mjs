@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { reviewRegressions } from './packedReviewRegressions.mjs';
+import { surgicalRegressions } from './packedSurgicalRegressions.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -44,6 +45,7 @@ for (const name of Object.keys(tarballs)) assert(realpathSync(join(consumer, 'no
 console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 'redemeine', 'help']));
 const bin = join(consumer, 'node_modules/.bin/redemeine');
 reviewRegressions(consumer, command);
+surgicalRegressions(consumer, command, bin);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   target: 'ES2022', lib: ['ES2022', 'ESNext.Disposable'], module: 'ESNext', moduleResolution: 'Bundler', strict: true,
