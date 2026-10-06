@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/mirage",
-  "version": "0.2.0-pre.0",
+  "version": "0.2.0-pre.1",
   "description": "In-memory aggregate repository for testing event-sourced systems",
   "license": "MIT",
   "repository": {

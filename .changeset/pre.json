@@ -15,9 +15,25 @@
     "@redemeine/projection-worker-lite": "0.1.0",
     "@redemeine/saga": "0.1.0",
     "@redemeine/saga-runtime": "0.1.0",
-    "@redemeine/testing": "0.1.0"
+    "@redemeine/testing": "0.1.0",
+    "@redemeine/cli": "0.1.0",
+    "@redemeine/projection-transport": "0.1.0"
   },
   "changesets": [
-    "initial-release"
+    "accepted-projection-baseline",
+    "bright-commits-project",
+    "fair-sagas-fail",
+    "gentle-sagas-doc",
+    "initial-release",
+    "link-held-cli-kernel",
+    "neat-sagas-organize",
+    "observed-projection-tail",
+    "quiet-joins-gate",
+    "quiet-wolves-smile",
+    "red-sagas-split",
+    "repair-public-package-closure",
+    "sharp-sagas-type",
+    "standalone-cli-vk7d",
+    "tired-dodos-sleep"
   ]
 }

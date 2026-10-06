@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/saga",
-  "version": "0.1.1-pre.0",
+  "version": "0.1.1-pre.1",
   "description": "Process manager (saga) builder for long-running workflows",
   "license": "MIT",
   "repository": {
