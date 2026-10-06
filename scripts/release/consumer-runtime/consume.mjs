@@ -60,7 +60,9 @@ try {
   ]);
   result.phases.install = 'passed';
   command('npm', ['ls', '--all']);
+  result.phases.ls = 'passed';
   await verifyLock(job, result);
+  result.phases.lock = 'passed';
   result.phases.installedGraph = 'passed';
   await smoke(job, command, result);
   result.exitCode = 0;

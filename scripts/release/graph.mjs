@@ -1,4 +1,5 @@
 import semver from 'semver';
+import { plannedCandidateEdge } from './release-plan-schema.mjs';
 import { edges } from './specs.mjs';
 import { diagnostic } from './workspace.mjs';
 
@@ -82,7 +83,7 @@ async function resolveEdge(state, edge, artifact) {
     return;
   }
   const local = state.local.get(edge.canonical);
-  const workspaceIntent = edge.sourceSpec?.startsWith('workspace:');
+  const workspaceIntent = edge.sourceSpec?.startsWith('workspace:') || plannedCandidateEdge(state.report.releasePlan?.plan, edge);
   const localMatch = workspaceIntent && local && semver.satisfies(local.manifest.version, edge.range);
   if (localMatch && artifact.origin === 'candidate') propose(state, edge.package, edge.canonical);
   const metadata = await state.registry.metadata(edge.canonical);

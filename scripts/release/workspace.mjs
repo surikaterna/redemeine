@@ -27,7 +27,7 @@ export function diagnostic(report, code, message, context = {}, incomplete = fal
 
 export function run(report, cwd, command, args) {
   const pnpm = command === 'pnpm';
-  if (pnpm) args = [...args, '--config.ignore-pnpmfile=true', '--config.ignore-scripts=true'];
+  if (pnpm) args = ['--config.ignore-pnpmfile=true', '--config.ignore-scripts=true', ...args];
   const env = pnpm ? pnpmEnvironment() : process.env;
   const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
   report.invocations.push({
@@ -48,7 +48,8 @@ const pnpmSafetyEnvironment = {
   pnpm_config_ignore_pnpmfile: 'true',
   pnpm_config_ignore_scripts: 'true',
   npm_config_ignore_pnpmfile: 'true',
-  npm_config_ignore_scripts: 'true'
+  npm_config_ignore_scripts: 'true',
+  pnpm_config_verify_deps_before_run: 'false'
 };
 
 function pnpmEnvironment() {

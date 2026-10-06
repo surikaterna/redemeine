@@ -1,0 +1,104 @@
+name: Nonpublishing release handoff rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Fixture cross-job proof or read-only repository blockers
+        type: choice
+        options: [healthy-fixture, repository-plan]
+        default: healthy-fixture
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-handoff-local-pre
+  cancel-in-progress: false
+
+env:
+  pnpm_config_ignore_pnpmfile: 'true'
+  npm_config_ignore_pnpmfile: 'true'
+  pnpm_config_ignore_scripts: 'true'
+  npm_config_ignore_scripts: 'true'
+  pnpm_config_verify_deps_before_run: 'false'
+  TURBO_REMOTE_CACHE: '0'
+  TURBO_CACHE: 'local:rw'
+  TURBO_TELEMETRY_DISABLED: '1'
+  TURBO_CONCURRENCY: '1'
+
+jobs:
+  producer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.bundle.outputs.artifact-id }}
+      artifact-digest: ${{ steps.bundle.outputs.artifact-digest }}
+      envelope-sha256: ${{ steps.produce.outputs.envelope-sha256 }}
+      source-sha: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
+      - if: inputs.mode == 'repository-plan'
+        run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true exec turbo run build --force
+      - id: produce
+        env:
+          REHEARSAL_MODE: ${{ inputs.mode }}
+        run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true exec node scripts/release/handoff-test/produce.mjs --mode "$REHEARSAL_MODE" --output /tmp/release-handoff-evidence
+      - id: bundle
+        if: inputs.mode == 'healthy-fixture'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: immutable-release-handoff
+          path: /tmp/release-handoff-evidence/bundle/
+          if-no-files-found: error
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: handoff-producer-evidence
+          path: |
+            /tmp/release-handoff-evidence/
+            /tmp/handoff-fixture-*/
+          retention-days: 14
+
+  consumer:
+    needs: producer
+    if: inputs.mode == 'healthy-fixture'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.producer.outputs.artifact-id }}
+          merge-multiple: true
+          path: /tmp/downloaded-handoff
+      - name: Revalidate same-run source and every original file before LOCAL writes
+        env:
+          EXPECTED_SOURCE: ${{ needs.producer.outputs.source-sha }}
+          EXPECTED_ENVELOPE: ${{ needs.producer.outputs.envelope-sha256 }}
+          ARTIFACT_DIGEST: ${{ needs.producer.outputs.artifact-digest }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE"
+          test -n "$ARTIFACT_DIGEST"
+          pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true run release:rehearse --envelope /tmp/downloaded-handoff/envelope.json --envelope-sha256 "$EXPECTED_ENVELOPE" --output /tmp/handoff-local-replay
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: handoff-consumer-evidence
+          path: /tmp/handoff-local-replay/
+          retention-days: 14

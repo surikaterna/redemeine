@@ -6,15 +6,23 @@ import { parseArgs } from 'node:util';
 import { pack } from './artifacts.mjs';
 import { auditGraph } from './graph.mjs';
 import { registryClient } from './registry.mjs';
+import { applySelection } from './release-plan.mjs';
 import { diagnostic, discover, prerequisites, sourceIdentity } from './workspace.mjs';
 
 export function argumentsFor(args) {
   const { values } = parseArgs({
     args,
-    options: { output: { type: 'string' }, 'registry-fixture': { type: 'string' }, help: { type: 'boolean' } },
+    options: {
+      output: { type: 'string' },
+      'registry-fixture': { type: 'string' },
+      help: { type: 'boolean' },
+      'release-plan': { type: 'string' },
+      'release-plan-sha256': { type: 'string' }
+    },
     allowPositionals: false
   });
   if (!values.help && (!values.output || !isAbsolute(values.output))) throw new Error('--output must be an absolute, not-yet-existing directory');
+  if (Boolean(values['release-plan']) !== Boolean(values['release-plan-sha256'])) throw new Error('Release plan path and digest must be supplied together');
   return values;
 }
 
@@ -45,7 +53,7 @@ function newReport(root) {
 
 async function packAll(workspaces, output, report) {
   const artifacts = [];
-  for (const workspace of workspaces.filter((entry) => entry.selection !== 'private')) {
+  for (const workspace of workspaces.filter((entry) => (report.schemaVersion === 2 ? entry.selection === 'candidate' : entry.selection !== 'private'))) {
     try {
       const artifact = await pack(workspace, output, report);
       if (artifact) artifacts.push(artifact);
@@ -66,6 +74,7 @@ export async function audit(root, options) {
     report.policy = policy;
     report.repository = await sourceIdentity(root, report);
     const workspaces = await discover(root, policy, report);
+    if (options['release-plan']) await applySelection(root, workspaces, report, options);
     const artifacts = await packAll(workspaces, options.output, report);
     const registry = await registryClient(policy, options['registry-fixture'], options.output, report);
     await auditGraph(workspaces, artifacts, policy, registry, report);
@@ -88,7 +97,7 @@ export async function main(args = process.argv.slice(2)) {
     const options = argumentsFor(args);
     if (options.help) {
       console.log(
-        'Node24 / root-pinned pnpm, built workspaces required. Anonymous read-only registry audit; NEVER publishes.\n--output <absolute fresh directory> [--registry-fixture <directory with index.json and original tgz bytes>]\nExit 0: static clean; 1: artifact/graph violations; 2: input/tool/network/incomplete. No consumer or publisher proof.'
+        'Node24 / root-pinned pnpm, built workspaces required. Anonymous read-only registry audit; NEVER publishes.\n--output <absolute fresh directory> [--registry-fixture <directory with index.json and original tgz bytes>] [--release-plan <file> --release-plan-sha256 <digest>]\nExit 0: static clean; 1: artifact/graph violations; 2: input/tool/network/incomplete. No consumer or publisher proof.'
       );
       return 0;
     }

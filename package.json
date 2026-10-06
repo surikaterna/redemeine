@@ -31,6 +31,11 @@
     }
   },
   "scripts": {
+    "release:plan": "node scripts/release/release-plan.mjs",
+    "release:handoff": "node scripts/release/handoff.mjs",
+    "release:rehearse": "node scripts/release/publish-rehearsal.mjs",
+    "test:release:handoff:unit": "node --test --test-concurrency=1 scripts/release/handoff-test/plan.test.mjs scripts/release/handoff-test/version.test.mjs scripts/release/handoff-test/workflow.test.mjs scripts/release/handoff-test/runtime-commands.test.mjs",
+    "test:release:handoff": "node --test --test-concurrency=1 scripts/release/handoff-test/*.test.mjs",
     "release:check": "node scripts/release/check.mjs",
     "test:release": "node --test scripts/release/test/*.test.mjs",
     "release:consumer": "node scripts/release/consumer.mjs",

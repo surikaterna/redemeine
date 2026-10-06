@@ -1,42 +1,17 @@
-name: 🚀 Publish to npm
+name: Publication held — nonpublishing refusal
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write # CRITICAL: Required for npm provenance
 
 jobs:
-  publish:
-    name: Build & Publish
+  held:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 1
     steps:
-      - name: 🚚 Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: 📦 Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'pnpm'
-
-      - name: 📦 Install Dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: 🧪 Run Test Suite
-        run: pnpm exec turbo run test --continue
-
-      - name: 🏗️ Build TypeScript
-        run: pnpm exec turbo run build --continue
-
-      - name: 🚀 Publish to npm (with Provenance)
-        run: pnpm -r publish --access public --provenance --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Refuse publication explicitly
+        run: |
+          printf '%s\n' 'Publication is HELD (redemeine-cwxu). This workflow cannot publish. Slice C is local rehearsal only; real repair qualification and separate owner authorization are required.' >&2
+          exit 1

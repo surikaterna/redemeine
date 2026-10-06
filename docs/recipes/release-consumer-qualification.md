@@ -1,15 +1,17 @@
 # Qualify exact artifacts in local npm consumers
 
 This internal tool belongs to **redemeine-cwxu.2**, Slice B of
-**redemeine-cwxu**. It is not a publisher or release authorization. The live
-publisher, versions, private flags and source dependency declarations are unchanged.
+**redemeine-cwxu**. It is not a publisher or release authorization. Versions,
+private flags and source dependency declarations remain unchanged. The separate
+[Slice C handoff](release-handoff.md) replaces the legacy publisher with a refusal.
 No changeset is needed for this internal tooling.
 
 ## A before B
 
 First build trusted source, then run the [static artifact audit](release-artifact-audit.md).
 Keep the entire A evidence directory. B never builds, packs, repairs or changes
-versions. It accepts only the actual v1 schema and checked-in policy bytes.
+versions. It accepts actual v1 or explicit plan-bound v2 schemas and trusted policy
+bytes; v2 selection occurs upstream in A, never by filtering a red report.
 
 ```bash
 export pnpm_config_ignore_pnpmfile=true npm_config_ignore_pnpmfile=true

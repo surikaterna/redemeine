@@ -1,5 +1,6 @@
 import semver from 'semver';
 import { z } from 'zod';
+import { planSchema } from './release-plan-schema.mjs';
 
 export class ConsumerError extends Error {
   constructor(code, message) {
@@ -87,7 +88,7 @@ const edge = z
   })
   .strict();
 
-export const manifestSchema = z
+export const v1ManifestSchema = z
   .object({
     schemaVersion: z.literal(1),
     beads: strings,
@@ -158,8 +159,24 @@ export const manifestSchema = z
   })
   .strict();
 
+const v2ManifestSchema = v1ManifestSchema.extend({
+  schemaVersion: z.literal(2),
+  purpose: z.literal('selected-release-audit'),
+  releasePlan: z.object({ sha256: digest, plan: planSchema }).strict(),
+  workspaces: z
+    .array(
+      v1ManifestSchema.shape.workspaces.element.extend({
+        selection: z.enum(['private', 'held-audit', 'candidate', 'not-selected'])
+      })
+    )
+    .min(1)
+    .max(1000)
+});
+
+export const manifestSchema = z.discriminatedUnion('schemaVersion', [v1ManifestSchema, v2ManifestSchema]);
+
 export function inputVerdict(manifest) {
-  demand(manifest.schemaVersion === 1 && Array.isArray(manifest.diagnostics), 'Unsupported A manifest');
+  demand([1, 2].includes(manifest.schemaVersion) && Array.isArray(manifest.diagnostics), 'Unsupported A manifest');
   const incomplete = manifest.diagnostics.some((entry) => entry.severity === 'incomplete');
   const code = incomplete ? 2 : Number(manifest.diagnostics.length > 0);
   demand(

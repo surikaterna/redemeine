@@ -3,10 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import ts from 'typescript';
 
-test('consumer production modules stay <=350 lines, functions <50 lines and control nesting <=3', async () => {
+test('release production modules stay <=350 lines, functions <50 lines and control nesting <=3', async () => {
   const root = new URL('../', import.meta.url);
-  const files = (await readdir(root)).filter((name) => /^consumer.*\.mjs$/.test(name));
-  files.push('quarantine.mjs', ...(await readdir(new URL('../consumer-runtime/', import.meta.url))).map((name) => `consumer-runtime/${name}`));
+  const files = (await readdir(root)).filter((name) => name.endsWith('.mjs'));
+  files.push(...(await readdir(new URL('../consumer-runtime/', import.meta.url))).map((name) => `consumer-runtime/${name}`));
   for (const path of files) {
     const text = await readFile(new URL(path, root), 'utf8');
     assert(text.split('\n').length - 1 <= 350, `${path}: file exceeds 350 lines`);

@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import semver from 'semver';
 import { demand } from './consumer-schema.mjs';
+import { plannedCandidateEdge } from './release-plan-schema.mjs';
 import { edges } from './specs.mjs';
 
 export const artifactKey = (artifact) => `${artifact.manifest.name}@${artifact.manifest.version}`;
@@ -45,7 +46,8 @@ function validateSelection(manifest, edge, target, metadata) {
   const versions = metadata.get(edge.canonical)?.versions;
   demand(versions, 'Owned edge is missing registry metadata');
   const candidate = manifest.artifacts.find((a) => a.manifest.name === edge.canonical && a.origin === 'candidate');
-  const local = edge.sourceSpec?.startsWith('workspace:') && candidate && semver.satisfies(candidate.manifest.version, edge.range);
+  const intent = edge.sourceSpec?.startsWith('workspace:') || plannedCandidateEdge(manifest.releasePlan?.plan, edge);
+  const local = intent && candidate && semver.satisfies(candidate.manifest.version, edge.range);
   const overlap = local && versions[candidate.manifest.version];
   if (local && !overlap) {
     demand(target === candidate, 'A candidate resolution identity changed');
@@ -92,7 +94,11 @@ function bindEdge(manifest, expected, used, artifact) {
 function validateEdge(manifest, edge, owned) {
   const internal = owned.names.includes(edge.canonical) || owned.scopes.some((scope) => edge.canonical.startsWith(`${scope}/`));
   const workspace = manifest.workspaces.find((entry) => entry.name === edge.canonical);
-  demand(!workspace || workspace.selection === 'candidate', 'Withheld production dependency', 1);
+  demand(
+    !workspace || workspace.selection === 'candidate' || (manifest.schemaVersion === 2 && workspace.selection === 'not-selected'),
+    'Withheld production dependency',
+    1
+  );
   demand(!deniedVersions(manifest.policy, edge.canonical).some((v) => semver.satisfies(v, edge.range)), 'Range admits known-bad artifact', 1);
   if (!internal) {
     demand(!edge.resolved && edge.resolution === 'external-unvalidated', 'Contradictory external edge');

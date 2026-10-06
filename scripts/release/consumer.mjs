@@ -33,6 +33,7 @@ export function consumerArguments(args) {
 function newReport(options) {
   return {
     schemaVersion: 1,
+    timestamp: new Date().toISOString(),
     beads: ['redemeine-cwxu', 'redemeine-cwxu.2'],
     purpose: 'requested isolated consumer scope only; never full-release-qualified',
     platform: tools.platform,
@@ -46,7 +47,7 @@ function newReport(options) {
   };
 }
 
-function signalHandlers(report) {
+export function signalHandlers(report) {
   const controller = new AbortController();
   const interrupt = (signal) => {
     report.interrupted = signal;
@@ -82,6 +83,7 @@ async function finish(options, report, state, signals) {
     const status = result?.failureKind === 'coverage-incomplete' ? 'blocked' : result ? 'attempted' : 'not-run';
     return { ...requested, exitCode: result?.exitCode ?? null, status };
   });
+  report.finishedAt = new Date().toISOString();
   await writeFile(resolve(options.output, 'result.json'), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
 }
 

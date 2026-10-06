@@ -7,6 +7,7 @@ import { boundedRead, newSnapshot, snapshotFile } from './consumer-files.mjs';
 import { reconstructGraph } from './consumer-graph.mjs';
 import { checkArchiveJson, parseJson } from './consumer-json.mjs';
 import { demand, digest, inputVerdict, manifestSchema, policySchema } from './consumer-schema.mjs';
+import { canonicalBytes, validatePlan } from './release-plan-schema.mjs';
 import { fields } from './specs.mjs';
 import { hash } from './workspace.mjs';
 
@@ -19,6 +20,7 @@ export async function loadInput(path, expected, output, policyBytes) {
   // Incomplete A runs can lack provenance; they never reach schema admission or Docker.
   if (verdict === 2) return { manifest: raw, bytes, digest: expected, verdict };
   const manifest = manifestSchema.parse(raw);
+  if (manifest.schemaVersion === 2) validateSelectedPlan(manifest);
   const policy = policySchema.parse(parseJson(policyBytes));
   demand(
     hash(policyBytes) === manifest.inputs['scripts/release/policy.json'] && isDeepStrictEqual(policy, manifest.policy),
@@ -76,7 +78,12 @@ function validateMembership(manifest) {
     demand(!names.has(workspace.name) && !paths.has(workspace.sourcePath), 'Duplicate workspace');
     names.add(workspace.name);
     paths.add(workspace.sourcePath);
-    const expected = Object.hasOwn(manifest.policy.holds, workspace.name) ? 'held-audit' : 'candidate';
+    const expected =
+      manifest.schemaVersion === 2
+        ? manifest.releasePlan.plan.workspaces.find((item) => item.name === workspace.name)?.selection
+        : Object.hasOwn(manifest.policy.holds, workspace.name)
+          ? 'held-audit'
+          : 'candidate';
     if (workspace.selection !== 'private') demand(workspace.selection === expected, 'Workspace hold policy mismatch');
     const matches = manifest.artifacts.filter(
       (a) =>
@@ -85,7 +92,8 @@ function validateMembership(manifest) {
         a.manifest.version === workspace.version &&
         a.origin === workspace.selection
     );
-    demand(matches.length === Number(workspace.selection !== 'private'), 'Incomplete/duplicate workspace artifact inventory');
+    const packed = manifest.schemaVersion === 2 ? workspace.selection === 'candidate' : workspace.selection !== 'private';
+    demand(matches.length === Number(packed), 'Incomplete/duplicate workspace artifact inventory');
   }
   for (const artifact of manifest.artifacts.filter((a) => ['candidate', 'held-audit'].includes(a.origin))) {
     demand(
@@ -98,6 +106,22 @@ function validateMembership(manifest) {
       ),
       'Uninventoried local artifact'
     );
+  }
+}
+
+function validateSelectedPlan(manifest) {
+  const { plan, sha256 } = manifest.releasePlan;
+  validatePlan(plan);
+  demand(hash(canonicalBytes(plan)) === sha256 && plan.status === 'applied', 'A plan digest/status mismatch');
+  demand(isDeepStrictEqual(manifest.repository, plan.repository) && isDeepStrictEqual(manifest.policy, plan.policy), 'A plan source/policy mismatch');
+  demand(isDeepStrictEqual(manifest.tools, plan.tools), 'A plan toolchain mismatch');
+  for (const [file, digest] of Object.entries(manifest.inputs)) demand(plan.inputs[file] === digest, 'A plan input mismatch');
+  const membership = (items) =>
+    items.map(({ name, version, sourcePath, selection }) => ({ name, version, sourcePath, selection })).sort((a, b) => a.name.localeCompare(b.name));
+  demand(isDeepStrictEqual(membership(manifest.workspaces), membership(plan.workspaces)), 'A plan membership mismatch');
+  for (const edge of manifest.edges.filter((item) => item.origin === 'candidate')) {
+    const source = plan.workspaces.find((item) => item.name === edge.package)?.manifest;
+    demand(source?.[edge.field]?.[edge.name] === edge.sourceSpec, 'A edge source differs from reviewed plan');
   }
 }
 

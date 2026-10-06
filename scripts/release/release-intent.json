@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "actor": "redemeine-cwxu.3 reviewed proposal; actual application requires redemeine-cwxu.4 approval",
+  "channel": "pre",
+  "destinationTag": "pre",
+  "selected": [
+    { "name": "@redemeine/aggregate", "version": "0.2.0-pre.1" },
+    { "name": "@redemeine/mirage", "version": "0.2.0-pre.1" },
+    { "name": "@redemeine/saga", "version": "0.1.1-pre.1" }
+  ],
+  "candidateEdges": [{ "from": "@redemeine/saga", "field": "dependencies", "name": "@redemeine/aggregate", "version": "0.2.0-pre.1" }],
+  "exclusions": {
+    "redemeine": { "held": true, "reason": "Private workspace" },
+    "website": { "held": true, "reason": "Private workspace" },
+    "@redemeine/cli": { "held": true, "reason": "Pending minor/PR123; generated-project consumer coverage incomplete on both Nodes" },
+    "@redemeine/testing": { "held": true, "reason": "Testing held; unapproved private runtime closure" },
+    "@redemeine/kernel": { "held": false, "reason": "Original registry prerequisite requires independent fresh qualification; no forced release" },
+    "@redemeine/projection": { "held": false, "reason": "Outside repair selection; pending minor needs separate disposition, no forced release" },
+    "@redemeine/projection-router-core": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-runtime": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-runtime-core": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-runtime-store-inmemory": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-runtime-store-mongodb": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-transport": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-worker-core": { "held": true, "reason": "Private workspace" },
+    "@redemeine/projection-worker-lite": { "held": true, "reason": "Private workspace" },
+    "@redemeine/saga-runtime": { "held": true, "reason": "Private workspace" }
+  },
+  "changesets": {
+    "initial-release": "Pre-consumed; retained as source evidence, not new intent",
+    "accepted-projection-baseline": "Retain private-package intent for separately approved version workflow",
+    "bright-commits-project": "Retain projection minor; outside initial repair selection",
+    "fair-sagas-fail": "Proposed saga repair; no consumption authorized",
+    "gentle-sagas-doc": "Proposed saga repair; no consumption authorized",
+    "neat-sagas-organize": "Proposed saga repair; no consumption authorized",
+    "observed-projection-tail": "Retain private-package intent for separately approved version workflow",
+    "quiet-joins-gate": "Retain private-package intent for separately approved version workflow",
+    "quiet-wolves-smile": "Proposed aggregate/saga repair; no consumption authorized",
+    "red-sagas-split": "Proposed saga repair; no consumption authorized",
+    "sharp-sagas-type": "Proposed saga repair; no consumption authorized",
+    "standalone-cli-vk7d": "Retain CLI minor; held pending PR123 and generated-project qualification",
+    "tired-dodos-sleep": "Mixed intent MUST be reconciled without loss in D, including held/private/kernel/projection entries; no ignore hack or partial consumption"
+  }
+}

@@ -45,7 +45,7 @@ export async function runConsumer(state, input, selection, registry, image, plan
       .map((a) => ({ manifest: a.manifest, sha256: a.sha256, integrity: a.integrity }))
   };
   await writeFile(resolve(directory, 'job.json'), JSON.stringify(job), { mode: 0o600 });
-  for (const file of ['consume.mjs', 'verify.mjs', 'smoke.mjs', 'declarations.mjs', 'cli-generation.mjs']) {
+  for (const file of ['consume.mjs', 'verify.mjs', 'smoke.mjs', 'smoke-commands.mjs', 'declarations.mjs', 'cli-generation.mjs']) {
     await copyFile(new URL(`./consumer-runtime/${file}`, import.meta.url), resolve(directory, file));
   }
   const id = await createContainer(state, image.id, registry.internal, ['--entrypoint', 'node'], ['/job/consume.mjs']);
