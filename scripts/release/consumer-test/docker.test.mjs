@@ -17,12 +17,12 @@ test('actual A tgz -> official pinned Verdaccio -> two isolated npm11 consumers'
   const fixture = await workspace([
     manifest('@fixture/one', {
       scripts: hooks,
-      dependencies: { alias: 'npm:@fixture/original@1.0.0' },
-      optionalDependencies: { '@fixture/optional': '^1.0.0' },
+      dependencies: { 'alias..dots': 'npm:@fixture/original@1.0.0' },
+      optionalDependencies: { '@fixture/optional..dots': '^1.0.0' },
       peerDependencies: { '@fixture/host': '^1.0.0' }
     })
   ]);
-  for (const name of ['@fixture/original', '@fixture/optional', '@fixture/host']) {
+  for (const name of ['@fixture/original', '@fixture/optional..dots', '@fixture/host']) {
     await addRegistry(fixture, name, [manifest(name, { scripts: hooks })]);
   }
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -44,5 +44,9 @@ test('actual A tgz -> official pinned Verdaccio -> two isolated npm11 consumers'
     ]
   );
   assert(report.consumers.every((c) => c.cache.every((a) => report.staging.receipts.some((s) => s.sha256 === a.sha256))));
+  for (const consumer of report.consumers) {
+    assert(consumer.cache.some((a) => a.path === 'node_modules/alias..dots'));
+    assert(consumer.cache.some((a) => a.path === 'node_modules/@fixture/optional..dots'));
+  }
   assert(report.cleanup.complete);
 });

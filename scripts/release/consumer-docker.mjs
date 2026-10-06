@@ -23,7 +23,7 @@ export async function docker(args, timeout = 120000) {
 }
 
 export function dockerRun(output, report) {
-  return { id: `consumer-${randomUUID()}`, output, report, containers: [], networks: [], label };
+  return { id: `consumer-${randomUUID()}`, output, report, containers: [], networks: [], imageTags: [], label };
 }
 
 export async function network(state, internal) {
@@ -91,13 +91,18 @@ export async function provision(state) {
     await copyFile(resolve(root, file), resolve(context, file));
   }
   const images = [];
+  state.report.images = images;
   for (const node of tools.nodes) {
     const tag = `${state.id}:node-${node.version}`;
+    const image = { ...node, tag };
+    state.imageTags.push(image);
+    images.push(image);
     const log = await docker(
       ['build', '--platform', tools.platform, '--build-arg', `BASE=${node.image}`, '-t', tag, '-f', resolve(context, files[0]), context],
       240000
     );
     const id = JSON.parse(await docker(['image', 'inspect', tag]))[0].Id;
+    image.id = id;
     const versions = await docker([
       'run',
       '--rm',
@@ -113,9 +118,8 @@ export async function provision(state) {
     const actual = JSON.parse(versions);
     demand(actual.node === node.version && actual.npm === tools.npm.version && actual.typescript === tools.typescript, 'Consumer tool version mismatch');
     await writeFile(resolve(state.output, `provision-${node.version}.log`), log, { mode: 0o600 });
-    images.push({ ...node, id, actual, logSha256: hash(log) });
+    Object.assign(image, { actual, logSha256: hash(log) });
   }
-  state.report.images = images;
   return images;
 }
 
@@ -149,6 +153,27 @@ async function cleanupOwned(state) {
       failures.push({ resource: id, operation: 'network cleanup' });
     }
   }
+  await cleanupImages(state, failures);
   state.report.cleanup = { complete: failures.length === 0, failures };
   return failures.length === 0;
+}
+
+async function cleanupImages(state, failures) {
+  state.report.imageCleanup = [];
+  for (const image of state.imageTags) {
+    try {
+      demand(
+        tools.nodes.some((node) => image.tag === `${state.id}:node-${node.version}`),
+        'Refusing cleanup of foreign image tag'
+      );
+      const found = await docker(['image', 'ls', '-q', '--no-trunc', '--filter', `reference=${image.tag}`]);
+      if (!found) continue;
+      demand(!image.id || found === image.id, 'Image tag identity changed');
+      // Tags can share cached layers or another run's image ID: never force-remove by ID or prune.
+      await docker(['image', 'rm', image.tag]);
+      state.report.imageCleanup.push({ tag: image.tag, id: found, removed: true });
+    } catch {
+      failures.push({ resource: image.tag, operation: 'image tag cleanup' });
+    }
+  }
 }

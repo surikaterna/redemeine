@@ -32,7 +32,7 @@ export async function verifyLock(job, result) {
   result.cache = [];
   for (const [path, entry] of Object.entries(lock.packages)) {
     if (!path) continue;
-    assert(path.startsWith('node_modules/') && !path.includes('..') && !entry.link);
+    assert(path.startsWith('node_modules/') && !path.includes('\\') && !path.split('/').some((part) => ['', '.', '..'].includes(part)) && !entry.link);
     assert.equal(new URL(entry.resolved).origin, new URL(job.endpoint).origin);
     assert(/^sha512-/.test(entry.integrity));
     const pkg = JSON.parse(await readFile(resolve('/consumer', path, 'package.json'), 'utf8'));

@@ -28,9 +28,9 @@ function expectedConsumer(consumer, node) {
 }
 
 function healthyResources(report) {
-  if (report.resourceOutcomes === undefined) return true;
   return (
     Array.isArray(report.resourceOutcomes) &&
+    report.resourceOutcomes.length > 0 &&
     report.resourceOutcomes.every(
       (resource) =>
         resource?.oomKilled === false &&

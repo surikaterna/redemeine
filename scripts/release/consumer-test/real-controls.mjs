@@ -51,14 +51,7 @@ await writeFile(
 const cliParent = await mkdtemp(resolve(tmpdir(), 'consumer-real-cli-'));
 const cliResult = await attempt(fixture.root, cliParent, ['@redemeine/cli@0.1.0']);
 const blocked = isExpectedCliCoverage(cliResult.b);
-if (cliResult.b.exitCode === 2 && !blocked) process.exitCode = 2;
-else if (cliResult.b.staging.receipts.length) {
-  assert.deepEqual(
-    cliResult.b.consumers.map((c) => c.node),
-    ['22.23.3', '24.20.0']
-  );
-  assert(blocked, 'The unchanged CLI root-only control must record missing prerequisite coverage2 on both runtimes');
-}
+if (!blocked) process.exitCode = 2;
 console.log(
   'Real CLI coverage retained without repair/override; missing generated-project prerequisite is incomplete2, not an artifact defect. This is NOT full release qualification.'
 );

@@ -55,6 +55,11 @@ No workspace, host HOME, host cache, host networking or Docker socket is mounted
 The official registry image's fresh anonymous storage volume is deleted with its
 container. Host ports are not exposed.
 
+Teardown removes this run's derived image **tags**, retaining tags/IDs in the receipt.
+It never force-removes shared image IDs or prunes another run's tags, base images or
+build cache. Removal failures make cleanup incomplete (exit **2**); retained shared
+layers are not evidence of leaked registry storage or consumer caches.
+
 Consumers and stagers join only an internal Docker network. By default the registry
 has no uplink. Explicit `--external-proxy npmjs` adds anonymous external reads through
 Verdaccio; only that registry joins a separate egress network. Exact workspace names
@@ -140,8 +145,10 @@ and records partial coverage without repair. The root-only install does not
 include the separately documented `@redemeine/aggregate` prerequisite (nor a packed peer
 declaration requiring it). The current expected CLI result is **2 on both Nodes**, with
 successful install/API/declaration phases retained and generated-project coverage blocked.
-The control script accepts that specific documented coverage outcome, not arbitrary
-infrastructure failures. Earlier investigative invalid-input extraction receipts belong
+The control script accepts only that specific documented coverage outcome with successful
+cleanup and non-empty, healthy resource outcomes. Every other result fails the control,
+including artifact failures before staging; the qualification report keeps its original exit.
+Earlier investigative invalid-input extraction receipts belong
 to `redemeine-a05s`, a separate product diagnostic/precondition investigation, **not proof
 of a CLI artifact defect**. The qualifying path no longer invokes extraction on that
 unsupported setup or injects siblings to make it green. The full-repository control requires A=1, B=1,

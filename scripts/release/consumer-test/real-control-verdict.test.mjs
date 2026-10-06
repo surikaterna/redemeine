@@ -94,6 +94,22 @@ const mutations = {
   },
   'resource OOM': (r) => {
     r.resourceOutcomes[0].oomKilled = true;
+  },
+  'missing resource outcomes': (r) => {
+    delete r.resourceOutcomes;
+  },
+  'empty resource outcomes': (r) => {
+    r.resourceOutcomes = [];
+  },
+  'artifact failure before staging': (r) => {
+    r.exitCode = 1;
+    r.staging.receipts = [];
+    r.consumers = [];
+  },
+  'unexpected success before staging': (r) => {
+    r.exitCode = 0;
+    r.staging.receipts = [];
+    r.consumers = [];
   }
 };
 
