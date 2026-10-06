@@ -31,6 +31,7 @@ function healthyResources(report) {
   return (
     Array.isArray(report.resourceOutcomes) &&
     report.resourceOutcomes.length > 0 &&
+    completeConsumerResources(report) &&
     report.resourceOutcomes.every(
       (resource) =>
         resource?.oomKilled === false &&
@@ -41,4 +42,13 @@ function healthyResources(report) {
             report.consumers.some((consumer) => consumer.identity?.id === resource.id)))
     )
   );
+}
+
+function completeConsumerResources(report) {
+  const ids = report.consumers.map((consumer) => consumer.identity?.id);
+  if (ids.some((id) => typeof id !== 'string' || id.length === 0) || new Set(ids).size !== ids.length) return false;
+  return ids.every((id) => {
+    const outcomes = report.resourceOutcomes.filter((resource) => resource?.id === id);
+    return outcomes.length === 1 && outcomes[0].running === false && outcomes[0].oomKilled === false && outcomes[0].exitCode === 2;
+  });
 }

@@ -29,6 +29,7 @@ function expectedReport() {
     consumers,
     resourceOutcomes: [
       { id: 'registry', running: true, oomKilled: false, exitCode: 0 },
+      { id: 'stager', running: false, oomKilled: false, exitCode: 0 },
       ...consumers.map((consumer) => ({ id: consumer.identity.id, running: false, oomKilled: false, exitCode: 2 }))
     ]
   };
@@ -101,6 +102,52 @@ const mutations = {
   'empty resource outcomes': (r) => {
     r.resourceOutcomes = [];
   },
+  'registry-only resource outcomes': (r) => {
+    r.resourceOutcomes = [r.resourceOutcomes[0]];
+  },
+  'missing Node22 resource outcome': (r) => {
+    r.resourceOutcomes = r.resourceOutcomes.filter((resource) => resource.id !== r.consumers[0].identity.id);
+  },
+  'missing Node24 resource outcome': (r) => {
+    r.resourceOutcomes = r.resourceOutcomes.filter((resource) => resource.id !== r.consumers[1].identity.id);
+  },
+  'wrong consumer resource ID': (r) => {
+    r.resourceOutcomes[2].id = 'unknown-consumer';
+  },
+  'Node22 resource exit0 contradicts blocker': (r) => {
+    r.resourceOutcomes[2].exitCode = 0;
+  },
+  'Node24 resource exit0 contradicts blocker': (r) => {
+    r.resourceOutcomes[3].exitCode = 0;
+  },
+  'consumer still running': (r) => {
+    r.resourceOutcomes[2].running = true;
+  },
+  'consumer resource OOM': (r) => {
+    r.resourceOutcomes[2].oomKilled = true;
+  },
+  'missing consumer identity': (r) => {
+    delete r.consumers[0].identity;
+  },
+  'empty consumer identity ID': (r) => {
+    r.consumers[0].identity.id = r.resourceOutcomes[2].id = '';
+  },
+  'nonstring consumer identity ID': (r) => {
+    r.consumers[0].identity.id = r.resourceOutcomes[2].id = 22;
+  },
+  'duplicate consumer identities sharing one outcome': (r) => {
+    r.consumers[1].identity.id = r.consumers[0].identity.id;
+    r.resourceOutcomes.pop();
+  },
+  'duplicate consumer resource outcome': (r) => {
+    r.resourceOutcomes.push({ ...r.resourceOutcomes[2] });
+  },
+  'conflicting duplicate consumer resource outcome': (r) => {
+    r.resourceOutcomes.push({ ...r.resourceOutcomes[2], exitCode: 0 });
+  },
+  'unknown additional consumer exit2': (r) => {
+    r.resourceOutcomes.push({ id: 'unknown-consumer', running: false, oomKilled: false, exitCode: 2 });
+  },
   'artifact failure before staging': (r) => {
     r.exitCode = 1;
     r.staging.receipts = [];
@@ -150,9 +197,9 @@ for (const [name, mutate] of Object.entries(mutations)) {
   test(`F4 actual control rejects ${name} despite expected consumer blockers`, () => {
     const report = expectedReport();
     mutate(report);
-    assert.equal(isExpectedCliCoverage(report), false);
     const result = executeControl(report);
     assert.equal(result.status, 2, result.stderr);
+    assert.equal(isExpectedCliCoverage(report), false);
   });
 }
 
