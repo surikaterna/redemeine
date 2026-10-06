@@ -3,9 +3,9 @@
   "registry": "https://registry.npmjs.org/",
   "internalScopes": ["@redemeine"],
   "holds": {
-    "@redemeine/testing": {
+    "@redemeine/cli": {
       "owner": "redemeine maintainers",
-      "reason": "Unapproved private projection-runtime-core and projection-runtime-store-inmemory runtime closure"
+      "reason": "First CLI publication is outside the approved six-package repair closure"
     }
   },
   "knownBad": {

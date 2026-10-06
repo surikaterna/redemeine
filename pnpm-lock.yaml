@@ -98,8 +98,8 @@ importers:
   packages/aggregate:
     dependencies:
       '@redemeine/kernel':
-        specifier: 0.2.0-pre.0
-        version: 0.2.0-pre.0
+        specifier: workspace:*
+        version: link:../kernel
     devDependencies:
       tsup:
         specifier: ^8.4.0
@@ -111,8 +111,8 @@ importers:
   packages/cli:
     dependencies:
       '@redemeine/kernel':
-        specifier: 0.2.0-pre.0
-        version: 0.2.0-pre.0
+        specifier: workspace:*
+        version: link:../kernel
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -309,8 +309,8 @@ importers:
   packages/saga:
     dependencies:
       '@redemeine/aggregate':
-        specifier: 0.2.0-pre.0
-        version: 0.2.0-pre.0
+        specifier: workspace:*
+        version: link:../aggregate
       immer:
         specifier: ^10.1.1
         version: 10.2.0
@@ -346,19 +346,19 @@ importers:
       '@redemeine/projection':
         specifier: workspace:*
         version: link:../projection
+      '@redemeine/saga':
+        specifier: workspace:*
+        version: link:../saga
+      immer:
+        specifier: ^10.2.0
+        version: 10.2.0
+    devDependencies:
       '@redemeine/projection-runtime-core':
         specifier: workspace:*
         version: link:../projection-runtime-core
       '@redemeine/projection-runtime-store-inmemory':
         specifier: workspace:*
         version: link:../projection-runtime-store-inmemory
-      '@redemeine/saga':
-        specifier: workspace:*
-        version: link:../saga
-      immer:
-        specifier: ^10.1.1
-        version: 10.2.0
-    devDependencies:
       '@types/node':
         specifier: ^24.7.2
         version: 24.13.2
@@ -2639,12 +2639,6 @@ packages:
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
-
-  '@redemeine/aggregate@0.2.0-pre.0':
-    resolution: {integrity: sha512-LJcGT97hQaCuSG4/+tLrdS9tAweudQbDlz83OJCHZ9X2mPeEDFbum4FvqKhtUV4iTRN8xsnd4ZL0HtJoOUar+A==}
-
-  '@redemeine/kernel@0.2.0-pre.0':
-    resolution: {integrity: sha512-PaczICHWoLYMRjsAQdeGK7cZbchn3EZzxFVP3wn+yVfXURUB7SIRWkP/mqJ/3NVWKXbYV6ZRBPBrRu2wDPGqVQ==}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -10856,15 +10850,6 @@ snapshots:
       config-chain: 1.1.13
 
   '@polka/url@1.0.0-next.29': {}
-
-  '@redemeine/aggregate@0.2.0-pre.0':
-    dependencies:
-      '@redemeine/kernel': link:packages/kernel
-
-  '@redemeine/kernel@0.2.0-pre.0':
-    dependencies:
-      immer: 10.2.0
-      zod: 4.4.3
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true

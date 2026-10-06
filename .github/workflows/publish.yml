@@ -1,42 +1,150 @@
-name: 🚀 Publish to npm
+name: Packages
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      approved_versions:
+        description: 'Exact space-separated name@version candidates from the reviewed version PR (includes first publications)'
+        type: string
+        required: true
+      tag:
+        description: 'Publication channel; latest requires stable versions after Changesets pre exit'
+        type: choice
+        options: [pre, latest]
+        required: true
+      promote_latest:
+        description: 'Separate approval: exact name@version entries to move to latest AFTER public verification; blank means none'
+        type: string
+        default: ''
 
 permissions:
   contents: read
-  id-token: write # CRITICAL: Required for npm provenance
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build & Publish
+  version:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: 🚚 Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: 📦 Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: 🟢 Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'pnpm'
-
-      - name: 📦 Install Dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: 🧪 Run Test Suite
-        run: pnpm exec turbo run test --continue
-
-      - name: 🏗️ Build TypeScript
-        run: pnpm exec turbo run build --continue
-
-      - name: 🚀 Publish to npm (with Provenance)
-        run: pnpm -r publish --access public --provenance --no-git-checks
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3; Changesets CLI 2.x
+        with:
+          version: pnpm run version:packages
+          createGithubReleases: false
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm install --frozen-lockfile
+
+  qualify:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
+      - name: Pack, inspect, local exact-file publish/readback and isolated Node 24 + 22 consumers
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm run release:check-simple "$RUNNER_TEMP/release"
+      - name: Check exact approval before requesting environment review
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { approve } from "./scripts/release/simple.mjs";
+            const plan = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/release/plan.json"));
+            approve(plan, process.env.APPROVED_VERSIONS, process.env.RELEASE_TAG);
+            console.log(JSON.stringify(plan.artifacts.filter(a => a.candidate).map(a => ({name:a.manifest.name,version:a.manifest.version,sha256:a.sha256})), null, 2));'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: upload
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: checked-packages
+          path: |
+            ${{ runner.temp }}/release/*.tgz
+            ${{ runner.temp }}/release/plan.json
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: qualify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-release
+    steps:
+      - name: Require owner activation after configuring environment protection
+        env:
+          ENABLED: ${{ vars.NPM_RELEASE_ENABLED }}
+        run: test "$ENABLED" = true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm --config.ignore-scripts=true --config.ignore-pnpmfile=true install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Publish only checked tarball paths (no build or repack)
+        run: node scripts/release/simple.mjs publish "$RUNNER_TEMP/release"
+        env:
+          RELEASE_APPROVED: 'true'
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify public bytes and fresh independent consumers without credentials
+        run: node scripts/release/simple.mjs verify-public "$RUNNER_TEMP/release"
+      - name: Separately approved latest promotion after verification
+        if: inputs.promote_latest != ''
+        run: node scripts/release/simple.mjs promote "$RUNNER_TEMP/release"
+        env:
+          RELEASE_APPROVED: 'true'
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PROMOTE_LATEST: ${{ inputs.promote_latest }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
