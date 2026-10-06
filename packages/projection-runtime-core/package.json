@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection-runtime-core",
-  "version": "0.1.0",
+  "version": "1.0.0-pre.0",
   "description": "Core projection runtime engine with pluggable storage",
   "license": "MIT",
   "repository": {
