@@ -1,6 +1,8 @@
 # Audit built artifacts without publishing
 
 This is **redemeine-cwxu.1**, the first nonpublishing slice of **redemeine-cwxu**.
+The separate [isolated consumer recipe](release-consumer-qualification.md) describes
+Slice B, which consumes these exact evidence files and never accepts red subsets.
 The existing live publisher is **unchanged and unprotected by this gate**.
 Never use this recipe as permission to publish or change versions to make it green.
 

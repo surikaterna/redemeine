@@ -1,0 +1,71 @@
+name: Local exact-artifact consumer qualification
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      real_reads:
+        description: Attempt original public kernel, unchanged CLI and current repository controls
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  pnpm_config_ignore_pnpmfile: 'true'
+  npm_config_ignore_pnpmfile: 'true'
+  pnpm_config_ignore_scripts: 'true'
+  npm_config_ignore_scripts: 'true'
+  pnpm_config_verify_deps_before_run: 'false'
+  TURBO_REMOTE_CACHE: '0'
+  TURBO_CACHE: 'local:rw'
+  TURBO_TELEMETRY_DISABLED: '1'
+  TURBO_CONCURRENCY: '1'
+
+jobs:
+  input-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true run test:release:consumer:unit
+  # Docker provisioning/integration is a bounded manual gate, not a silently skipped unit test.
+  # redemeine-cwxu.2: Architect/Auditor must approve expanding this cost to every PR.
+  docker-matrix:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.20.0'
+      - run: corepack enable && corepack install
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true install --frozen-lockfile --ignore-scripts
+      - run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true run test:release:consumer
+      - name: Opt-in original public kernel control
+        if: inputs.real_reads
+        run: node scripts/release/consumer-test/real-kernel.mjs
+      - name: Opt-in fresh source build before A, never in B
+        if: inputs.real_reads
+        run: pnpm --config.ignore-pnpmfile=true --config.ignore-scripts=true exec turbo run build --force
+      - name: Opt-in repository rejection and unchanged CLI attempt
+        if: inputs.real_reads
+        run: node scripts/release/consumer-test/real-controls.mjs
+      - name: Retain receipts on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: local-consumer-evidence
+          path: /tmp/consumer-*/
+          retention-days: 14
