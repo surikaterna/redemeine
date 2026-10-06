@@ -19,7 +19,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@redemeine/kernel": "0.2.0-pre.0",
+    "@redemeine/kernel": "workspace:*",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },

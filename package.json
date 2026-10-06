@@ -31,6 +31,9 @@
     }
   },
   "scripts": {
+    "version:packages": "changeset version && pnpm install --lockfile-only",
+    "release:check-simple": "node scripts/release/simple.mjs check",
+    "test:release:simple": "node --test scripts/release/simple.test.mjs",
     "release:check": "node scripts/release/check.mjs",
     "test:release": "node --test scripts/release/test/*.test.mjs",
     "release:consumer": "node scripts/release/consumer.mjs",
