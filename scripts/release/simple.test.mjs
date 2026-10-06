@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -7,7 +9,7 @@ import { c } from 'tar';
 import ts from 'typescript';
 import { checkContent } from './artifacts.mjs';
 import { registryClient } from './registry.mjs';
-import { approve, publishArgs } from './simple.mjs';
+import { approve, authorize, publishArgs } from './simple.mjs';
 import { checkArtifact, checkImports, checkManifest, chooseVersion, dependencyOrder, eligible, selectCandidates, verifyFiles } from './simple-check.mjs';
 import { hash } from './workspace.mjs';
 
@@ -15,6 +17,14 @@ const policy = { holds: { '@redemeine/cli': {} }, knownBad: { '@redemeine/aggreg
 const workspace = (name, version = '1.0.0', privateFlag = false) => ({ name, version, manifest: { name, version, private: privateFlag } });
 const workspaces = [workspace('@redemeine/future'), workspace('@redemeine/cli'), workspace('@redemeine/private', '1.0.0', true)];
 const artifact = (name, dependencies = {}) => ({ manifest: { name, version: '1.0.0', dependencies }, candidate: true });
+
+async function releaseWorkflow() {
+  // Reuse Jest's locked YAML parser without adding a release/runtime dependency.
+  let require = createRequire(import.meta.url);
+  for (const name of ['jest', 'jest-cli', 'jest-config']) require = createRequire(require.resolve(name));
+  const text = await readFile(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8');
+  return { text, workflow: require('js-yaml').load(text) };
+}
 
 async function checkSourceArtifact(extension, text) {
   const directory = await mkdtemp(resolve(tmpdir(), 'simple-source-'));
@@ -182,7 +192,7 @@ test('approval is exact and explicit, and publisher arguments point at a file wi
     '--ignore-scripts',
     '--access',
     'public',
-    '--provenance=false',
+    '--provenance',
     '--tag',
     'pre',
     '--registry',
@@ -205,15 +215,101 @@ test('changed artifact bytes cannot reach publication', async () => {
   }
 });
 
-test('workflow has no release-event or recursive publisher bypass and isolates npm credentials', async () => {
-  const workflow = await readFile(new URL('../../.github/workflows/publish.yml', import.meta.url), 'utf8');
-  assert.doesNotMatch(workflow, /types: \[published\]|pnpm -r publish|id-token: write|pull_request_target/);
-  assert.match(workflow, /environment: npm-release/);
-  assert.match(workflow, /vars.NPM_RELEASE_ENABLED/);
-  assert.match(workflow, /artifact-ids: \$\{\{ needs.qualify.outputs.artifact_id \}\}/);
-  assert.equal((workflow.match(/secrets.NPM_TOKEN/g) || []).length, 2);
-  assert.ok(workflow.indexOf('verify-public') < workflow.indexOf('simple.mjs promote'));
-  for (const use of workflow.matchAll(/uses: ([^\s]+)/g)) assert.match(use[1], /@[a-f0-9]{40}$/);
+test('OIDC authorization requires every context field; token-only fails without requests or subprocesses', (t) => {
+  const env = {
+    GITHUB_ACTIONS: 'true',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    RELEASE_APPROVED: 'true',
+    ACTIONS_ID_TOKEN_REQUEST_URL: 'https://oidc.invalid/synthetic-never-requested',
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'synthetic-never-transmitted'
+  };
+  const fetch = t.mock.method(globalThis, 'fetch', () => assert.fail('No identity or registry requests allowed'));
+  const spawn = t.mock.method(childProcess, 'spawnSync', () => assert.fail('No npm calls allowed'));
+  syncBuiltinESMExports();
+  try {
+    assert.doesNotThrow(() => authorize(env));
+    for (const field of Object.keys(env)) {
+      for (const value of [undefined, '', ' ']) assert.throws(() => authorize({ ...env, [field]: value }));
+    }
+    for (const [field, value] of [
+      ['GITHUB_ACTIONS', 'false'],
+      ['GITHUB_REF', 'refs/heads/other'],
+      ['GITHUB_EVENT_NAME', 'push'],
+      ['RELEASE_APPROVED', 'false']
+    ]) {
+      assert.throws(() => authorize({ ...env, [field]: value }));
+    }
+    assert.throws(
+      () => authorize({ ...env, ACTIONS_ID_TOKEN_REQUEST_URL: undefined, ACTIONS_ID_TOKEN_REQUEST_TOKEN: undefined, NODE_AUTH_TOKEN: 'token-only-marker' }),
+      /Missing GitHub OIDC/
+    );
+    assert.throws(
+      () => authorize({ ...env, ACTIONS_ID_TOKEN_REQUEST_URL: '' }),
+      (error) => {
+        assert.doesNotMatch(String(error), /synthetic-never|token-only-marker/);
+        return /Missing GitHub OIDC request URL/.test(error.message);
+      }
+    );
+    assert.equal(fetch.mock.callCount(), 0);
+    assert.equal(spawn.mock.callCount(), 0);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('workflow confines OIDC permission to the protected main/manual publish job with no token fallback', async () => {
+  const { text, workflow } = await releaseWorkflow();
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.deepEqual(Object.keys(workflow.jobs).sort(), ['publish', 'qualify', 'version']);
+  assert.deepEqual(workflow.jobs.version.permissions, { contents: 'write', 'pull-requests': 'write' });
+  assert.equal(workflow.jobs.qualify.permissions, undefined);
+  const publish = workflow.jobs.publish;
+  assert.deepEqual(publish.permissions, { contents: 'read', 'id-token': 'write' });
+  assert.equal(publish.environment, 'npm-release');
+  assert.equal(publish.if, "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'");
+  assert.equal(publish.needs, 'qualify');
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.deepEqual(Object.keys(workflow.on).sort(), ['pull_request', 'push', 'workflow_dispatch']);
+  assert.doesNotMatch(text, /pnpm -r publish|NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|--provenance=false/);
+  assert.match(text, /vars.NPM_RELEASE_ENABLED/);
+  assert.match(text, /artifact-ids: \$\{\{ needs.qualify.outputs.artifact_id \}\}/);
+  const commands = publish.steps.filter((step) => step.run?.startsWith('node scripts/release/simple.mjs'));
+  assert.deepEqual(
+    commands.map((step) => step.run.split(' ')[2]),
+    ['publish', 'verify-public', 'promote']
+  );
+  for (const step of [commands[0], commands[2]]) assert.equal(step.env.RELEASE_APPROVED, 'true');
+  for (const use of text.matchAll(/uses: ([^\s]+)/g)) assert.match(use[1], /@[a-f0-9]{40}$/);
+});
+
+test('both release hosts install and assert npm 11.21.0 before driver use; version job stays unchanged', async () => {
+  const { workflow } = await releaseWorkflow();
+  const install = 'npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org';
+  for (const name of ['qualify', 'publish']) {
+    const steps = workflow.jobs[name].steps;
+    const index = steps.findIndex((step) => step.run?.split('\n')[0] === install);
+    assert.ok(index > steps.findIndex((step) => step.uses?.startsWith('actions/setup-node@')));
+    assert.deepEqual(steps[index].run.trim().split('\n'), [install, 'npm --version', 'test "$(npm --version)" = 11.21.0']);
+    assert.ok(index < steps.findIndex((step) => /release:check-simple|simple.mjs publish/.test(step.run)));
+    assert.equal(steps.filter((step) => step.run?.includes('npm install --global')).length, 1);
+    assert.equal(steps.find((step) => step.uses?.startsWith('actions/setup-node@')).with['node-version'], '24.20.0');
+  }
+  assert.ok(workflow.jobs.version.steps.every((step) => !step.run?.includes('npm install --global')));
+});
+
+test('public write operations authorize first and the driver asserts its actual reported host npm version', async () => {
+  const text = await readFile(new URL('./simple.mjs', import.meta.url), 'utf8');
+  const source = ts.createSourceFile('simple.mjs', text, ts.ScriptTarget.Latest, true);
+  const functions = source.statements.filter(ts.isFunctionDeclaration);
+  for (const name of ['publish', 'promote']) {
+    const fn = functions.find((statement) => statement.name.text === name);
+    assert.equal(fn.body.statements[0].getText(source), 'authorize();');
+  }
+  const main = functions.find((statement) => statement.name.text === 'main');
+  const assertion = main.body.statements.find((statement) => statement.getText(source).startsWith('assert.equal(report.tools.npm,'));
+  assert.equal(assertion.expression.arguments[1].text, '11.21.0');
 });
 
 test('only an actual registry 404 is absence; authentication/server errors fail closed', async () => {

@@ -146,15 +146,16 @@ export function approve(plan, approved, tag) {
 }
 
 export function publishArgs(file, tag) {
-  return ['publish', file, '--ignore-scripts', '--access', 'public', '--provenance=false', '--tag', tag, '--registry', registry];
+  return ['publish', file, '--ignore-scripts', '--access', 'public', '--provenance', '--tag', tag, '--registry', registry];
 }
 
-function authorize() {
-  assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Public writes only in the owned workflow');
-  assert.equal(process.env.GITHUB_REF, 'refs/heads/main');
-  assert.equal(process.env.GITHUB_EVENT_NAME, 'workflow_dispatch');
-  assert.equal(process.env.RELEASE_APPROVED, 'true', 'Protected npm-release approval required');
-  assert.ok(process.env.NODE_AUTH_TOKEN, 'Missing owner-provided NPM_TOKEN');
+export function authorize(env = process.env) {
+  assert.equal(env.GITHUB_ACTIONS, 'true', 'Public writes only in the owned workflow');
+  assert.equal(env.GITHUB_REF, 'refs/heads/main');
+  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
+  assert.equal(env.RELEASE_APPROVED, 'true', 'Protected npm-release approval required');
+  assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_URL?.trim(), 'Missing GitHub OIDC request URL');
+  assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN?.trim(), 'Missing GitHub OIDC request token');
 }
 
 async function loadChecked(output, policy, workspaces) {
@@ -237,7 +238,7 @@ async function main() {
   process.env.pnpm_config_verify_deps_before_run = 'false';
   const policy = await prerequisites(root, report);
   assert.equal(process.versions.node, '24.20.0');
-  assert.equal(report.tools.npm, '11.19.0');
+  assert.equal(report.tools.npm, '11.21.0');
   const workspaces = await discover(root, policy, report);
   const output = resolve(destination);
   if (operation === 'check') return check(output, policy, workspaces);
