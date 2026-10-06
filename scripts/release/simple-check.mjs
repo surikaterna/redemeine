@@ -122,7 +122,7 @@ async function checkPayload(file, privateNames, license) {
   assert.ok(packedLicense, 'Missing root LICENSE');
   assert.deepEqual(packedLicense[1], license, 'LICENSE differs from root');
   for (const [path, bytes] of contents) {
-    if (/\.[cm]?[jt]s$/.test(path)) checkImports(bytes.toString('utf8'), path, privateNames);
+    if (/\.(?:[cm]?[jt]s|[jt]sx)$/.test(path)) checkImports(bytes.toString('utf8'), path, privateNames);
   }
 }
 

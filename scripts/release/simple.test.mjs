@@ -1,18 +1,59 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
+import { c } from 'tar';
+import ts from 'typescript';
 import { checkContent } from './artifacts.mjs';
 import { registryClient } from './registry.mjs';
 import { approve, publishArgs } from './simple.mjs';
-import { checkImports, checkManifest, chooseVersion, dependencyOrder, eligible, selectCandidates, verifyFiles } from './simple-check.mjs';
+import { checkArtifact, checkImports, checkManifest, chooseVersion, dependencyOrder, eligible, selectCandidates, verifyFiles } from './simple-check.mjs';
 import { hash } from './workspace.mjs';
 
 const policy = { holds: { '@redemeine/cli': {} }, knownBad: { '@redemeine/aggregate': ['0.2.0-pre.0'] }, internalScopes: ['@redemeine'] };
 const workspace = (name, version = '1.0.0', privateFlag = false) => ({ name, version, manifest: { name, version, private: privateFlag } });
 const workspaces = [workspace('@redemeine/future'), workspace('@redemeine/cli'), workspace('@redemeine/private', '1.0.0', true)];
 const artifact = (name, dependencies = {}) => ({ manifest: { name, version: '1.0.0', dependencies }, candidate: true });
+
+async function checkSourceArtifact(extension, text) {
+  const directory = await mkdtemp(resolve(tmpdir(), 'simple-source-'));
+  const manifest = { name: '@redemeine/future', version: '1.0.0', exports: `./index.${extension}`, dependencies: { immer: '^10.2.0' } };
+  const license = Buffer.from('fixture license');
+  try {
+    const root = resolve(directory, 'package');
+    await mkdir(root);
+    await writeFile(resolve(root, 'package.json'), JSON.stringify(manifest));
+    await writeFile(resolve(root, 'LICENSE'), license);
+    await writeFile(resolve(root, `index.${extension}`), text);
+    const file = resolve(directory, 'candidate.tgz');
+    await c({ cwd: directory, file, gzip: true }, ['package']);
+    return await checkArtifact(file, manifest, workspaces, policy, license);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test('packed source scanning retains JS, TS, module and declaration suffixes', async () => {
+  for (const extension of ['js', 'cjs', 'mjs', 'ts', 'cts', 'mts', 'd.ts', 'd.cts', 'd.mts']) {
+    await checkSourceArtifact(extension, 'import "immer";');
+    await assert.rejects(checkSourceArtifact(extension, 'import "@redemeine/private";'), /Private import: @redemeine\/private/);
+  }
+});
+
+for (const extension of ['jsx', 'tsx']) {
+  test(`packed .${extension} exports accept public JSX and reject private imports inside its AST`, async () => {
+    const annotation = extension === 'tsx' ? ': unknown' : '';
+    const text = `import "immer"; const view${annotation} = <section>{import("immer")}</section>;`;
+    const source = ts.createSourceFile(`index.${extension}`, text, ts.ScriptTarget.Latest, true);
+    assert.equal(source.scriptKind, extension === 'tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
+    assert.deepEqual(source.parseDiagnostics, []);
+    assert.ok(ts.isJsxElement(source.statements[1].declarationList.declarations[0].initializer));
+    await checkSourceArtifact(extension, text);
+    await assert.rejects(checkSourceArtifact(extension, text.replace('import "immer"', 'import "@redemeine/private"')), /Private import/);
+    await assert.rejects(checkSourceArtifact(extension, text.replace('import("immer")', 'import("@redemeine/private")')), /Private import/);
+  });
+}
 
 test('future nonprivate workspace is eligible without a name allowlist; CLI and private remain excluded', () => {
   assert.deepEqual(
