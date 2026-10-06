@@ -35,15 +35,67 @@ export function checkManifest(manifest, workspaces, policy) {
   }
 }
 
+function bindingChecker(source) {
+  // Bind only this payload: lexical shadowing matters, dependency resolution does not.
+  return ts
+    .createProgram(
+      [source.fileName],
+      { allowJs: true, noLib: true, noResolve: true },
+      {
+        ...ts.createCompilerHost({}),
+        getSourceFile: (file) => (file === source.fileName ? source : undefined)
+      }
+    )
+    .getTypeChecker();
+}
+
+function isGlobalRequire(node, checker) {
+  return ts.isIdentifier(node) && node.text === 'require' && !checker.getSymbolAtLocation(node)?.declarations?.length;
+}
+
+function nodeModuleBinding(node, checker) {
+  if (!ts.isIdentifier(node)) return;
+  const declaration = checker.getSymbolAtLocation(node)?.declarations?.[0];
+  if (!declaration) return;
+  let parent = declaration;
+  while (parent && !ts.isImportDeclaration(parent)) parent = parent.parent;
+  if (!parent || !['node:module', 'module'].includes(parent.moduleSpecifier.text)) return;
+  if (ts.isImportSpecifier(declaration)) return (declaration.propertyName || declaration.name).text;
+  if (ts.isNamespaceImport(declaration) || ts.isImportClause(declaration)) return '*';
+}
+
+function isRequireFactory(node, checker) {
+  if (nodeModuleBinding(node, checker) === 'createRequire') return true;
+  if (ts.isPropertyAccessExpression(node)) return node.name.text === 'createRequire' && nodeModuleBinding(node.expression, checker) === '*';
+  // Computed namespace access cannot establish which Node loader API is selected.
+  return ts.isElementAccessExpression(node) && nodeModuleBinding(node.expression, checker) === '*';
+}
+
+function staticTarget(node, file) {
+  assert.ok(node && ts.isStringLiteral(node), `Uninspectable loader: ${file}`);
+  return node.text;
+}
+
 export function checkImports(text, file, privateNames) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const checker = bindingChecker(source);
   function visit(node) {
     let spec;
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) spec = node.moduleSpecifier.text;
     if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) spec = node.argument.literal.text;
-    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.getText(source) === 'require')) {
-      assert.ok(node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0]), `Uninspectable loader: ${file}`);
-      spec = node.arguments[0].text;
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      spec = staticTarget(node.moduleReference.expression, file);
+    }
+    // Reject loader capture/factories rather than attempting alias dataflow.
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      assert.ok(!isGlobalRequire(node.initializer, checker) && !isRequireFactory(node.initializer, checker), `Unsupported loader alias: ${file}`);
+    }
+    if (ts.isCallExpression(node)) {
+      assert.ok(!isRequireFactory(node.expression, checker), `Unsupported createRequire loader: ${file}`);
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword || isGlobalRequire(node.expression, checker)) {
+        assert.equal(node.arguments.length, 1, `Uninspectable loader: ${file}`);
+        spec = staticTarget(node.arguments[0], file);
+      }
     }
     if (spec) {
       assert.ok(!privateNames.some((name) => spec === name || spec.startsWith(`${name}/`)), `Private import: ${spec}`);

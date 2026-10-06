@@ -63,6 +63,58 @@ test('private static, dynamic and declaration imports and variable loaders are r
   checkImports('import x from "@redemeine/future"; import("immer")', 'index.js', names);
 });
 
+test('declaration import-equals requires an inspectable public module target', () => {
+  const names = ['@redemeine/private'];
+  for (const target of ['"@redemeine/private"', '"@redemeine/private/types"', '"file:../private"', 'path']) {
+    assert.throws(() => checkImports(`import T = require(${target});`, 'index.d.ts', names), /Private import|Local import|Uninspectable loader/);
+  }
+  checkImports('import T = require("@redemeine/future"); import Alias = T.Types;', 'index.d.ts', names);
+});
+
+test('global require aliases fail closed even with public or computed targets', () => {
+  for (const target of ['"@redemeine/private"', '"immer"', 'path']) {
+    assert.throws(() => checkImports(`const load = require; load(${target});`, 'index.js', ['@redemeine/private']), /Unsupported loader alias/);
+  }
+  assert.throws(() => checkImports('require("@redemeine/private/subpath")', 'index.cjs', ['@redemeine/private']), /Private import/);
+  assert.throws(() => checkImports('require(path)', 'index.cjs', []), /Uninspectable loader/);
+  checkImports('require("immer"); import("immer")', 'index.js', []);
+});
+
+test('actual Node createRequire imports fail closed including aliases and namespace access', () => {
+  for (const module of ['node:module', 'module']) {
+    for (const text of [
+      `import { createRequire } from "${module}"; createRequire(import.meta.url)("@redemeine/private");`,
+      `import { createRequire as make } from "${module}"; const load = make(import.meta.url); load(path);`,
+      `import { createRequire as make } from "${module}"; const alias = make; alias(import.meta.url)("immer");`,
+      `import * as mod from "${module}"; mod.createRequire(import.meta.url)("@redemeine/private");`,
+      `import mod from "${module}"; mod.createRequire(import.meta.url)("immer");`,
+      `import * as mod from "${module}"; mod["createRequire"](import.meta.url)("@redemeine/private");`,
+      `import * as mod from "${module}"; mod[method](import.meta.url)(path);`
+    ]) {
+      assert.throws(() => checkImports(text, 'index.js', ['@redemeine/private']), /Unsupported (createRequire loader|loader alias)/);
+    }
+  }
+});
+
+test('innocent names and nearest lexical bindings are not mistaken for Node loaders', () => {
+  for (const text of [
+    'function createRequire() { return () => {}; } createRequire(import.meta.url)("@redemeine/private");',
+    'const createRequire = () => () => {}; const alias = createRequire; alias()(path);',
+    'function f(require) { const load = require; load("@redemeine/private"); require(path); }',
+    'const require = (x) => x; const load = require; load(path);',
+    '{ const load = require; function require(x) { return x; } load(path); }',
+    'import { createRequire as make } from "other"; make(import.meta.url)(path);',
+    'import { createRequire as make } from "node:module"; function f(make) { make(import.meta.url)(path); }',
+    'import * as mod from "node:module"; function f(mod) { mod.createRequire(import.meta.url)(path); }',
+    'import { createRequire } from "node:module"; import * as mod from "node:module"; mod.isBuiltin("fs");',
+    'import { require } from "other"; const load = require; load(path);',
+    'var __require = typeof require !== "undefined" ? require : (x) => { throw Error(x); };'
+  ]) {
+    checkImports(text, 'index.js', ['@redemeine/private']);
+  }
+  assert.throws(() => checkImports('function f(require) {} const load = require; load(path);', 'index.js', []), /Unsupported loader alias/);
+});
+
 test('missing sibling and stale known-bad versions fail rather than guessing a registry resolution', () => {
   assert.throws(() => chooseVersion('@redemeine/aggregate', '0.2.0-pre.1', [], { versions: {} }, policy), /No candidate/);
   assert.throws(() => chooseVersion('@redemeine/aggregate', '0.2.0-pre.0', [], { versions: { '0.2.0-pre.0': {} } }, policy), /known broken/);
