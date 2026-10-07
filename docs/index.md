@@ -41,8 +41,7 @@ Redemeine's "Type-Transparent" architecture is designed around end-to-end safety
 Once you've mastered the basics, explore task-oriented guides for solving common problems.
 
 * [**CLI Domain Workflow**](/docs/recipes/cli-domain-workflow) — Standalone scaffolding, safe entity mounts, and schema regeneration (local tarballs before publication).
-* [**Nonpublishing Artifact Audit**](/docs/recipes/release-artifact-audit) — Node/pnpm prerequisites, static tarball diagnosis and Bun-free qualification.
-* [**Artifact Gate Boundary**](/docs/architecture/release-artifact-gate) — Ownership, evidence limits and separately authorized future phases.
+* [**Releasing Packages**](/docs/releasing) — Changesets version PRs, approved checked tarballs and publication retries.
 
 * [**Testing Aggregates**](/docs/recipes/testing-aggregates) — A "Given / When / Then" blueprint for testing pure business logic.
 * [**Testing Projections**](/docs/recipes/testing-projections) — Practical patterns for `.from()`/`.join()`, identity routing, and pure handler tests.

@@ -1,32 +1,71 @@
 # Releasing packages
 
-Use Node **24.20.0**, the root integrity-pinned **pnpm 11.9.0**, host npm **11.21.0**, and Docker (Linux amd64). Install the host CLI with `npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org` and verify `npm --version` is exactly `11.21.0`; all four simple-driver operations enforce it. Qualification and publication hosts use this pin for OIDC publish and dist-tag support; isolated local-registry/Node 24 + 22 consumers intentionally retain npm **11.19.0**. These are trusted developer tools: invoking `pnpm run` itself occurs outside the checker's subprocess guards. Inside the checker all pnpm list/version/pack calls disable config hooks and lifecycle scripts; packing never runs build hooks. Build the reviewed source first.
+Use Node **24.20.0**, root integrity-pinned **pnpm 11.9.0**, and release-host
+**npm 11.21.0**. The Packages workflow installs and checks these pins.
 
-## Normal development and version PR
+## Changeset → version PR → manual publication
 
-Add a workspace with a unique name, version, license, built root JS/types exports and `files` inventory; leave `private: true` until its public API is approved. Use `workspace:*` for sibling dependencies. Public runtime/peer/optional edges cannot point at private workspaces. Add a standard Changeset (`pnpm exec changeset`); **new public names need no release membership list**. Policy holds in `scripts/release/policy.json` exclude CLI; the old-version denylist remains version-specific. Generic new packages get an independent name-only install, `npm ls`, and root import on Node 24 + 22. Add a representative behavior/type fixture when its API needs more than this baseline (testing already has one); bin-only packages need an explicit smoke before removing their hold.
+1. Add an ordinary Changeset (`pnpm exec changeset`). On main pushes, Changesets
+   action **v1.5.3** with CLI **2.31** opens the generated version PR; it never
+   publishes. Review versions, dependency pins, changelogs, prerelease state and
+   lockfile, pass normal checks, then merge. Token-created PRs may require a
+   maintainer close/reopen to trigger checks.
+2. Confirm each package's npm trusted publisher: GitHub Actions,
+   **surikaterna/redemeine**, workflow **release.yml**, optional environment **blank**,
+   direct publication allowed. A new name may require separately owner-managed
+   first-publication setup. Never bootstrap placeholders or add token fallback.
+3. Manually dispatch **Packages** on **main**, entering the exact space-separated
+   `name@version` source versions to publish and channel `pre` (default) or
+   `latest`. Approval is validated before building/packing. `latest` requires
+   stable versions and Changesets prerelease mode exited; this pipeline does not
+   change prerelease state. New public workspaces need no membership list, but
+   must be explicitly selected. Private workspaces and `policy.json` holds
+   (currently CLI) cannot be selected.
+4. Qualification runs build, lint, typecheck, application and release tests,
+   then `pnpm pack` with lifecycle/config hooks disabled. Root LICENSE is copied
+   only when missing and that owned copy is removed afterward. The small plan
+   records source commit, tool pins, channel, dependency order and tarball hashes.
+   The publish job downloads **checked-packages by that run's artifact ID** and
+   checks the qualification job's plan SHA256, source, approval and tarball bytes.
+   It never builds or repacks. Only this job has OIDC permission; no environment
+   activation, npm secret, or `whoami` request is needed.
+5. All exact versions are preflighted before any writes. Only explicit 404 means
+   absent. Existing identical SHA512 bytes are skipped; missing integrity or a
+   conflict stops the whole batch. Publication uses checked `.tgz` paths with
+   `--ignore-scripts --access public --provenance` and the explicit channel.
+   npm exit zero is accepted success, immediately printed as **Published**.
+   There is no public readback, polling, consumer gate or automatic tag promotion.
 
-On trusted main pushes, pinned Changesets action **v1.5.3** creates a version PR, never publishes. Its documented `version` input supports the installed Changesets **2.31**; v2 is not a drop-in. `pnpm run version:packages` runs ordinary Changesets versioning then lock-only install. Private version/changelog updates and mixed changesets are intentional; do not ignore or delete them. Review all generated versions, pins, changelogs, prerelease state and the lockfile. The CLI workspace pin allows this without registry overrides while publication remains held. Frozen install must pass. GitHub must allow Actions to create PRs; GITHUB_TOKEN-created PR events may need a maintainer close/reopen to trigger PR checks. Do not merge without checks.
+## Failure and rerun
 
-To rehearse, **in a disposable checkout only**, run `pnpm run version:packages` then `pnpm install --frozen-lockfile`. In that versioned checkout the two qualification commands are:
+Publication is not atomic. A failed/ambiguous npm command stops immediately and
+prints published, already-matching/skipped, current **UNKNOWN**, and pending
+versions. Review the failure, then use **Re-run failed jobs** on the same run to
+download the original artifact and retry: matching existing bytes skip, pending
+versions publish once. Do not rerun qualification/rebuild as a substitute for
+the original bytes. Missing/expired artifacts or different bytes require fresh
+review and possibly a new version. A skipped version does **not** move a tag.
+Later tag changes require separate owner authorization and standard npm tooling,
+not an automated promotion path here.
+
+## Local checks and limits
 
 ```sh
-pnpm -r build && pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
-pnpm run release:check-simple /absolute/new/output-directory
+pnpm install --frozen-lockfile
+pnpm -r build && pnpm run lint && pnpm run typecheck && pnpm test
+pnpm run test:release:simple
+APPROVED_VERSIONS='@redemeine/example@1.0.0' RELEASE_TAG=pre \
+  pnpm run release:check-simple /absolute/new/output-directory
 ```
 
-The output directory must not exist. The checker discovers every nonprivate, nonheld workspace, skips already-published exact versions without mutating them, and fails on registry errors other than actual 404. It validates actual pnpm archives, copies root LICENSE temporarily only when absent (removes it in `finally`), checks every declared target and dependency field, rejects private imports, and resolves owned dependencies to checked candidates or integrity-checked healthy registry archives. External semver dependencies are resolved by npm, not a new resolver. Unsupported aliases/URLs/bundled node_modules or variable loaders fail explicitly. It stages dependency-first exact `.tgz` files using **npm publish FILE --ignore-scripts** into owned disposable Verdaccio, reads their bytes back, then installs each candidate alone in a new container directory. Only the registry proxies external packages; owned scope fallback is blocked. The testing root also runs the cwxu.4 strict DTS/multi-API fixture without skips, overrides, source mounts or sibling installs. Reports/locks stay in the output; Docker resources are cleaned on ordinary success/failure. On runner termination use the run-owned Docker labels to inspect leftovers, never global prune.
-
-## Explicit publication approval
-
-No GitHub environment is required. In **each npm package's Settings → Trusted publishing**, select GitHub Actions, organization/user **surikaterna**, repository **redemeine**, workflow filename **release.yml** (not its path). Leave the optional environment constraint **blank**; if one is already configured, the owner must remove it in npm's UI because the publish job no longer declares an environment. Confirm **Allow npm publish** for direct publication and, for approved promotion, the independent **Allow npm dist-tag** permission; stage-only trust is insufficient. [npm's trusted-publishing documentation](https://docs.npmjs.com/trusted-publishers/) requires npm 11.21.0 or later for OIDC dist-tags. The reported setup of kernel/aggregate/mirage/projection/testing still needs owner confirmation for these exact settings and permissions; local checks cannot inspect or prove that trust.
-
-Saga's registry 404 means its package/trusted-publisher setup is a separate first-publication prerequisite. The owner must resolve this before dispatch, using a separately reviewed one-time bootstrap of the correct qualified artifact if package creation is required. Never publish an empty placeholder or add a workflow token fallback. Reconcile any bootstrap publication with the next run's exact candidate approval. This change does not configure npm/GitHub settings or authorize a dispatch.
-
-OIDC authenticates the workflow; provenance attests package origin. Public publishing explicitly requests `--provenance`, with no NPM_TOKEN/NODE_AUTH_TOKEN mapping or setup-node token-placeholder npmrc. Only the publish job has `id-token: write`. The guard requires both GitHub OIDC request fields plus main/manual/approval context, but field presence is **not proof of npm authorization**. Local qualification uses no hosted identity requests and retains `--provenance=false` only for disposable registry staging, where CI attestations cannot be generated.
-
-After merging the reviewed version PR and confirming the owner prerequisites, manually run **Packages** on **main**, entering the exact space-separated `name@version` candidates and explicit `pre` or `latest` channel. Qualification has no OIDC privilege or npm secret and checks that approval against the candidate plan **before** publication. It records candidate hashes and uploads tgzs/`plan.json`/`SHA256SUMS`; publication follows successful qualification without an environment review pause. The publish job downloads that same run's artifact by ID, verifies sums, rechecks availability, and publishes those file paths in dependency order without rebuilding/repacking. `latest` publication requires stable versions (intentional Changesets pre exit). GitHub exposes OIDC request capability at publish-job scope; public readback and isolated consumers use anonymous registry access, not forwarded identity credentials.
-
-Public readback must match every archive hash and clean consumers must pass. Only then may the separately supplied `promote_latest` list move those **exact approved candidate versions** to latest. Blank means no promotion, including for saga. For the initial incident, review five `0.2.0-pre.1` candidates (kernel/aggregate/mirage/projection/testing) and saga `0.1.1-pre.1`; separately approve latest repair for the five existing names if desired. These are proposals, not release authorization. CLI and both private runtimes stay unpublished.
-
-Publishing is not atomic and has **no resume protocol**. On any failure, stop and manually compare remote versions, hashes and tags before another run; do not blindly retry or regenerate version numbers. A late-existing version fails the run. A fresh run skips published versions, so prior partial results and any pending tag repair require explicit operator reconciliation rather than a promise of automatic recovery. No GitHub release event, recursive source publisher, or automatic latest promotion remains. Parent **redemeine-cwxu** stays unresolved until separately approved public repair and clean public consumers succeed; this route is **redemeine-cwxu.5**, with cwxu.4's independently verified source fix preserved.
+Use actual reviewed source names/versions; the output directory must not exist.
+The check command performs read-only npm metadata requests, never publication.
+All dependency fields in the actual packed manifests must use registry semver
+(ordinary npm aliases supported); private production/optional/peer edges fail,
+while private development inputs are allowed. Selected owned dependencies must
+satisfy the chosen ranges; omitted owned dependencies need already-public valid
+metadata. Missing entrypoints, unsafe archives, mismatched identities/licenses,
+and literal private JS/DTS imports fail. This is static checking plus shallow
+direct-owned-dependency metadata validation—not a runtime sandbox, proof about
+arbitrary computed loaders, or recursive validation of historical registry trees.
+Independent package packed-boundary and CLI smoke tests remain ordinary tests.

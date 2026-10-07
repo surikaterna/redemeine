@@ -31,13 +31,12 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Reference',
-      items: ['reference/sagas-reference'],
+      items: ['reference/sagas-reference', 'releasing'],
     },
     {
       type: 'category',
       label: 'Recipes',
-      items: ['recipes/cli-domain-workflow', 'recipes/testing-aggregates', 'recipes/testing-projections',
-        'recipes/release-artifact-audit', 'recipes/release-consumer-qualification'],
+      items: ['recipes/cli-domain-workflow', 'recipes/testing-aggregates', 'recipes/testing-projections'],
     },
   ],
 

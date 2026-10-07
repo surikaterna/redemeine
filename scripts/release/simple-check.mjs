@@ -1,36 +1,45 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import semver from 'semver';
 import { t } from 'tar';
 import ts from 'typescript';
 import { inspect } from './artifacts.mjs';
-import { hash } from './workspace.mjs';
+import { hash, object, sri } from './workspace.mjs';
 
 export const key = (artifact) => `${artifact.manifest.name}@${artifact.manifest.version}`;
 export const runtimeFields = ['dependencies', 'peerDependencies', 'optionalDependencies'];
 export const eligible = (workspaces, policy) => workspaces.filter((w) => !w.manifest.private && !Object.hasOwn(policy.holds, w.name));
 
-export async function selectCandidates(workspaces, policy, client) {
-  const candidates = [];
-  const skipped = [];
-  for (const workspace of eligible(workspaces, policy)) {
-    const metadata = await client.metadata(workspace.name);
-    if (metadata.versions[workspace.version]) skipped.push(`${workspace.name}@${workspace.version}`);
-    else candidates.push(workspace);
-  }
-  return { candidates, skipped };
+export function selectCandidates(workspaces, policy, approved, tag, preMode) {
+  const requested = approved.trim().split(/\s+/);
+  assert.ok(approved.trim() && new Set(requested).size === requested.length, 'Explicit unique approval required');
+  const candidates = requested.map((entry) => eligible(workspaces, policy).find((w) => key(w) === entry));
+  assert.ok(candidates.every(Boolean), 'Approval must name exact public, non-held source versions');
+  assert.ok(tag === 'pre' || tag === 'latest', 'Choose pre or latest explicitly');
+  if (tag === 'latest') assert.ok(preMode !== 'pre' && candidates.every((w) => !semver.prerelease(w.version)), 'Exit Changesets prerelease mode first');
+  return candidates;
 }
 
-export function checkManifest(manifest, workspaces, policy) {
+export function dependency(name, spec) {
+  assert.equal(typeof spec, 'string', `Non-registry dependency: ${name}`);
+  const alias = /^npm:((?:@[a-z0-9._-]+\/)?[a-z0-9._-]+)@(.+)$/.exec(spec);
+  const target = alias ? alias[1] : name;
+  const range = alias ? alias[2] : spec;
+  assert.ok(range.trim() && semver.validRange(range), `Non-registry semver dependency: ${name}=${spec}`);
+  return [target, range];
+}
+
+export function checkManifest(manifest, workspaces) {
   assert.ok(!manifest.private, 'Private artifact');
-  assert.ok(!policy.knownBad[manifest.name]?.includes(manifest.version), `Known broken artifact: ${manifest.name}@${manifest.version}`);
   assert.ok(!manifest.bundledDependencies && !manifest.bundleDependencies, 'Use explicit build bundling, not bundled node_modules');
   assert.ok(!manifest.publishConfig || Object.keys(manifest.publishConfig).every((k) => k === 'access'), 'Unsupported publishConfig');
   for (const field of [...runtimeFields, 'devDependencies']) {
+    assert.ok(manifest[field] === undefined || object(manifest[field]), `Invalid dependency field: ${field}`);
     for (const [name, spec] of Object.entries(manifest[field] || {})) {
-      assert.ok(typeof spec === 'string' && semver.validRange(spec), `Non-registry semver dependency: ${name}=${spec}`);
-      if (field !== 'devDependencies') assert.ok(!workspaces.find((w) => w.name === name)?.manifest.private, `Private runtime edge: ${name}`);
+      const [target] = dependency(name, spec);
+      if (field !== 'devDependencies')
+        assert.ok(!workspaces.some((w) => [name, target].includes(w.name) && w.manifest.private), `Private runtime edge: ${name}`);
     }
   }
 }
@@ -127,11 +136,9 @@ async function checkPayload(file, privateNames, license) {
 }
 
 export async function checkArtifact(file, expected, workspaces, policy, license) {
-  const report = { diagnostics: [] };
-  const artifact = await inspect(await readFile(file), expected, report, { package: expected.name });
-  assert.deepEqual(report.diagnostics, [], 'Invalid packed content');
-  assert.ok(artifact);
-  checkManifest(artifact.manifest, workspaces, policy);
+  const artifact = await inspect(await readFile(file), expected);
+  assert.ok(!Object.hasOwn(policy.holds, artifact.manifest.name), 'Held artifact');
+  checkManifest(artifact.manifest, workspaces);
   await checkPayload(
     file,
     workspaces.filter((w) => w.manifest.private).map((w) => w.name),
@@ -140,39 +147,63 @@ export async function checkArtifact(file, expected, workspaces, policy, license)
   return artifact;
 }
 
-export function chooseVersion(name, range, artifacts, metadata, policy) {
-  const candidate = artifacts.find((a) => a.manifest.name === name && semver.satisfies(a.manifest.version, range));
-  if (candidate) return candidate.manifest.version;
-  const version = semver.maxSatisfying(Object.keys(metadata.versions), range);
-  assert.ok(version, `No candidate or registry version satisfies ${name}@${range}`);
-  assert.ok(!policy.knownBad[name]?.includes(version), `Dependency resolves known broken ${name}@${version}`);
-  return version;
-}
-
-export function ownedEdges(artifact, workspaces, policy) {
+export function ownedEdges(artifact, workspaces) {
   return runtimeFields
     .flatMap((field) => Object.entries(artifact.manifest[field] || {}))
-    .filter(([name]) => workspaces.some((w) => w.name === name) || policy.internalScopes.some((scope) => name.startsWith(`${scope}/`)));
+    .map(([name, spec]) => dependency(name, spec))
+    .filter(([name]) => workspaces.some((w) => w.name === name));
 }
 
-export function dependencyOrder(artifacts, workspaces, policy) {
+export async function dependencyOrder(artifacts, workspaces, metadata) {
+  const edges = new Map();
+  for (const artifact of artifacts) {
+    const selected = [];
+    for (const [name, range] of ownedEdges(artifact, workspaces)) {
+      const candidate = artifacts.find((a) => a.manifest.name === name);
+      if (candidate) {
+        assert.ok(semver.satisfies(candidate.manifest.version, range), `Selected dependency does not satisfy ${name}@${range}`);
+        selected.push(name);
+      } else checkExisting(name, range, await metadata(name, range), workspaces);
+    }
+    edges.set(artifact, selected);
+  }
   const pending = [...artifacts];
   const ordered = [];
   while (pending.length) {
-    const index = pending.findIndex((a) =>
-      ownedEdges(a, workspaces, policy).every(([name, range]) =>
-        ordered.some((dep) => dep.manifest.name === name && semver.satisfies(dep.manifest.version, range))
-      )
-    );
-    assert.ok(index >= 0, `Cyclic or missing owned dependency: ${pending.map(key).join(', ')}`);
+    const index = pending.findIndex((a) => edges.get(a).every((name) => ordered.some((dep) => dep.manifest.name === name)));
+    assert.ok(index >= 0, `Cyclic selected dependency: ${pending.map(key).join(', ')}`);
     ordered.push(...pending.splice(index, 1));
   }
   return ordered;
 }
 
+function checkExisting(name, range, metadata, workspaces) {
+  const versions = Array.isArray(metadata) ? metadata : [metadata];
+  assert.ok(
+    versions.every((m) => object(m) && m.name === name && semver.valid(m.version)),
+    `Missing/invalid metadata: ${name}`
+  );
+  const version = semver.maxSatisfying(
+    versions.map((m) => m.version),
+    range
+  );
+  assert.ok(version, `Missing public dependency: ${name}@${range}`);
+  checkManifest(
+    versions.find((m) => m.version === version),
+    workspaces
+  );
+}
+
 export async function verifyFiles(output, plan) {
+  assert.ok((await lstat(output)).isDirectory(), 'Artifact directory must not be a link');
+  for (const artifact of plan.artifacts) assert.match(artifact.file, /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.tgz$/);
+  const files = ['plan.json', ...plan.artifacts.map((a) => a.file)];
+  assert.equal(new Set(files).size, files.length, 'Duplicate artifact filename');
+  assert.deepEqual((await readdir(output)).sort(), files.sort(), 'Unexpected artifact files');
+  for (const file of files) assert.ok((await lstat(resolve(output, file))).isFile(), 'Artifacts must be regular files');
   for (const artifact of plan.artifacts) {
-    assert.match(artifact.file, /^[a-zA-Z0-9%_.-]+\.tgz$/);
-    assert.equal(hash(await readFile(resolve(output, artifact.file))), artifact.sha256, `Changed artifact: ${key(artifact)}`);
+    const bytes = await readFile(resolve(output, artifact.file));
+    assert.equal(hash(bytes), artifact.sha256, `Changed artifact: ${key(artifact)}`);
+    assert.equal(sri(bytes), artifact.integrity, `Changed artifact integrity: ${key(artifact)}`);
   }
 }

@@ -46,10 +46,9 @@ Our workflow follows the standard GitHub Flow model:
     ```
 5. Commit your changes and open a **Pull Request**.
 
-Build before the nonpublishing artifact audit; it never builds implicitly. See
-the [Node-only audit recipe](docs/recipes/release-artifact-audit.md) for commands,
-lifecycle restrictions, expected known defects and the clean-container procedure.
-Node 22 consumer compatibility is separate from this Node 24 contributor baseline.
+See [Releasing packages](docs/releasing.md) for version PRs, nonpublishing packed
+checks and the explicitly approved publication procedure. Run `pnpm run test:release:simple`
+for offline release regressions; build before checking actual workspace tarballs.
 
 ---
 
