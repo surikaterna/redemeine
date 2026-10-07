@@ -1,0 +1,50 @@
+import type { Event } from '@redemeine/kernel';
+import { preserveValue, requireSync } from './guards';
+import type { AggregateBase, BridgeableAggregate, BridgeCommand, BridgeContext, BridgeEvent, BridgeOptions, CommandCreators } from './types';
+
+function convertEvent<S extends object, B extends AggregateBase>(
+  event: Event, command: BridgeCommand, aggregate: BridgeContext<S>, envelope: BridgeOptions<S, B>['envelope'],
+): BridgeEvent {
+  if (!command.id) throw new Error('Builder events require a command id');
+  const addressed = { ...event, aggregateId: aggregate.id, correlationId: command.id };
+  const { id, type, aggregateId, correlationId } = addressed;
+  const metadataMatches = preserveValue(addressed.metadata);
+  const converted = requireSync(envelope ? envelope(addressed, command, aggregate) : addressed, 'envelope');
+  if (!converted || !converted.type || converted.type !== type || converted.id !== id
+    || converted.aggregateId !== aggregateId || converted.correlationId !== correlationId
+    || !metadataMatches(converted.metadata) || !converted.payload || typeof converted.payload !== 'object') {
+    throw new Error('Envelope must preserve event identity, addressing and metadata with an object payload');
+  }
+  return converted;
+}
+
+export function createDispatch<S extends object, C extends CommandCreators, B extends AggregateBase>(
+  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S, B>,
+) {
+  const commandTypes = new Set(Object.values(builder.types.commands));
+  const eventTypes = new Set(Object.values(builder.types.events));
+  function process(aggregate: BridgeContext<S>, command: BridgeCommand): unknown {
+    if (command.type === '$stream.delete.command') return aggregate.processDelete(requireLegacyPayload(command));
+    if (!commandTypes.has(command.type)) throw new Error(`Unknown command: ${command.type}`);
+    const events = requireSync(builder.process(aggregate._state, command), 'builder.process');
+    if ('__intents' in events && events.__intents != null) throw new Error('demeine-interop does not support intents');
+    const converted = events.map(event => convertEvent(event, command, aggregate, options.envelope));
+    for (const event of converted) aggregate._apply(requireLegacyPayload(event), true);
+    return aggregate;
+  }
+  function apply(aggregate: BridgeContext<S>, event: Event): void {
+    if (event.type === '$stream.deleted.event') {
+      aggregate.applyDeleted();
+      return;
+    }
+    if (!eventTypes.has(event.type)) throw new Error(`Unknown event: ${event.type}`);
+    aggregate._state = requireSync(builder.apply(aggregate._state, event), 'builder.apply');
+  }
+  return { process, apply };
+}
+
+export function requireLegacyPayload<T extends { payload: unknown }>(message: T): T & { payload: object } {
+  if (!message.payload || typeof message.payload !== 'object') throw new TypeError('Legacy messages require object payloads');
+  // The guard narrows payload, but TypeScript cannot express narrowing a generic intersection.
+  return message as T & { payload: object };
+}

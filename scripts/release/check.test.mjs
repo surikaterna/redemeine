@@ -14,6 +14,20 @@ const noRead = () => assert.fail('Selected candidates must not require registry 
 const publicConfigs = [undefined, {}, { access: 'public' }];
 const invalidConfigs = ['restricted', 'Public', 'latest', '', null, false, 1, {}, []].map((access) => ({ access }));
 
+test('interop source/candidate selection and dependency closure retain CLI hold', async () => {
+  for (const version of ['0.1.0-pre.0', '0.1.0-pre.1']) {
+    const interop = workspace('@redemeine/demeine-interop', version);
+    const selected = selectCandidates([...workspaces, interop], policy, `@redemeine/demeine-interop@${version}`, 'pre', 'pre');
+    assert.deepEqual(selected, [interop]);
+    assert.throws(() => selectCandidates([...workspaces, interop], policy, `@redemeine/demeine-interop@${version} @redemeine/cli@1.0.0`, 'pre'));
+  }
+  const kernel = { manifest: { name: '@redemeine/kernel', version: '0.2.0-pre.2' } };
+  const aggregate = { manifest: { name: '@redemeine/aggregate', version: '0.2.0-pre.2', dependencies: { '@redemeine/kernel': '0.2.0-pre.2' } } };
+  const interop = { manifest: { name: '@redemeine/demeine-interop', version: '0.1.0-pre.1', dependencies: { '@redemeine/kernel': '0.2.0-pre.2' } } };
+  const owned = [kernel, aggregate, interop].map(({ manifest }) => ({ ...manifest, manifest }));
+  assert.deepEqual(await dependencyOrder([interop, aggregate, kernel], owned, noRead), [kernel, interop, aggregate]);
+});
+
 test('approval selects exact source versions; no hardcoded public membership or registry absence selection', () => {
   assert.deepEqual(eligible(workspaces, policy), [workspaces[0]]);
   assert.deepEqual(selectCandidates(workspaces, policy, '@redemeine/future@1.0.0', 'pre'), [workspaces[0]]);
