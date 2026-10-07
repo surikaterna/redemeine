@@ -16,6 +16,7 @@ export function selectCandidates(workspaces, policy, approved, tag, preMode) {
   assert.ok(approved.trim() && new Set(requested).size === requested.length, 'Explicit unique approval required');
   const candidates = requested.map((entry) => eligible(workspaces, policy).find((w) => key(w) === entry));
   assert.ok(candidates.every(Boolean), 'Approval must name exact public, non-held source versions');
+  for (const candidate of candidates) checkPublicAccess(candidate.manifest);
   assert.ok(tag === 'pre' || tag === 'latest', 'Choose pre or latest explicitly');
   if (tag === 'latest') assert.ok(preMode !== 'pre' && candidates.every((w) => !semver.prerelease(w.version)), 'Exit Changesets prerelease mode first');
   return candidates;
@@ -30,8 +31,15 @@ export function dependency(name, spec) {
   return [target, range];
 }
 
+function checkPublicAccess({ publishConfig }) {
+  if (publishConfig === undefined) return;
+  assert.ok(object(publishConfig), 'Invalid publishConfig');
+  assert.ok(!Object.hasOwn(publishConfig, 'access') || publishConfig.access === 'public', 'publishConfig.access must be public or absent');
+}
+
 export function checkManifest(manifest, workspaces) {
   assert.ok(!manifest.private, 'Private artifact');
+  checkPublicAccess(manifest);
   assert.ok(!manifest.bundledDependencies && !manifest.bundleDependencies, 'Use explicit build bundling, not bundled node_modules');
   assert.ok(!manifest.publishConfig || Object.keys(manifest.publishConfig).every((k) => k === 'access'), 'Unsupported publishConfig');
   for (const field of [...runtimeFields, 'devDependencies']) {

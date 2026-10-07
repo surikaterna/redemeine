@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import test from 'node:test';
-import { checkImports, checkManifest, dependency, dependencyOrder, eligible, selectCandidates } from './simple-check.mjs';
+import { c } from 'tar';
+import { checkArtifact, checkImports, checkManifest, dependency, dependencyOrder, eligible, selectCandidates } from './simple-check.mjs';
 
 const policy = { holds: { '@redemeine/cli': {} } };
 const workspace = (name, version = '1.0.0', privateFlag = false) => ({ name, version, manifest: { name, version, private: privateFlag } });
 const workspaces = [workspace('@redemeine/future'), workspace('@redemeine/cli'), workspace('@redemeine/private', '1.0.0', true)];
 const artifact = (name, dependencies = {}) => ({ manifest: { name, version: '1.0.0', dependencies } });
 const noRead = () => assert.fail('Selected candidates must not require registry reads');
+const publicConfigs = [undefined, {}, { access: 'public' }];
+const invalidConfigs = ['restricted', 'Public', 'latest', '', null, false, 1, {}, []].map((access) => ({ access }));
 
 test('approval selects exact source versions; no hardcoded public membership or registry absence selection', () => {
   assert.deepEqual(eligible(workspaces, policy), [workspaces[0]]);
@@ -36,6 +42,41 @@ test('latest requires stable source versions AND exited Changesets prerelease mo
   assert.throws(() => selectCandidates(preview, policy, 'preview@1.0.0-pre.0', 'latest', 'exit'), /Exit Changesets/);
   selectCandidates(workspaces, policy, '@redemeine/future@1.0.0', 'latest', 'exit');
   assert.throws(() => selectCandidates(workspaces, policy, '@redemeine/future@1.0.0', 'other'), /explicitly/);
+});
+
+test('source approval accepts absent/public access without rejecting pnpm manifest transformations', () => {
+  for (const publishConfig of [...publicConfigs, { access: 'public', main: './dist/index.js' }]) {
+    const candidate = workspace('@redemeine/future');
+    candidate.manifest.publishConfig = publishConfig;
+    candidate.manifest.dependencies = { local: 'workspace:*' };
+    assert.deepEqual(selectCandidates([candidate], policy, '@redemeine/future@1.0.0', 'pre'), [candidate]);
+  }
+});
+
+test('source approval rejects restricted/malformed access before packing can transform owner intent', () => {
+  for (const publishConfig of [...invalidConfigs, null, false, 'public', []]) {
+    const candidate = workspace('@redemeine/future');
+    candidate.manifest.publishConfig = publishConfig;
+    assert.throws(() => selectCandidates([candidate], policy, '@redemeine/future@1.0.0', 'pre'), /publishConfig/);
+  }
+});
+
+test('actual packed manifest independently requires absent/public access despite public source intent', async (t) => {
+  const directory = await mkdtemp(resolve(tmpdir(), 'release-access-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(resolve(directory, 'package'));
+  const license = Buffer.from('fixture license');
+  await writeFile(resolve(directory, 'package/LICENSE'), license);
+  const expected = { ...workspaces[0].manifest, publishConfig: { access: 'public' } };
+  const file = resolve(directory, 'packed.tgz');
+  for (const publishConfig of [...publicConfigs, ...invalidConfigs, null, false, 'public', []]) {
+    const manifest = { ...expected, publishConfig };
+    await writeFile(resolve(directory, 'package/package.json'), JSON.stringify(manifest));
+    await c({ cwd: directory, file, gzip: true }, ['package']);
+    const checked = checkArtifact(file, expected, workspaces, policy, license);
+    if (publicConfigs.includes(publishConfig)) assert.deepEqual((await checked).manifest, JSON.parse(JSON.stringify(manifest)));
+    else await assert.rejects(checked, /publishConfig/);
+  }
 });
 
 test('all packed dependency fields reject local/foreign specs; registry semver and npm aliases work', () => {
@@ -96,6 +137,7 @@ test('omitted owned dependency requires valid already-public metadata, without r
     [],
     { ...good, name: 'wrong' },
     { ...good, version: '2.0.0' },
+    { ...good, publishConfig: { access: 'restricted' } },
     { ...good, dependencies: { x: 'workspace:*' } },
     { ...good, peerDependencies: { '@redemeine/private': '1.0.0' } }
   ]) {
