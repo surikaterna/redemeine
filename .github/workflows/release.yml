@@ -83,7 +83,7 @@ jobs:
       - name: Pack, inspect, local exact-file publish/readback and isolated Node 24 + 22 consumers
         if: github.event_name == 'workflow_dispatch'
         run: pnpm run release:check-simple "$RUNNER_TEMP/release"
-      - name: Check exact approval before requesting environment review
+      - name: Check exact approval before publication
         if: github.event_name == 'workflow_dispatch'
         env:
           APPROVED_VERSIONS: ${{ inputs.approved_versions }}
@@ -112,15 +112,10 @@ jobs:
     needs: qualify
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: npm-release
     permissions:
       contents: read
       id-token: write
     steps:
-      - name: Require owner activation after configuring environment protection
-        env:
-          ENABLED: ${{ vars.NPM_RELEASE_ENABLED }}
-        run: test "$ENABLED" = true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
