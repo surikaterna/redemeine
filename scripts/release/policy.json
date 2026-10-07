@@ -1,16 +1,8 @@
 {
-  "schemaVersion": 1,
-  "registry": "https://registry.npmjs.org/",
-  "internalScopes": ["@redemeine"],
   "holds": {
     "@redemeine/cli": {
       "owner": "redemeine maintainers",
-      "reason": "First CLI publication is outside the approved six-package repair closure"
+      "reason": "First CLI publication requires separate owner approval"
     }
-  },
-  "knownBad": {
-    "@redemeine/aggregate": ["0.2.0-pre.0"],
-    "@redemeine/mirage": ["0.2.0-pre.0"],
-    "@redemeine/testing": ["0.2.0-pre.0"]
   }
 }

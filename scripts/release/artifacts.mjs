@@ -1,10 +1,9 @@
-import { mkdir, readdir, readFile } from 'node:fs/promises';
-import { posix, resolve } from 'node:path';
+import assert from 'node:assert/strict';
 import { gunzipSync } from 'node:zlib';
 import { minimatch } from 'minimatch';
 import semver from 'semver';
 import { t } from 'tar';
-import { diagnostic, hash, object, run, sri } from './workspace.mjs';
+import { hash, object, sri } from './workspace.mjs';
 
 const MAX_BYTES = 64 * 1024 * 1024;
 
@@ -67,7 +66,7 @@ export async function inventory(bytes) {
   if (!state.manifestBytes) throw new Error('Missing regular package/package.json');
   const manifest = JSON.parse(state.manifestBytes.toString('utf8'));
   if (!object(manifest) || typeof manifest.name !== 'string' || !semver.valid(manifest.version)) throw new Error('Invalid packed manifest identity');
-  return { manifest, manifestSha256: hash(state.manifestBytes), entries: [...state.entries.values()] };
+  return { manifest, entries: [...state.entries.values()] };
 }
 
 function targetFiles(target, files, exportTarget) {
@@ -126,24 +125,16 @@ function wildcardValues(target, matches) {
   return JSON.stringify(matches.map((file) => file.path.slice(prefix.length, suffix ? -suffix.length : undefined)).sort());
 }
 
-export function checkContent(artifact, report, context) {
+export function checkContent(artifact) {
   const { manifest, entries } = artifact;
   const files = entries.filter((entry) => entry.type === 'File');
-  const check = (field, action) => {
-    try {
-      action();
-    } catch (error) {
-      diagnostic(report, 'CONTENT', error.message, { ...context, field });
-    }
-  };
   for (const field of ['main', 'module', 'types', 'typings']) {
-    if (manifest[field] !== undefined) check(field, () => targetFiles(manifest[field], files, false));
+    if (manifest[field] !== undefined) targetFiles(manifest[field], files, false);
   }
-  if (manifest.exports !== undefined) check('exports', () => checkExports(manifest.exports, files));
-  if (manifest.bin !== undefined) check('bin', () => checkBins(manifest.bin, files));
-  if (manifest.files !== undefined) check('files', () => checkDistribution(manifest.files, files));
-  if (manifest.typesVersions !== undefined)
-    diagnostic(report, 'UNSUPPORTED_TYPES_VERSIONS', 'typesVersions mapping requires later consumer qualification', context);
+  if (manifest.exports !== undefined) checkExports(manifest.exports, files);
+  if (manifest.bin !== undefined) checkBins(manifest.bin, files);
+  if (manifest.files !== undefined) checkDistribution(manifest.files, files);
+  assert.equal(manifest.typesVersions, undefined, 'Unsupported typesVersions mapping');
 }
 
 function checkBins(bin, files) {
@@ -167,14 +158,8 @@ function checkDistribution(patterns, files) {
   }
 }
 
-export async function inspect(bytes, expected, report, context) {
-  let artifact;
-  try {
-    artifact = await inventory(bytes);
-  } catch (error) {
-    diagnostic(report, 'ARCHIVE', error.message, { ...context, size: bytes.length, sha256: hash(bytes), integrity: sri(bytes) });
-    return null;
-  }
+export async function inspect(bytes, expected) {
+  const artifact = await inventory(bytes);
   const { manifest } = artifact;
   if (
     manifest.name !== expected.name ||
@@ -183,27 +168,8 @@ export async function inspect(bytes, expected, report, context) {
     manifest.private === true ||
     (manifest.private !== undefined && typeof manifest.private !== 'boolean')
   ) {
-    diagnostic(report, 'IDENTITY', 'Packed identity/private flag disagrees with expected public package', context);
+    throw new Error('Packed identity/private flag disagrees with expected public package');
   }
-  checkContent(artifact, report, context);
-  return { ...artifact, size: bytes.length, sha256: hash(bytes), integrity: sri(bytes) };
-}
-
-export async function pack(workspace, output, report) {
-  const directory = resolve(output, workspace.selection, encodeURIComponent(workspace.name));
-  await mkdir(directory, { recursive: true });
-  run(report, workspace.path, 'pnpm', ['pack', '--pack-destination', directory, '--json']);
-  const archives = (await readdir(directory)).filter((name) => name.endsWith('.tgz'));
-  if (archives.length !== 1) throw new Error('Pack must produce exactly one tarball');
-  const archive = resolve(directory, archives[0]);
-  const context = { package: workspace.name, origin: workspace.selection, chain: [workspace.name] };
-  const artifact = await inspect(await readFile(archive), workspace.manifest, report, context);
-  if (!artifact) return null;
-  return {
-    ...artifact,
-    archive: posix.join(workspace.selection, encodeURIComponent(workspace.name), archives[0]),
-    origin: workspace.selection,
-    sourcePath: workspace.sourcePath,
-    source: workspace.manifest
-  };
+  checkContent(artifact);
+  return { manifest, sha256: hash(bytes), integrity: sri(bytes) };
 }

@@ -146,12 +146,11 @@ pnpm exec turbo run typecheck
 pnpm exec turbo run test
 
 # Nonpublishing artifact fixtures (no registry network)
-pnpm run test:release
+pnpm run test:release:simple
 ```
 
-See the [artifact audit recipe](docs/recipes/release-artifact-audit.md) for fresh
-build/static audit commands, expected current failures, and Bun-free qualification.
-The existing publishing workflow is **not protected by this advisory gate yet**.
+See [Releasing packages](docs/releasing.md) for the Changesets version PR,
+checked tarball publication, explicit approval and failed-job rerun procedure.
 
 ## Architecture
 

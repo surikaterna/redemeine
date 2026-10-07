@@ -15,10 +15,7 @@ on:
         type: choice
         options: [pre, latest]
         required: true
-      promote_latest:
-        description: 'Separate approval: exact name@version entries to move to latest AFTER public verification; blank means none'
-        type: string
-        default: ''
+        default: pre
 
 permissions:
   contents: read
@@ -61,6 +58,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      plan_sha256: ${{ steps.pack.outputs.plan_sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -72,29 +70,27 @@ jobs:
         with:
           node-version: '24.20.0'
           cache: pnpm
-      - name: Pin release host npm for OIDC publish and dist-tag support
+      - name: Pin release host npm for OIDC publication
         run: |
           npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
           npm --version
           test "$(npm --version)" = 11.21.0
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r build
-      - run: pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
-      - name: Pack, inspect, local exact-file publish/readback and isolated Node 24 + 22 consumers
+      - name: Check source approval before build and packing
         if: github.event_name == 'workflow_dispatch'
-        run: pnpm run release:check-simple "$RUNNER_TEMP/release"
-      - name: Check exact approval before publication
-        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/release/simple.mjs approve
         env:
           APPROVED_VERSIONS: ${{ inputs.approved_versions }}
           RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            import { approve } from "./scripts/release/simple.mjs";
-            const plan = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/release/plan.json"));
-            approve(plan, process.env.APPROVED_VERSIONS, process.env.RELEASE_TAG);
-            console.log(JSON.stringify(plan.artifacts.filter(a => a.candidate).map(a => ({name:a.manifest.name,version:a.manifest.version,sha256:a.sha256})), null, 2));'
+      - run: pnpm -r build
+      - run: pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
+      - name: Pack and check approved source versions
+        id: pack
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm run release:check-simple "$RUNNER_TEMP/release"
+        env:
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: upload
         if: github.event_name == 'workflow_dispatch'
@@ -103,7 +99,6 @@ jobs:
           path: |
             ${{ runner.temp }}/release/*.tgz
             ${{ runner.temp }}/release/plan.json
-            ${{ runner.temp }}/release/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
 
@@ -126,7 +121,7 @@ jobs:
         with:
           node-version: '24.20.0'
           cache: pnpm
-      - name: Pin release host npm for OIDC publish and dist-tag support
+      - name: Pin release host npm for OIDC publication
         run: |
           npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
           npm --version
@@ -143,13 +138,4 @@ jobs:
           RELEASE_APPROVED: 'true'
           APPROVED_VERSIONS: ${{ inputs.approved_versions }}
           RELEASE_TAG: ${{ inputs.tag }}
-      - name: Verify public bytes and fresh independent consumers using anonymous registry reads
-        run: node scripts/release/simple.mjs verify-public "$RUNNER_TEMP/release"
-      - name: Separately approved latest promotion after verification
-        if: inputs.promote_latest != ''
-        run: node scripts/release/simple.mjs promote "$RUNNER_TEMP/release"
-        env:
-          RELEASE_APPROVED: 'true'
-          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
-          RELEASE_TAG: ${{ inputs.tag }}
-          PROMOTE_LATEST: ${{ inputs.promote_latest }}
+          PLAN_SHA256: ${{ needs.qualify.outputs.plan_sha256 }}
