@@ -153,7 +153,7 @@ export function authorize(env = process.env) {
   assert.equal(env.GITHUB_ACTIONS, 'true', 'Public writes only in the owned workflow');
   assert.equal(env.GITHUB_REF, 'refs/heads/main');
   assert.equal(env.GITHUB_EVENT_NAME, 'workflow_dispatch');
-  assert.equal(env.RELEASE_APPROVED, 'true', 'Protected npm-release approval required');
+  assert.equal(env.RELEASE_APPROVED, 'true', 'Explicit release approval required');
   assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_URL?.trim(), 'Missing GitHub OIDC request URL');
   assert.ok(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN?.trim(), 'Missing GitHub OIDC request token');
 }

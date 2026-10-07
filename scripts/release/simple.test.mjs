@@ -229,6 +229,7 @@ test('OIDC authorization requires every context field; token-only fails without 
   syncBuiltinESMExports();
   try {
     assert.doesNotThrow(() => authorize(env));
+    assert.throws(() => authorize({ ...env, RELEASE_APPROVED: undefined }), /Explicit release approval required/);
     for (const field of Object.keys(env)) {
       for (const value of [undefined, '', ' ']) assert.throws(() => authorize({ ...env, [field]: value }));
     }
@@ -259,28 +260,43 @@ test('OIDC authorization requires every context field; token-only fails without 
   }
 });
 
-test('workflow confines OIDC permission to the protected main/manual publish job with no token fallback', async () => {
+test('workflow confines OIDC to main/manual publication without environment, activation or token fallback', async () => {
   const { text, workflow } = await releaseWorkflow();
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(Object.keys(workflow.jobs).sort(), ['publish', 'qualify', 'version']);
   assert.deepEqual(workflow.jobs.version.permissions, { contents: 'write', 'pull-requests': 'write' });
   assert.equal(workflow.jobs.qualify.permissions, undefined);
+  assert.equal(
+    workflow.jobs.qualify.if,
+    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')"
+  );
+  for (const job of Object.values(workflow.jobs)) assert.equal(job.environment, undefined);
   const publish = workflow.jobs.publish;
   assert.deepEqual(publish.permissions, { contents: 'read', 'id-token': 'write' });
-  assert.equal(publish.environment, 'npm-release');
   assert.equal(publish.if, "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'");
   assert.equal(publish.needs, 'qualify');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   assert.deepEqual(Object.keys(workflow.on).sort(), ['pull_request', 'push', 'workflow_dispatch']);
-  assert.doesNotMatch(text, /pnpm -r publish|NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|--provenance=false/);
-  assert.match(text, /vars.NPM_RELEASE_ENABLED/);
+  assert.doesNotMatch(text, /pnpm -r publish|NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|--provenance=false|NPM_RELEASE_ENABLED|Require owner activation/);
+  const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.deepEqual(Object.keys(inputs).sort(), ['approved_versions', 'promote_latest', 'tag']);
+  assert.equal(inputs.approved_versions.required, true);
+  assert.equal(inputs.tag.required, true);
+  assert.equal(inputs.tag.type, 'choice');
+  assert.deepEqual(inputs.tag.options, ['pre', 'latest']);
   assert.match(text, /artifact-ids: \$\{\{ needs.qualify.outputs.artifact_id \}\}/);
   const commands = publish.steps.filter((step) => step.run?.startsWith('node scripts/release/simple.mjs'));
   assert.deepEqual(
     commands.map((step) => step.run.split(' ')[2]),
     ['publish', 'verify-public', 'promote']
   );
-  for (const step of [commands[0], commands[2]]) assert.equal(step.env.RELEASE_APPROVED, 'true');
+  const approvalEnv = { APPROVED_VERSIONS: `\${{ inputs.approved_versions }}`, RELEASE_TAG: `\${{ inputs.tag }}` };
+  const approval = workflow.jobs.qualify.steps.find((step) => step.name === 'Check exact approval before publication');
+  assert.equal(approval.if, "github.event_name == 'workflow_dispatch'");
+  assert.deepEqual(approval.env, approvalEnv);
+  assert.deepEqual(commands[0].env, { RELEASE_APPROVED: 'true', ...approvalEnv });
+  assert.deepEqual(commands[2].env, { RELEASE_APPROVED: 'true', ...approvalEnv, PROMOTE_LATEST: `\${{ inputs.promote_latest }}` });
+  assert.equal(commands[2].if, "inputs.promote_latest != ''");
   for (const use of text.matchAll(/uses: ([^\s]+)/g)) assert.match(use[1], /@[a-f0-9]{40}$/);
 });
 
