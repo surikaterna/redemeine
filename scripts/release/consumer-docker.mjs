@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { chmodSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -13,11 +15,31 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 export const tools = JSON.parse(await readFile(new URL('./consumer-tools.json', import.meta.url), 'utf8'));
 const label = 'org.redemeine.consumer-run';
 const cancellation = new AsyncLocalStorage();
+let dockerConfig;
+
+function privateDockerConfig() {
+  if (dockerConfig) return dockerConfig;
+  const directory = mkdtempSync(resolve(tmpdir(), 'redemeine-docker-'));
+  // Keep CLI state through resource cleanup and final inspections. SIGKILL cannot run exit handlers.
+  process.once('exit', (code) => {
+    try {
+      rmSync(directory, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`Docker CLI config cleanup failed: ${error.message}`);
+      process.exitCode = code || Number(process.exitCode) || 1;
+    }
+  });
+  chmodSync(directory, 0o700);
+  const stat = statSync(directory);
+  demand(stat.isDirectory() && (stat.mode & 0o777) === 0o700 && stat.uid === process.geteuid(), 'Unsafe Docker CLI config directory');
+  dockerConfig = directory;
+  return directory;
+}
 
 export const withDockerSignal = (signal, action) => cancellation.run(signal, action);
 
 export async function docker(args, timeout = 120000) {
-  const env = { PATH: process.env.PATH, HOME: '/nonexistent', DOCKER_CONFIG: '/nonexistent' };
+  const env = { PATH: process.env.PATH, HOME: '/nonexistent', DOCKER_CONFIG: privateDockerConfig() };
   const { stdout } = await execute('docker', args, { env, encoding: 'utf8', timeout, maxBuffer: 8 * 1024 * 1024, signal: cancellation.getStore() });
   return stdout.trim();
 }
