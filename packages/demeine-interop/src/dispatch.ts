@@ -1,9 +1,9 @@
 import type { Event } from '@redemeine/kernel';
 import { preserveValue, requireSync } from './guards';
-import type { AggregateBase, BridgeableAggregate, BridgeCommand, BridgeContext, BridgeEvent, BridgeOptions, CommandCreators } from './types';
+import type { BridgeableAggregate, BridgeCommand, BridgeContext, BridgeEvent, BridgeOptions, CommandCreators } from './types';
 
-function convertEvent<S extends object, B extends AggregateBase>(
-  event: Event, command: BridgeCommand, aggregate: BridgeContext<S>, envelope: BridgeOptions<S, B>['envelope'],
+function convertEvent<S extends object>(
+  event: Event, command: BridgeCommand, aggregate: BridgeContext<S>, envelope: BridgeOptions<S>['envelope'],
 ): BridgeEvent {
   if (!command.id) throw new Error('Builder events require a command id');
   const addressed = { ...event, aggregateId: aggregate.id, correlationId: command.id };
@@ -18,11 +18,11 @@ function convertEvent<S extends object, B extends AggregateBase>(
   return converted;
 }
 
-export function createDispatch<S extends object, C extends CommandCreators, B extends AggregateBase>(
-  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S, B>,
+export function createDispatch<S extends object, C extends CommandCreators>(
+  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S>,
 ) {
   const commandTypes = new Set(Object.values(builder.types.commands));
-  function process(aggregate: BridgeContext<S>, command: BridgeCommand): unknown {
+  function process(aggregate: BridgeContext<S>, command: BridgeCommand): BridgeContext<S> {
     if (command.type === '$stream.delete.command') return aggregate.processDelete(requireLegacyPayload(command));
     if (!commandTypes.has(command.type)) throw new Error(`Unknown command: ${command.type}`);
     const events = requireSync(builder.process(aggregate._state, command), 'builder.process');
@@ -31,7 +31,7 @@ export function createDispatch<S extends object, C extends CommandCreators, B ex
     for (const event of converted) aggregate._apply(requireLegacyPayload(event), true);
     return aggregate;
   }
-  function apply(aggregate: BridgeContext<S>, event: Event): void {
+  function apply(aggregate: BridgeContext<S>, event: Event<unknown, string>): void {
     if (event.type === '$stream.deleted.event') {
       aggregate.applyDeleted();
       return;

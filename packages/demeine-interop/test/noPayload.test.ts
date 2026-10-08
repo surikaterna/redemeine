@@ -1,6 +1,6 @@
 import { createAggregate } from '@redemeine/aggregate';
 import { Contract, ContractError, type Event } from '@redemeine/kernel';
-import { Aggregate, type CommandSink } from 'demeine';
+import type { CommandSink } from 'demeine';
 import { z } from 'zod';
 import { createDemeineBridge } from '../src';
 
@@ -32,7 +32,7 @@ test.each([false, true])('zero-argument shortcut preserves its creator envelope 
   Object.freeze(command);
   const creator = jest.fn(() => command);
   const process = jest.spyOn(built, 'process');
-  const Bridge = createDemeineBridge({ ...built, commandCreators: { ...built.commandCreators, confirm: creator } }, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge({ ...built, commandCreators: { ...built.commandCreators, confirm: creator } });
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   await expect(aggregate.confirm()).resolves.toBe(aggregate);
@@ -55,7 +55,7 @@ test.each([false, true])('zero-argument shortcut preserves its creator envelope 
 test('ordinary no-arg and intentionally undefined packing keep queue/drain and return the aggregate', async () => {
   const { built, pack } = definition();
   const process = jest.spyOn(built, 'process');
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   const first = aggregate.confirm();
@@ -77,7 +77,7 @@ test('custom object packing retains shared payload identity', async () => {
   const { built, objectPack } = definition();
   const process = jest.spyOn(built, 'process');
   const payload = Object.freeze({ amount: 4 });
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   await expect(aggregate.object(payload)).resolves.toBe(aggregate);
@@ -93,14 +93,14 @@ test.each([null, 1, false, 'invalid'])('null/scalar pack output %p still fails b
     .events({ changed: (_state, _event: Event<object>) => {} })
     .commands(emit => ({ invalid: { pack: () => payload, handler: () => emit.changed({}) } }))
     .build();
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const sink = forwardingSink();
   expect(() => new Bridge(sink).invalid()).toThrow('Legacy messages require object payloads');
   expect(sink.sink).not.toHaveBeenCalled();
 });
 
 test.each([null, 1, false, 'invalid'])('explicit malformed shortcut argument %p is not rewritten', payload => {
-  const Bridge = createDemeineBridge(definition().built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(definition().built);
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   expect(() => Reflect.apply(aggregate.confirm, aggregate, [payload])).toThrow('Legacy messages require object payloads');
@@ -111,7 +111,7 @@ test('the attached object contract sees the same canonical payload as the legacy
   const contract = new Contract().addCommand('counter.confirm.command', z.strictObject({}));
   const { built, observed } = definition(contract);
   const process = jest.spyOn(built, 'process');
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   await expect(aggregate.confirm()).resolves.toBe(aggregate);
@@ -125,7 +125,7 @@ test('void-only contracts are not bypassed or secretly given a different payload
   const { built, observed } = definition(contract);
   expect(built.process(built.initialState, built.commandCreators.confirm())).toHaveLength(1);
   observed.mockClear();
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const sink = forwardingSink();
   const aggregate = new Bridge(sink);
   await expect(aggregate.confirm()).rejects.toThrow(ContractError);

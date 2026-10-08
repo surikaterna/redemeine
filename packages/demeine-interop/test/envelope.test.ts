@@ -1,11 +1,11 @@
-import { Aggregate, type CommandSink } from 'demeine';
+import type { CommandSink } from 'demeine';
 import { createDemeineBridge, type BridgeEvent } from '../src';
 import { definition } from './fixture';
 
 test('builder metadata and post-sink command reach one envelope conversion', async () => {
   const built = definition();
   const envelope = jest.fn((event: BridgeEvent) => structuredClone(event));
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const Bridge = createDemeineBridge(built, { envelope });
   const aggregate = new Bridge();
   const command = {
     ...built.commandCreators.add(2), id: 'command-id', aggregateId: aggregate.id,
@@ -33,7 +33,7 @@ test('sink header reset is authoritative; no erased summary/storeRef recovered',
     Object.assign(command, { headers: {} });
     return aggregate._process(command);
   } };
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const aggregate = new Bridge(sink);
   await aggregate._sink({ ...built.commandCreators.add(1), aggregateId: aggregate.id, headers: { commandSummary: 'lost', commandStoreRef: 'lost' } });
   expect(aggregate.getUncommittedEvents()[0]).toMatchObject({ metadata: { command: { id: expect.any(String), type: 'counter.add.command' } } });
@@ -44,7 +44,7 @@ test('sink header reset is authoritative; no erased summary/storeRef recovered',
 test('raw/replayed events gain no synthesized command metadata', async () => {
   const built = definition();
   built.process = () => [{ id: 'raw', type: 'counter.added.event', payload: { amount: 1 } }];
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   const aggregate = new Bridge();
   await aggregate.add(1);
   expect(aggregate.getUncommittedEvents()[0]).not.toHaveProperty('metadata');
@@ -54,7 +54,7 @@ test('raw/replayed events gain no synthesized command metadata', async () => {
 });
 
 test.each(['id', 'aggregateId', 'correlationId', 'metadata'])('envelope cannot discard %s', async field => {
-  const Bridge = createDemeineBridge(definition(), { AggregateBase: Aggregate, envelope(event) {
+  const Bridge = createDemeineBridge(definition(), { envelope(event) {
     Reflect.deleteProperty(event, field);
     return event;
   } });
@@ -64,7 +64,7 @@ test.each(['id', 'aggregateId', 'correlationId', 'metadata'])('envelope cannot d
 });
 
 test('metadata nested mutation is rejected before event application', async () => {
-  const Bridge = createDemeineBridge(definition(), { AggregateBase: Aggregate, envelope(event) {
+  const Bridge = createDemeineBridge(definition(), { envelope(event) {
     Reflect.set(event.metadata!.command!, 'type', 'changed.command');
     return event;
   } });
@@ -75,13 +75,13 @@ test('metadata nested mutation is rejected before event application', async () =
 
 test('inspectable hooks/plugins and even empty declared intents are unsupported', async () => {
   for (const unsupported of [{ hooks: { afterCommit() {} } }, { plugins: [{}] }]) {
-    expect(() => createDemeineBridge({ ...definition(), ...unsupported }, { AggregateBase: Aggregate })).toThrow('hooks or plugins');
+    expect(() => createDemeineBridge({ ...definition(), ...unsupported })).toThrow('hooks or plugins');
   }
   for (const intents of [{}, [], { work: [] }]) {
     const built = definition();
     const process = built.process;
     built.process = (state, command) => Object.defineProperty(process(state, command), '__intents', { value: intents });
-    const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+    const Bridge = createDemeineBridge(built);
     const aggregate = new Bridge();
     await expect(aggregate.add(1)).rejects.toThrow('intents');
     expect(aggregate.getVersion()).toBe(0);
@@ -91,7 +91,7 @@ test('inspectable hooks/plugins and even empty declared intents are unsupported'
 
 test('envelope cannot replace an opaque summary with an empty object', async () => {
   const built = definition();
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope(event) {
+  const Bridge = createDemeineBridge(built, { envelope(event) {
     Reflect.set(event.metadata!.command!, 'summary', {});
     return event;
   } });

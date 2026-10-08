@@ -82,3 +82,45 @@ Diplomat owns audited source delivery; current prep does not authorize PR creati
 merge, feature publication or substitution of these old files for main-run bytes.
 Record candidate versus final hashes distinctly in the Bead, never a guessed
 future registry resolution.
+# Standalone qualification (`redemeine-ov0e.6`)
+
+For the standalone major API, use `standalone-packed.mjs`, not the historical
+supplied-base/CLI helpers below. In a disposable snapshot run actual Changesets
+status and `pnpm run version:packages`, build interop, then run the existing
+`release:check-simple` with only the derived interop version selected. Do not
+version the feature worktree or overwrite previously qualified tarballs.
+
+From the worktree, under the release Node/pnpm/npm pins:
+
+```sh
+node packages/demeine-interop/qualification/standalone-packed.mjs \
+  /absolute/path/to/artifacts \
+  /absolute/path/to/actual/host/node_modules/@surikat/factory/lib/types.d.ts \
+  /absolute/path/to/fresh/qualification-output
+```
+
+The output directory must not exist. This installs the exact candidate alongside
+an independent minimal consumer containing only the candidate and TS5.9.3/TS7.0.2.
+That consumer checks both `.mts`/`.cts` with NodeNext and browser-oriented Bundler
+resolution, `strict: true`, `skipLibCheck: false`, `types: []` and `typeRoots: []`.
+Loaded-file realpaths must remain inside its physical install; no ancestor,
+Demeine, Factory, test ambient dependency, or manually supplied Node types can
+mask a missing published dependency. Run `minimal-types.mjs TARBALL FRESH_OUTPUT`
+separately to reproduce this declaration-closure gate.
+
+An optional fourth `standalone-packed.mjs` argument selects the full host fixture's
+Node type version (default `24.13.2`); `26.6.2` also exercises the actual current
+consumer's host typings. The separate minimal fixture never installs Node types
+directly: its declaration dependencies must come from the candidate itself.
+
+The full integration fixture then installs the candidate alongside
+public dependencies, compiles strict import/require declarations with TS5.9.3 and
+TS7.0.2, runs native ESM/CJS on Node24/26, runs all package tests against installed
+exports, and bundles/runs a browser lifecycle using the real `events` dependency.
+It checks production imports via syntax nodes (not comments), records the actual
+Factory declaration hash, and compares installed source maps/README with source.
+Legacy Demeine and its host `regenerator-runtime` are integration-fixture
+dependencies, not standalone runtime requirements. Logs record exact commands;
+this is qualification only, never registry publication or consumer lock delivery.
+
+## Historical supplied-base qualification

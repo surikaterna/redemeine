@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { setTimeout } from 'node:timers/promises';
-import legacy from 'demeine';
 import { createAggregate } from '../../aggregate/src/index.ts';
 import { createDemeineBridge } from '../src/createDemeineBridge.ts';
 
@@ -30,7 +29,6 @@ for (const name of ['process', 'apply']) {
   built[name] = (...args) => { calls[name]++; return boundary === name ? unsupportedResult() : original(...args); };
 }
 const Bridge = createDemeineBridge(built, {
-  AggregateBase: legacy.Aggregate,
   envelope(event) { calls.envelope++; return boundary === 'envelope' ? unsupportedResult() : event; },
 });
 const handler = boundary === 'eventHandler' ? { handle() { calls.eventHandler++; return unsupportedResult(); } } : undefined;

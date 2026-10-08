@@ -1,6 +1,5 @@
-import { Aggregate, type CommandSink } from 'demeine';
 import { createAggregate } from '@redemeine/aggregate';
-import { createDemeineBridge } from '@redemeine/demeine-interop';
+import { createDemeineBridge, type CommandSink, type CompatibleAggregate } from '@redemeine/demeine-interop';
 import { createIdentity, type Event } from '@redemeine/kernel';
 
 const built = createAggregate('counter', { count: 0 })
@@ -11,9 +10,9 @@ const built = createAggregate('counter', { count: 0 })
     packed: { pack: () => undefined, handler: () => emit.added({ amount: 1 }) },
   }))
   .build();
-const Counter = createDemeineBridge(built, { AggregateBase: Aggregate, envelope: event => ({ ...event }) });
-const sink: CommandSink = { sink: (command, aggregate) => aggregate._process(command) };
-const aggregate: InstanceType<typeof Aggregate> = new Counter(sink);
+const Counter = createDemeineBridge(built, { envelope: event => ({ ...event }) });
+const sink: CommandSink<{ count: number }> = { sink: (command, aggregate) => aggregate._process(command) };
+const aggregate: CompatibleAggregate = new Counter(sink);
 const counter = new Counter(sink);
 const rejected = new Counter(sink, { handle: () => Promise.reject(new Error('event rejected')) });
 void rejected.add(1).then(
@@ -28,7 +27,7 @@ const unsafe = createAggregate('counter', { count: 0 })
   .commands(emit => ({ then: { pack: () => ({}), handler: () => emit.added({}) } }))
   .build();
 try {
-  createDemeineBridge(unsafe, { AggregateBase: Aggregate });
+  createDemeineBridge(unsafe);
   throw new Error('then shortcut was accepted');
 } catch (error) {
   if (!(error instanceof Error) || error.message !== 'Legacy method collision: then') throw error;
@@ -37,7 +36,6 @@ const count: number = counter._state.count;
 void count;
 void aggregate;
 if (typeof createIdentity() !== 'string') throw new Error('kernel export failed');
-if (!(counter instanceof Aggregate)) throw new Error('supplied base identity lost');
 void counter.add(4).then(async result => {
   if (result !== counter) throw new Error('queued result lost aggregate identity');
   const initialCount = counter._state.count;

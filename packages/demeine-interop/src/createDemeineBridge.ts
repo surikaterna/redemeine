@@ -1,35 +1,31 @@
-import type { Event } from '@redemeine/kernel';
 import { createDispatch } from './dispatch';
 import { rejectLifecycle, requireSync, validateHandler } from './guards';
 import { installMethods } from './methods';
-import type { AggregateBase, BridgeableAggregate, BridgeCommand, BridgeConstructor, BridgeContext, BridgeOptions, CommandCreators, Dispatcher } from './types';
+import { StandaloneAggregate } from './StandaloneAggregate';
+import type { CommandHandler, CommandSink, EventHandler } from './lifecycleTypes';
+import type { BridgeableAggregate, BridgeConstructor, BridgeOptions, CommandCreators } from './types';
 
-export function createDemeineBridge<S extends object, C extends CommandCreators, B extends AggregateBase>(
-  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S, B>,
-): BridgeConstructor<S, C, B> {
+export function createDemeineBridge<S extends object, C extends CommandCreators>(
+  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S> = {},
+): BridgeConstructor<S, C> {
+  if ('AggregateBase' in options) throw new TypeError('AggregateBase is no longer supported; the bridge owns its lifecycle');
   rejectLifecycle(builder);
   const dispatch = createDispatch(builder, options);
-  // Erase only constructor services at the runtime boundary. Public services and the
-  // full inherited instance remain those of B; initialState establishes S below.
-  const Base = options.AggregateBase as unknown as new (
-    sink: unknown, events: Dispatcher<S, Event>, commands: Dispatcher<S, BridgeCommand>,
-  ) => BridgeContext<S>;
-  class Bridge extends Base {
-    constructor(sink?: unknown, events?: Dispatcher<S, Event> | null, commands?: Dispatcher<S, BridgeCommand> | null) {
+  class Bridge extends StandaloneAggregate<S> {
+    constructor(sink?: CommandSink<S> | null, events?: EventHandler | null, commands?: CommandHandler | null) {
       validateHandler(events, 'eventHandler');
       validateHandler(commands, 'commandHandler');
       const eventHandler = events == null ? { handle: dispatch.apply } : synchronousHandler(events);
-      super(sink ?? undefined, eventHandler, commands ?? { handle: dispatch.process });
-      this._state = structuredClone(builder.initialState);
+      super(builder.initialState, sink, eventHandler, commands ?? { handle: dispatch.process });
       this.type = builder.aggregateType ?? Object.values(builder.types.commands)[0]?.split('.')[0] ?? 'unknown';
     }
   }
   installMethods(Bridge.prototype, builder, dispatch);
   // Generated methods are installed and collision-checked above, not visible to TS.
-  return Bridge as unknown as BridgeConstructor<S, C, B>;
+  return Bridge as BridgeConstructor<S, C>;
 }
 
-function synchronousHandler<S extends object>(handler: Dispatcher<S, Event>): Dispatcher<S, Event> {
+function synchronousHandler(handler: EventHandler): EventHandler {
   return {
     handle(aggregate, event) {
       return requireSync(handler.handle(aggregate, event), 'eventHandler');
