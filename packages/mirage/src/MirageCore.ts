@@ -27,6 +27,18 @@ export const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
 
+export const assertEventCount = (value: number): void => {
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw new RangeError('initialVersion / snapshot.version must be a nonnegative safe integer event count.');
+    }
+};
+
+export const assertCanAdvanceEventCount = (value: number): void => {
+    if (!Number.isSafeInteger(value + 1)) {
+        throw new RangeError('Mirage event count cannot exceed Number.MAX_SAFE_INTEGER.');
+    }
+};
+
 /**
  * Handles "schema not found" errors from contract validation.
  * In strict mode, rethrows; otherwise logs a warning and swallows the error.
@@ -70,8 +82,10 @@ export class MirageCore<S> {
         public state: S,
         public contract?: Contract,
         public strict: boolean = false,
-        plugins: RedemeinePlugin<any>[] = []
+        plugins: RedemeinePlugin<any>[] = [],
+        initialVersion: number = 0
     ) {
+        this.version = initialVersion;
         this.plugins = plugins;
         this.plugins.forEach(assertPluginHasKey);
         this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
@@ -115,7 +129,6 @@ export class MirageCore<S> {
         }
 
         this.applyEvents(events);
-        this.version++;
         this.notify();
         return this.state;
     }
@@ -146,8 +159,10 @@ export class MirageCore<S> {
                     handleSchemaValidationError(err, this.strict);
                 }
             }
+            assertCanAdvanceEventCount(this.version);
             this.state = this.builder.apply(this.state, ev);
             this.pendingResults.events.push(ev);
+            this.version++;
             if (this.builder.hooks?.onEventApplied) {
                 this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state));
             }

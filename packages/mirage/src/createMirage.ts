@@ -1,11 +1,11 @@
 import { type Event, type RedemeinePlugin, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { AggregateEntityRegistry, BuiltAggregate } from '@redemeine/aggregate';
-import { MirageCore } from './MirageCore';
+import { MirageCore, assertEventCount } from './MirageCore';
 import { hydrateStateFromEvents } from './hydration';
 import { createProxyContext } from './proxy/deepProxy';
 import type {
     Mirage,
-    MirageOptions,
+    MirageSetup,
     HydrationEvents,
     BuiltAggregateCommands,
     BuiltAggregateState,
@@ -20,23 +20,34 @@ import { MirageCoreSymbol } from './mirage.types';
 export { HYDRATION_REPLAY_YIELD_THRESHOLD } from './hydration';
 export * from './mirage.types';
 
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+type MirageBuilder = BuiltAggregate<any, any, any, any, any>;
+
+export function createMirage<BA extends MirageBuilder>(
     builder: BA,
-    id: string
+    id: string,
+    setup?: MirageSetup<BuiltAggregateState<BA>, BuiltAggregatePlugins<BA>> & { events?: undefined }
 ): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+export function createMirage<BA extends MirageBuilder>(
     builder: BA,
     id: string,
-    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: HydrationEvents<Event> }
+    setup: MirageSetup<BuiltAggregateState<BA>, BuiltAggregatePlugins<BA>> & { events: HydrationEvents<Event> }
 ): Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
+export function createMirage<BA extends MirageBuilder>(
     builder: BA,
     id: string,
-    setup?: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: HydrationEvents<Event> }
+    setup: MirageSetup<BuiltAggregateState<BA>, BuiltAggregatePlugins<BA>>
+): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
+export function createMirage<BA extends MirageBuilder>(
+    builder: BA,
+    id: string,
+    setup?: MirageSetup<BuiltAggregateState<BA>, BuiltAggregatePlugins<BA>>
 ): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>> {
 
-    const makeMirage = (state: BuiltAggregateState<BA>, plugins: RedemeinePlugin<any>[]): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
-        const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, plugins);
+    const initialVersion = setup?.initialVersion === undefined ? 0 : setup.initialVersion;
+    assertEventCount(initialVersion);
+
+    const makeMirage = (state: BuiltAggregateState<BA>, plugins: RedemeinePlugin<any>[], version: number): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
+        const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, plugins, version);
         const mounts = (builder.mounts || {}) as Record<string, MountMetadata>;
         const selectors = (builder.selectors || {}) as Record<string, (...args: any[]) => any>;
 
@@ -51,12 +62,12 @@ export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>
     const plugins = [...(builder.plugins || []), ...(setup?.plugins || [])] as RedemeinePlugin<any>[];
 
     if (!setupEvents) {
-        return makeMirage(baseState, plugins);
+        return makeMirage(baseState, plugins, initialVersion);
     }
 
     return (async () => {
-        const hydratedState = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins);
-        return makeMirage(hydratedState, plugins);
+        const { state, appliedCount } = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins, initialVersion);
+        return makeMirage(state, plugins, initialVersion + appliedCount);
     })();
 }
 

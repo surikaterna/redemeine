@@ -188,9 +188,27 @@ const order = await createMirage(OrderAggregate, 'order-1', {
 // Async — snapshot + catch-up events
 const order = await createMirage(OrderAggregate, 'order-1', {
   snapshot: cachedState,
+  initialVersion: 42, // verified event count represented by cachedState, BEFORE newEvents
   events: newEvents
 });
 ```
+
+`initialVersion` is setup-only, defaults to `0`, and must be a nonnegative safe
+integer (including explicit `0`; `null` is invalid). It is validated before replay
+or plugin effects. It is **not a final-version override**: a baseline of 42 plus
+three replayed events produces version 45. A state-only snapshot has baseline 0;
+Mirage cannot infer history from state. Supply a verified baseline for persisted use.
+
+Event counts are bounded by `Number.MAX_SAFE_INTEGER`. That baseline is valid
+with no replayed events, and zero-event commands still succeed at the ceiling.
+An event that would exceed the ceiling throws `RangeError`: live commands check
+per event after schema validation but before calling `apply`, replacing state,
+buffering, or invoking `onEventApplied`. Earlier successful events in the same
+command remain applied, buffered, and counted; the aborted command does not
+notify subscribers or merge its intents. This is not command-wide rollback.
+Hydration checks each yielded event before its hydration plugins or `apply`;
+overflow rejects construction rather than returning an unsafe version. Iteration
+and earlier events' plugin effects may already have occurred.
 
 ### Standalone Utility Functions
 
@@ -223,6 +241,10 @@ const events = extractUncommittedEvents(order);
 
 Clears the uncommitted event buffer. Typically called after persisting events.
 
+Clearing does not reset state or version and is not proof of persistence. If you
+discard unsaved events, rehydrate/re-establish an authoritative baseline before
+saving that instance through a Depot.
+
 ```typescript
 import { clearUncommittedEvents } from '@redemeine/mirage';
 
@@ -231,7 +253,9 @@ clearUncommittedEvents(order);
 
 #### `subscribe(mirage, listener)`
 
-Subscribes to state changes. The listener fires after each command dispatch. Returns an unsubscribe function.
+Subscribes to state changes. The listener fires once after each successful command,
+including commands emitting zero events, but not after failed application/hooks.
+Returns an unsubscribe function.
 
 ```typescript
 import { subscribe } from '@redemeine/mirage';
@@ -283,6 +307,14 @@ const order = await depot.get('order-1', {
 
 Persists uncommitted events to the store and clears the buffer. Runs `onBeforeAppend` and `onAfterCommit` plugin hooks.
 
+Callers must **serialize dispatch and save**, awaiting each operation before the
+next. Overlapping operations are not safe: the existing clear-entire-buffer race
+is tracked separately as `redemeine-98zi`. Correct pre-append counts do not fix it.
+Append or `onBeforeAppend` failure retains pending events and the applied version.
+`onAfterCommit` failure occurs after storage and clearing; it does not roll back
+either. Empty-event/intent-only saves still call storage and `onAfterCommit`;
+per-event `onBeforeAppend` has no events to visit.
+
 ```typescript
 order.addLine({ id: 'l2', product: 'gadget', qty: 1, price: 50 });
 await depot.save(order);
@@ -299,7 +331,21 @@ interface EventStore {
 }
 ```
 
-`readStream` returns an async iterable of events for a given aggregate ID. `saveEvents` persists events, optionally with optimistic concurrency via `expectedVersion`.
+`readStream` must yield the complete ordered history (or snapshot tail), without
+filtering out log positions. `fromVersion` is **1-based and inclusive**, defaulting
+to 1. A snapshot's `version` is its authoritative persisted event count B; Depot
+validates it before reading, requests B + 1, and initializes Mirage with baseline B.
+`initialState` without snapshot metadata is only a seed, with baseline 0.
+
+Depot supplies `saveEvents.expectedVersion` as the persisted event count **before
+append**: current Mirage version minus the captured pending-event count. Both are
+captured before awaiting append plugins. A first two-event batch expects 0; the
+next append expects 2. The store must compare atomically and reject mismatches for
+optimistic concurrency. An empty save expects the current persisted count.
+No event-envelope `version` field is required or synthesized. Adapters for
+zero-based backend revisions must translate count B to revision B - 1 (and use
+their new-stream sentinel for B = 0). No production adapter is shipped or qualified
+by these tests.
 
 ## Hydration
 
@@ -312,6 +358,51 @@ Hydration reconstructs aggregate state from stored events. Mirage supports three
 During hydration, events are replayed through the aggregate's `apply` function in order. To avoid blocking the event loop on large aggregates, mirage yields back to Node.js every 250 events (`HYDRATION_REPLAY_YIELD_THRESHOLD`).
 
 Plugin `onHydrateEvent` hooks run during replay, allowing payload transformation (e.g., decryption) before projection.
+
+Replay counts each successful `apply`, including accepted unknown/same-state
+events, but never buffers events, calls live command/event-applied hooks, validates
+live contracts, or notifies subscribers. A replay failure rejects construction.
+
+### Event-count version and migration (breaking change)
+
+The invariant is **initial persisted baseline + successfully replayed tail +
+successfully applied live events**. New streams start at 0. Zero-event commands
+do not advance it; one/many-event commands advance by one/the number applied.
+The internal version is available through `MirageCoreSymbol`, not a reserved
+`mirage.version` property: domain state may still use that name.
+
+Live application replaces state and buffers each event, then increments version
+**before `onEventApplied`**, invalidating entity caches at each event boundary.
+Validation/projector failure does not count that event; earlier applied events
+remain. A throwing `onEventApplied` has already applied, buffered, and counted its
+event. Later events are skipped; there is no command-wide rollback. Observer
+errors also leave applied events intact. Command intents still merge only after
+the complete event loop, so partial failure can retain events without those
+intents; this is not a transactional redesign.
+
+`onBeforeCommand` and `onAfterCommand` retain their existing order:
+before hook → command validation/decision → after hook → event application.
+Despite its name, **`onAfterCommand` sees the old state and version**, before any
+decided events apply. Async before-command plugins and dispatch return semantics
+are unchanged.
+
+Before upgrading, audit checkpoints, snapshots, and store adapters:
+
+- Preserve already-authoritative event-store counts and snapshot boundaries.
+- Historical native Mirage versions may be command counts, or 0 after hydration.
+  They cannot be converted arithmetically to event counts. Rebuild affected
+  snapshots/checkpoints from authoritative full history or supply an
+  operator-verified baseline. One-event-only examples do not establish general
+  compatibility.
+- Update adapters that treated `expectedVersion` as a post-command/post-append
+  value. Qualify compare-and-append and snapshot-tail behavior against the actual
+  backend before cutover; filtered histories cannot infer total stream counts.
+- This release performs no automatic data writes, checkpoint migration, deletion,
+  or reindexing. Consumers must explicitly plan their upgrade and migration.
+
+The accompanying major Changeset describes the breaking contract. Actual version
+numbers are derived by Changesets from the current prerelease state, not manually
+bumped; source validation does not authorize publication or consumer rollout.
 
 ## Entity Collections
 

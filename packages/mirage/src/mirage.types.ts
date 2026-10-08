@@ -263,6 +263,13 @@ export interface MirageOptions<TPlugins extends PluginExtensions = {}> {
     plugins?: RedemeinePlugin<TPlugins>[];
 }
 
+export interface MirageSetup<TState, TPlugins extends PluginExtensions = {}> extends MirageOptions<TPlugins> {
+    snapshot?: TState;
+    events?: HydrationEvents<Event>;
+    /** Persisted event count represented by the starting state, before replay. Defaults to zero. */
+    initialVersion?: number;
+}
+
 export type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
 export type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
 export type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R, any> ? R : {};

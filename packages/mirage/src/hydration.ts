@@ -1,7 +1,7 @@
 import type { Event, EventInterceptorContext, RedemeinePlugin } from '@redemeine/kernel';
 import type { BuiltAggregate } from '@redemeine/aggregate';
 import type { HydrationEvents } from './mirage.types';
-import { assertPluginHasKey, hasHydrateEventPlugins, wrapPluginHookFailure } from './MirageCore';
+import { assertCanAdvanceEventCount, assertPluginHasKey, hasHydrateEventPlugins, wrapPluginHookFailure } from './MirageCore';
 
 /**
  * Maximum number of replayed hydration events before yielding back to the Node.js event loop.
@@ -12,19 +12,38 @@ const yieldToEventLoop = async (): Promise<void> => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 };
 
+const runHydratePlugins = async (
+    ctx: EventInterceptorContext<{}, unknown>,
+    plugins: RedemeinePlugin[]
+): Promise<void> => {
+    for (const plugin of plugins) {
+        assertPluginHasKey(plugin);
+        if (typeof plugin.onHydrateEvent !== 'function') continue;
+        ctx.pluginKey = plugin.key;
+        try {
+            const nextPayload = await plugin.onHydrateEvent(ctx);
+            if (nextPayload !== undefined) ctx.payload = nextPayload;
+        } catch (error) {
+            throw wrapPluginHookFailure(plugin, 'onHydrateEvent', ctx.aggregateId, error);
+        }
+    }
+};
+
 export const hydrateStateFromEvents = async <S>(
     builder: BuiltAggregate<S, any, any, any>,
     aggregateId: string,
     baseState: S,
     events: HydrationEvents<Event>,
-    plugins: RedemeinePlugin<any>[]
-): Promise<S> => {
+    plugins: RedemeinePlugin<any>[],
+    initialVersion: number
+): Promise<{ state: S; appliedCount: number }> => {
     let state = baseState;
     let replayedEvents = 0;
     const eventMetaRegistry = builder.metadata?.events || {};
     const hasHydratePlugins = hasHydrateEventPlugins(plugins);
 
     for await (const event of events) {
+        assertCanAdvanceEventCount(initialVersion + replayedEvents);
         if (hasHydratePlugins) {
             const ctx: EventInterceptorContext<{}, unknown> = {
                 pluginKey: '',
@@ -34,20 +53,7 @@ export const hydrateStateFromEvents = async <S>(
                 meta: eventMetaRegistry[event.type]?.meta
             };
 
-            for (const plugin of plugins) {
-                assertPluginHasKey(plugin);
-                if (typeof plugin.onHydrateEvent === 'function') {
-                    ctx.pluginKey = plugin.key;
-                    try {
-                        const nextPayload = await plugin.onHydrateEvent(ctx);
-                        if (nextPayload !== undefined) {
-                            ctx.payload = nextPayload;
-                        }
-                    } catch (error) {
-                        throw wrapPluginHookFailure(plugin, 'onHydrateEvent', aggregateId, error);
-                    }
-                }
-            }
+            await runHydratePlugins(ctx, plugins);
 
             event.payload = ctx.payload;
         }
@@ -60,5 +66,5 @@ export const hydrateStateFromEvents = async <S>(
         }
     }
 
-    return state;
+    return { state, appliedCount: replayedEvents };
 };
