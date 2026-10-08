@@ -1,6 +1,5 @@
 import { createAggregate } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
-import { Aggregate } from 'demeine';
 import { createDemeineBridge } from '../src';
 
 export function definition() {
@@ -23,6 +22,6 @@ export function fixture() {
   const built = definition();
   const process = jest.spyOn(built, 'process');
   const apply = jest.spyOn(built, 'apply');
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(built);
   return { built, process, apply, Bridge };
 }

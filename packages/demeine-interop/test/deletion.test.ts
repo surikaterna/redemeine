@@ -1,4 +1,4 @@
-import { Aggregate, Repository, type Command, type Event, type Partition } from 'demeine';
+import { Repository, type Command, type Event, type Partition } from 'demeine';
 import Bluebird from 'bluebird';
 import { DefaultCommandHandler } from 'demeine/lib/aggregate/DefaultCommandHandler';
 import { DefaultEventHandler } from 'demeine/lib/aggregate/DefaultEventHandler';
@@ -10,7 +10,7 @@ test.each([false, true])('inherited deletion bypasses builder/envelope (explicit
   const process = jest.spyOn(built, 'process');
   const apply = jest.spyOn(built, 'apply');
   const envelope = jest.fn(event => event);
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const Bridge = createDemeineBridge(built, { envelope });
   const aggregate = new Bridge(null, explicit ? new DefaultEventHandler() : null, explicit ? new DefaultCommandHandler() : null);
   aggregate.id = 'live-id';
   aggregate.type = 'LiveType';
@@ -31,7 +31,7 @@ test.each([false, true])('inherited deletion bypasses builder/envelope (explicit
 });
 
 test('real Repository intercepts first deletion, discarding normal append of mixed buffer', async () => {
-  const Bridge = createDemeineBridge(definition(), { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(definition());
   const aggregate = new Bridge();
   const stream = { append: jest.fn(), commit: jest.fn(), getCommittedEvents: jest.fn(), getVersion: () => 0, _version: 0 };
   const partition = { delete: jest.fn().mockReturnValue(Bluebird.resolve(aggregate)), openStream: jest.fn().mockReturnValue(Bluebird.resolve(stream)) };
@@ -70,7 +70,7 @@ async function storedAggregate() {
   persistence.removeSnapshot = jest.fn(async id => { delete persistence._snapshots[id]; });
   const truncate = jest.spyOn(persistence, 'truncateStreamFrom');
   const deleteSpy = jest.spyOn(partition, 'delete');
-  const Bridge = createDemeineBridge(definition(), { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(definition());
   const aggregate = new Bridge();
   aggregate.type = 'CounterProjection';
   const repository = new Repository(partition, 'counter', () => aggregate);
@@ -108,4 +108,28 @@ test('tapeworm 0.5.0 deletion truncates, commits one fresh tombstone, removes sn
   expect(await partition.loadSnapshot!(aggregate.id)).toBeUndefined();
   expect(commitLookup).toEqual([remove]);
   expect(projections.size).toBe(0);
+});
+
+test('real Repository reads snapshots into fresh standalone instances and retains captured arrays during save', async () => {
+  const { partition, aggregate } = await storedAggregate();
+  const Bridge = createDemeineBridge(definition());
+  const repository = new Repository(partition, 'counter', id => {
+    const fresh = new Bridge();
+    fresh.id = id;
+    return fresh;
+  });
+  const restored = await repository.findById(aggregate.id);
+  expect(restored).not.toBe(aggregate);
+  expect(restored._state).toEqual({ count: 3, items: [] });
+  expect(restored.getVersion()).toBe(1);
+  expect(restored.getUncommittedEvents()).toEqual([]);
+  await restored._sink({ id: 'next', type: 'counter.add.command', aggregateId: restored.id, payload: { amount: 2 } });
+  const pending = restored.getUncommittedEvents();
+  await repository.save(restored);
+  expect(pending).toHaveLength(1);
+  expect(restored.getUncommittedEvents()).toEqual([]);
+  expect(restored.getUncommittedEvents()).not.toBe(pending);
+  const reread = await repository.findById(aggregate.id);
+  expect(reread._state).toEqual({ count: 5, items: [] });
+  expect(reread.getVersion()).toBe(2);
 });
