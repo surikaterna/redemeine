@@ -16,6 +16,11 @@ on:
         options: [pre, latest]
         required: true
         default: pre
+      publish:
+        description: 'false qualifies/uploads only; true performs registry writes for explicitly approved versions'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -103,7 +108,7 @@ jobs:
           retention-days: 7
 
   publish:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish == true
     needs: qualify
     runs-on: ubuntu-latest
     timeout-minutes: 30
