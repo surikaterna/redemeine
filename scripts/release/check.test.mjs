@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { c } from 'tar';
 import { checkArtifact, checkImports, checkManifest, dependency, dependencyOrder, eligible, selectCandidates } from './simple-check.mjs';
 
+// Keep generic hold enforcement covered independently of current package approvals.
 const policy = { holds: { '@redemeine/cli': {} } };
 const workspace = (name, version = '1.0.0', privateFlag = false) => ({ name, version, manifest: { name, version, private: privateFlag } });
 const workspaces = [workspace('@redemeine/future'), workspace('@redemeine/cli'), workspace('@redemeine/private', '1.0.0', true)];
@@ -13,6 +14,60 @@ const artifact = (name, dependencies = {}) => ({ manifest: { name, version: '1.0
 const noRead = () => assert.fail('Selected candidates must not require registry reads');
 const publicConfigs = [undefined, {}, { access: 'public' }];
 const invalidConfigs = ['restricted', 'Public', 'latest', '', null, false, 1, {}, []].map((access) => ({ access }));
+
+test('synthetic CLI hold still rejects selection while permitting interop and its closure', async () => {
+  for (const version of ['0.1.0-pre.0', '0.1.0-pre.1']) {
+    const interop = workspace('@redemeine/demeine-interop', version);
+    const selected = selectCandidates([...workspaces, interop], policy, `@redemeine/demeine-interop@${version}`, 'pre', 'pre');
+    assert.deepEqual(selected, [interop]);
+    assert.throws(() => selectCandidates([...workspaces, interop], policy, `@redemeine/demeine-interop@${version} @redemeine/cli@1.0.0`, 'pre'));
+  }
+  const kernel = { manifest: { name: '@redemeine/kernel', version: '0.2.0-pre.2' } };
+  const aggregate = { manifest: { name: '@redemeine/aggregate', version: '0.2.0-pre.2', dependencies: { '@redemeine/kernel': '0.2.0-pre.2' } } };
+  const interop = { manifest: { name: '@redemeine/demeine-interop', version: '0.1.0-pre.1', dependencies: { '@redemeine/kernel': '0.2.0-pre.2' } } };
+  const owned = [kernel, aggregate, interop].map(({ manifest }) => ({ ...manifest, manifest }));
+  assert.deepEqual(await dependencyOrder([interop, aggregate, kernel], owned, noRead), [kernel, interop, aggregate]);
+});
+
+async function sourceWorkspace(directory) {
+  const manifest = JSON.parse(await readFile(new URL(`../../packages/${directory}/package.json`, import.meta.url), 'utf8'));
+  return { name: manifest.name, version: manifest.version, manifest };
+}
+
+test('actual policy permits exact approved CLI/interop source versions but never private packages', async () => {
+  const actualPolicy = JSON.parse(await readFile(new URL('./policy.json', import.meta.url), 'utf8'));
+  const [cli, interop, privatePackage] = await Promise.all(['cli', 'demeine-interop', 'saga-runtime'].map(sourceWorkspace));
+  assert.deepEqual(actualPolicy, { holds: {} });
+  assert.equal(privatePackage.manifest.private, true);
+  const all = [cli, interop, privatePackage];
+  const exact = [cli, interop].map(w => `${w.name}@${w.version}`).join(' ');
+  assert.deepEqual(selectCandidates(all, actualPolicy, exact, 'pre', 'pre'), [cli, interop]);
+  assert.deepEqual(selectCandidates(all, actualPolicy, `${cli.name}@${cli.version}`, 'pre', 'pre'), [cli]);
+  assert.throws(() => selectCandidates(all, actualPolicy, `${cli.name}@99.0.0`, 'pre', 'pre'));
+  assert.throws(() => selectCandidates(all, actualPolicy, `${privatePackage.name}@${privatePackage.version}`, 'pre', 'pre'));
+  assert.deepEqual(cli.manifest.repository, { type: 'git', url: 'https://github.com/surikaterna/redemeine.git', directory: 'packages/cli' });
+});
+
+test('actual policy selects only five approved candidates and orders their real runtime edges', async () => {
+  const actualPolicy = JSON.parse(await readFile(new URL('./policy.json', import.meta.url), 'utf8'));
+  const directories = ['kernel', 'aggregate', 'demeine-interop', 'cli', 'mirage'];
+  const versions = ['0.2.0-pre.2', '0.2.0-pre.2', '0.1.0-pre.1', '0.2.0-pre.1', '1.0.0-pre.2'];
+  const sources = await Promise.all(directories.map(sourceWorkspace));
+  const byName = new Map(sources.map((w, index) => [w.name, versions[index]]));
+  const candidates = sources.map((w, index) => ({ ...w, version: versions[index], manifest: {
+    ...w.manifest, version: versions[index], dependencies: Object.fromEntries(Object.entries(w.manifest.dependencies ?? {})
+      .map(([name, range]) => [name, range === 'workspace:*' ? byName.get(name) : range]))
+  } }));
+  const omitted = await Promise.all(['projection', 'saga', 'saga-runtime', 'testing'].map(sourceWorkspace));
+  const owned = [...candidates, ...omitted];
+  const approval = candidates.map(w => `${w.name}@${w.version}`).join(' ');
+  assert.deepEqual(selectCandidates(owned, actualPolicy, approval, 'pre', 'pre'), candidates);
+  const ordered = await dependencyOrder([...candidates].reverse(), owned, noRead);
+  const position = name => ordered.findIndex(w => w.name === `@redemeine/${name}`);
+  for (const name of ['aggregate', 'demeine-interop', 'cli', 'mirage']) assert(position('kernel') < position(name));
+  assert(position('aggregate') < position('mirage'));
+  assert.deepEqual(candidates[3].manifest.dependencies, { '@redemeine/kernel': '0.2.0-pre.2', typescript: '^5.9.3', zod: '^4.3.6' });
+});
 
 test('approval selects exact source versions; no hardcoded public membership or registry absence selection', () => {
   assert.deepEqual(eligible(workspaces, policy), [workspaces[0]]);

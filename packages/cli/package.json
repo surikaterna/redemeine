@@ -3,6 +3,11 @@
   "version": "0.2.0-pre.0",
   "description": "Domain scaffolding and compiler-only schema extraction for Redemeine",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surikaterna/redemeine.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

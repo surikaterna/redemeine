@@ -9,15 +9,16 @@ import {
 } from './extract/aggregateNavigator';
 import { TypeToZodConverter } from './extract/typeConverter';
 import { generateOutput } from './extract/outputGenerator';
+import { aggregateJsonOutput, validateSchemaOutput, type SchemaOutputOptions } from './extract/jsonSchemaOutput';
 
-export interface ExtractZodOptions {
+export interface ExtractZodOptions extends SchemaOutputOptions {
     /** Path to tsconfig.json */
     tsconfig: string;
     /** Path to the source file containing the aggregate export */
     entry: string;
     /** Name of the exported aggregate variable */
     aggregateExport: string;
-    /** Output file path for generated Zod schemas */
+    /** Output file path for the selected schema format */
     outFile: string;
     /** Whether to include state schema (default: true) */
     includeState?: boolean;
@@ -32,13 +33,14 @@ export interface ExtractZodOptions {
 
 /**
  * Extracts types from a built aggregate using the TypeScript Compiler API
- * and generates Zod schema source code.
+ * and generates Zod source (default) or structural JSON Schema metadata.
  *
  * Navigates the aggregate's `commandCreators`, `pure.eventProjectors`,
  * and `initialState` to extract payload and state types, then converts
  * them recursively into Zod schema definitions.
  */
 export function extractZodSchemas(options: ExtractZodOptions): void {
+    validateSchemaOutput(options);
     const program = createProgramFromConfig(options.tsconfig);
     const checker = program.getTypeChecker();
 
@@ -59,7 +61,9 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
         checker, program, options.dateHandling ?? 'string', options.typeOverrides, options.outFile
     );
 
-    const output = generateOutput(
+    const output = options.format === 'json-schema'
+        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, options)
+        : generateOutput(
         converter, commandPayloads, eventPayloads, stateType, options
     );
 
