@@ -1,5 +1,13 @@
 # @redemeine/saga-runtime
 
+## 0.1.1-pre.2
+
+### Patch Changes
+
+- Updated dependencies [[`7cf5217`](https://github.com/surikaterna/redemeine/commit/7cf5217b3be22dd81c92892c24bc8b9e017e72a3)]:
+  - @redemeine/aggregate@0.2.0-pre.2
+  - @redemeine/saga@0.1.1-pre.2
+
 ## 0.1.1-pre.1
 
 ### Patch Changes

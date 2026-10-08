@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/cli",
-  "version": "0.2.0-pre.0",
+  "version": "0.2.0-pre.1",
   "description": "Domain scaffolding and compiler-only schema extraction for Redemeine",
   "license": "MIT",
   "repository": {
