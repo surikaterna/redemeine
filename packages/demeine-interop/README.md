@@ -95,4 +95,7 @@ deleted-read rejection, or an immutable no-recreation guarantee.
 Both import and require have matching declarations (`index.d.ts` / `index.d.cts`).
 The source seed version is 0.1.0-pre.0, not a promise of the final Changesets
 candidate. See `qualification/README.md` in the source tree for non-publishing
-artifact reproduction. CLI remains a held, separately supplied developer tool.
+artifact reproduction. CLI publication is now approved under `redemeine-ov0e.4`,
+not yet a verified registry release. Earlier separately supplied developer CLI
+artifacts are historical qualification evidence, not final main-run release files;
+see the repository's `docs/releasing.md` for the current five-package release gates.

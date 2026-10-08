@@ -1,4 +1,13 @@
-# Non-publishing qualification (redemeine-ov0e.1)
+# Historical non-publishing qualification (redemeine-ov0e.1)
+
+The procedure below describes the original four-package/local developer-CLI
+fixture. **It is not the current five-package release preparation.** User approval
+in `redemeine-ov0e.4` removes the CLI hold, but does not make historical artifacts
+publishable. Preserve frozen `.1`/`.3` evidence; do not rerun these helpers over it.
+Current preparation uses a NEW disposable snapshot, the real `pnpm run
+version:packages` (including changelogs/lock/pre-state), and the existing generic
+five-package release checker. Follow `docs/releasing.md`; only a later reviewed
+main-run `checked-packages` artifact can become final publication input.
 
 Run from the supplied feature worktree. No script here publishes or creates a
 commit. `prepare.mjs` replaces only `.cache/demeine-interop/candidate`, copies
@@ -24,8 +33,9 @@ ordering or bypass the release prerequisites.
 
 `artifacts.mjs` builds candidate kernel/aggregate/interop/Mirage and runs the existing
 `scripts/release/simple.mjs check` with explicit `APPROVED_VERSIONS` and
-`RELEASE_TAG=pre`. CLI is still held and absent from that plan. A **separate developer
-pack** builds the unchanged source CLI 0.2.0-pre.0. No hold removal is needed.
+`RELEASE_TAG=pre`. CLI was held and absent from that historical plan. A **separate
+developer pack** built source CLI 0.2.0-pre.0. These helpers intentionally retain
+their local-fixture scope; do not treat their versions/selection as today's release plan.
 
 Evidence under `.cache/demeine-interop/`:
 
@@ -40,10 +50,10 @@ Evidence under `.cache/demeine-interop/`:
   fallback can conceal an incorrect require export.
 - `cli-tool/node_modules/@redemeine/cli`: dependency-resolved developer package
   root for `REDEMEINE_CLI_DIR`. Launch its manifest bin (`dist/bin.js`) with Node;
-  consumers must validate name and exact version 0.2.0-pre.0. Do not add this held
-  CLI as a production dependency or assume registry publication.
+  this historical fixture validates name and exact version 0.2.0-pre.0. It is not
+  the approved candidate CLI0.2.0-pre.1 or proof of registry publication.
 
-The current Changesets delta is interop 0.1.0-pre.0 → **0.1.0-pre.1**;
+The historical Changesets delta was interop 0.1.0-pre.0 → **0.1.0-pre.1**;
 kernel/aggregate 0.2.0-pre.1 → **0.2.0-pre.2**; Mirage → **1.0.0-pre.2**.
 Automatic dependency bumps also affect CLI, saga, saga-runtime and testing in the
 snapshot, but do not expand this approved artifact selection. Source manifests
@@ -66,6 +76,9 @@ inventing lock entries or changing CLI source. Its normal fixture retains eviden
 under `/tmp/opencode/standalone-cli-*`.
 
 Independent Auditor verification is required before any ready-to-publish claim.
-Diplomat owns eventual audited commits/push; publication, merge and first-publication
-authorization are explicitly outside this task. Record final hashes in the Bead,
-not a guessed future registry resolution.
+Publication was outside the historical task; it is now user-approved, including
+CLI, subject to the main/review/npm gates described in `docs/releasing.md`.
+Diplomat owns audited source delivery; current prep does not authorize PR creation,
+merge, feature publication or substitution of these old files for main-run bytes.
+Record candidate versus final hashes distinctly in the Bead, never a guessed
+future registry resolution.

@@ -1,8 +1,9 @@
 # @redemeine/cli
 
 Standalone ESM executable `redemeine` and side-effect-free typed API
-`@redemeine/cli/reflector` for Node.js 22 or newer. This package is being prepared for publication;
-the commands below using the registry apply **after publication**, not today.
+`@redemeine/cli/reflector` for Node.js 22 or newer. Publication is approved under
+`redemeine-ov0e.4`, but the package is unpublished at that preparation stage.
+The registry commands below apply only **after publication is verified**.
 
 ```sh
 npm install -D @redemeine/cli typescript vitest @types/node
@@ -128,7 +129,11 @@ node "${REDEMEINE_CLI_DIR:?set qualified CLI path}/dist/bin.js" extract-schemas 
 node "${REDEMEINE_CLI_DIR:?set qualified CLI path}/dist/bin.js" extract-schemas --entry src/aggregate.ts --export PaymentAttemptAggregate --tsconfig tsconfig.json --format json-schema --target draft-7 --out src/schemas/generated/json.json
 ```
 
-The repository CLI hold remains in force. Source workspace `npm pack` preserves
+The historical CLI hold is removed following user approval; the normal reviewed
+main/version/workflow and npm-owner gates still apply. Earlier same-version
+developer artifacts remain historical/local evidence, not final release files.
+See [releasing packages](https://github.com/surikaterna/redemeine/blob/main/docs/releasing.md)
+for the five-package batch and future first-name owner handoff. Source workspace `npm pack` preserves
 `workspace:*`; use real `pnpm pack` registry-layout artifacts for the packed gate
 (the existing interop qualification `cli-packed.mjs` prepares that disposable
 layout). The JSON packed test installs Ajv only in its isolated consumer fixture
