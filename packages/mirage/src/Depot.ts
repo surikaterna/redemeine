@@ -2,10 +2,11 @@ import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
 import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
 import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
 import type { BuiltAggregateCommands, BuiltAggregateState, BuiltAggregateRegistry, BuiltAggregatePlugins } from './mirage.types';
-import { assertPluginHasKey, wrapPluginHookFailure } from './MirageCore';
+import { assertEventCount, assertPluginHasKey, wrapPluginHookFailure } from './MirageCore';
 
 export interface EventStore {
     readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
+    /** Expected persisted event count BEFORE this append (zero for a new stream). */
     saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
 }
 
@@ -109,8 +110,9 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
           const initialState = getOptions?.initialState;
 
           if (snapshot) {
+            assertEventCount(snapshot.version);
             const events = store.readStream(id, { fromVersion: snapshot.version + 1 });
-            return createMirage(builder, id, { ...options, snapshot: snapshot.state, events });
+            return createMirage(builder, id, { ...options, snapshot: snapshot.state, initialVersion: snapshot.version, events });
           }
 
           if (initialState !== undefined) {
@@ -126,9 +128,10 @@ export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
         if (!core) throw new Error('Not a valid Mirage Instance');
 
           const { events, intents } = core.getPendingResults();
+          const expectedVersion = core.version - events.length;
           const appendableEvents = await runAppendInterceptors(core.id, events);
 
-          await store.saveEvents(core.id, appendableEvents, core.version);
+          await store.saveEvents(core.id, appendableEvents, expectedVersion);
           core.clearPendingResults();
 
           // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
