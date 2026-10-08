@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/kernel",
-  "version": "0.2.0-pre.1",
+  "version": "0.2.0-pre.2",
   "description": "Core primitives for event-sourced aggregates — events, commands, metadata, and type utilities",
   "license": "MIT",
   "repository": {
@@ -24,8 +24,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" },
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
       "default": "./dist/index.js"
     }
   },

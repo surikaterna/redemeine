@@ -17,14 +17,19 @@
     "@redemeine/saga-runtime": "0.1.0",
     "@redemeine/testing": "0.1.0",
     "@redemeine/cli": "0.1.0",
-    "@redemeine/projection-transport": "0.1.0"
+    "@redemeine/projection-transport": "0.1.0",
+    "@redemeine/demeine-interop": "0.1.0-pre.0"
   },
   "changesets": [
     "accepted-projection-baseline",
     "bright-commits-project",
+    "cli-publication-repository",
+    "compiler-json-schema-output",
     "fair-sagas-fail",
     "gentle-sagas-doc",
     "initial-release",
+    "legacy-lifecycle-interop",
+    "legacy-no-payload-shortcuts",
     "link-held-cli-kernel",
     "neat-sagas-organize",
     "observed-projection-tail",

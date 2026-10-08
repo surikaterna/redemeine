@@ -1,5 +1,21 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.2
+
+### Major Changes
+
+- [#134](https://github.com/surikaterna/redemeine/pull/134) [`7cf5217`](https://github.com/surikaterna/redemeine/commit/7cf5217b3be22dd81c92892c24bc8b9e017e72a3) Thanks [@spralle](https://github.com/spralle)! - Move the legacy bridge out of Mirage into the new demeine-interop package. The
+  replacement API requires the application's Aggregate base and returns a constructor,
+  preserving its sink, dispatchers, queue, replay and reserved deletion lifecycle.
+  Mirage no longer exports the old callable bridge. Kernel, aggregate and interop now
+  provide independent CommonJS and ESM entry points with matching declarations.
+
+### Patch Changes
+
+- Updated dependencies [[`7cf5217`](https://github.com/surikaterna/redemeine/commit/7cf5217b3be22dd81c92892c24bc8b9e017e72a3)]:
+  - @redemeine/kernel@0.2.0-pre.2
+  - @redemeine/aggregate@0.2.0-pre.2
+
 ## 0.2.0-pre.1
 
 ### Patch Changes

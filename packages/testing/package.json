@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/testing",
-  "version": "0.2.0-pre.1",
+  "version": "0.2.0-pre.2",
   "description": "Test utilities and harnesses for @redemeine event-sourced applications",
   "license": "MIT",
   "repository": {

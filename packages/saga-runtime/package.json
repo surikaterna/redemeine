@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/saga-runtime",
-  "version": "0.1.1-pre.1",
+  "version": "0.1.1-pre.2",
   "description": "Saga execution runtime with aggregate coordination",
   "license": "MIT",
   "repository": {
