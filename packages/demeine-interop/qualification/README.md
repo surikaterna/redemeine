@@ -113,6 +113,14 @@ Node type version (default `24.13.2`); `26.6.2` also exercises the actual curren
 consumer's host typings. The separate minimal fixture never installs Node types
 directly: its declaration dependencies must come from the candidate itself.
 
+Minimal checks also cover state-specific service inference and message fields.
+Separate negative programs must produce exactly the expected wrong-state errors
+for constructor injection and stored-handler calls, without diagnostic suppression.
+The full fixture runs `state-services.mts`/`.cts` plus the queued-rejection matrix
+(native, foreign-realm, Bluebird, thenable, and throwing getter/method inputs) under
+strict rejection policy on Node24 and Node26. Promise adoption is observed early;
+validation, command mutation and sink processing must remain FIFO work.
+
 The full integration fixture then installs the candidate alongside
 public dependencies, compiles strict import/require declarations with TS5.9.3 and
 TS7.0.2, runs native ESM/CJS on Node24/26, runs all package tests against installed

@@ -2,7 +2,7 @@ import { createDispatch } from './dispatch';
 import { rejectLifecycle, requireSync, validateHandler } from './guards';
 import { installMethods } from './methods';
 import { StandaloneAggregate } from './StandaloneAggregate';
-import type { CommandHandler, CommandSink, EventHandler } from './lifecycleTypes';
+import type { CommandHandler, CommandSink, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
 import type { BridgeableAggregate, BridgeConstructor, BridgeOptions, CommandCreators } from './types';
 
 export function createDemeineBridge<S extends object, C extends CommandCreators>(
@@ -12,7 +12,7 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   rejectLifecycle(builder);
   const dispatch = createDispatch(builder, options);
   class Bridge extends StandaloneAggregate<S> {
-    constructor(sink?: CommandSink<S> | null, events?: EventHandler | null, commands?: CommandHandler | null) {
+    constructor(sink?: CommandSink<S> | null, events?: EventHandler<S> | null, commands?: CommandHandler<S> | ObjectCommandHandler | null) {
       validateHandler(events, 'eventHandler');
       validateHandler(commands, 'commandHandler');
       const eventHandler = events == null ? { handle: dispatch.apply } : synchronousHandler(events);
@@ -25,7 +25,7 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   return Bridge as BridgeConstructor<S, C>;
 }
 
-function synchronousHandler(handler: EventHandler): EventHandler {
+function synchronousHandler<S extends object>(handler: EventHandler<S>): EventHandler<S> {
   return {
     handle(aggregate, event) {
       return requireSync(handler.handle(aggregate, event), 'eventHandler');

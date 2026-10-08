@@ -13,3 +13,8 @@ Demeine dependency; existing host repositories may still depend on Demeine.
 Declare and explicitly reference the Node emitter type dependency in both public
 declaration formats, so minimal consumers need no ambient host/test typings.
 The browser runtime continues to use the `events` package.
+
+Observe promised command rejection across realms and promise implementations while
+waiting in FIFO order, adopting each input once. Expose kernel-compatible headers
+and metadata on neutral messages, and infer state-specific services on generated
+and authored-base constructors while retaining sound legacy handler compatibility.

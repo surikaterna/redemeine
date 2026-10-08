@@ -6,6 +6,8 @@ export interface Command<Payload extends object = object> {
   id?: string;
   aggregateType?: string;
   aggregateId?: string;
+  headers?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Event<Payload extends object = object> {
@@ -14,6 +16,8 @@ export interface Event<Payload extends object = object> {
   id?: string;
   aggregateId?: string;
   correlationId?: string | undefined;
+  headers?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CommandSink<S extends object = object> {
@@ -23,6 +27,11 @@ export interface CommandSink<S extends object = object> {
 export interface CommandHandler<S extends object = object> {
   handle(aggregate: CompatibleAggregate<S>, command: Command): CompatibleAggregate<S>;
 }
+
+// A legacy fallback must genuinely accept object state, not erase a narrower handler.
+export type ObjectCommandHandler = {
+  handle: (aggregate: CompatibleAggregate, command: Command) => CompatibleAggregate;
+};
 
 export interface EventHandler<S extends object = object> {
   handle(aggregate: CompatibleAggregate<S>, event: Event): void;
@@ -36,8 +45,8 @@ export interface CompatibleAggregate<S extends object = object> {
   _uncommittedEvents: Event[];
   _commandQueue: Queue;
   _commandSink: CommandSink<S>;
-  _eventHandler: EventHandler;
-  _commandHandler: CommandHandler;
+  _eventHandler: EventHandler<S>;
+  _commandHandler: CommandHandler<S> | ObjectCommandHandler;
   _apply(event: Event, isNew?: boolean): CompatibleAggregate<S>;
   _process(command: Command): Promise<CompatibleAggregate<S>>;
   _sink(command: Command | Promise<Command>): Promise<CompatibleAggregate<S> | true>;
@@ -53,8 +62,8 @@ export interface CompatibleAggregate<S extends object = object> {
 }
 
 /** Annotate an authored subclass's base without introducing generated shortcuts. */
-export type CompatibleAggregateConstructor<S extends object = object> = new (
-  commandSink?: CommandSink<S> | null,
-  eventHandler?: EventHandler | null,
-  commandHandler?: CommandHandler | null,
-) => CompatibleAggregate<S>;
+export type CompatibleAggregateConstructor<S extends object = object> = {
+  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: CommandHandler<S> | null): CompatibleAggregate<S>;
+  // Legacy handlers return object-state aggregates; retain that honest alternative.
+  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: ObjectCommandHandler | null): CompatibleAggregate<S>;
+};

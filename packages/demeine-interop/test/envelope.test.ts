@@ -2,6 +2,28 @@ import type { CommandSink } from 'demeine';
 import { createDemeineBridge, type BridgeEvent } from '../src';
 import { definition } from './fixture';
 
+test('state-specific services receive typed neutral headers and metadata without losing identity', async () => {
+  const headers = { trace: 'custom' };
+  const metadata = { command: { id: 'origin' } };
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge({ sink(command, instance) {
+    expect(command.headers).toBe(headers);
+    expect(command.metadata).toBe(metadata);
+    return instance._process(command);
+  } }, { handle(instance, event) {
+    expect(event.headers).toBe(headers);
+    expect(event.metadata?.command).toBe(metadata.command);
+    instance._state.count++;
+  } }, { handle(instance, command) {
+    expect(instance._state.count).toBe(0);
+    return instance._apply({ ...command, type: 'counter.added.event', correlationId: command.id }, true);
+  } });
+  await aggregate._sink({ id: 'command', type: 'counter.add.command', aggregateId: aggregate.id, payload: {}, headers, metadata });
+  expect(aggregate._state.count).toBe(1);
+  expect(aggregate.getVersion()).toBe(1);
+  expect(aggregate.getUncommittedEvents()[0]?.metadata).toBe(metadata);
+});
+
 test('builder metadata and post-sink command reach one envelope conversion', async () => {
   const built = definition();
   const envelope = jest.fn((event: BridgeEvent) => structuredClone(event));

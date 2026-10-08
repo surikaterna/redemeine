@@ -50,10 +50,20 @@ class Counter extends Base {
 
 `CompatibleAggregate<S>`, `CompatibleAggregateConstructor<S>`, `CommandSink<S>`,
 `CommandHandler<S>`, `EventHandler<S>`, object-payload `Command<P>` / `Event<P>`,
-and `Queue` / `QueueOptions` are public neutral exports. Stored handler fields
-use the historical object-state signature; sinks/command handlers keep the legacy
-declared return types even though untyped runtime results are assimilated. No
-legacy type import or cast is needed to assign to the qualified Factory/Repository.
+and `Queue` / `QueueOptions` are public neutral exports. Both constructor types
+infer `S` in inline handlers and accept named `EventHandler<S>` / `CommandHandler<S>`.
+A separate, strictly object-accepting command-handler overload preserves real legacy
+handlers whose declarations return object-state aggregates. The stored command
+handler retains that explicit alternative rather than erasing a state-specific
+handler; calling it still requires an aggregate with state `S`. Its result may have
+object state, as in the legacy contract. No broader asynchronous handler return
+type or compatibility cast is required for the qualified Factory/Repository.
+
+Neutral commands and events expose optional `headers` and `metadata` as
+`Record<string, unknown>`, matching kernel envelopes. Services can read these
+fields and callers can supply them without casts. Values such as
+`event.metadata?.command` remain unknown until narrowed; there is no hardcoded
+application envelope schema or synthesized metadata on raw events.
 
 ### Intentional lifecycle compatibility
 
@@ -65,6 +75,11 @@ legacy type import or cast is needed to assign to the qualified Factory/Reposito
   Public `_queue` retains its actual nominal PQueue type. `isProcessing()` checks
   queued size, **not** running count: a synchronous pending read can succeed during
   the sole running task. Async reads wait for idle and recheck queued work.
+- `_sink` adopts its input once immediately and observes rejection across native,
+  cross-realm and Bluebird promises and arbitrary thenables. Throwing `then` getters
+  reject the adopted promise, not the synchronous `_sink` call. Command validation,
+  id/type mutation, sink invocation and caller-visible settlement remain queued;
+  adoption does not process commands early or assimilate the input a second time.
 - `_process` uses `bluebird@3.7.2` operational-only error handling: operational
   failures log and replace the pending array; ordinary errors preserve it. Version
   and prior state effects are not rolled back. Logging uses console warnings/errors.

@@ -1,7 +1,7 @@
 import Bluebird from 'bluebird';
 import { v4 as uuid } from 'uuid';
 import { Queue } from './Queue';
-import type { Command, CommandHandler, CommandSink, CompatibleAggregate, Event, EventHandler } from './lifecycleTypes';
+import type { Command, CommandHandler, CommandSink, CompatibleAggregate, Event, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => {
@@ -18,10 +18,10 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
   _uncommittedEvents: Event[] = [];
   _commandQueue = new Queue();
   _commandSink: CommandSink<S>;
-  _eventHandler: EventHandler;
-  _commandHandler: CommandHandler;
+  _eventHandler: EventHandler<S>;
+  _commandHandler: CommandHandler<S> | ObjectCommandHandler;
 
-  constructor(state: S, sink: CommandSink<S> | null | undefined, events: EventHandler, commands: CommandHandler) {
+  constructor(state: S, sink: CommandSink<S> | null | undefined, events: EventHandler<S>, commands: CommandHandler<S> | ObjectCommandHandler) {
     this._state = structuredClone(state);
     this._commandSink = sink ?? { sink: command => this._process(command) };
     this._eventHandler = events;
@@ -30,7 +30,7 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
 
   _process(command: Command): Promise<CompatibleAggregate<S>> {
     return new Bluebird<CompatibleAggregate<S>>((resolve, reject) => {
-      // Legacy handlers declare object state while _process promises the caller's S.
+      // Legacy handlers can return object state; preserve the historical _process contract.
       try { resolve(this._commandHandler.handle(this, command) as CompatibleAggregate<S>); }
       catch (error) { reject(error); }
     }).error(error => {
@@ -42,10 +42,11 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
   }
 
   _sink(commandToSink: Command | Promise<Command>): Promise<CompatibleAggregate<S> | true> {
-    // Observe an already-started native promise while FIFO work delays consumption.
-    // Its value/error is still consumed only by this command's queued task.
-    if (commandToSink instanceof Promise) void commandToSink.catch(() => undefined);
-    return this._commandQueue.queueCommand(() => Promise.resolve(commandToSink).then<CompatibleAggregate<S> | true>(command => {
+    // Adopt once across realms/thenable implementations; getters that throw reject
+    // this promise, while command mutation and sink invocation remain FIFO work.
+    const input = new Promise<Command>(resolve => resolve(commandToSink));
+    void input.catch(() => undefined);
+    return this._commandQueue.queueCommand(() => input.then<CompatibleAggregate<S> | true>(command => {
       if (!command.id) {
         console.warn('No command id set, setting it automatically');
         command.id = uuid();

@@ -14,23 +14,25 @@ const manifest = { private: true, type: 'module', dependencies: {
 }, devDependencies: { typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2' } };
 await writeFile(resolve(output, 'package.json'), JSON.stringify(manifest, null, 2));
 const gates = [];
-async function run(label, args) {
+async function run(label, args, expectTypeErrors = false) {
   const [command, ...parameters] = args;
   const result = spawnSync(command, parameters, { cwd: output, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 180000 });
   await writeFile(resolve(output, `${label}.log`), (result.stdout ?? '') + (result.stderr ?? ''));
-  gates.push({ command: args, cwd: output, status: result.status, log: `${label}.log` });
+  gates.push({ command: args, cwd: output, status: result.status, expectTypeErrors, log: `${label}.log` });
   await writeFile(resolve(output, 'gates.json'), JSON.stringify(gates, null, 2));
   console.log(label, result.status);
-  assert.equal(result.status, 0, `See ${label}.log`);
+  if (expectTypeErrors) assert(result.status > 0, `Expected rejection: ${label}.log`);
+  else assert.equal(result.status, 0, `See ${label}.log`);
   return result.stdout;
 }
 await run('install', ['npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund']);
-const source = `import { Queue, createDemeineBridge, type CompatibleAggregate } from '@redemeine/demeine-interop';
+const source = `import { Queue, createDemeineBridge, type CompatibleAggregate, type CompatibleAggregateConstructor,
+  type CommandSink, type CommandHandler, type EventHandler } from '@redemeine/demeine-interop';
 const queue = new Queue();
 queue.once('probe', (value: number) => { void value; });
 queue.once(Symbol('probe'), () => {});
 const names: (string | symbol)[] = queue.eventNames();
-const Counter = createDemeineBridge({
+export const Counter = createDemeineBridge({
   initialState: { count: 0 }, aggregateType: 'counter',
   types: { commands: { increment: 'counter.increment.command' }, events: { incremented: 'counter.incremented.event' } },
   commandCreators: { increment: () => ({ type: 'counter.increment.command', payload: {} }) },
@@ -41,8 +43,46 @@ const counter = new Counter();
 const result: Promise<CompatibleAggregate<{ count: number }> | true> = counter.increment();
 void result;
 void names;
+type State = { count: number };
+const events: EventHandler<State> = { handle(aggregate, event) {
+  aggregate._state.count++;
+  const link: unknown = event.metadata?.command;
+  const trace: unknown = event.headers?.trace;
+  void link; void trace;
+} };
+const commands: CommandHandler<State> = { handle(aggregate, command) {
+  aggregate._state.count++;
+  const trace: unknown = command.headers?.trace;
+  const origin: unknown = command.metadata?.origin;
+  void trace; void origin;
+  return aggregate;
+} };
+const sink: CommandSink<State> = { sink(command, aggregate) {
+  const trace: unknown = command.headers?.trace;
+  const origin: unknown = command.metadata?.origin;
+  void trace; void origin;
+  return aggregate._process(command);
+} };
+export const Base: CompatibleAggregateConstructor<State> = Counter;
+new Counter(sink, events, commands);
+new Base(sink, events, commands);
+new Counter(undefined, { handle(aggregate) { aggregate._state.count++; } }, { handle(aggregate) { aggregate._state.count++; return aggregate; } });
+new Base(undefined, { handle(aggregate) { aggregate._state.count++; } }, { handle(aggregate) { aggregate._state.count++; return aggregate; } });
+void counter._sink({ type: 'counter.increment.command', payload: {}, headers: { trace: 1 }, metadata: { origin: 'caller' } });
+counter._apply({ type: 'counter.incremented.event', payload: {}, headers: { trace: 1 }, metadata: { command: { id: 'caller' } } });
 `;
 for (const extension of ['mts', 'cts']) await writeFile(resolve(output, `consumer.${extension}`), source);
+for (const [extension, runtime] of [['mts', 'mjs'], ['cts', 'cjs']]) await writeFile(resolve(output, `negative.${extension}`), `
+import { Counter, Base } from './consumer.${runtime}';
+import { createDemeineBridge, type CommandHandler } from '@redemeine/demeine-interop';
+const Other = createDemeineBridge({ initialState: { label: '' }, types: { commands: {}, events: {} }, commandCreators: {}, process: () => [], apply: state => state });
+const counter = new Counter();
+counter._eventHandler.handle(new Other(), { type: 'event', payload: {} });
+counter._commandHandler.handle(new Other(), { type: 'command', payload: {} });
+const wrong: CommandHandler<{ label: string }> = { handle(aggregate) { aggregate._state.label.toUpperCase(); return aggregate; } };
+new Counter(undefined, undefined, wrong);
+new Base(undefined, undefined, wrong);
+`);
 const resolutions = [['NodeNext', 'NodeNext'], ['Preserve', 'Bundler']];
 const loaded = [];
 for (const [module, moduleResolution] of resolutions) {
@@ -52,6 +92,8 @@ for (const [module, moduleResolution] of resolutions) {
   }, files: ['consumer.mts', 'consumer.cts'] };
   const filename = `tsconfig-${moduleResolution}.json`;
   await writeFile(resolve(output, filename), JSON.stringify(config, null, 2));
+  const negativeConfig = `negative-${moduleResolution}.json`;
+  await writeFile(resolve(output, negativeConfig), JSON.stringify({ ...config, files: ['negative.mts', 'negative.cts'] }, null, 2));
   for (const compiler of ['typescript', 'typescript7']) {
     const stdout = await run(`${compiler}-${moduleResolution}`, ['node', `node_modules/${compiler}/bin/tsc`, '-p', filename, '--listFiles']);
     const files = stdout.trim().split('\n');
@@ -61,6 +103,11 @@ for (const [module, moduleResolution] of resolutions) {
       assert(!location.startsWith('..') && !isAbsolute(location), `Ancestor dependency leaked into minimal fixture: ${file}`);
     }
     loaded.push({ compiler, moduleResolution, files });
+    const rejected = await run(`${compiler}-${moduleResolution}-wrong-state`, ['node', `node_modules/${compiler}/bin/tsc`, '-p', negativeConfig], true);
+    const diagnostics = [...rejected.matchAll(/^negative\.(?:mts|cts)\(\d+,\d+\): error TS(\d+):/gm)];
+    assert.equal(diagnostics.length, 8, rejected);
+    assert.equal((rejected.match(/error TS/g) ?? []).length, 8, rejected);
+    assert.deepEqual(diagnostics.map(match => match[1]).sort(), ['2345', '2345', '2345', '2345', '2769', '2769', '2769', '2769']);
   }
 }
 const lock = JSON.parse(await readFile(resolve(output, 'package-lock.json')));

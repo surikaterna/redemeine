@@ -73,7 +73,7 @@ assert.equal(await readFile(resolve(interopRoot, 'README.md'), 'utf8'), await re
 await writeFile(resolve(output, 'boundary.json'), JSON.stringify({ productionImportsPassed: true, sourceMapsMatch: true, readmeMatches: true,
   factoryTypes: resolve(factoryTypes), factorySha256: createHash('sha256').update(await readFile(factoryTypes)).digest('hex'),
 }, null, 2));
-for (const name of ['consumer', 'legacy-types']) {
+for (const name of ['consumer', 'legacy-types', 'state-services']) {
   const source = await readFile(resolve(root, `packages/demeine-interop/qualification/${name}.ts`));
   for (const extension of ['mts', 'cts']) await writeFile(resolve(consumer, `${name}.${extension}`), source);
 }
@@ -84,9 +84,11 @@ await writeFile(resolve(consumer, 'tsconfig.json'), JSON.stringify({ compilerOpt
 await run('types-5.9.3', 'node', ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json']);
 await run('types-7.0.2', 'node', ['node_modules/typescript7/bin/tsc', '-p', 'tsconfig.json']);
 for (const version of ['24.20.0', '26.10.0']) {
-  for (const format of ['mjs', 'cjs']) await run(`runtime-${version}-${format}`, 'mise', [
-    'exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module', `compiled/consumer.${format}`,
-  ]);
+  for (const format of ['mjs', 'cjs']) {
+    for (const fixture of ['consumer', 'state-services']) await run(`runtime-${fixture}-${version}-${format}`, 'mise', [
+      'exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module', `compiled/${fixture}.${format}`,
+    ]);
+  }
 }
 await mkdir(resolve(consumer, 'test'));
 for (const file of await readdir(resolve(root, 'packages/demeine-interop/test'))) {
@@ -103,6 +105,15 @@ await writeFile(resolve(consumer, 'jest.config.cjs'), `module.exports = {
   } }] }
 };\n`);
 await run('packed-tests', 'node', ['--unhandled-rejections=strict', '--no-experimental-require-module', 'node_modules/jest/bin/jest.js', '--config', 'jest.config.cjs', '--runInBand']);
+for (const version of ['24.20.0', '26.10.0']) {
+  for (const kind of ['native', 'realm', 'bluebird', 'thenable', 'getter', 'throwing-then']) {
+    const timings = ['getter', 'throwing-then'].includes(kind) ? ['immediate'] : ['immediate', 'delayed'];
+    for (const timing of timings) await run(`queued-${version}-${kind}-${timing}`, 'mise', [
+      'exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module',
+      'test/queueRejection.fixture.mjs', kind, timing,
+    ]);
+  }
+}
 await writeFile(resolve(consumer, 'browser.mjs'), await readFile(resolve(root, 'packages/demeine-interop/qualification/browser.mjs')));
 await run('browser-build', 'node', ['node_modules/esbuild/bin/esbuild', 'browser.mjs', '--bundle', '--platform=browser', '--format=iife', '--outfile=browser.js', '--metafile=browser-meta.json']);
 const inputs = Object.keys(JSON.parse(await readFile(resolve(consumer, 'browser-meta.json'))).inputs);

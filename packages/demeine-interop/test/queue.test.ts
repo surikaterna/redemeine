@@ -3,10 +3,14 @@ import { command, deferred, implementations, type State } from './lifecycle.fixt
 
 afterEach(() => jest.restoreAllMocks());
 
-test('queued promised-command rejection is observed before its FIFO turn under strict Node policy', () => {
+test.each([
+  ['native', 'immediate'], ['native', 'delayed'], ['realm', 'immediate'], ['realm', 'delayed'],
+  ['bluebird', 'immediate'], ['bluebird', 'delayed'], ['thenable', 'immediate'], ['thenable', 'delayed'],
+  ['getter', 'immediate'], ['throwing-then', 'immediate'],
+])('queued %s/%s rejection is observed before its FIFO turn under strict Node policy', (kind, timing) => {
   const result = spawnSync(process.execPath, [
     '--unhandled-rejections=strict', '--no-experimental-require-module', '--import', 'tsx',
-    join(__dirname, 'queueRejection.fixture.mjs'),
+    join(__dirname, 'queueRejection.fixture.mjs'), kind!, timing!,
   ], { encoding: 'utf8' });
   expect(result.stderr).toBe('');
   expect(result.status).toBe(0);
