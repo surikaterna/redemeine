@@ -4,7 +4,7 @@ import type { Event } from '@redemeine/kernel';
 import { DefaultCommandHandler } from 'demeine/lib/aggregate/DefaultCommandHandler';
 import { DefaultEventHandler } from 'demeine/lib/aggregate/DefaultEventHandler';
 import type { CommandSink, CommandHandler, EventHandler } from 'demeine';
-import { createDemeineBridge } from '../src';
+import { createDemeineBridge, type BridgeEvent } from '../src';
 import { definition, fixture } from './fixture';
 
 test('real base owns UUID, independent state, live identity/type/state, sink and queue', async () => {
@@ -156,4 +156,94 @@ test('legacy nested/snake-case dispatch names work with actual Default handlers'
   await aggregate.add(3);
   expect(aggregate._state.count).toBe(3);
   expect(aggregate.getVersion()).toBe(1);
+});
+
+test('unknown replay preserves the real builder warning, same state reference and base versioning', async () => {
+  const built = definition();
+  const process = jest.spyOn(built, 'process');
+  const envelope = jest.fn((event: BridgeEvent) => event);
+  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const aggregate = new Bridge();
+  const state = aggregate._state;
+  const event: Event & { aggregateId: string } = { id: 'replay', type: 'counter.unmatched.event', aggregateId: aggregate.id, payload: {} };
+  const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    expect(built.apply(state, event)).toBe(state);
+    const directWarnings = [...warn.mock.calls];
+    expect(directWarnings).toHaveLength(1);
+    warn.mockClear();
+    const apply = jest.spyOn(built, 'apply');
+    await aggregate._rehydrate([event]);
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith(state, event);
+    expect(warn.mock.calls).toEqual(directWarnings);
+    expect(aggregate._state).toBe(state);
+    expect(aggregate.getVersion()).toBe(1);
+    expect(aggregate.getUncommittedEvents()).toEqual([]);
+    expect(process).not.toHaveBeenCalled();
+    expect(envelope).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('strict builder unmatched policy propagates its exact error once without fallback or version advance', async () => {
+  const error = new Error('domain rejects unknown events');
+  const unmatched = jest.fn(() => { throw error; });
+  const built = createAggregate('strict', { count: 0 })
+    .events({ added: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+    .onUnmatchedEvent(unmatched).build();
+  const apply = jest.spyOn(built, 'apply');
+  const process = jest.spyOn(built, 'process');
+  const envelope = jest.fn((event: BridgeEvent) => event);
+  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const aggregate = new Bridge();
+  const state = aggregate._state;
+  await expect(aggregate._rehydrate([{ type: 'strict.unknown.event', aggregateId: aggregate.id, payload: {} }])).rejects.toBe(error);
+  expect(unmatched).toHaveBeenCalledTimes(1);
+  expect(unmatched).toHaveBeenCalledWith('strict.unknown.event', 'strict');
+  expect(apply).toHaveBeenCalledTimes(1);
+  expect(process).not.toHaveBeenCalled();
+  expect(envelope).not.toHaveBeenCalled();
+  expect(aggregate._state).toBe(state);
+  expect(aggregate.getVersion()).toBe(0);
+  expect(aggregate.getUncommittedEvents()).toEqual([]);
+});
+
+test('known replay evolves once and reserved deletion bypasses the builder without resetting state', async () => {
+  const { built, apply, process } = fixture();
+  const envelope = jest.fn((event: BridgeEvent) => event);
+  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const aggregate = new Bridge();
+  const deleted = jest.spyOn(aggregate, 'applyDeleted');
+  const event = { type: 'counter.added.event', aggregateId: aggregate.id, payload: { amount: 4 } };
+  await aggregate._rehydrate([event]);
+  expect(apply).toHaveBeenCalledTimes(1);
+  expect(aggregate._state.count).toBe(4);
+  const state = aggregate._state;
+  await aggregate._rehydrate([{ type: '$stream.deleted.event', aggregateId: aggregate.id, payload: { aggregateType: aggregate.type } }]);
+  expect(deleted).toHaveBeenCalledTimes(1);
+  expect(apply).toHaveBeenCalledTimes(1);
+  expect(aggregate._state).toBe(state);
+  expect(aggregate.getVersion()).toBe(2);
+  expect(aggregate.getUncommittedEvents()).toEqual([]);
+  expect(process).not.toHaveBeenCalled();
+  expect(envelope).not.toHaveBeenCalled();
+});
+
+test('supplied event handler remains a replacement for unknown replay, not followed by builder policy', async () => {
+  const { Bridge, apply, process } = fixture();
+  const handle = jest.fn((aggregate: Aggregate) => { aggregate._state = { count: 9, items: [] }; });
+  const handler: EventHandler = { handle };
+  const aggregate = new Bridge(null, handler);
+  const event = { type: 'counter.unknown.event', aggregateId: aggregate.id, payload: {} };
+  await aggregate._rehydrate([event]);
+  expect(handle).toHaveBeenCalledTimes(1);
+  expect(handle).toHaveBeenCalledWith(aggregate, event);
+  expect(handle.mock.contexts[0]).toBe(handler);
+  expect(apply).not.toHaveBeenCalled();
+  expect(process).not.toHaveBeenCalled();
+  expect(aggregate._state.count).toBe(9);
+  expect(aggregate.getVersion()).toBe(1);
+  expect(aggregate.getUncommittedEvents()).toEqual([]);
 });

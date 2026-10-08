@@ -22,7 +22,6 @@ export function createDispatch<S extends object, C extends CommandCreators, B ex
   builder: BridgeableAggregate<S, C>, options: BridgeOptions<S, B>,
 ) {
   const commandTypes = new Set(Object.values(builder.types.commands));
-  const eventTypes = new Set(Object.values(builder.types.events));
   function process(aggregate: BridgeContext<S>, command: BridgeCommand): unknown {
     if (command.type === '$stream.delete.command') return aggregate.processDelete(requireLegacyPayload(command));
     if (!commandTypes.has(command.type)) throw new Error(`Unknown command: ${command.type}`);
@@ -37,7 +36,6 @@ export function createDispatch<S extends object, C extends CommandCreators, B ex
       aggregate.applyDeleted();
       return;
     }
-    if (!eventTypes.has(event.type)) throw new Error(`Unknown event: ${event.type}`);
     aggregate._state = requireSync(builder.apply(aggregate._state, event), 'builder.apply');
   }
   return { process, apply };
