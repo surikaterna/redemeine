@@ -25,9 +25,24 @@ The constructor is a real subclass (`instanceof Aggregate`). It retains the
 supplied sink, base UUID, command queue, promised-command support, errors, replay,
 snapshot, version and uncommitted-event behavior. Initial state is cloned per
 instance. Later factory assignments to `id`, `type` and `_state` are authoritative;
-replacement state is not merged with defaults. Shortcuts supply only a missing
+replacement state is not merged with defaults. Shortcuts fill a missing
 aggregateId and enter `_sink`; mismatched identities remain errors. Without a
 sink, the inherited local sink calls `_process` but does not persist anything.
+
+For generated shortcuts only, a creator's missing/undefined payload (including a
+no-argument command or a pack function intentionally returning undefined) becomes
+a fresh `{}` in a shallow copy of its envelope. Original commands are not mutated;
+object pack results retain payload identity. Explicit null/scalar results still
+fail the legacy object-payload guard. Raw legacy methods and event payload rules
+are unchanged.
+
+The sink, dispatcher, built contract and handler all see that **same canonical
+object**; the adapter never secretly restores undefined after the sink. A legacy-
+bound no-payload contract must therefore accept `{}`. A void-only contract such as
+`z.void()` still accepts the native creator's undefined payload in direct builder
+processing, but rejects the normalized shortcut command with the normal contract
+error and no fallback. Use an object-compatible contract for the legacy bridge;
+this adaptation does not promise native void-contract equivalence.
 
 ## Handlers and envelopes
 

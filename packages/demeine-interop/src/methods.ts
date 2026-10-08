@@ -32,7 +32,10 @@ export function installMethods<S extends object, C extends CommandCreators>(
     if (typeof creator !== 'function') throw new Error(`Missing command creator: ${key}`);
     define(key, function (this: BridgeContext<S>, ...args: unknown[]) {
       const command: BridgeCommand = Reflect.apply(creator, builder.commandCreators, args);
-      return this._sink(requireLegacyPayload({ ...command, aggregateId: command.aggregateId ?? this.id }));
+      // A creator's absent payload becomes the same legacy object for sink and
+      // processor/contract; preserve every non-undefined pack result unchanged.
+      const payload = command.payload === undefined ? {} : command.payload;
+      return this._sink(requireLegacyPayload({ ...command, payload, aggregateId: command.aggregateId ?? this.id }));
     });
   }
 }
