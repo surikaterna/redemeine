@@ -81,6 +81,13 @@ export function applyEventToDraft<S>(
     scopedEventProjectors: Record<string, AnyFunction> = {},
     unmatchedEventHandler?: UnmatchedEventHandler
 ): void {
+    const directScopedProjector = scopedProjectorByEventType[event.type];
+    const exactProjector = projectorByEventType[event.type];
+    if (!directScopedProjector && exactProjector) {
+        exactProjector(draft, event);
+        return;
+    }
+
     // SAFETY: `any` required — targetDraft narrows to sub-entities during path traversal, losing the Draft<S> type
     let targetDraft: any = draft;
     let eventName = event.type;
@@ -111,7 +118,6 @@ export function applyEventToDraft<S>(
         eventName = parsedPath.coreEventName;
     }
 
-    const directScopedProjector = scopedProjectorByEventType[event.type];
     if (directScopedProjector) {
         directScopedProjector(targetDraft, event);
         return;
