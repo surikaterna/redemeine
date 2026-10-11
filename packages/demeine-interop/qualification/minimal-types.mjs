@@ -114,6 +114,7 @@ const lock = JSON.parse(await readFile(resolve(output, 'package-lock.json')));
 assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
 assert.deepEqual(lock.packages[''].devDependencies, manifest.devDependencies);
 assert(!Object.keys(lock.packages).some(name => /node_modules\/(?:demeine|@surikat\/|@types\/jest|jest(?:\/|$))/.test(name)));
+assert(!Object.keys(lock.packages).some(name => /node_modules\/(?:@types\/)?bluebird(?:\/|$)/.test(name)), 'Minimal production dependency closure must not install Bluebird or its typings');
 const installedPath = resolve(output, 'node_modules/@redemeine/demeine-interop');
 assert(!(await lstat(installedPath)).isSymbolicLink(), 'Candidate must be physically installed');
 const installed = JSON.parse(await readFile(resolve(installedPath, 'package.json')));

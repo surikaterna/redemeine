@@ -18,3 +18,9 @@ Observe promised command rejection across realms and promise implementations whi
 waiting in FIFO order, adopting each input once. Expose kernel-compatible headers
 and metadata on neutral messages, and infer state-specific services on generated
 and authored-base constructors while retaining sound legacy handler compatibility.
+
+Use native promises for command processing and remove direct Bluebird runtime and
+test dependencies, including its typings. Handler invocation remains synchronous;
+only an exact operational-error marker triggers pending-array replacement, while
+the original rejection and state/version are preserved. Native scheduling replaces
+the previous library scheduling; no promise-extension methods are emulated.

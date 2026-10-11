@@ -117,9 +117,18 @@ Minimal checks also cover state-specific service inference and message fields.
 Separate negative programs must produce exactly the expected wrong-state errors
 for constructor injection and stored-handler calls, without diagnostic suppression.
 The full fixture runs `state-services.mts`/`.cts` plus the queued-rejection matrix
-(native, foreign-realm, Bluebird, thenable, and throwing getter/method inputs) under
+(native, foreign-realm, thenable, and throwing getter/method inputs) under
 strict rejection policy on Node24 and Node26. Promise adoption is observed early;
 validation, command mutation and sink processing must remain FIFO work.
+
+No helper installs Bluebird or its typings directly. The minimal production graph
+must contain neither package; the browser bundle must not include it. Real legacy
+fixtures can still resolve it transitively. The runner compiles standalone consumers
+separately from the unchanged strict legacy compatibility program, compares any
+legacy failure with a real Demeine-only baseline, and records the raw diagnostics.
+Missing legacy declaration prerequisites remain a **blocked** gate (runner exits
+nonzero after completing independent runtime/browser gates), never a green strict
+compatibility claim or an excuse to add forbidden typings or relax `skipLibCheck`.
 
 The full integration fixture then installs the candidate alongside
 public dependencies, compiles strict import/require declarations with TS5.9.3 and

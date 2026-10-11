@@ -20,25 +20,26 @@ assert.equal(artifact.manifest.name, '@redemeine/demeine-interop');
 const tarball = resolve(artifactDirectory, artifact.file);
 assert.equal(createHash('sha256').update(await readFile(tarball)).digest('hex'), artifact.sha256);
 const gates = [];
-async function run(label, command, args) {
+async function run(label, command, args, allowLegacyFailure = false) {
   const result = spawnSync(command, args, { cwd: consumer, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 180000 });
   await writeFile(resolve(output, `${label}.log`), (result.stdout ?? '') + (result.stderr ?? ''));
   gates.push({ command: [command, ...args], cwd: consumer, status: result.status, log: `${label}.log` });
   await writeFile(resolve(output, 'gates.json'), JSON.stringify(gates, null, 2) + '\n');
   console.log(label, result.status);
-  assert.equal(result.status, 0, `See ${label}.log`);
+  if (!allowLegacyFailure) assert.equal(result.status, 0, `See ${label}.log`);
+  return result;
 }
 await run('minimal-types', 'node', [resolve(root, 'packages/demeine-interop/qualification/minimal-types.mjs'), tarball, resolve(output, 'minimal')]);
 await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies: {
   '@redemeine/kernel': '0.2.0-pre.2', '@redemeine/aggregate': '0.2.0-pre.2', '@redemeine/demeine-interop': `file:${tarball}`,
-  demeine: '1.3.0', 'regenerator-runtime': '0.13.11', zod: '4.3.6', bluebird: '3.7.2', tapeworm: '0.5.0',
+  demeine: '1.3.0', 'regenerator-runtime': '0.13.11', zod: '4.3.6', tapeworm: '0.5.0',
 }, devDependencies: {
-  typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2', '@types/node': nodeTypesVersion, '@types/bluebird': '3.5.42',
+  typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2', '@types/node': nodeTypesVersion,
   '@types/jest': '29.5.14', jest: '29.7.0', 'ts-jest': '29.4.11', tsx: '4.21.0', esbuild: '0.25.12',
 } }, null, 2));
 await run('install', 'npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 const ts = (await import(pathToFileURL(resolve(consumer, 'node_modules/typescript/lib/typescript.js')).href)).default;
-const permitted = spec => !/^(?:demeine(?:\/|$)|@redemeine\/mirage(?:\/|$)|node:events$)/.test(spec);
+const permitted = spec => !/^(?:demeine(?:\/|$)|@redemeine\/mirage(?:\/|$)|(?:@types\/)?bluebird(?:\/|$)|node:events$)/.test(spec);
 function scanImports(text, filename) {
   const source = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true);
   function visit(node) {
@@ -62,6 +63,9 @@ for (const file of ['index.js', 'index.cjs', 'index.d.ts', 'index.d.cts']) {
   scanImports(text, file);
 }
 for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) assert(Object.keys(artifact.manifest[field] ?? {}).every(permitted));
+for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies', 'devDependencies']) {
+  assert(!Object.keys(artifact.manifest[field] ?? {}).some(name => /^(?:@types\/)?bluebird$/.test(name)));
+}
 for (const format of ['js', 'cjs']) {
   const map = JSON.parse(await readFile(resolve(interopRoot, `dist/index.${format}.map`)));
   for (const [index, source] of map.sources.entries()) {
@@ -77,12 +81,31 @@ for (const name of ['consumer', 'legacy-types', 'state-services']) {
   const source = await readFile(resolve(root, `packages/demeine-interop/qualification/${name}.ts`));
   for (const extension of ['mts', 'cts']) await writeFile(resolve(consumer, `${name}.${extension}`), source);
 }
-await writeFile(resolve(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+const compilerOptions = {
   strict: true, skipLibCheck: false, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
   esModuleInterop: true, outDir: 'compiled', paths: { '@surikat/factory/lib/types': [resolve(factoryTypes)] },
-}, include: ['*.mts', '*.cts'] }, null, 2));
-await run('types-5.9.3', 'node', ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json']);
-await run('types-7.0.2', 'node', ['node_modules/typescript7/bin/tsc', '-p', 'tsconfig.json']);
+};
+await writeFile(resolve(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions,
+  files: ['consumer.mts', 'consumer.cts', 'state-services.mts', 'state-services.cts'],
+}, null, 2));
+await writeFile(resolve(consumer, 'tsconfig-legacy.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, noEmit: true }, files: ['legacy-types.mts', 'legacy-types.cts'] }, null, 2));
+for (const extension of ['mts', 'cts']) await writeFile(resolve(consumer, `legacy-baseline.${extension}`),
+  "import type { Aggregate, Repository } from 'demeine';\nexport type ExistingAggregate = Aggregate;\nexport type ExistingRepository = Repository;\n");
+await writeFile(resolve(consumer, 'tsconfig-legacy-baseline.json'), JSON.stringify({ compilerOptions: { ...compilerOptions, noEmit: true }, files: ['legacy-baseline.mts', 'legacy-baseline.cts'] }, null, 2));
+const legacyBlocks = [];
+for (const compiler of ['typescript', 'typescript7']) {
+  await run(`${compiler}-standalone-types`, 'node', [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json']);
+  const actual = await run(`${compiler}-legacy-types`, 'node', [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig-legacy.json'], true);
+  const baseline = await run(`${compiler}-legacy-baseline`, 'node', [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig-legacy-baseline.json'], true);
+  if (actual.status !== 0) {
+    assert(actual.status > 0 && baseline.status > 0, 'Unexpected legacy compiler termination');
+    assert.equal(actual.stdout, baseline.stdout, 'New diagnostics differ from the real legacy-only baseline');
+    assert.match(actual.stdout, /bluebird/);
+    legacyBlocks.push({ compiler, actualStatus: actual.status, baselineStatus: baseline.status,
+      classification: 'blocked: real legacy declaration prerequisites missing; not a strict compatibility pass', diagnostics: actual.stdout });
+  } else assert.equal(baseline.status, 0);
+}
+await writeFile(resolve(output, 'legacy-types-status.json'), JSON.stringify({ legacyBlocks }, null, 2));
 for (const version of ['24.20.0', '26.10.0']) {
   for (const format of ['mjs', 'cjs']) {
     for (const fixture of ['consumer', 'state-services']) await run(`runtime-${fixture}-${version}-${format}`, 'mise', [
@@ -106,7 +129,7 @@ await writeFile(resolve(consumer, 'jest.config.cjs'), `module.exports = {
 };\n`);
 await run('packed-tests', 'node', ['--unhandled-rejections=strict', '--no-experimental-require-module', 'node_modules/jest/bin/jest.js', '--config', 'jest.config.cjs', '--runInBand']);
 for (const version of ['24.20.0', '26.10.0']) {
-  for (const kind of ['native', 'realm', 'bluebird', 'thenable', 'getter', 'throwing-then']) {
+  for (const kind of ['native', 'realm', 'thenable', 'getter', 'throwing-then']) {
     const timings = ['getter', 'throwing-then'].includes(kind) ? ['immediate'] : ['immediate', 'delayed'];
     for (const timing of timings) await run(`queued-${version}-${kind}-${timing}`, 'mise', [
       'exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module',
@@ -118,16 +141,17 @@ await writeFile(resolve(consumer, 'browser.mjs'), await readFile(resolve(root, '
 await run('browser-build', 'node', ['node_modules/esbuild/bin/esbuild', 'browser.mjs', '--bundle', '--platform=browser', '--format=iife', '--outfile=browser.js', '--metafile=browser-meta.json']);
 const inputs = Object.keys(JSON.parse(await readFile(resolve(consumer, 'browser-meta.json'))).inputs);
 assert(inputs.some(file => file.endsWith('node_modules/events/events.js')));
-assert(!inputs.some(file => /(?:^node:|node_modules\/(?:demeine|@redemeine\/mirage)\/)/.test(file)));
+assert(!inputs.some(file => /(?:^node:|node_modules\/(?:demeine|bluebird|@redemeine\/mirage)\/)/.test(file)));
 const browser = { crypto: webcrypto, structuredClone, setTimeout, clearTimeout, console };
 runInNewContext(await readFile(resolve(consumer, 'browser.js'), 'utf8'), browser);
 assert.equal((await browser.browserSmoke).count, 2);
 await writeFile(resolve(output, 'browser.json'), JSON.stringify({ passed: true, inputs }, null, 2));
 const lock = JSON.parse(await readFile(resolve(consumer, 'package-lock.json')));
-const installed = ['@redemeine/kernel', '@redemeine/aggregate', '@redemeine/demeine-interop', '@types/node', 'p-queue', 'events', 'bluebird', 'uuid'].map(name => ({ name, ...lock.packages[`node_modules/${name}`] }));
+const installed = ['@redemeine/kernel', '@redemeine/aggregate', '@redemeine/demeine-interop', '@types/node', 'p-queue', 'events', 'uuid'].map(name => ({ name, ...lock.packages[`node_modules/${name}`] }));
 for (const entry of installed) {
   if (entry.name === '@redemeine/demeine-interop') assert.equal(entry.integrity, artifact.integrity);
   else assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//);
 }
 await writeFile(resolve(output, 'installed.json'), JSON.stringify(installed, null, 2));
-console.log('Packed standalone types, runtime, lifecycle and browser gates passed');
+console.log('Packed standalone types, runtime, lifecycle and browser gates passed; legacy strict declaration gate:', legacyBlocks.length ? 'BLOCKED' : 'PASS');
+if (legacyBlocks.length) process.exitCode = 2;

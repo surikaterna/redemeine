@@ -5,7 +5,7 @@ afterEach(() => jest.restoreAllMocks());
 
 test.each([
   ['native', 'immediate'], ['native', 'delayed'], ['realm', 'immediate'], ['realm', 'delayed'],
-  ['bluebird', 'immediate'], ['bluebird', 'delayed'], ['thenable', 'immediate'], ['thenable', 'delayed'],
+  ['thenable', 'immediate'], ['thenable', 'delayed'],
   ['getter', 'immediate'], ['throwing-then', 'immediate'],
 ])('queued %s/%s rejection is observed before its FIFO turn under strict Node policy', (kind, timing) => {
   const result = spawnSync(process.execPath, [

@@ -1,5 +1,4 @@
-import { Repository, type Command, type Event, type Partition } from 'demeine';
-import Bluebird from 'bluebird';
+import { Repository, type Command, type Event, type Partition, type Stream } from 'demeine';
 import { DefaultCommandHandler } from 'demeine/lib/aggregate/DefaultCommandHandler';
 import { DefaultEventHandler } from 'demeine/lib/aggregate/DefaultEventHandler';
 import { createDemeineBridge } from '../src';
@@ -31,22 +30,27 @@ test.each([false, true])('inherited deletion bypasses builder/envelope (explicit
 });
 
 test('real Repository intercepts first deletion, discarding normal append of mixed buffer', async () => {
-  const Bridge = createDemeineBridge(definition());
-  const aggregate = new Bridge();
-  const stream = { append: jest.fn(), commit: jest.fn(), getCommittedEvents: jest.fn(), getVersion: () => 0, _version: 0 };
-  const partition = { delete: jest.fn().mockReturnValue(Bluebird.resolve(aggregate)), openStream: jest.fn().mockReturnValue(Bluebird.resolve(stream)) };
-  const repository = new Repository(partition, 'counter', () => aggregate);
+  const { partition, aggregate, repository, deleteSpy } = await storedAggregate();
+  const streams: Stream[] = [];
+  const open = partition.openStream.bind(partition);
+  jest.spyOn(partition, 'openStream').mockImplementation((id, writable) => open(id, writable).then((stream: Stream) => {
+    jest.spyOn(stream, 'append');
+    jest.spyOn(stream, 'commit');
+    streams.push(stream);
+    return stream;
+  }));
   await aggregate.add(1);
   await aggregate.delete();
   await aggregate.add(2);
   await aggregate.delete();
   const firstDeleted = aggregate.getUncommittedEvents()[1];
   await repository.save(aggregate);
-  expect(partition.delete).toHaveBeenCalledTimes(1);
-  expect(partition.delete).toHaveBeenCalledWith(aggregate.id, firstDeleted);
+  expect(deleteSpy).toHaveBeenCalledTimes(1);
+  expect(deleteSpy).toHaveBeenCalledWith(aggregate.id, firstDeleted);
   expect(partition.openStream).toHaveBeenCalledWith(aggregate.id, true);
-  expect(stream.append).not.toHaveBeenCalled();
-  expect(stream.commit).not.toHaveBeenCalled();
+  expect(streams[0]!.append).not.toHaveBeenCalled();
+  expect(streams[0]!.commit).not.toHaveBeenCalled();
+  expect(aggregate.getUncommittedEvents()).toHaveLength(4);
 });
 
 type Commit = { id: string; streamId: string; events: Event<{ aggregateType?: string }>[]; isDispatched: boolean };

@@ -76,13 +76,17 @@ application envelope schema or synthesized metadata on raw events.
   queued size, **not** running count: a synchronous pending read can succeed during
   the sole running task. Async reads wait for idle and recheck queued work.
 - `_sink` adopts its input once immediately and observes rejection across native,
-  cross-realm and Bluebird promises and arbitrary thenables. Throwing `then` getters
+  cross-realm promises and arbitrary thenables. Throwing `then` getters
   reject the adopted promise, not the synchronous `_sink` call. Command validation,
   id/type mutation, sink invocation and caller-visible settlement remain queued;
   adoption does not process commands early or assimilate the input a second time.
-- `_process` uses `bluebird@3.7.2` operational-only error handling: operational
-  failures log and replace the pending array; ordinary errors preserve it. Version
-  and prior state effects are not rolled back. Logging uses console warnings/errors.
+- `_process` invokes its handler synchronously inside a native Promise executor;
+  native resolution assimilates returned values, promises and thenables. Its native
+  catch logs and replaces the pending array only for an object/function whose
+  `isOperational` marker is exactly `true`. Ordinary errors, primitives and other
+  marker values preserve the array. A throwing marker getter is treated as unmarked.
+  The original rejection is rethrown, without wrapping or state/version rollback.
+  Scheduling is native microtask scheduling; no promise-extension methods are provided.
 - Pending arrays and snapshots are live references. Clearing assigns and returns
   a new empty array without modifying references retained by a Repository.
 - Event ids are assigned before validation. Successful application normalizes
@@ -161,6 +165,10 @@ deleted-read rejection, or an immutable no-recreation guarantee.
 - No production Demeine, Mirage, Depot or Surikat imports. Demeine is a dev fixture
   only. A consuming application's host Repository/Factory or `lynx3-utils` can still
   depend on Demeine transitively; this package does not promise host-wide removal.
+- Interop has no direct Bluebird runtime or test dependency, including its typings.
+  Real legacy Demeine/Tapeworm fixtures may still use it transitively. Their missing
+  declaration prerequisites can block a fresh strict legacy-only type gate; that
+  is reported separately, never repaired with fake types or hidden direct installs.
 - Exposed configured hooks/nonempty plugins fail at creation; non-null defined
   `__intents` (even `{}`) fail before applying events. Opaque wrappers cannot be
   inspected fully. No afterCommit, rollback or plugin parity is promised.

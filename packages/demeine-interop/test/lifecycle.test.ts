@@ -1,5 +1,6 @@
-import Bluebird from 'bluebird';
-import { type Event } from '../src';
+import { runInNewContext } from 'node:vm';
+import { createDemeineBridge, type Event } from '../src';
+import { definition } from './fixture';
 import { command, event, implementations } from './lifecycle.fixture';
 
 afterEach(() => jest.restoreAllMocks());
@@ -72,7 +73,7 @@ for (const [label, Constructor] of implementations) {
     const aggregate = new Constructor(null, { handle() {} });
     aggregate._apply(event(aggregate.id), true);
     const previous = aggregate.getUncommittedEvents();
-    const error = failure === 'operational' ? new Bluebird.OperationalError('operational') : new Error('ordinary');
+    const error = failure === 'operational' ? Object.assign(new Error('operational'), { isOperational: true }) : new Error('ordinary');
     const handle = jest.fn(() => {
       if (failure === 'native rejection') return Promise.reject(error);
       throw error;
@@ -113,3 +114,75 @@ for (const [label, Constructor] of implementations) {
     expect(aggregate.getUncommittedEvents()).toEqual([]);
   });
 }
+
+test('native process invokes synchronously, assimilates results and has no promise extensions', async () => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge();
+  const foreign = runInNewContext('Promise.resolve("foreign")');
+  let assimilations = 0;
+  const thenable = Object.defineProperty({}, 'then', { value(resolve: (value: string) => void) {
+    assimilations++;
+    resolve('thenable');
+  } });
+  for (const [value, expected] of [[aggregate, aggregate], [Promise.resolve('native'), 'native'], [foreign, 'foreign'], [thenable, 'thenable']]) {
+    const handle = jest.fn(() => value);
+    Reflect.set(aggregate, '_commandHandler', { handle });
+    const result = aggregate._process(command(aggregate.id));
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(result).toBeInstanceOf(Promise);
+    expect(result.constructor).toBe(Promise);
+    expect('error' in result).toBe(false);
+    expect('nodeify' in result).toBe(false);
+    await expect(result).resolves.toBe(expected);
+  }
+  expect(assimilations).toBe(1);
+});
+
+const throwingMarker = Object.defineProperty({}, 'isOperational', { get() { throw new Error('marker'); } });
+test.each(['foreign promise', 'thenable'])('native process assimilates rejecting %s without replacing its reason', async kind => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const pending = aggregate.getUncommittedEvents();
+  const reason = new Error('original rejection');
+  const returned = kind === 'foreign promise' ? runInNewContext('Promise.reject(reason)', { reason })
+    : Object.defineProperty({}, 'then', { value(_resolve: unknown, reject: (reason: unknown) => void) { reject(reason); } });
+  Reflect.set(aggregate, '_commandHandler', { handle: () => returned });
+  await expect(aggregate._process(command(aggregate.id))).rejects.toBe(reason);
+  expect(aggregate.getUncommittedEvents()).toBe(pending);
+  expect(aggregate.getVersion()).toBe(1);
+});
+
+const reasons: [string, unknown, boolean][] = [
+  ['marked error', Object.assign(new Error('marked'), { isOperational: true }), true],
+  ['marked object', { isOperational: true }, true],
+  ['marked function', Object.assign(() => {}, { isOperational: true }), true],
+  ['foreign marked error', runInNewContext('Object.assign(new Error("foreign"), {isOperational:true})'), true],
+  ['ordinary error', new Error('ordinary'), false], ['unmarked', {}, false],
+  ['false marker', { isOperational: false }, false], ['truthy marker', { isOperational: 'true' }, false],
+  ['numeric marker', { isOperational: 1 }, false], ['throwing getter', throwingMarker, false],
+  ['throwing proxy', new Proxy({}, { get() { throw new Error('proxy'); } }), false],
+  ['null', null, false], ['undefined', undefined, false], ['string', 'reason', false],
+  ['number', 1, false], ['boolean', true, false], ['symbol', Symbol('reason'), false],
+];
+
+test.each(reasons)('native process preserves %s and clears only an exact operational marker', async (_label, reason, operational) => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const state = aggregate._state;
+  const previous = aggregate.getUncommittedEvents();
+  const clear = jest.spyOn(aggregate, 'clearUncommittedEvents');
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  Reflect.set(aggregate, '_commandHandler', { handle: () => Promise.reject(reason) });
+  await expect(aggregate._process(command(aggregate.id))).rejects.toBe(reason);
+  expect(clear).toHaveBeenCalledTimes(operational ? 1 : 0);
+  expect(log).toHaveBeenCalledTimes(operational ? 1 : 0);
+  expect(aggregate._state).toBe(state);
+  expect(aggregate.getVersion()).toBe(1);
+  expect(previous).toHaveLength(1);
+  if (operational) {
+    expect(aggregate.getUncommittedEvents()).not.toBe(previous);
+    expect(aggregate.getUncommittedEvents()).toEqual([]);
+  } else expect(aggregate.getUncommittedEvents()).toBe(previous);
+});

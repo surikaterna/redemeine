@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runInNewContext } from 'node:vm';
-import Bluebird from 'bluebird';
 import { createAggregate } from '../../aggregate/src/index.ts';
 import { createDemeineBridge } from '../src/createDemeineBridge.ts';
 
 const [kind = 'native', timing = 'immediate'] = process.argv.slice(2);
+assert(['native', 'realm', 'thenable', 'getter', 'throwing-then'].includes(kind));
 const failure = kind === 'realm' ? runInNewContext('new Error("foreign rejection")') : new Error('queued rejection');
 const unhandled = [];
 process.on('unhandledRejection', reason => unhandled.push(reason));
@@ -14,7 +14,6 @@ let assimilations = 0;
 function rejectingInput() {
   const fail = reject => timing === 'delayed' ? setTimeout(() => reject(failure), 5) : reject(failure);
   if (kind === 'native') return new Promise((_resolve, reject) => fail(reject));
-  if (kind === 'bluebird') return new Bluebird((_resolve, reject) => fail(reject));
   if (kind === 'realm') return runInNewContext('new Promise((_resolve, reject) => fail(reject))', { fail });
   return {
     // biome-ignore lint/suspicious/noThenProperty: Exercise one-time thenable adoption and throwing getters.

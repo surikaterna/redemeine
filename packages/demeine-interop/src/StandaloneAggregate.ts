@@ -1,7 +1,15 @@
-import Bluebird from 'bluebird';
 import { v4 as uuid } from 'uuid';
 import { Queue } from './Queue';
 import type { Command, CommandHandler, CommandSink, CompatibleAggregate, Event, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
+
+function isOperational(reason: unknown): boolean {
+  if (reason === null || (typeof reason !== 'object' && typeof reason !== 'function')) return false;
+  try {
+    const marker: unknown = Reflect.get(reason, 'isOperational');
+    return marker === true;
+  }
+  catch { return false; } // A hostile marker must not replace the original rejection.
+}
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => {
@@ -29,15 +37,15 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
   }
 
   _process(command: Command): Promise<CompatibleAggregate<S>> {
-    return new Bluebird<CompatibleAggregate<S>>((resolve, reject) => {
+    return new Promise<CompatibleAggregate<S>>(resolve => {
       // Legacy handlers can return object state; preserve the historical _process contract.
-      try { resolve(this._commandHandler.handle(this, command) as CompatibleAggregate<S>); }
-      catch (error) { reject(error); }
-    }).error(error => {
-      // Bluebird's operational-only handler is deliberately not a catch-all.
-      console.error('Failed to process command', command, error);
-      this.clearUncommittedEvents();
-      throw error;
+      resolve(this._commandHandler.handle(this, command) as CompatibleAggregate<S>);
+    }).catch((reason: unknown) => {
+      if (isOperational(reason)) {
+        console.error('Failed to process command', command, reason);
+        this.clearUncommittedEvents();
+      }
+      throw reason;
     });
   }
 
