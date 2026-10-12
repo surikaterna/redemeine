@@ -201,6 +201,46 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  packages/projection-service:
+    dependencies:
+      '@redemeine/projection-runtime-core':
+        specifier: workspace:*
+        version: link:../projection-runtime-core
+      '@redemeine/projection-runtime-store-mongodb':
+        specifier: workspace:*
+        version: link:../projection-runtime-store-mongodb
+      '@redemeine/projection-transport':
+        specifier: workspace:*
+        version: link:../projection-transport
+      '@redemeine/projection-worker-core':
+        specifier: workspace:*
+        version: link:../projection-worker-core
+      amqplib:
+        specifier: 2.0.1
+        version: 2.0.1
+      mongodb:
+        specifier: 6.18.0
+        version: 6.18.0
+    devDependencies:
+      '@types/amqplib':
+        specifier: 0.10.8
+        version: 0.10.8
+      tapeworm:
+        specifier: 0.6.0
+        version: 0.6.0
+      tapeworm_persistence_store_mongodb:
+        specifier: 3.1.0
+        version: 3.1.0
+      tsup:
+        specifier: 8.4.0
+        version: 8.4.0(jiti@1.21.7)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.8.3)(yaml@2.9.0)
+      tsx:
+        specifier: 4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+
   packages/projection-transport:
     dependencies:
       '@redemeine/projection-runtime-core':

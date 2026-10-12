@@ -45,3 +45,12 @@ export {
   type TapewormIndexedCommit,
   type TapewormIndexedCommitRangeCapability
 } from './tapewormRangeReader';
+export { normalizeLiveRegistration, validateLiveStart } from './liveRegistration';
+export type { LiveRegistration } from './liveRegistration';
+export { MongoLiveSourceOrder } from './mongoLiveSourceOrder';
+export type { LiveSourcePositionDocument } from './mongoLiveSourceOrder';
+export { admitLiveDelivery } from './liveAdmissionEvidence';
+export { createLiveDeliveryGate } from './liveDeliveryGate';
+export type { LiveDeliveryGate, LiveDeliveryScope, LiveRabbitDelivery } from './liveDeliveryGate';
+export { LiveProjectionRabbitWorker } from './liveRabbitWorker';
+export type { LiveRabbitChannel, LiveRabbitWorkerOptions } from './liveRabbitWorker';
