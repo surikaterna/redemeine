@@ -1,38 +1,6 @@
 ## Git branch structure
 We use git flow with feature/* for all feature / tasks 
 
-## Chain of Command
-
-Flow:
-
-Builder (Lead/Orchestrate) -> Architect (Plan) -> Engineer (Build) -> Auditor (Test) -> Diplomat (Deploy)
-
-Supporting role:
-
-Explorer (Research/Discovery) supports Builder and Architect with fast codebase investigation and evidence-backed handoff notes.
-
-Explorer usage policy (conditional, not default):
-
-- Use Explorer only when discovery is the bottleneck.
-- Do not invoke Explorer by default for every build task.
-- Invoke Explorer only if one or more are true:
-  - Target files/owners are unclear after quick direct search.
-  - The change likely spans multiple packages/domains.
-  - Risk/dependency mapping is needed before implementation.
-- If Architect already has high-confidence file targets and dependencies, skip Explorer.
-- Engineer should not repeat broad discovery; only do minimal gap-filling searches required to implement.
-
-Protocol:
-
-- The Bead ID is the source of truth at every hand-off.
-- Every stage transition must update the same Bead ID in bd before work is passed onward.
-- Builder decomposes user requests, verifies team composition, and delegates each step to the correct subagent(s).
-- Required hand-off statuses:
-  - Engineer sets `implemented` when coding is complete and ready for audit.
-  - Auditor sets `verified` on pass or `changes_requested` on fail.
-  - Diplomat sets `in_review` for PR workflow, then closes the Bead on merge/deploy.
-- Handoff artifacts must include the Bead ID in notes, PR descriptions, and release communication.
-
 ## Issue Tracking with bd (beads)
 
 Use Beads for all issue tracking. For worktrees, always use `bd worktree create` so the worktree is wired to the shared repo `.beads` database.
