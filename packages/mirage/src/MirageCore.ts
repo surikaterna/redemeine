@@ -1,9 +1,11 @@
-import { type Command, type Event, type CommandInterceptorContext, type PluginIntents, type RedemeinePlugin, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
-import type { BuiltAggregate } from '@redemeine/aggregate';
+import { type Command as KernelCommand, type Event, type CommandInterceptorContext, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import type { RuntimeBuilder, RuntimePlugin, RuntimeExtensions } from './runtimeDefinition';
 import type { DispatchResult } from './mirage.types';
+import { readonlySnapshot } from './stateViews';
+type Command = KernelCommand<unknown, string>;
 
 export const wrapPluginHookFailure = (
-    plugin: RedemeinePlugin<any>,
+    plugin: RuntimePlugin,
     hook: 'onBeforeCommand' | 'onHydrateEvent' | 'onBeforeAppend' | 'onAfterCommit',
     aggregateId: string,
     cause: unknown
@@ -17,13 +19,13 @@ export const wrapPluginHookFailure = (
     });
 };
 
-export const assertPluginHasKey = (plugin: RedemeinePlugin<any>): void => {
+export const assertPluginHasKey = (plugin: RuntimePlugin): void => {
     if (!plugin.key || typeof plugin.key !== 'string') {
         throw new Error('Invalid plugin configuration: plugin.key is required and must be a non-empty string.');
     }
 };
 
-export const hasHydrateEventPlugins = (plugins: RedemeinePlugin<any>[]): boolean => {
+export const hasHydrateEventPlugins = (plugins: RuntimePlugin[]): boolean => {
     return plugins.some((plugin) => typeof plugin.onHydrateEvent === 'function');
 };
 
@@ -63,26 +65,26 @@ export class MirageCore<S> {
         intents: {}
     };
     public version: number = 0;
-    private listeners: ((state: S) => void)[] = [];
-    private plugins: RedemeinePlugin<any>[];
+    private listeners: ((state: ReadonlyDeep<S>) => void)[] = [];
+    private plugins: RuntimePlugin[];
     private hasBeforeCommandPlugins: boolean;
 
     public get uncommitted(): Event[] {
         return this.pendingResults.events;
     }
 
-    private getResultIntents(events: Event[]): PluginIntents<any> {
+    private getResultIntents(events: Event[]): Record<string, unknown> {
         const intents = (events as Event[] & { __intents?: Record<string, unknown> }).__intents;
-        return intents && typeof intents === 'object' ? intents : {} as PluginIntents<any>;
+        return intents && typeof intents === 'object' ? intents : {};
     }
 
     constructor(
-        public builder: BuiltAggregate<S, any, any, any>,
+        public builder: RuntimeBuilder<S>,
         public id: string,
         public state: S,
         public contract?: Contract,
         public strict: boolean = false,
-        plugins: RedemeinePlugin<any>[] = [],
+        plugins: RuntimePlugin[] = [],
         initialVersion: number = 0
     ) {
         this.version = initialVersion;
@@ -91,9 +93,9 @@ export class MirageCore<S> {
         this.hasBeforeCommandPlugins = plugins.some((plugin) => typeof plugin.onBeforeCommand === 'function');
     }
 
-    private async runBeforeCommandInterceptors(command: Command<any, string>): Promise<void> {
+    private async runBeforeCommandInterceptors(command: Command): Promise<void> {
         const commandMetaRegistry = this.builder.metadata?.commands || {};
-        const ctx: CommandInterceptorContext<{}, unknown> = {
+        const ctx: CommandInterceptorContext<RuntimeExtensions, unknown> = {
             pluginKey: '',
             aggregateId: this.id,
             commandType: command.type,
@@ -113,36 +115,37 @@ export class MirageCore<S> {
         }
     }
 
-    private executeCommand(command: Command<any, string>): S {
+    private executeCommand(command: Command): ReadonlyDeep<S> {
         if (this.builder.hooks?.onBeforeCommand) {
-            this.builder.hooks.onBeforeCommand(command, createReadonlyDeepProxy(this.state));
+            this.builder.hooks.onBeforeCommand(command, this.stateView());
         }
 
         if (this.contract) {
             this.validateCommand(command);
         }
 
-        const events = this.builder.process(this.state, command);
+        // Decision code receives isolated data; only event application can replace live state.
+        const events = this.builder.process(structuredClone(this.state), command);
 
         if (this.builder.hooks?.onAfterCommand) {
-            this.builder.hooks.onAfterCommand(command, events, createReadonlyDeepProxy(this.state));
+            this.builder.hooks.onAfterCommand(command, events, this.stateView());
         }
 
         this.applyEvents(events);
         this.notify();
-        return this.state;
+        return this.stateView();
     }
 
-    private processAndApply(command: Command<any, string>): S {
+    private processAndApply(command: Command): ReadonlyDeep<S> {
         return this.executeCommand(command);
     }
 
-    private async dispatchWithPlugins(command: Command<any, string>): Promise<S> {
+    private async dispatchWithPlugins(command: Command): Promise<ReadonlyDeep<S>> {
         await this.runBeforeCommandInterceptors(command);
         return this.executeCommand(command);
     }
 
-    private validateCommand(command: Command<any, string>): void {
+    private validateCommand(command: Command): void {
         try {
             this.contract!.validateCommand(command.type, command.payload);
         } catch (err: unknown) {
@@ -164,7 +167,7 @@ export class MirageCore<S> {
             this.pendingResults.events.push(ev);
             this.version++;
             if (this.builder.hooks?.onEventApplied) {
-                this.builder.hooks.onEventApplied(ev, createReadonlyDeepProxy(this.state));
+                this.builder.hooks.onEventApplied(ev, this.stateView());
             }
         }
 
@@ -188,7 +191,11 @@ export class MirageCore<S> {
         };
     }
 
-    public subscribe(listener: (state: S) => void) {
+    public stateView(): ReadonlyDeep<S> {
+        return readonlySnapshot(this.state);
+    }
+
+    public subscribe(listener: (state: ReadonlyDeep<S>) => void) {
         this.listeners.push(listener);
         return () => {
             this.listeners = this.listeners.filter(l => l !== listener);
@@ -196,11 +203,15 @@ export class MirageCore<S> {
     }
 
     public notify() {
-        this.listeners.forEach(l => l(this.state));
+        if (!this.listeners.length) return;
+        const view = this.stateView();
+        this.listeners.forEach(l => l(view));
     }
 
-    public dispatch(cmd: any): DispatchResult<S> {
-        const command = cmd as Command<any, string>;
+    public dispatch(command: Command): DispatchResult<S> {
+        if (!command || typeof command !== 'object' || typeof command.type !== 'string' || !('payload' in command)) {
+            throw new TypeError('Dispatch requires a command envelope with type and payload');
+        }
 
         if (this.hasBeforeCommandPlugins) {
             return this.dispatchWithPlugins(command);

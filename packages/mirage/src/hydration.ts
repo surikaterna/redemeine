@@ -1,5 +1,5 @@
-import type { Event, EventInterceptorContext, RedemeinePlugin } from '@redemeine/kernel';
-import type { BuiltAggregate } from '@redemeine/aggregate';
+import type { Event, EventInterceptorContext } from '@redemeine/kernel';
+import type { RuntimeBuilder, RuntimePlugin, RuntimeExtensions } from './runtimeDefinition';
 import type { HydrationEvents } from './mirage.types';
 import { assertCanAdvanceEventCount, assertPluginHasKey, hasHydrateEventPlugins, wrapPluginHookFailure } from './MirageCore';
 
@@ -13,8 +13,8 @@ const yieldToEventLoop = async (): Promise<void> => {
 };
 
 const runHydratePlugins = async (
-    ctx: EventInterceptorContext<{}, unknown>,
-    plugins: RedemeinePlugin[]
+    ctx: EventInterceptorContext<RuntimeExtensions, unknown>,
+    plugins: RuntimePlugin[]
 ): Promise<void> => {
     for (const plugin of plugins) {
         assertPluginHasKey(plugin);
@@ -30,11 +30,11 @@ const runHydratePlugins = async (
 };
 
 export const hydrateStateFromEvents = async <S>(
-    builder: BuiltAggregate<S, any, any, any>,
+    builder: RuntimeBuilder<S>,
     aggregateId: string,
     baseState: S,
     events: HydrationEvents<Event>,
-    plugins: RedemeinePlugin<any>[],
+    plugins: RuntimePlugin[],
     initialVersion: number
 ): Promise<{ state: S; appliedCount: number }> => {
     let state = baseState;
@@ -45,7 +45,7 @@ export const hydrateStateFromEvents = async <S>(
     for await (const event of events) {
         assertCanAdvanceEventCount(initialVersion + replayedEvents);
         if (hasHydratePlugins) {
-            const ctx: EventInterceptorContext<{}, unknown> = {
+            const ctx: EventInterceptorContext<RuntimeExtensions, unknown> = {
                 pluginKey: '',
                 aggregateId,
                 eventType: event.type,

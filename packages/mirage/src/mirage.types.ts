@@ -1,5 +1,5 @@
 import type { Event, PluginExtensions, RedemeinePlugin, Contract, ReadonlyDeep } from '@redemeine/kernel';
-import type { EntityPackage, AggregateEntityRegistry, BuiltAggregate } from '@redemeine/aggregate';
+import type { AggregateEntityRegistry } from '@redemeine/aggregate';
 import type { MirageContextPolymorphicBinding, MirageContextSingleBinding } from '@redemeine/aggregate';
 
 export type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
@@ -10,12 +10,15 @@ export type MountMetadata = {
     statePath: string[];
     pk?: string | readonly string[] | undefined;
     knownKeys?: readonly string[] | undefined;
+    entity?: object | undefined;
+    commandNames?: readonly string[] | undefined;
 };
 
 export type InvocationContext = {
     idsPayload: Record<string, unknown>;
     packPrefix: unknown[];
     entityPk?: Record<string, unknown> | undefined;
+    resolveState?: (() => unknown) | undefined;
 };
 
 export type { BuiltAggregate } from '@redemeine/aggregate';
@@ -25,33 +28,34 @@ export type { BuiltAggregate } from '@redemeine/aggregate';
  * These methods dispatch commands and return the mutated state.
  */
 type IsBroadRecord<T> = string extends keyof T ? true : false;
-export type DispatchResult<T> = T | Promise<T>;
+export type DispatchResult<T> = ReadonlyDeep<T> | Promise<ReadonlyDeep<T>>;
 
 export type MirageCommandMap<S, M> = IsBroadRecord<M> extends true
     ? {}
     : {
         [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-            ? (...args: Args extends any[] ? Args : never) => DispatchResult<S>
+            ? (...args: Args extends unknown[] ? Args : never) => DispatchResult<S>
             : [M[K]] extends [void] | [undefined] | [never]
                 ? () => DispatchResult<S>
                 : (payload: M[K]) => DispatchResult<S>;
     };
 
-type EntityStateOf<T> = T extends EntityPackage<infer ES, any, any, any, any, any, any> ? ES : never;
-type EntityCommandsOf<T> = T extends EntityPackage<any, any, any, any, infer C, any, any> ? C : never;
+type EntityStateOf<T> = T extends { readonly __stateType?: infer ES } ? ES : never;
+type EntityCommandsOf<T> = T extends { commands: infer C } ? C : never;
+type EntityShape = { readonly __stateType?: unknown; commands: object };
 
-type DropFirstN<Args extends any[], N extends number, Count extends any[] = []> =
+type DropFirstN<Args extends unknown[], N extends number, Count extends unknown[] = []> =
     Count['length'] extends N
         ? Args
-        : Args extends [any, ...infer Rest]
-            ? DropFirstN<Rest, N, [...Count, any]>
+        : Args extends [unknown, ...infer Rest]
+            ? DropFirstN<Rest, N, [...Count, unknown]>
             : [];
 
-type InjectedArgCount<PK> = PK extends readonly any[] ? PK['length'] : 1;
+type InjectedArgCount<PK> = PK extends readonly unknown[] ? PK['length'] : 1;
 
 type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number> = {
     [K in keyof TCommands]: TCommands[K] extends { args: infer Args }
-        ? (...args: DropFirstN<Args extends any[] ? Args : [], InjectedCount>) => DispatchResult<TEntityState>
+        ? (...args: DropFirstN<Args extends unknown[] ? Args : [], InjectedCount>) => DispatchResult<TEntityState>
         : [TCommands[K]] extends [void] | [undefined] | [never]
             ? () => DispatchResult<TEntityState>
             : (payload: TCommands[K]) => DispatchResult<TEntityState>;
@@ -73,18 +77,17 @@ type MapKnownKeys<TEntry> = TEntry extends { knownKeys?: readonly (infer K)[] }
     ? Extract<K, string>
     : string;
 
-type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string> =
-    Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1>>> &
-    Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1>> &
-    EntityScopedMirage<TEntityState, TEntityCommands, 1>;
+type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string> = string extends Keys
+    ? Readonly<Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1> | undefined>>
+    : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1>>>;
 
 type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
     [K in keyof Registry & keyof TState]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
-        ? ListScopedMirage<EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>, EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>, PK>
+        ? ListScopedMirage<EntityStateOf<EP>, EntityCommandsOf<EP>, PK>
         : Registry[K] extends { kind: 'map'; entity: infer EP }
             ? MapScopedMirage<
-                EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
-                EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
+                EntityStateOf<EP>,
+                EntityCommandsOf<EP>,
                 MapKnownKeys<Registry[K]>
             >
             : Registry[K] extends { kind: 'valueObject' | 'valueObjectList' | 'valueObjectMap' }
@@ -92,41 +95,16 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
                 : never;
 };
 
-type AnyMountedEntityMirage<Registry extends AggregateEntityRegistry> = {
-    [K in keyof Registry]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
-        ? EntityScopedMirage<
-            EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
-            EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
-            InjectedArgCount<PK>
-        >
-        : Registry[K] extends { kind: 'map'; entity: infer EP }
-            ? EntityScopedMirage<
-                EntityStateOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
-                EntityCommandsOf<Extract<EP, EntityPackage<any, any, any, any, any, any, any>>>,
-                1
-            >
-            : never;
-}[keyof Registry];
-
 export type SelectorCollectionMirage<TEntity, Registry extends AggregateEntityRegistry> =
-    ReadonlyArray<ReadonlyDeep<TEntity>> & {
-        first: () => AnyMountedEntityMirage<Registry> | undefined;
-        at: (index: number) => AnyMountedEntityMirage<Registry> | undefined;
-    };
-
-type SelectorUtils = { bindContext: typeof import('@redemeine/aggregate').bindContext };
+    ReadonlyArray<ReadonlyDeep<TEntity>>;
 
 type SelectorPublicArgs<TState, TSelector> =
-    TSelector extends (state: ReadonlyDeep<TState>, utils: SelectorUtils, ...args: infer Args) => any
-        ? Args
-        : TSelector extends (state: ReadonlyDeep<TState>, ...args: infer Args) => any
+    TSelector extends (state: ReadonlyDeep<TState>, ...args: infer Args) => unknown
             ? Args
             : never;
 
 type SelectorRawResult<TState, TSelector> =
-    TSelector extends (state: ReadonlyDeep<TState>, utils: SelectorUtils, ...args: any[]) => infer R
-        ? R
-        : TSelector extends (state: ReadonlyDeep<TState>, ...args: any[]) => infer R
+    TSelector extends (state: ReadonlyDeep<TState>, ...args: never[]) => infer R
             ? R
             : never;
 
@@ -157,12 +135,22 @@ type ArrayLikeElement<T> =
 
 type IsArrayLike<T> = ArrayLikeElement<T> extends never ? false : true;
 
-type ContextBoundSingleMirage<TData, TRole> = IsArrayLike<TData> extends true
-    ? ReadonlyArray<EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, 1>>
-    : EntityScopedMirage<TData, EntityCommandsOf<TRole>, 1>;
+type BoundKey<Registry, Role, Mount> = {
+    [K in keyof Registry]: Registry[K] extends { kind: 'list'; entity: infer Entity; pk: infer PK }
+      ? Mount extends string ? K extends Mount ? PK : never : Role extends Entity ? PK : never : never
+}[keyof Registry];
+type BoundArgCount<Registry, Role, Mount> = [BoundKey<Registry, Role, Mount>] extends [never] ? 1
+    : InjectedArgCount<BoundKey<Registry, Role, Mount>>;
+
+type ContextBoundSingleMirage<TData, TRole, Registry, Mount> = TData extends null | undefined ? TData
+    : IsArrayLike<TData> extends true
+      ? ReadonlyArray<EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>>> & {
+          first(): EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>> | undefined;
+        }
+      : EntityScopedMirage<TData, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>>;
 
 type RoleFromDiscriminator<
-    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>,
+    TRoleMap extends Record<string, EntityShape>,
     TDisc extends string
 > = TDisc extends keyof TRoleMap ? TRoleMap[TDisc] : never;
 
@@ -172,20 +160,22 @@ type DiscriminatorValues<E, TKey extends string> =
 type MatchingDiscriminatorValues<
     E,
     TKey extends string,
-    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>
+    TRoleMap extends Record<string, EntityShape>
 > = Extract<DiscriminatorValues<E, TKey>, keyof TRoleMap & string>;
 
 type PolyRoleMirageForDiscriminator<
     E,
     TKey extends string,
-    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>,
-    TDisc extends string
+    TRoleMap extends Record<string, EntityShape>,
+    TDisc extends string,
+    Registry,
+    Mount
 > = RoleFromDiscriminator<TRoleMap, TDisc> extends infer TRole
-    ? TRole extends EntityPackage<any, any, any, any, any, any, any>
+    ? TRole extends EntityShape
         ? EntityScopedMirage<
             E extends object ? SetPathValue<E, TKey, TDisc> : E,
             EntityCommandsOf<TRole>,
-            1
+            BoundArgCount<Registry, TRole, Mount>
         >
         : never
     : never;
@@ -193,13 +183,15 @@ type PolyRoleMirageForDiscriminator<
 type ContextBoundPolyMirage<
     TData,
     TKey extends string,
-    TRoleMap extends Record<string, EntityPackage<any, any, any, any, any, any, any>>
+    TRoleMap extends Record<string, EntityShape>,
+    Registry,
+    Mount
 > = IsArrayLike<TData> extends true
     ? ReadonlyArray<
         ArrayLikeElement<TData> extends infer E
         ? MatchingDiscriminatorValues<E, TKey, TRoleMap> extends infer D
             ? D extends string
-                ? PolyRoleMirageForDiscriminator<E, TKey, TRoleMap, D>
+                ? PolyRoleMirageForDiscriminator<E, TKey, TRoleMap, D, Registry, Mount>
                 : never
             : never
         : never
@@ -207,29 +199,31 @@ type ContextBoundPolyMirage<
     : never;
 
 type SelectorResultMirage<R, Registry extends AggregateEntityRegistry> =
-    R extends MirageContextSingleBinding<infer TData, infer TRole>
-        ? ContextBoundSingleMirage<TData, TRole>
-        : R extends MirageContextPolymorphicBinding<infer TData, infer TKey, infer TRoleMap>
+    R extends MirageContextSingleBinding<infer TData, infer TRole, infer Mount>
+        ? ContextBoundSingleMirage<TData, TRole, Registry, Mount>
+        : R extends MirageContextPolymorphicBinding<infer TData, infer TKey, infer TRoleMap, infer Mount>
             ? ContextBoundPolyMirage<
                 TData,
                 Extract<TKey, string>,
-                Extract<TRoleMap, Record<string, EntityPackage<any, any, any, any, any, any, any>>>
+                Extract<TRoleMap, Record<string, EntityShape>>,
+                Registry,
+                Mount
             >
             : R extends ReadonlyArray<infer E>
-                ? SelectorCollectionMirage<E, Registry>
-                : R;
+                ? ReadonlyArray<ReadonlyDeep<E>>
+                : ReadonlyDeep<R>;
 
-type MirageSelectorMap<TState, Sel extends Record<string, any>, Registry extends AggregateEntityRegistry> = {
-    [K in keyof Sel]: Sel[K] extends (...args: any[]) => any
+type MirageSelectorMap<TState, Sel extends object, Registry extends AggregateEntityRegistry> = {
+    [K in keyof Sel]: Sel[K] extends (...args: never[]) => unknown
     ? (...args: SelectorPublicArgs<TState, Sel[K]>) => SelectorResultMirage<SelectorRawResult<TState, Sel[K]>, Registry>
         : never;
 };
 
 type RootMirageSelectorMap<
     TState,
-    M extends Record<string, any>,
+    M extends object,
     Registry extends AggregateEntityRegistry,
-    Sel extends Record<string, any>
+    Sel extends object
 > = IsBroadRecord<M> extends true
     ? Omit<
                 MirageSelectorMap<TState, Sel, Registry>,
@@ -243,12 +237,21 @@ type RootMirageSelectorMap<
 /**
  * The standard active instantiated aggregate wrapper holding bounded paths.
  */
-export type Mirage<TState, M extends Record<string, any> = any, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}> = 
-    MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel>;
+declare const mirageStateType: unique symbol;
+export interface MirageDiagnostics {
+    readonly version: number;
+    getPendingResults(): { events: Event[]; intents: Record<string, unknown> };
+}
+/** Type-only identity preserves state inference through helpers; runtime identity is private. */
+export type MirageInstance<TState> = {
+    readonly [mirageStateType]: TState;
+    readonly [MirageCoreSymbol]: MirageDiagnostics;
+};
+export type Mirage<TState, M extends object = {}, Registry extends AggregateEntityRegistry = {}, Sel extends object = {}> =
+    MirageInstance<TState> & MirageCommandMap<TState, M> & Omit<ReadonlyDeep<TState>, keyof MountedMirageProps<TState, Registry>> & MountedMirageProps<TState, Registry> & RootMirageSelectorMap<TState, M, Registry, Sel>;
 
 /**
- * A private symbol used to access internal dispatch mechanisms (MirageCore) 
- * without polluting the public aggregate API methods.
+ * Readonly diagnostics without domain-name collisions; mutable core access stays private.
  */
 export const MirageCoreSymbol = Symbol('MirageCore');
 
@@ -264,14 +267,35 @@ export interface MirageOptions<TPlugins extends PluginExtensions = {}> {
 }
 
 export interface MirageSetup<TState, TPlugins extends PluginExtensions = {}> extends MirageOptions<TPlugins> {
-    snapshot?: TState;
+    snapshot?: TState | ReadonlyDeep<TState>;
     events?: HydrationEvents<Event>;
     /** Persisted event count represented by the starting state, before replay. Defaults to zero. */
     initialVersion?: number;
 }
 
-export type BuiltAggregateCommands<T> = T extends BuiltAggregate<any, infer M, any, any> ? M : Record<string, any>;
-export type BuiltAggregateState<T> = T extends BuiltAggregate<infer S, any, any, any> ? S : never;
-export type BuiltAggregateRegistry<T> = T extends BuiltAggregate<any, any, any, infer R, any> ? R : {};
-export type BuiltAggregateSelectors<T> = T extends BuiltAggregate<any, any, any, any, infer Sel> ? Sel : {};
-export type BuiltAggregatePlugins<T> = T extends BuiltAggregate<any, any, any, any, any, infer P> ? P : {};
+export type BuiltAggregateCommands<T> = T extends { commandCreators: infer C } ? {
+    [K in keyof C]: C[K] extends (...args: infer Args) => infer Cmd
+        ? { args: Args; payload: Cmd extends { payload: infer P } ? P : unknown } : never
+} : {};
+export type BuiltAggregateState<T> = T extends { initialState: infer S } ? S : never;
+export type BuiltAggregateRegistry<T> = T extends { __registryType?: infer R extends AggregateEntityRegistry } ? R : {};
+export type BuiltAggregateSelectors<T> = T extends { selectors: infer Sel extends object } ? Sel : {};
+export type BuiltAggregatePlugins<T> = T extends { plugins: RedemeinePlugin<infer P>[] } ? P : {};
+export type MirageOf<T> = Mirage<BuiltAggregateState<T>, BuiltAggregateCommands<T>, BuiltAggregateRegistry<T>, BuiltAggregateSelectors<T>>;
+
+type KnownKeys<T> = string extends keyof T ? never : keyof T;
+type StateKeys<B> = KnownKeys<BuiltAggregateState<B>>;
+type CommandKeys<B> = KnownKeys<BuiltAggregateCommands<B>>;
+type SelectorKeys<B> = KnownKeys<BuiltAggregateSelectors<B>>;
+type ProtocolNames = 'then' | 'toJSON' | 'toString' | 'valueOf' | 'inspect';
+type MountCollisionKeys<R> = {
+    [K in keyof R]: R[K] extends { entity: infer E }
+      ? Extract<KnownKeys<EntityStateOf<E>>, KnownKeys<EntityCommandsOf<E>>>
+        | Extract<KnownKeys<EntityStateOf<E>> | KnownKeys<EntityCommandsOf<E>>, ProtocolNames> : never
+}[keyof R];
+type CollisionKeys<B> = Extract<StateKeys<B>, CommandKeys<B> | SelectorKeys<B>>
+  | Extract<CommandKeys<B>, SelectorKeys<B>>
+  | Extract<StateKeys<B> | CommandKeys<B> | SelectorKeys<B>, ProtocolNames>
+  | MountCollisionKeys<BuiltAggregateRegistry<B>>;
+export type NoMirageCollisions<B> = [CollisionKeys<B>] extends [never] ? unknown
+  : { readonly __mirageNameCollision: CollisionKeys<B> };

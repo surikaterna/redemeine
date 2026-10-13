@@ -173,7 +173,7 @@ describe('event-count version contract', () => {
         const entity = createEntity<{ id: string; qty: number }, 'item'>('item').events({}).build();
         const builder = createAggregate('cart', { items: [{ id: 'a', qty: 0 }] })
             .entityList('items', entity)
-            .selectors({ selected: (state) => state.items })
+            .selectors(({ bindContext }) => ({ selected: (state) => bindContext(state.items, entity) }))
             .events({ changed: (state, event: Event<number>) => {
                 if (event.payload < 0) throw new Error('apply failed');
                 state.items[0].qty = event.payload;
@@ -626,7 +626,7 @@ describe('Mirage tests', () => {
 
         expect(() => {
             (live as any).preferencesByRegion.US.theme = 'dark';
-        }).toThrow('Cannot mutate properties directly');
+        }).toThrow(/Cannot mutate properties directly|read only/);
 
         expect((live as any).aliases.add).toBeUndefined();
         expect((live as any).preferencesByRegion.setTheme).toBeUndefined();

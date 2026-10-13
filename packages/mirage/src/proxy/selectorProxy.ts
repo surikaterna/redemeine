@@ -1,274 +1,83 @@
 import { createReadonlyDeepProxy } from '@redemeine/kernel';
-import { bindContext, isMirageContextBinding, MirageContextSymbol } from '@redemeine/aggregate';
-import type { ReadonlyDeep } from '@redemeine/kernel';
-import type { InvocationContext } from '../mirage.types';
+import { isMirageContextBinding, MirageContextSymbol } from '@redemeine/aggregate';
+import type { InvocationContext, MountMetadata } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
-import { findListMountForEntity, selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
-import { findEntityInCollection } from './entityCache';
+import { selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
+import { invoke, readProperty } from '../runtimeDefinition';
+import { readonlyArrayMember, readonlyTraps } from './readonlyView';
 
-const roleCommandNamesCache = new WeakMap<object, string[]>();
+const roleCommandCache = new WeakMap<object, readonly string[]>();
 
-export const getRoleCommandNames = (role: unknown): string[] => {
-    if (!role || typeof role !== 'object') {
-        return [];
-    }
+function roleCommands(role: unknown): readonly string[] {
+  if (!role || typeof role !== 'object') throw new Error('Invalid selector role');
+  const cached = roleCommandCache.get(role);
+  if (cached) return cached;
+  const emit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
+  const commands = invoke(readProperty(role, 'commandFactory'), role, [emit, { selectors: {}, commands: {} }]);
+  if (!commands || typeof commands !== 'object') throw new Error('Invalid selector role command map');
+  const names = Object.keys(commands);
+  roleCommandCache.set(role, names);
+  return names;
+}
 
-    const cached = roleCommandNamesCache.get(role);
-    if (cached) {
-        return cached;
-    }
+function resolveMount(role: unknown, explicit: unknown, ctx: ProxyContext): [string, MountMetadata] {
+  const mounts = Object.entries(ctx.mounts);
+  const candidates = mounts.filter(([name, mount]) =>
+    mount.kind === 'list' && (explicit === undefined ? mount.entity === role : name === explicit));
+  if (candidates.length !== 1) {
+    throw new Error('Missing or ambiguous selector mount; bindContext(data, Entity, { mount: "name" }) must identify one list');
+  }
+  if (mounts.some(([, mount]) => mount.entity === role) && candidates[0]![1].entity !== role) {
+    throw new Error('Explicit selector mount does not match the declared entity');
+  }
+  return candidates[0]!;
+}
 
-    const roleAsEntity = role as { commandFactory?: Function };
-    if (typeof roleAsEntity.commandFactory !== 'function') {
-        roleCommandNamesCache.set(role, []);
-        return [];
-    }
+function bindEntity(entity: unknown, role: unknown, mountName: unknown, context: InvocationContext, ctx: ProxyContext): unknown {
+  if (entity === undefined || entity === null) return entity;
+  const [name, mount] = resolveMount(role, mountName, ctx);
+  const selected = selectFromListEntity(name, mount, entity);
+  const entityProxy = makeEntityMirageProxy(mount.statePath, [mount.commandPrefix], { ...selected,
+    idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
+  return role === mount.entity ? entityProxy : restrictRole(entityProxy, role, mount);
+}
 
-    try {
-        const fakeEmit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
-        const fakeSelectors = new Proxy({}, { get: () => () => undefined });
-        const fakeCommands = new Proxy({}, {
-            get: (_target, prop: string) => (payload: unknown) => ({ command: prop, payload })
-        });
-        const roleCommands = roleAsEntity.commandFactory(fakeEmit, { selectors: fakeSelectors, commands: fakeCommands }) || {};
-        const names = Object.keys(roleCommands);
-        roleCommandNamesCache.set(role, names);
-        return names;
-    } catch {
-        roleCommandNamesCache.set(role, []);
-        return [];
-    }
-};
+function restrictRole(value: unknown, role: unknown, mount: MountMetadata): unknown {
+  if (!value || typeof value !== 'object') throw new Error('Invalid entity proxy');
+  const allowed = new Set(roleCommands(role));
+  if ([...allowed].some(name => !mount.commandNames?.includes(name))) throw new Error('Selector role has commands absent from its explicit mount');
+  return new Proxy(value, { ...readonlyTraps, get(target, property) {
+    if (typeof property === 'string' && mount.commandNames?.includes(property) && !allowed.has(property)) return undefined;
+    return Reflect.get(target, property);
+  } });
+}
 
-export const resolveEntityFromSelection = (collectionPath: string[], selection: InvocationContext, ctx: ProxyContext) => {
-    const collection = ctx.resolvePath(collectionPath);
-    if (!Array.isArray(collection)) {
-        return undefined;
-    }
+function boundArray(items: unknown[]): readonly unknown[] {
+  return new Proxy(items, { ...readonlyTraps, get: (_target, property) => readonlyArrayMember(items, property) });
+}
 
-    return findEntityInCollection(collection, selection, ctx.core.version);
-};
+function wrapSelectorResult(result: unknown, context: InvocationContext, ctx: ProxyContext): unknown {
+  if (!isMirageContextBinding(result)) return createReadonlyDeepProxy(result);
+  const binding: unknown = readProperty(result, MirageContextSymbol);
+  const data = readProperty(binding, 'data');
+  if (readProperty(binding, 'kind') === 'single') {
+    const wrap = (entity: unknown) => bindEntity(entity, readProperty(binding, 'role'), readProperty(binding, 'mount'), context, ctx);
+    return Array.isArray(data) ? boundArray(data.map(wrap)) : wrap(data);
+  }
+  if (!Array.isArray(data)) throw new Error('Polymorphic selector binding requires an array');
+  const discriminator = readProperty(binding, 'discriminatorKey');
+  if (typeof discriminator !== 'string') throw new Error('Invalid selector discriminator');
+  return boundArray(data.map(item => {
+    const value = discriminator.split('.').reduce<unknown>((current, part) => readProperty(current, part), item);
+    const role = readProperty(readProperty(binding, 'roleMap'), String(value));
+    if (!role) throw new Error(`No role mapping found for discriminator value "${String(value)}".`);
+    return bindEntity(item, role, readProperty(binding, 'mount'), context, ctx);
+  }));
+}
 
-export const makeReadonlyWrappedArray = <T>(items: T[]): ReadonlyArray<T> => {
-    return new Proxy(items, {
-        get(target, prop) {
-            if (typeof prop !== 'string') {
-                if (prop === Symbol.iterator) {
-                    return target[Symbol.iterator].bind(target);
-                }
-                return Reflect.get(target, prop);
-            }
-
-            if (!isNaN(Number(prop))) {
-                return target[Number(prop)];
-            }
-
-            const value = (target as any)[prop];
-            return typeof value === 'function' ? value.bind(target) : value;
-        },
-        set() {
-            throw new Error('Cannot mutate selector collection directly');
-        },
-        deleteProperty() {
-            throw new Error('Cannot mutate selector collection directly');
-        }
-    });
-};
-
-const makeRoleScopedEntityProxy = (
-    baseProxy: any,
-    collectionPath: string[],
-    selection: InvocationContext,
-    commandNames: string[],
-    ctx: ProxyContext
-) => {
-    const allowedCommands = new Set(commandNames);
-
-    return new Proxy({}, {
-        get(target, prop) {
-            if (typeof prop !== 'string') {
-                return Reflect.get(target, prop);
-            }
-
-            if (prop === 'then') return undefined;
-
-            const entity = resolveEntityFromSelection(collectionPath, selection, ctx);
-            if (entity && typeof entity === 'object' && prop in entity) {
-                return baseProxy[prop];
-            }
-
-            if (allowedCommands.has(prop)) {
-                return baseProxy[prop];
-            }
-
-            return undefined;
-        },
-        set() {
-            throw new Error('Cannot mutate properties directly');
-        },
-        deleteProperty() {
-            throw new Error('Cannot mutate properties directly');
-        }
-    });
-};
-
-const wrapEntityWithRole = (entity: any, role: unknown, context: InvocationContext, ctx: ProxyContext) => {
-    const resolved = findListMountForEntity(entity, ctx.mounts);
-    if (!resolved) {
-        throw new Error('bindContext could not resolve a mounted list entity for selector item.');
-    }
-
-    const [mountName, mount] = resolved;
-    const selection = selectFromListEntity(mountName, mount, entity);
-    if (!selection) {
-        throw new Error('bindContext could not extract key fields from selector item.');
-    }
-
-    const scopedSelection: InvocationContext = {
-        idsPayload: { ...context.idsPayload, ...selection.idsPayload },
-        packPrefix: [...context.packPrefix, ...selection.packPrefix],
-        entityPk: selection.entityPk
-    };
-
-    const baseEntityMirage = makeEntityMirageProxy(
-        [...mount.statePath],
-        [mount.commandPrefix],
-        scopedSelection,
-        ctx
-    );
-
-    const commandNames = getRoleCommandNames(role);
-    return makeRoleScopedEntityProxy(baseEntityMirage, [...mount.statePath], scopedSelection, commandNames, ctx);
-};
-
-const makeSelectedCollectionProxy = (entities: any[], context: InvocationContext, ctx: ProxyContext): any => {
-    const getEntityMirageAt = (index: number) => {
-        const entity = entities[index];
-        if (!entity || typeof entity !== 'object') {
-            return undefined;
-        }
-
-        const resolved = findListMountForEntity(entity, ctx.mounts);
-        if (!resolved) {
-            return undefined;
-        }
-
-        const [mountName, mount] = resolved;
-        const selection = selectFromListEntity(mountName, mount, entity);
-        if (!selection) {
-            return undefined;
-        }
-
-        return makeEntityMirageProxy(
-            [...mount.statePath],
-            [mount.commandPrefix],
-            {
-                idsPayload: { ...context.idsPayload, ...selection.idsPayload },
-                packPrefix: [...context.packPrefix, ...selection.packPrefix],
-                entityPk: selection.entityPk
-            },
-            ctx
-        );
-    };
-
-    return new Proxy(entities, {
-        get(target, prop) {
-            if (prop === 'first') {
-                return () => getEntityMirageAt(0);
-            }
-
-            if (prop === 'at') {
-                return (index: number) => getEntityMirageAt(index);
-            }
-
-            if (typeof prop !== 'string') {
-                if (prop === Symbol.iterator) {
-                    return target[Symbol.iterator].bind(target);
-                }
-                return Reflect.get(target, prop);
-            }
-
-            if (!isNaN(Number(prop))) {
-                return createReadonlyDeepProxy(target[Number(prop)]);
-            }
-
-            const value = (target as any)[prop];
-            if (typeof value === 'function') {
-                return value.bind(target);
-            }
-
-            return value;
-        },
-        set() {
-            throw new Error('Cannot mutate selector collection directly');
-        },
-        deleteProperty() {
-            throw new Error('Cannot mutate selector collection directly');
-        }
-    });
-};
-
-export const wrapSelectorResult = (result: unknown, context: InvocationContext, ctx: ProxyContext) => {
-    const getPathValue = (obj: unknown, path: string): unknown => {
-        if (!obj || typeof obj !== 'object') {
-            return undefined;
-        }
-        return path.split('.').reduce<unknown>((acc, part) => {
-            if (acc && typeof acc === 'object') {
-                return (acc as Record<string, unknown>)[part];
-            }
-            return undefined;
-        }, obj);
-    };
-
-    if (isMirageContextBinding(result)) {
-        const bound: any = (result as any)[MirageContextSymbol];
-
-        if (bound.kind === 'single') {
-            if (Array.isArray(bound.data)) {
-                return makeReadonlyWrappedArray(bound.data.map((item: any) => wrapEntityWithRole(item, bound.role, context, ctx)));
-            }
-            return wrapEntityWithRole(bound.data, bound.role, context, ctx);
-        }
-
-        if (!Array.isArray(bound.data)) {
-            throw new Error('bindContext polymorphic binding expects an array of data items.');
-        }
-
-        const wrapped = bound.data.map((item: any) => {
-            const discriminatorValue = getPathValue(item, bound.discriminatorKey);
-            const role = bound.roleMap?.[String(discriminatorValue)];
-            if (!role) {
-                throw new Error(`No role mapping found for discriminator value "${String(discriminatorValue)}".`);
-            }
-            return wrapEntityWithRole(item, role, context, ctx);
-        });
-
-        return makeReadonlyWrappedArray(wrapped);
-    }
-
-    if (Array.isArray(result)) {
-        return makeSelectedCollectionProxy(result, context, ctx);
-    }
-    return createReadonlyDeepProxy(result);
-};
-
-export const invokeSelector = (
-    selectorName: string,
-    args: unknown[],
-    context: InvocationContext,
-    ctx: ProxyContext
-) => {
-    const selector = ctx.selectors[selectorName];
-    if (typeof selector !== 'function') {
-        throw new Error('Selector ' + selectorName + ' not found on selectors.');
-    }
-
-    const stateView = createReadonlyDeepProxy(ctx.core.state);
-    const shouldInjectUtils = selector.length >= args.length + 2;
-    const result = shouldInjectUtils
-        ? selector(stateView, { bindContext }, ...args)
-        : selector(stateView, ...args);
-
-    return wrapSelectorResult(result, context, ctx);
-};
+export function invokeSelector(name: string, args: unknown[], context: InvocationContext, ctx: ProxyContext): unknown {
+  const stateView = ctx.core.stateView();
+  // Utilities are captured by Aggregate's selector factory; function arity is not a calling convention.
+  const result = invoke(readProperty(ctx.selectors, name), undefined, [stateView, ...args]);
+  return wrapSelectorResult(result, context, ctx);
+}

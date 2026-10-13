@@ -1,91 +1,43 @@
 import { singular } from '@redemeine/aggregate';
-import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
+import { readProperty } from '../runtimeDefinition';
+import { readonlyTraps, readonlyValue } from './readonlyView';
 
-export const selectFromMap = (mountName: string, rawKey: string): InvocationContext => {
-    const keyName = `${singular(mountName)}Key`;
-    return {
-        idsPayload: {
-            key: rawKey,
-            [keyName]: rawKey,
-            [`${mountName}Key`]: rawKey
-        },
-        packPrefix: [rawKey]
-    };
-};
+function makeMapItemProxy(path: string[], prefix: string[], key: string, context: InvocationContext, ctx: ProxyContext): unknown {
+  const name = path.at(-1)!;
+  const resolveState = () => {
+    const value = readProperty(ctx.resolvePath(path), key);
+    if (!value || typeof value !== 'object') throw new Error(`Entity not found in ${name}.${key}`);
+    return value;
+  };
+  const selection: InvocationContext = { idsPayload: { ...context.idsPayload, key, [`${singular(name)}Key`]: key, [`${name}Key`]: key },
+    packPrefix: [...context.packPrefix, key], resolveState };
+  return new Proxy({}, {
+    ...readonlyTraps,
+    get(_target, property) {
+      if (typeof property !== 'string' || property === 'then') return undefined;
+      const entity = resolveState();
+      if (Object.hasOwn(entity, property)) return readonlyValue(readProperty(entity, property));
+      if (!Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName([...prefix, property]))) return undefined;
+      return ctx.makeDeepProxy([...path, key, property], [...prefix, property], selection);
+    }
+  });
+}
 
-const makeMapItemProxy = (
-    mapPath: string[],
-    commandPrefixPath: string[],
-    mapKey: string,
-    context: InvocationContext,
-    ctx: ProxyContext
-) => {
-    const selection = selectFromMap(mapPath[mapPath.length - 1]!, mapKey);
-    const scopedContext: InvocationContext = {
-        idsPayload: { ...context.idsPayload, ...selection.idsPayload },
-        packPrefix: [...context.packPrefix, ...selection.packPrefix]
-    };
-
-    return new Proxy({}, {
-        get(target, prop) {
-            if (typeof prop !== 'string') return Reflect.get(target, prop);
-            if (prop === 'then') return undefined;
-
-            const mapObject = ctx.resolvePath(mapPath);
-            const entity = mapObject && typeof mapObject === 'object' ? mapObject[mapKey] : undefined;
-
-            if (entity && typeof entity === 'object' && prop in entity) {
-                return createReadonlyDeepProxy(entity[prop]);
-            }
-
-            return ctx.makeDeepProxy([...mapPath, mapKey, prop], [...commandPrefixPath, prop], scopedContext);
-        },
-        set() {
-            throw new Error('Cannot mutate properties directly');
-        },
-        deleteProperty() {
-            throw new Error('Cannot mutate properties directly');
-        }
-    });
-};
-
-export const makeMapProxy = (
-    mapPath: string[],
-    commandPrefixPath: string[],
-    mount: MountMetadata,
-    context: InvocationContext,
-    ctx: ProxyContext
-) => {
-    return new Proxy({}, {
-        get(target, prop) {
-            if (prop === 'then') return undefined;
-
-            const mapObject = ctx.resolvePath(mapPath) || {};
-
-            if (typeof prop !== 'string') {
-                if (prop === Symbol.iterator) {
-                    return Object.values(mapObject)[Symbol.iterator].bind(Object.values(mapObject));
-                }
-                return Reflect.get(target, prop);
-            }
-
-            if (['set', 'delete'].includes(prop)) {
-                return () => { throw new Error('Cannot mutate map directly'); };
-            }
-
-            if (prop in mapObject || (mount.knownKeys || []).includes(prop)) {
-                return makeMapItemProxy(mapPath, commandPrefixPath, prop, context, ctx);
-            }
-
-            return ctx.makeDeepProxy([...mapPath, prop], [...commandPrefixPath, prop], context);
-        },
-        set() {
-            throw new Error('Cannot mutate properties directly');
-        },
-        deleteProperty() {
-            throw new Error('Cannot mutate properties directly');
-        }
-    });
-};
+export function makeMapProxy(path: string[], prefix: string[], _mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
+  return new Proxy({}, {
+    ...readonlyTraps,
+    get(_target, property) {
+      if (typeof property !== 'string') return undefined;
+      const map = ctx.resolvePath(path);
+      if (!map || typeof map !== 'object' || !Object.hasOwn(map, property)) return undefined;
+      return makeMapItemProxy(path, prefix, property, context, ctx);
+    },
+    ownKeys: () => Object.keys(ctx.resolvePath(path) ?? {}),
+    getOwnPropertyDescriptor: (_target, property) => {
+      const map = ctx.resolvePath(path);
+      return map && typeof map === 'object' && Object.hasOwn(map, property) ? { enumerable: true, configurable: true } : undefined;
+    }
+  });
+}

@@ -38,7 +38,7 @@ export function mountEntities<S, TMeta>(
     };
 
     entityPackages.forEach(({ name: mountName, kind, component: entity, mountOverrides, pk, knownKeys }) => {
-        mounts[mountName] = { kind, commandPrefix: mountName, statePath: [mountName], pk, knownKeys };
+        mounts[mountName] = { kind, commandPrefix: mountName, statePath: [mountName], pk, knownKeys, entity };
 
         if (!entity || kind === 'valueObject') return;
 
@@ -85,6 +85,7 @@ export function mountEntities<S, TMeta>(
             selectors: mergedSelectors,
             commands: createCommandContextProxy<Record<string, unknown>>()
         });
+        mounts[mountName]!.commandNames = Object.keys(entityCommands);
         const entityCommandNameOverrides = entity.commandOverrides || {};
         const mountCommandNameOverrides = {
             ...((mountOverrides && mountOverrides.commandOverrides) || {}),

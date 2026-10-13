@@ -1,13 +1,13 @@
 
 import { createAggregate } from '@redemeine/aggregate';
 import { createDepot, EventStore } from '../src/Depot';
-import { extractUncommittedEvents, MirageCoreSymbol } from '../src/createMirage';
-import type { MirageCore } from '../src/MirageCore';
+import { extractUncommittedEvents } from '../src/createMirage';
+import { getCore } from '../src/coreAccess';
 import { Event, RedemeinePlugin } from '@redemeine/kernel';
 
 type S = { id: string; count: number };
 
-const coreOf = (live: unknown) => (live as { [MirageCoreSymbol]: MirageCore<S> })[MirageCoreSymbol];
+const coreOf = (live: unknown) => getCore<S>(live);
 const incrementEvent = (amount: number): Event => ({ type: 'order.incremented.event', payload: { amount } });
 
 function enforcingStore(initial: Event[] = []) {

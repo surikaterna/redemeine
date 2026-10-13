@@ -1,142 +1,51 @@
-import type { Mirage, MirageOptions, HydrationEvents } from './createMirage';
-import { createMirage, type BuiltAggregate, MirageCoreSymbol } from './createMirage';
-import { type Event, type EventInterceptorContext, type PluginExtensions, type RedemeinePlugin, RedemeinePluginHookError } from '@redemeine/kernel';
-import type { BuiltAggregateCommands, BuiltAggregateState, BuiltAggregateRegistry, BuiltAggregatePlugins } from './mirage.types';
-import { assertEventCount, assertPluginHasKey, wrapPluginHookFailure } from './MirageCore';
+import type { Event, ReadonlyDeep } from '@redemeine/kernel';
+import { createMirage } from './createMirage';
+import type { MirageOptions, BuiltAggregateState, BuiltAggregatePlugins, MirageOf, NoMirageCollisions } from './mirage.types';
+import { getCore } from './coreAccess';
+import { builderPlugins, erasePlugins, readProperty, type MirageBuilder } from './runtimeDefinition';
+import { assertEventCount, assertPluginHasKey } from './MirageCore';
+import { beforeAppend, afterCommit } from './depotPlugins';
 
 export interface EventStore {
-    readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
-    /** Expected persisted event count BEFORE this append (zero for a new stream). */
-    saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
+  readStream(id: string, options?: EventReadStreamOptions): AsyncIterable<Event>;
+  /** Expected persisted event count BEFORE this append (zero for a new stream). */
+  saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
+}
+export type EventReadStreamOptions = { fromVersion?: number };
+export type DepotSnapshot<TState> = { state: TState | ReadonlyDeep<TState>; version: number };
+export type DepotGetOptions<TState> = { initialState?: TState | ReadonlyDeep<TState>; snapshot?: DepotSnapshot<TState> };
+
+export interface Depot<B extends MirageBuilder> {
+  get(id: string, options?: DepotGetOptions<BuiltAggregateState<B>>): Promise<MirageOf<B>>;
+  save(mirage: MirageOf<B>): Promise<void>;
 }
 
-export type EventReadStreamOptions = {
-  fromVersion?: number;
-};
-
-export type DepotSnapshot<TState> = {
-  state: TState;
-  version: number;
-};
-
-export type DepotGetOptions<TState> = {
-  initialState?: TState;
-  snapshot?: DepotSnapshot<TState>;
-};
-
-
-
-/**
- * Depots are the primary way to retrieve a Mirage of an aggregate by its ID.
- * Handles event sourced hydration and persistence of new uncommitted events.
- */
-export interface Depot<TState extends {}, M extends Record<string, any> = any, Registry extends Record<string, any> = {}> {
-  get(id: string, options?: DepotGetOptions<TState>): Promise<Mirage<TState, M, Registry>>;
-  save(mirage: Mirage<TState, M, Registry>): Promise<void>;
-}
-
-/**
- * Creates a standard Depot linking an EventStore to a BuiltAggregate.
- */
-export function createDepot<BA extends BuiltAggregate<any, any, any, any>>(
-  builder: BA,
-  store: EventStore,
-  options?: MirageOptions<BuiltAggregatePlugins<BA>>
-): Depot<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>> {
-  const plugins = [...(builder.plugins || []), ...(options?.plugins || [])] as RedemeinePlugin<any>[];
-
+export function createDepot<B extends MirageBuilder>(builder: B & NoMirageCollisions<NoInfer<B>>, store: EventStore,
+  options?: MirageOptions<BuiltAggregatePlugins<B>>): Depot<B> {
+  const plugins = [...builderPlugins(builder), ...erasePlugins(options?.plugins ?? [])];
   plugins.forEach(assertPluginHasKey);
-
-  const runAppendInterceptors = async (id: string, events: Event[]): Promise<Event[]> => {
-    if (plugins.length === 0) return events;
-
-    const eventMetaRegistry = builder.metadata?.events || {};
-
-    for (const event of events) {
-      const ctx: EventInterceptorContext<{}, unknown> = {
-        pluginKey: '',
-        aggregateId: id,
-        eventType: event.type,
-        payload: event.payload,
-        meta: eventMetaRegistry[event.type]?.meta
-      };
-
-      for (const plugin of plugins) {
-        if (typeof plugin.onBeforeAppend === 'function') {
-          ctx.pluginKey = plugin.key;
-          try {
-            const nextPayload = await plugin.onBeforeAppend(ctx);
-            if (nextPayload !== undefined) {
-              ctx.payload = nextPayload;
-            }
-          } catch (error) {
-            throw wrapPluginHookFailure(plugin, 'onBeforeAppend', id, error);
-          }
-        }
-      }
-
-      event.payload = ctx.payload;
-    }
-
-    return events;
-  };
-
-  const runAfterCommitHooks = async (
-    id: string,
-    events: Event[],
-    intents: Record<string, unknown>
-  ): Promise<void> => {
-    if (plugins.length === 0) return;
-
-    for (const plugin of plugins) {
-      if (typeof plugin.onAfterCommit === 'function') {
-        try {
-          await plugin.onAfterCommit({
-            pluginKey: plugin.key,
-            aggregateId: id,
-            events,
-            intents
-          });
-        } catch (error) {
-          throw wrapPluginHookFailure(plugin, 'onAfterCommit', id, error);
-        }
-      }
-    }
-  };
-
   return {
-      get: async (id: string, getOptions?: DepotGetOptions<BuiltAggregateState<BA>>) => {
-          const snapshot = getOptions?.snapshot;
-          const initialState = getOptions?.initialState;
-
-          if (snapshot) {
-            assertEventCount(snapshot.version);
-            const events = store.readStream(id, { fromVersion: snapshot.version + 1 });
-            return createMirage(builder, id, { ...options, snapshot: snapshot.state, initialVersion: snapshot.version, events });
-          }
-
-          if (initialState !== undefined) {
-            const events = store.readStream(id);
-            return createMirage(builder, id, { ...options, snapshot: initialState, events });
-          }
-
-          const events = store.readStream(id);
-          return createMirage(builder, id, { ...options, events });
-      },
-      save: async (mirage: Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>>) => {
-        const core = (mirage as any)[MirageCoreSymbol];
-        if (!core) throw new Error('Not a valid Mirage Instance');
-
-          const { events, intents } = core.getPendingResults();
-          const expectedVersion = core.version - events.length;
-          const appendableEvents = await runAppendInterceptors(core.id, events);
-
-          await store.saveEvents(core.id, appendableEvents, expectedVersion);
-          core.clearPendingResults();
-
-          // TODO(outbox): move onAfterCommit side-effects to a transactional outbox worker
-          // so post-commit failures are retriable without coupling to request lifecycle.
-          await runAfterCommitHooks(core.id, appendableEvents, intents);
+    async get(id, setup) {
+      if (setup?.snapshot) {
+        const snapshot = setup.snapshot;
+        assertEventCount(snapshot.version);
+        const events = store.readStream(id, { fromVersion: snapshot.version + 1 });
+        return createMirage<B>(builder, id, { ...options, snapshot: snapshot.state, initialVersion: snapshot.version, events });
       }
+      const events = store.readStream(id);
+      return setup?.initialState === undefined ? createMirage<B>(builder, id, { ...options, events })
+        : createMirage<B>(builder, id, { ...options, snapshot: setup.initialState, events });
+    },
+    async save(mirage) {
+      const core = getCore<BuiltAggregateState<B>>(mirage);
+      if (!Object.is(core.builder, builder)) throw new Error('Mirage belongs to a different builder');
+      const { events, intents } = core.getPendingResults();
+      const expectedVersion = core.version - events.length;
+      const appendable = await beforeAppend(core.id, events, plugins, readProperty(builder, 'metadata'));
+      await store.saveEvents(core.id, appendable, expectedVersion);
+      core.clearPendingResults();
+      // Post-commit effects are not rolled back; transactional outbox behavior is a separate contract.
+      await afterCommit(core.id, appendable, intents, plugins);
+    }
   };
 }

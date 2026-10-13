@@ -1,25 +1,27 @@
-import type { ReadonlyDeep } from '@redemeine/kernel';
-import type { BuiltAggregate } from '@redemeine/aggregate';
-import type { MirageCore } from '../MirageCore';
-import type { MountMetadata, InvocationContext, DispatchResult } from '../mirage.types';
+import type { Command, Event } from '@redemeine/kernel';
+import type { MountMetadata, InvocationContext } from '../mirage.types';
+import type { MirageBuilder } from '../runtimeDefinition';
 
-/**
- * Shared context passed to all proxy factories, replacing closure-captured variables.
- */
-export interface ProxyContext {
-    core: MirageCore<any>;
-    mounts: Record<string, MountMetadata>;
-    selectors: Record<string, (state: ReadonlyDeep<any>, ...args: any[]) => any>;
-    builder: BuiltAggregate<any, any, any, any>;
-    resolvePath: (path: string[]) => any;
-    toCommandName: (path: string[]) => string;
-    getMountForRoot: (rootProp: string) => MountMetadata | undefined;
-    invokeByPath: (commandPath: string[], args: unknown[], context: InvocationContext) => DispatchResult<any>;
-    invokeSelector: (selectorName: string, args: unknown[], context: InvocationContext) => any;
-    makeDeepProxy: (statePath: string[], commandPath: string[], context: InvocationContext) => any;
-    makeCollectionProxy: (collectionPath: string[], commandPrefixPath: string[], mount: MountMetadata, context: InvocationContext) => any;
-    makeMapProxy: (mapPath: string[], commandPrefixPath: string[], mount: MountMetadata, context: InvocationContext) => any;
-    makeEntityMirageProxy: (collectionPath: string[], commandPrefixPath: string[], selection: InvocationContext) => any;
+export interface ProxyCore {
+  readonly state: unknown;
+  readonly version: number;
+  dispatch(command: Command<unknown, string>): unknown;
+  stateView(): unknown;
+  getPendingResults(): { events: Event[]; intents: Record<string, unknown> };
 }
 
-export type { MountMetadata, InvocationContext, DispatchResult } from '../mirage.types';
+export interface ProxyContext {
+  core: ProxyCore;
+  mounts: Record<string, MountMetadata>;
+  selectors: object;
+  builder: MirageBuilder;
+  resolvePath(path: string[]): unknown;
+  toCommandName(path: string[]): string;
+  getMountForRoot(rootProp: string): MountMetadata | undefined;
+  invokeByPath(path: string[], args: unknown[], context: InvocationContext): unknown;
+  invokeSelector(name: string, args: unknown[], context: InvocationContext): unknown;
+  makeDeepProxy(statePath: string[], commandPath: string[], context: InvocationContext): unknown;
+  makeCollectionProxy(path: string[], prefix: string[], mount: MountMetadata, context: InvocationContext): unknown;
+  makeMapProxy(path: string[], prefix: string[], mount: MountMetadata, context: InvocationContext): unknown;
+  makeEntityMirageProxy(path: string[], prefix: string[], selection: InvocationContext): unknown;
+}

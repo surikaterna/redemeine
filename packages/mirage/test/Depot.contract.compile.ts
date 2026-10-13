@@ -1,4 +1,4 @@
-import { EventStore } from '../src/Depot';
+import type { EventStore } from '../src/Depot';
 
 const _validStore: EventStore = {
   readStream: async function* (_id: string) {},
@@ -12,8 +12,8 @@ const _validStoreWithResumeOptions: EventStore = {
   saveEvents: async () => undefined
 };
 
-// @ts-expect-error EventStore.readStream must return AsyncIterable<Event>, not Promise<Event[]>
 const _legacyPromiseAdapter: EventStore = {
+  // @ts-expect-error EventStore.readStream must return AsyncIterable<Event>, not Promise<Event[]>
   readStream: async (_id: string) => [],
   saveEvents: async () => undefined
 };
