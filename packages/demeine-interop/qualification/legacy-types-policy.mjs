@@ -7,7 +7,7 @@ export function assertExceptionScope(version, legacyVersion, sha256, aggregateSh
   assert.equal(legacyVersion, '1.3.0', 'Legacy exception is limited to published Demeine 1.3.0');
   assert.equal(
     sha256,
-    'bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf',
+    '71a850cf17ab2e7c604aec6c127488f36e26902c794d2ca13573e0b1aeb03cd8',
     'Changed artifact bytes require renewed exception review; version equality is insufficient'
   );
   assert.equal(

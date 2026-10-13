@@ -26,3 +26,5 @@ the original rejection and state/version are preserved. Native scheduling replac
 the previous library scheduling; no promise-extension methods are emulated.
 Operational-error logs contain a fixed message, not command data or rejection
 details; callers still receive the original rejection for host-controlled handling.
+Accept typed `PromiseLike<Command>` inputs to `_sink`, matching existing thenable
+adoption while retaining the native Promise return and FIFO processing contract.

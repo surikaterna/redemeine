@@ -49,7 +49,7 @@ export interface CompatibleAggregate<S extends object = object> {
   _commandHandler: CommandHandler<S> | ObjectCommandHandler;
   _apply(event: Event, isNew?: boolean): CompatibleAggregate<S>;
   _process(command: Command): Promise<CompatibleAggregate<S>>;
-  _sink(command: Command | Promise<Command>): Promise<CompatibleAggregate<S> | true>;
+  _sink(command: Command | PromiseLike<Command>): Promise<CompatibleAggregate<S> | true>;
   _rehydrate(events: Event[], version?: number, snapshot?: S): Promise<void>;
   _getSnapshot(): S | undefined;
   delete(): Promise<CompatibleAggregate<S> | true>;

@@ -146,11 +146,12 @@ For the reviewed standalone **1.0.0-pre.2** candidate only, the operator approve
 an explicit exception for published **Demeine 1.3.0**'s missing Bluebird typings.
 The reviewed integrated pair is bound to these tarball SHA-256 values:
 
-- Interop **1.0.0-pre.2**: `bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf`.
+- Interop **1.0.0-pre.2**: `71a850cf17ab2e7c604aec6c127488f36e26902c794d2ca13573e0b1aeb03cd8`.
 - Aggregate **1.0.0-pre.3**: `93feb3fac8c8f41ad32049a5850adcd366c483c27513c0173e8f793720418844`.
 
 Both are checked against the actual packed bytes and installed integrity. This
-supersedes the pre-integration `719181c2` approval; a registry Aggregate fallback
+includes the reviewed PromiseLike input declaration and supersedes the prior
+`bfc5c069` and pre-integration `719181c2` approvals; a registry Aggregate fallback
 does not qualify. These are reviewed local candidates, not permission to publish
 feature-branch artifacts or a substitute for main-source release qualification.
 Any runtime, dependency or other

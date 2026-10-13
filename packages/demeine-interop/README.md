@@ -80,6 +80,8 @@ application envelope schema or synthesized metadata on raw events.
   reject the adopted promise, not the synchronous `_sink` call. Command validation,
   id/type mutation, sink invocation and caller-visible settlement remain queued;
   adoption does not process commands early or assimilate the input a second time.
+  Its input type is `Command | PromiseLike<Command>`; its return remains a native
+  `Promise<CompatibleAggregate<S> | true>`. Custom typed thenables need no cast.
 - `_process` invokes its handler synchronously inside a native Promise executor;
   native resolution assimilates returned values, promises and thenables. Its native
   catch logs and replaces the pending array only for an object/function whose

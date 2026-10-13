@@ -27,7 +27,7 @@ async function run(label, args, expectTypeErrors = false) {
 }
 await run('install', ['npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund']);
 const source = `import { Queue, createDemeineBridge, type CompatibleAggregate, type CompatibleAggregateConstructor,
-  type CommandSink, type CommandHandler, type EventHandler } from '@redemeine/demeine-interop';
+  type Command, type CommandSink, type CommandHandler, type EventHandler } from '@redemeine/demeine-interop';
 const queue = new Queue();
 queue.once('probe', (value: number) => { void value; });
 queue.once(Symbol('probe'), () => {});
@@ -70,6 +70,12 @@ new Counter(undefined, { handle(aggregate) { aggregate._state.count++; } }, { ha
 new Base(undefined, { handle(aggregate) { aggregate._state.count++; } }, { handle(aggregate) { aggregate._state.count++; return aggregate; } });
 void counter._sink({ type: 'counter.increment.command', payload: {}, headers: { trace: 1 }, metadata: { origin: 'caller' } });
 counter._apply({ type: 'counter.incremented.event', payload: {}, headers: { trace: 1 }, metadata: { command: { id: 'caller' } } });
+const promisedCommand: PromiseLike<Command> = {
+  then: (fulfilled, rejected) => Promise.resolve<Command>({ type: 'counter.increment.command', payload: {}, aggregateId: counter.id }).then(fulfilled, rejected),
+};
+const generatedResult: Promise<CompatibleAggregate<State> | true> = counter._sink(promisedCommand);
+const authoredResult: Promise<CompatibleAggregate<State> | true> = new Base()._sink(promisedCommand);
+void generatedResult; void authoredResult;
 `;
 for (const extension of ['mts', 'cts']) await writeFile(resolve(output, `consumer.${extension}`), source);
 for (const [extension, runtime] of [['mts', 'mjs'], ['cts', 'cjs']]) await writeFile(resolve(output, `negative.${extension}`), `
@@ -82,6 +88,9 @@ counter._commandHandler.handle(new Other(), { type: 'command', payload: {} });
 const wrong: CommandHandler<{ label: string }> = { handle(aggregate) { aggregate._state.label.toUpperCase(); return aggregate; } };
 new Counter(undefined, undefined, wrong);
 new Base(undefined, undefined, wrong);
+declare const invalidCommand: PromiseLike<{ type: string; payload: number }>;
+counter._sink(invalidCommand);
+new Base()._sink(invalidCommand);
 `);
 const resolutions = [['NodeNext', 'NodeNext'], ['Preserve', 'Bundler']];
 const loaded = [];
@@ -105,9 +114,9 @@ for (const [module, moduleResolution] of resolutions) {
     loaded.push({ compiler, moduleResolution, files });
     const rejected = await run(`${compiler}-${moduleResolution}-wrong-state`, ['node', `node_modules/${compiler}/bin/tsc`, '-p', negativeConfig], true);
     const diagnostics = [...rejected.matchAll(/^negative\.(?:mts|cts)\(\d+,\d+\): error TS(\d+):/gm)];
-    assert.equal(diagnostics.length, 8, rejected);
-    assert.equal((rejected.match(/error TS/g) ?? []).length, 8, rejected);
-    assert.deepEqual(diagnostics.map(match => match[1]).sort(), ['2345', '2345', '2345', '2345', '2769', '2769', '2769', '2769']);
+    assert.equal(diagnostics.length, 12, rejected);
+    assert.equal((rejected.match(/error TS/g) ?? []).length, 12, rejected);
+    assert.deepEqual(diagnostics.map(match => match[1]).sort(), [...Array(8).fill('2345'), ...Array(4).fill('2769')]);
   }
 }
 const lock = JSON.parse(await readFile(resolve(output, 'package-lock.json')));

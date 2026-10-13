@@ -43,11 +43,15 @@ test('compiler crashes, baseline success and unexpected stderr refuse', () => {
 });
 
 test('exception is bound to the reviewed prerelease and legacy package versions', () => {
-  const reviewedHash = 'bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf';
+  const reviewedHash = '71a850cf17ab2e7c604aec6c127488f36e26902c794d2ca13573e0b1aeb03cd8';
   const aggregateHash = '93feb3fac8c8f41ad32049a5850adcd366c483c27513c0173e8f793720418844';
   assert.doesNotThrow(() => assertExceptionScope('1.0.0-pre.2', '1.3.0', reviewedHash, aggregateHash));
   for (const version of ['1.0.0', '1.0.0-pre.3', '2.0.0-pre.2']) assert.throws(() => assertExceptionScope(version, '1.3.0', reviewedHash, aggregateHash));
   assert.throws(() => assertExceptionScope('1.0.0-pre.2', '1.3.1', reviewedHash, aggregateHash));
+  assert.throws(
+    () => assertExceptionScope('1.0.0-pre.2', '1.3.0', 'bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf', aggregateHash),
+    /Changed artifact bytes/
+  );
   for (const hash of [undefined, '', '0'.repeat(64), '719181c2c7fe508eaf79de5253fe110a3cf62a6e26650ff58154ca41e1234cac']) {
     assert.throws(() => assertExceptionScope('1.0.0-pre.2', '1.3.0', hash, aggregateHash), /Changed artifact bytes/);
   }

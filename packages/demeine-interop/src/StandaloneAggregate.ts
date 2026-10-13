@@ -49,7 +49,7 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
     });
   }
 
-  _sink(commandToSink: Command | Promise<Command>): Promise<CompatibleAggregate<S> | true> {
+  _sink(commandToSink: Command | PromiseLike<Command>): Promise<CompatibleAggregate<S> | true> {
     // Adopt once across realms/thenable implementations; getters that throw reject
     // this promise, while command mutation and sink invocation remain FIFO work.
     const input = new Promise<Command>(resolve => resolve(commandToSink));

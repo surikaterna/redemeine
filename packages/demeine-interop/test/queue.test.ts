@@ -1,7 +1,34 @@
-import { type Command, type CompatibleAggregate, type CommandSink } from '../src';
+import { type Command, type CompatibleAggregate, type CommandSink, createDemeineBridge } from '../src';
+import { definition } from './fixture';
 import { command, deferred, implementations, type State } from './lifecycle.fixture';
 
 afterEach(() => jest.restoreAllMocks());
+
+test('typed PromiseLike input is adopted once and returns a native Promise', async () => {
+  const Bridge = createDemeineBridge(definition());
+  const calls: Command[] = [];
+  const aggregate = new Bridge({ sink: async (input, instance) => { calls.push(input); return instance; } });
+  const pending = deferred<Command>();
+  let adoptions = 0;
+  const thenable: PromiseLike<Command> = {
+    // biome-ignore lint/suspicious/noThenProperty: Exercise the public PromiseLike input contract without a cast.
+    then(fulfilled, rejected) {
+      adoptions++;
+      return pending.promise.then(fulfilled, rejected);
+    }
+  };
+  const first = aggregate._sink(thenable);
+  const secondCommand = { ...command(aggregate.id), id: 'second' };
+  const second = aggregate._sink(secondCommand);
+  const firstCommand = command(aggregate.id);
+  expect(calls).toEqual([]);
+  pending.resolve(firstCommand);
+  expect(first).toBeInstanceOf(Promise);
+  expect(await first).toBe(aggregate);
+  expect(await second).toBe(aggregate);
+  expect(adoptions).toBe(1);
+  expect(calls).toEqual([firstCommand, secondCommand]);
+});
 
 test.each([
   ['native', 'immediate'], ['native', 'delayed'], ['realm', 'immediate'], ['realm', 'delayed'],
