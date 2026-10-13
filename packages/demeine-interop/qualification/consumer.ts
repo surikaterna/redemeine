@@ -49,7 +49,10 @@ async function verifyMultiwordNaming() {
   for (const mode of ['default', 'targeted', 'override']) {
     const definition = createAggregate('order', { count: 0 })
       .events({ itemAdded: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
-      .commands(emit => ({ addItem: (_state, amount: number) => emit.itemAdded({ amount }) }));
+      .commands(emit => ({ addItem: {
+        pack: (amount: number) => ({ amount }),
+        handler: (_state: unknown, payload: { amount: number }) => emit.itemAdded(payload)
+      } }));
     const aggregate = (mode === 'targeted' ? definition.naming(namingStrategies.targeted)
       : mode === 'override' ? definition.overrideEventNames({ itemAdded: 'external.accepted.event' }) : definition).build();
     const Bridge = createDemeineBridge(aggregate);

@@ -86,8 +86,8 @@ future registry resolution.
 
 For the standalone major API, use `standalone-packed.mjs`, not the historical
 supplied-base/CLI helpers below. In a disposable snapshot run actual Changesets
-status and `pnpm run version:packages`, build interop, then run the existing
-`release:check-simple` with only the derived interop version selected. Do not
+status and `pnpm run version:packages`, build interop and aggregate, then run the existing
+`release:check-simple` with both derived versions selected. Do not
 version the feature worktree or overwrite previously qualified tarballs.
 
 From the worktree, under the release Node/pnpm/npm pins:
@@ -101,11 +101,13 @@ node packages/demeine-interop/qualification/standalone-packed.mjs \
 
 The output directory must not exist. This installs the exact candidate alongside
 the registry Aggregate baseline by default. For integrated naming qualification,
-the checked plan may additionally contain the actual Changesets-derived Aggregate
+the checked plan must additionally contain the actual Changesets-derived Aggregate
 tarball. Its hash, version agreement with interop's packed dev dependency and
 installed integrity are verified, and it replaces the old registry baseline only
 in this disposable consumer. The selected combination is recorded in `installed.json`.
 No registry lock or source package version is rewritten by this runner.
+The single-artifact mode is retained for historical baselines; it is not evidence
+for the new multiword-default naming contract exercised by the current consumer.
 
 The runner also creates
 an independent minimal consumer containing only the candidate and TS5.9.3/TS7.0.2.
