@@ -56,7 +56,8 @@ await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: tru
 } }, null, 2));
 await run('install', 'npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 if (allowLegacyException)
-  assertExceptionScope(artifact.manifest.version, JSON.parse(await readFile(resolve(consumer, 'node_modules/demeine/package.json'))).version, artifact.sha256);
+  assertExceptionScope(artifact.manifest.version, JSON.parse(await readFile(resolve(consumer, 'node_modules/demeine/package.json'))).version,
+    artifact.sha256, aggregateArtifact?.sha256);
 const ts = (await import(pathToFileURL(resolve(consumer, 'node_modules/typescript/lib/typescript.js')).href)).default;
 const permitted = spec => !/^(?:demeine(?:\/|$)|@redemeine\/mirage(?:\/|$)|(?:@types\/)?bluebird(?:\/|$)|node:events$)/.test(spec);
 function scanImports(text, filename) {

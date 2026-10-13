@@ -144,9 +144,16 @@ compatibility claim or an excuse to add forbidden typings or relax `skipLibCheck
 
 For the reviewed standalone **1.0.0-pre.2** candidate only, the operator approved
 an explicit exception for published **Demeine 1.3.0**'s missing Bluebird typings.
-It is bound to tarball SHA-256
-`719181c2c7fe508eaf79de5253fe110a3cf62a6e26650ff58154ca41e1234cac`,
-already checked against the actual packed bytes. Any runtime, dependency or other
+The reviewed integrated pair is bound to these tarball SHA-256 values:
+
+- Interop **1.0.0-pre.2**: `bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf`.
+- Aggregate **1.0.0-pre.3**: `93feb3fac8c8f41ad32049a5850adcd366c483c27513c0173e8f793720418844`.
+
+Both are checked against the actual packed bytes and installed integrity. This
+supersedes the pre-integration `719181c2` approval; a registry Aggregate fallback
+does not qualify. These are reviewed local candidates, not permission to publish
+feature-branch artifacts or a substitute for main-source release qualification.
+Any runtime, dependency or other
 artifact change requires renewed review before updating this approval fingerprint;
 the same package version or a new internally consistent plan is not approval.
 Append `--allow-legacy-bluebird-baseline` to the command above to apply it.

@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 
 export const legacyExceptionFlag = '--allow-legacy-bluebird-baseline';
 
-export function assertExceptionScope(version, legacyVersion, sha256) {
+export function assertExceptionScope(version, legacyVersion, sha256, aggregateSha256) {
   assert.equal(version, '1.0.0-pre.2', 'Legacy exception requires a newly reviewed scope for other candidates');
   assert.equal(legacyVersion, '1.3.0', 'Legacy exception is limited to published Demeine 1.3.0');
   assert.equal(
     sha256,
-    '719181c2c7fe508eaf79de5253fe110a3cf62a6e26650ff58154ca41e1234cac',
+    'bfc5c06950e67884d06c2abd682ec78e2821394d81add4c222621e918bb6c2cf',
     'Changed artifact bytes require renewed exception review; version equality is insufficient'
+  );
+  assert.equal(
+    aggregateSha256,
+    '93feb3fac8c8f41ad32049a5850adcd366c483c27513c0173e8f793720418844',
+    'Legacy exception requires the reviewed Aggregate artifact, not a registry fallback or replacement'
   );
 }
 
