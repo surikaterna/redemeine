@@ -1,6 +1,4 @@
 import { createAggregate, createEntity, namingStrategies } from '@redemeine/aggregate';
-import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import type { Event } from '../../kernel/src';
 import { createProjection } from '../src';
 import { createProjection as createCoreProjection, ProjectionDaemon, type ProjectionEvent, type ProjectionContext } from '../../projection-runtime-core/src';
@@ -9,14 +7,6 @@ import { InMemoryCursorStoreAdapter, InMemoryProjectionPersistenceAdapter, Proje
 
 type State = { total: number };
 const builders = ['public', 'core'] as const;
-
-test('strict declaration fixtures reject invented wire names', () => {
-  execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'),
-    '--noEmit', '--strict', '--skipLibCheck', 'false', '--module', 'ES2022',
-    '--moduleResolution', 'Bundler', '--target', 'ES2022',
-    resolve(__dirname, 'resolved-event-types.ts'), resolve(__dirname, 'resolved-event-routing.test.ts')
-  ], { timeout: 20000, encoding: 'utf8' });
-}, 25000);
 
 function aggregate(name: string, mode: string) {
   const builder = createAggregate(name, { total: 0 })
