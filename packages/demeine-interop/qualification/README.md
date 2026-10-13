@@ -130,6 +130,35 @@ Missing legacy declaration prerequisites remain a **blocked** gate (runner exits
 nonzero after completing independent runtime/browser gates), never a green strict
 compatibility claim or an excuse to add forbidden typings or relax `skipLibCheck`.
 
+### Approved prerelease exception (`redemeine-p169`)
+
+For the reviewed standalone **1.0.0-pre.2** candidate only, the operator approved
+an explicit exception for published **Demeine 1.3.0**'s missing Bluebird typings.
+It is bound to tarball SHA-256
+`719181c2c7fe508eaf79de5253fe110a3cf62a6e26650ff58154ca41e1234cac`,
+already checked against the actual packed bytes. Any runtime, dependency or other
+artifact change requires renewed review before updating this approval fingerprint;
+the same package version or a new internally consistent plan is not approval.
+Append `--allow-legacy-bluebird-baseline` to the command above to apply it.
+Without that flag the runner still exits nonzero. Test the policy with
+`node --test packages/demeine-interop/qualification/legacy-types-policy.test.mjs`.
+
+Both strict legacy compiler programs still run with `skipLibCheck: false`.
+Each must produce exactly one TS7016 at
+`demeine/lib/repository/Partition.interfaces.d.ts(1,21)` for module `bluebird`,
+identical to its Demeine-only baseline. Additional or different diagnostics,
+compiler termination, unexpected stderr, or other package versions refuse.
+All native declaration, runtime, real Repository/Tapeworm, rejection and browser
+gates remain mandatory. No Bluebird/type dependency is injected into the fixture.
+
+Reports retain the nonzero compiler statuses and raw diagnostics. A successful
+exception run is `passed_with_approved_exception`, **not** a strict legacy pass;
+`qualification-status.json` records `legacyStrictPassed: false`. This does not
+repair strict consumers of the published legacy library or certify every host.
+Aggregate results use native promises: Bluebird extension methods and its
+scheduling are not promised. The exception requires no upstream Demeine changes,
+does not close `redemeine-p169`, and grants no merge or publication authority.
+
 The full integration fixture then installs the candidate alongside
 public dependencies, compiles strict import/require declarations with TS5.9.3 and
 TS7.0.2, runs native ESM/CJS on Node24/26, runs all package tests against installed

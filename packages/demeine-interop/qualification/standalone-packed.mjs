@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, webcrypto } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { assertExceptionScope, classifyLegacyFailure, legacyExceptionFlag } from './legacy-types-policy.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const [artifactDirectory, factoryTypes, outputDirectory, nodeTypesVersion = '24.13.2'] = process.argv.slice(2);
-assert(artifactDirectory && factoryTypes && outputDirectory, 'Usage: standalone-packed.mjs ARTIFACT_DIR ACTUAL_FACTORY_TYPES FRESH_OUTPUT_DIR [HOST_NODE_TYPES]');
+const arguments_ = process.argv.slice(2);
+const allowLegacyException = arguments_.includes(legacyExceptionFlag);
+assert(arguments_.filter((argument) => argument === legacyExceptionFlag).length <= 1);
+const positional = arguments_.filter((argument) => argument !== legacyExceptionFlag);
+assert(
+  positional.length >= 3 && positional.length <= 4 && !positional.some((argument) => argument.startsWith('--')),
+  'Usage: standalone-packed.mjs ARTIFACT_DIR ACTUAL_FACTORY_TYPES FRESH_OUTPUT_DIR [HOST_NODE_TYPES] [--allow-legacy-bluebird-baseline]'
+);
+const [artifactDirectory, factoryTypes, outputDirectory, nodeTypesVersion = '24.13.2'] = positional;
 const output = resolve(outputDirectory);
 await mkdir(output);
 const consumer = resolve(output, 'consumer');
@@ -38,6 +46,8 @@ await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: tru
   '@types/jest': '29.5.14', jest: '29.7.0', 'ts-jest': '29.4.11', tsx: '4.21.0', esbuild: '0.25.12',
 } }, null, 2));
 await run('install', 'npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
+if (allowLegacyException)
+  assertExceptionScope(artifact.manifest.version, JSON.parse(await readFile(resolve(consumer, 'node_modules/demeine/package.json'))).version, artifact.sha256);
 const ts = (await import(pathToFileURL(resolve(consumer, 'node_modules/typescript/lib/typescript.js')).href)).default;
 const permitted = spec => !/^(?:demeine(?:\/|$)|@redemeine\/mirage(?:\/|$)|(?:@types\/)?bluebird(?:\/|$)|node:events$)/.test(spec);
 function scanImports(text, filename) {
@@ -98,14 +108,10 @@ for (const compiler of ['typescript', 'typescript7']) {
   const actual = await run(`${compiler}-legacy-types`, 'node', [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig-legacy.json'], true);
   const baseline = await run(`${compiler}-legacy-baseline`, 'node', [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig-legacy-baseline.json'], true);
   if (actual.status !== 0) {
-    assert(actual.status > 0 && baseline.status > 0, 'Unexpected legacy compiler termination');
-    assert.equal(actual.stdout, baseline.stdout, 'New diagnostics differ from the real legacy-only baseline');
-    assert.match(actual.stdout, /bluebird/);
-    legacyBlocks.push({ compiler, actualStatus: actual.status, baselineStatus: baseline.status,
-      classification: 'blocked: real legacy declaration prerequisites missing; not a strict compatibility pass', diagnostics: actual.stdout });
+    legacyBlocks.push({ compiler, ...classifyLegacyFailure(actual, baseline, allowLegacyException) });
   } else assert.equal(baseline.status, 0);
 }
-await writeFile(resolve(output, 'legacy-types-status.json'), JSON.stringify({ legacyBlocks }, null, 2));
+await writeFile(resolve(output, 'legacy-types-status.json'), JSON.stringify({ exceptionRequested: allowLegacyException, legacyBlocks }, null, 2));
 for (const version of ['24.20.0', '26.10.0']) {
   for (const format of ['mjs', 'cjs']) {
     for (const fixture of ['consumer', 'state-services']) await run(`runtime-${fixture}-${version}-${format}`, 'mise', [
@@ -153,5 +159,7 @@ for (const entry of installed) {
   else assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//);
 }
 await writeFile(resolve(output, 'installed.json'), JSON.stringify(installed, null, 2));
-console.log('Packed standalone types, runtime, lifecycle and browser gates passed; legacy strict declaration gate:', legacyBlocks.length ? 'BLOCKED' : 'PASS');
-if (legacyBlocks.length) process.exitCode = 2;
+const status = !legacyBlocks.length ? 'passed' : allowLegacyException ? 'passed_with_approved_exception' : 'blocked_legacy_declarations';
+await writeFile(resolve(output, 'qualification-status.json'), JSON.stringify({ status, upstreamIssue: 'redemeine-p169', legacyStrictPassed: legacyBlocks.length === 0 }, null, 2));
+console.log('Packed standalone types, runtime, lifecycle and browser gates passed; qualification:', status);
+if (legacyBlocks.length && !allowLegacyException) process.exitCode = 2;
