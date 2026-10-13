@@ -22,11 +22,20 @@ await mkdir(output);
 const consumer = resolve(output, 'consumer');
 await mkdir(consumer);
 const plan = JSON.parse(await readFile(resolve(artifactDirectory, 'plan.json')));
-assert.equal(plan.artifacts.length, 1);
-const artifact = plan.artifacts[0];
+assert(plan.artifacts.length >= 1 && plan.artifacts.length <= 2);
+assert.equal(new Set(plan.artifacts.map(entry => entry.manifest.name)).size, plan.artifacts.length);
+assert(plan.artifacts.every(entry => ['@redemeine/demeine-interop', '@redemeine/aggregate'].includes(entry.manifest.name)));
+const artifact = plan.artifacts.find(entry => entry.manifest.name === '@redemeine/demeine-interop');
+assert(artifact);
 assert.equal(artifact.manifest.name, '@redemeine/demeine-interop');
 const tarball = resolve(artifactDirectory, artifact.file);
 assert.equal(createHash('sha256').update(await readFile(tarball)).digest('hex'), artifact.sha256);
+const aggregateArtifact = plan.artifacts.find(entry => entry.manifest.name === '@redemeine/aggregate');
+const aggregateTarball = aggregateArtifact ? resolve(artifactDirectory, aggregateArtifact.file) : undefined;
+if (aggregateArtifact) {
+  assert.equal(createHash('sha256').update(await readFile(aggregateTarball)).digest('hex'), aggregateArtifact.sha256);
+  assert.equal(aggregateArtifact.manifest.version, artifact.manifest.devDependencies['@redemeine/aggregate']);
+}
 const gates = [];
 async function run(label, command, args, allowLegacyFailure = false) {
   const result = spawnSync(command, args, { cwd: consumer, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 180000 });
@@ -39,7 +48,7 @@ async function run(label, command, args, allowLegacyFailure = false) {
 }
 await run('minimal-types', 'node', [resolve(root, 'packages/demeine-interop/qualification/minimal-types.mjs'), tarball, resolve(output, 'minimal')]);
 await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies: {
-  '@redemeine/kernel': '0.2.0-pre.2', '@redemeine/aggregate': '0.2.0-pre.2', '@redemeine/demeine-interop': `file:${tarball}`,
+  '@redemeine/kernel': '0.2.0-pre.2', '@redemeine/aggregate': aggregateTarball ? `file:${aggregateTarball}` : '0.2.0-pre.2', '@redemeine/demeine-interop': `file:${tarball}`,
   demeine: '1.3.0', 'regenerator-runtime': '0.13.11', zod: '4.3.6', tapeworm: '0.5.0',
 }, devDependencies: {
   typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2', '@types/node': nodeTypesVersion,
@@ -156,6 +165,10 @@ const lock = JSON.parse(await readFile(resolve(consumer, 'package-lock.json')));
 const installed = ['@redemeine/kernel', '@redemeine/aggregate', '@redemeine/demeine-interop', '@types/node', 'p-queue', 'events', 'uuid'].map(name => ({ name, ...lock.packages[`node_modules/${name}`] }));
 for (const entry of installed) {
   if (entry.name === '@redemeine/demeine-interop') assert.equal(entry.integrity, artifact.integrity);
+  else if (entry.name === '@redemeine/aggregate' && aggregateArtifact) {
+    assert.equal(entry.integrity, aggregateArtifact.integrity);
+    assert.equal(entry.version, aggregateArtifact.manifest.version);
+  }
   else assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//);
 }
 await writeFile(resolve(output, 'installed.json'), JSON.stringify(installed, null, 2));

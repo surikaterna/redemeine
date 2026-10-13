@@ -1,4 +1,4 @@
-import { createAggregate } from '@redemeine/aggregate';
+import { createAggregate, namingStrategies } from '@redemeine/aggregate';
 import { createDemeineBridge, type CommandSink, type CompatibleAggregate } from '@redemeine/demeine-interop';
 import { createIdentity, type Event } from '@redemeine/kernel';
 
@@ -44,3 +44,27 @@ void counter.add(4).then(async result => {
   if (counter._state.count !== 6 || counter.getVersion() !== 3) throw new Error('no-payload shortcut evolution failed');
   console.log('qualified counter', counter._state.count);
 });
+
+async function verifyMultiwordNaming() {
+  for (const mode of ['default', 'targeted', 'override']) {
+    const definition = createAggregate('order', { count: 0 })
+      .events({ itemAdded: (state, event: Event<{ amount: number }>) => { state.count += event.payload.amount; } })
+      .commands(emit => ({ addItem: (_state, amount: number) => emit.itemAdded({ amount }) }));
+    const aggregate = (mode === 'targeted' ? definition.naming(namingStrategies.targeted)
+      : mode === 'override' ? definition.overrideEventNames({ itemAdded: 'external.accepted.event' }) : definition).build();
+    const Bridge = createDemeineBridge(aggregate);
+    const live = new Bridge();
+    await live.addItem(3);
+    const expected = mode === 'targeted' ? 'order.item.added.event'
+      : mode === 'override' ? 'external.accepted.event' : 'order.item_added.event';
+    const events = await live.getUncommittedEventsAsync();
+    if (events.length !== 1 || events[0]?.type !== expected) throw new Error(`Wrong ${mode} wire name`);
+    const replay = new Bridge();
+    replay.id = live.id;
+    await replay._rehydrate(events, 1);
+    if (replay._state.count !== 3 || replay.getVersion() !== 1 || replay.getUncommittedEvents().length !== 0) {
+      throw new Error(`Incorrect ${mode} replay`);
+    }
+  }
+}
+void verifyMultiwordNaming();

@@ -100,6 +100,14 @@ node packages/demeine-interop/qualification/standalone-packed.mjs \
 ```
 
 The output directory must not exist. This installs the exact candidate alongside
+the registry Aggregate baseline by default. For integrated naming qualification,
+the checked plan may additionally contain the actual Changesets-derived Aggregate
+tarball. Its hash, version agreement with interop's packed dev dependency and
+installed integrity are verified, and it replaces the old registry baseline only
+in this disposable consumer. The selected combination is recorded in `installed.json`.
+No registry lock or source package version is rewritten by this runner.
+
+The runner also creates
 an independent minimal consumer containing only the candidate and TS5.9.3/TS7.0.2.
 That consumer checks both `.mts`/`.cts` with NodeNext and browser-oriented Bundler
 resolution, `strict: true`, `skipLibCheck: false`, `types: []` and `typeRoots: []`.
