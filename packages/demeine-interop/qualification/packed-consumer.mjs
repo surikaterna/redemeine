@@ -19,7 +19,7 @@ await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: tru
   '@redemeine/aggregate': `file:${tarball('aggregate')}`,
   '@redemeine/demeine-interop': `file:${tarball('demeine-interop')}`,
   demeine: '1.3.0', 'regenerator-runtime': '0.13.11', zod: '4.3.6',
-}, devDependencies: { typescript: '5.9.3', '@types/node': '24.13.2', '@types/bluebird': '3.5.42' } }, null, 2));
+}, devDependencies: { typescript: '5.9.3', '@types/node': '24.13.2' } }, null, 2));
 run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 const source = resolve(root, 'packages/demeine-interop/qualification/consumer.ts');
 await copyFile(source, resolve(consumer, 'consumer.cts'));

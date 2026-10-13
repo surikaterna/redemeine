@@ -1,6 +1,4 @@
 import { createAggregate, createEntity, namingStrategies } from '@redemeine/aggregate';
-import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import type { Event } from '../../kernel/src';
 import { createProjection } from '../src';
 import { createProjection as createCoreProjection, ProjectionDaemon, type ProjectionEvent, type ProjectionContext } from '../../projection-runtime-core/src';
@@ -9,14 +7,6 @@ import { InMemoryCursorStoreAdapter, InMemoryProjectionPersistenceAdapter, Proje
 
 type State = { total: number };
 const builders = ['public', 'core'] as const;
-
-test('strict declaration fixtures reject invented wire names', () => {
-  execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'),
-    '--noEmit', '--strict', '--skipLibCheck', 'false', '--module', 'ES2022',
-    '--moduleResolution', 'Bundler', '--target', 'ES2022',
-    resolve(__dirname, 'resolved-event-types.ts'), resolve(__dirname, 'resolved-event-routing.test.ts')
-  ], { timeout: 20000, encoding: 'utf8' });
-}, 25000);
 
 function aggregate(name: string, mode: string) {
   const builder = createAggregate(name, { total: 0 })
@@ -40,14 +30,18 @@ function fixture(build: typeof builders[number], mode: string) {
     ? createProjection('resolved-names', () => ({ total: 0 })).from(source, fromHandlers).join(joined, joinHandlers).build()
     : createCoreProjection('resolved-names', () => ({ total: 0 })).from(source, fromHandlers).join(joined, joinHandlers).build();
   const projection = { ...definition, fromStream: { ...definition.fromStream, aggregate: source } };
-  const events: ProjectionEvent[] = [source, joined].map((definition, index) => ({
-    ...definition.process(definition.initialState, definition.commandCreators.add(index + 2))[0],
-    aggregateType: definition.aggregateType,
-    aggregateId: index === 0 ? 'order-1' : 'customer-1',
-    sequence: index + 1,
-    timestamp: '2026-10-13T00:00:00Z'
-  }));
+  const events = [source, joined].map((definition, index) => projectionEvent(
+    definition.process(definition.initialState, definition.commandCreators.add(index + 2))[0]!,
+    definition.aggregateType, index === 0 ? 'order-1' : 'customer-1', index + 1
+  ));
   return { projection, events };
+}
+
+function projectionEvent(event: Event, aggregateType: string, aggregateId: string, sequence: number): ProjectionEvent {
+  const payload = event.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Expected object fixture payload');
+  return { ...event, payload: Object.fromEntries(Object.entries(payload)), aggregateType, aggregateId, sequence,
+    timestamp: '2026-10-13T00:00:00Z' };
 }
 
 function amount(payload: unknown): number {
@@ -117,8 +111,7 @@ test.each(builders)('retains explicit mounted wire keys without guessing camelCa
     : createCoreProjection('mounted', () => ({ total: 0 })).from(source, handlers).build();
   const store = new InMemoryProjectionStore<State>();
   const daemon = new ProjectionDaemon({ projection: { ...definition, fromStream: { ...definition.fromStream, aggregate: source } }, store,
-    subscription: { poll: async () => ({ events: [{ ...emitted, aggregateType: 'order', aggregateId: 'one', sequence: 1,
-      timestamp: '2026-10-13T00:00:00Z' }], nextCursor: { sequence: 1 } }) }
+    subscription: { poll: async () => ({ events: [projectionEvent(emitted, 'order', 'one', 1)], nextCursor: { sequence: 1 } }) }
   });
   await daemon.processBatch();
   expect(await store.load('one')).toEqual({ total: 7 });

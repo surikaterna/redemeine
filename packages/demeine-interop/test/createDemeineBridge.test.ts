@@ -7,12 +7,13 @@ import type { CommandSink, CommandHandler, EventHandler } from 'demeine';
 import { createDemeineBridge, type BridgeEvent } from '../src';
 import { definition, fixture } from './fixture';
 
-test('real base owns UUID, independent state, live identity/type/state, sink and queue', async () => {
+test('standalone owns UUID, independent state, live identity/type/state, sink and queue', async () => {
   const { Bridge, process, apply } = fixture();
   const sink: CommandSink = { sink: jest.fn((command, aggregate) => aggregate._process(command)) };
   const aggregate = new Bridge(sink);
   const other = new Bridge();
-  expect(aggregate).toBeInstanceOf(Aggregate);
+  expect(aggregate).not.toBeInstanceOf(Aggregate);
+  expect(aggregate.id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
   expect(aggregate.id).not.toBe(other.id);
   expect(aggregate._state).not.toBe(other._state);
   aggregate.id = 'late';
@@ -85,10 +86,11 @@ test('malformed services and ambiguous/reserved generated names fail fast', () =
   }
   for (const commands of [{ add: '$stream.delete.command' }, { add: 'x.add.command', duplicate: 'y.add.command' }]) {
     const built = definition();
-    expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands } }, { AggregateBase: Aggregate })).toThrow('collision');
+    expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands } })).toThrow('collision');
   }
   const built = definition();
-  expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands: { delete: 'x.remove.command' } } }, { AggregateBase: Aggregate })).toThrow('collision');
+  expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands: { delete: 'x.remove.command' } } })).toThrow('collision');
+  expect(() => Reflect.apply(createDemeineBridge, undefined, [built, { AggregateBase: Aggregate }])).toThrow('AggregateBase is no longer supported');
 });
 
 test.each(['then', '_sink', '_process', '_apply', '_rehydrate', 'delete', 'getUncommittedEventsAsync', '_commandQueue'])(
@@ -98,7 +100,7 @@ test.each(['then', '_sink', '_process', '_apply', '_rehydrate', 'delete', 'getUn
       .events({ added: (state, _event: Event<Record<string, never>>) => { state.count++; } })
       .commands(emit => ({ [name]: { pack: () => ({}), handler: () => { executed(); return emit.added({}); } } }))
       .build();
-    expect(() => createDemeineBridge(built, { AggregateBase: Aggregate }))
+    expect(() => createDemeineBridge(built))
       .toThrow(name === 'then' ? 'Legacy method collision: then' : 'Legacy method collision:');
     expect(executed).not.toHaveBeenCalled();
   },
@@ -151,7 +153,7 @@ test('legacy nested/snake-case dispatch names work with actual Default handlers'
     process: () => [{ type: 'legacy.counter_added.event' as const, payload: { amount: 3 } }],
     apply: () => ({ count: 3, items: [] }),
   };
-  const Bridge = createDemeineBridge(remapped, { AggregateBase: Aggregate });
+  const Bridge = createDemeineBridge(remapped);
   const aggregate = new Bridge(null, new DefaultEventHandler(), new DefaultCommandHandler());
   await aggregate.add(3);
   expect(aggregate._state.count).toBe(3);
@@ -162,7 +164,7 @@ test('unknown replay preserves the real builder warning, same state reference an
   const built = definition();
   const process = jest.spyOn(built, 'process');
   const envelope = jest.fn((event: BridgeEvent) => event);
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const Bridge = createDemeineBridge(built, { envelope });
   const aggregate = new Bridge();
   const state = aggregate._state;
   const event: Event & { aggregateId: string } = { id: 'replay', type: 'counter.unmatched.event', aggregateId: aggregate.id, payload: {} };
@@ -196,7 +198,7 @@ test('strict builder unmatched policy propagates its exact error once without fa
   const apply = jest.spyOn(built, 'apply');
   const process = jest.spyOn(built, 'process');
   const envelope = jest.fn((event: BridgeEvent) => event);
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const Bridge = createDemeineBridge(built, { envelope });
   const aggregate = new Bridge();
   const state = aggregate._state;
   await expect(aggregate._rehydrate([{ type: 'strict.unknown.event', aggregateId: aggregate.id, payload: {} }])).rejects.toBe(error);
@@ -213,7 +215,7 @@ test('strict builder unmatched policy propagates its exact error once without fa
 test('known replay evolves once and reserved deletion bypasses the builder without resetting state', async () => {
   const { built, apply, process } = fixture();
   const envelope = jest.fn((event: BridgeEvent) => event);
-  const Bridge = createDemeineBridge(built, { AggregateBase: Aggregate, envelope });
+  const Bridge = createDemeineBridge(built, { envelope });
   const aggregate = new Bridge();
   const deleted = jest.spyOn(aggregate, 'applyDeleted');
   const event = { type: 'counter.added.event', aggregateId: aggregate.id, payload: { amount: 4 } };
