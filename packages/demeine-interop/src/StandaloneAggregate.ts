@@ -42,7 +42,7 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
       resolve(this._commandHandler.handle(this, command) as CompatibleAggregate<S>);
     }).catch((reason: unknown) => {
       if (isOperational(reason)) {
-        console.error('Failed to process command', command, reason);
+        console.error('Failed to process command: operational error');
         this.clearUncommittedEvents();
       }
       throw reason;

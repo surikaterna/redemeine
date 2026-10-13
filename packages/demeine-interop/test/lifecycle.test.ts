@@ -139,6 +139,23 @@ test('native process invokes synchronously, assimilates results and has no promi
 });
 
 const throwingMarker = Object.defineProperty({}, 'isOperational', { get() { throw new Error('marker'); } });
+test('operational logging does not expose command data or rejection details', async () => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const previous = aggregate.getUncommittedEvents();
+  const input = { ...command(aggregate.id), payload: { secret: 'payload' }, headers: { authorization: 'secret' }, metadata: { customer: 'private' } };
+  const reason = Object.assign(new Error('sensitive vendor response'), { isOperational: true });
+  Reflect.set(aggregate, '_commandHandler', { handle: () => { throw reason; } });
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  await expect(aggregate._process(input)).rejects.toBe(reason);
+  expect(log.mock.calls).toEqual([['Failed to process command: operational error']]);
+  expect(previous).toHaveLength(1);
+  expect(aggregate.getUncommittedEvents()).toEqual([]);
+  expect(aggregate.getUncommittedEvents()).not.toBe(previous);
+  expect(aggregate.getVersion()).toBe(1);
+});
+
 test.each(['foreign promise', 'thenable'])('native process assimilates rejecting %s without replacing its reason', async kind => {
   const Bridge = createDemeineBridge(definition());
   const aggregate = new Bridge(null, { handle() {} });

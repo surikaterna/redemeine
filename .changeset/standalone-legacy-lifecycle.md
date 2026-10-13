@@ -24,3 +24,5 @@ test dependencies, including its typings. Handler invocation remains synchronous
 only an exact operational-error marker triggers pending-array replacement, while
 the original rejection and state/version are preserved. Native scheduling replaces
 the previous library scheduling; no promise-extension methods are emulated.
+Operational-error logs contain a fixed message, not command data or rejection
+details; callers still receive the original rejection for host-controlled handling.
