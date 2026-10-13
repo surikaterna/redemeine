@@ -33,7 +33,8 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection/test --testPathIgnorePatterns='.*e2e.*|.*integration.*|.*e5-1.*'",
+    "test": "pnpm run test:types && pnpm exec jest --config ../../jest.config.js --roots packages/projection/test --testPathIgnorePatterns='.*e2e.*|.*integration.*|.*e5-1.*'",
+    "test:types": "tsc --noEmit --strict --skipLibCheck false --module ES2022 --moduleResolution Bundler --target ES2022 test/resolved-event-types.ts test/resolved-event-routing.test.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {

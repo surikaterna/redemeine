@@ -1,0 +1,205 @@
+import { runInNewContext } from 'node:vm';
+import { createDemeineBridge, type Event } from '../src';
+import { definition } from './fixture';
+import { command, event, implementations } from './lifecycle.fixture';
+
+afterEach(() => jest.restoreAllMocks());
+
+for (const [label, Constructor] of implementations) {
+  test(`${label}: validation assigns UUID first, failed application does not count and successful events retain identity`, () => {
+    const handle = jest.fn();
+    const aggregate = new Constructor(null, { handle });
+    const invalid = event('wrong');
+    expect(() => aggregate._apply(invalid, true)).toThrow('event is missing data');
+    expect(invalid.id).toMatch(/^[a-f0-9-]{36}$/);
+    expect(handle).not.toHaveBeenCalled();
+    const accepted = event(aggregate.id);
+    aggregate._version = -1;
+    expect(aggregate._apply(accepted, true)).toBe(aggregate);
+    expect(aggregate.getVersion()).toBe(1);
+    expect(aggregate.getUncommittedEvents()[0]).toBe(accepted);
+    handle.mockImplementationOnce(() => { throw new Error('failed evolution'); });
+    expect(() => aggregate._apply(event(aggregate.id), true)).toThrow('failed evolution');
+    expect(aggregate.getVersion()).toBe(1);
+    expect(aggregate.getUncommittedEvents()).toEqual([accepted]);
+  });
+
+  test(`${label}: pending arrays and snapshots are live references; clear replaces rather than mutates`, () => {
+    const aggregate = new Constructor(null, { handle() {} });
+    const snapshot = { count: 7, items: ['factory'] };
+    aggregate._state = snapshot;
+    expect(aggregate._getSnapshot()).toBe(snapshot);
+    const pending = aggregate.getUncommittedEvents();
+    const accepted = event(aggregate.id);
+    aggregate._apply(accepted, true);
+    expect(pending[0]).toBe(accepted);
+    const empty = aggregate.clearUncommittedEvents();
+    expect(empty).toBe(aggregate.getUncommittedEvents());
+    expect(empty).toEqual([]);
+    expect(empty).not.toBe(pending);
+    expect(pending).toEqual([accepted]);
+    expect(aggregate.getVersion()).toBe(1);
+  });
+
+  test.each([undefined, 0, -1, 7])(`${label}: replay version %s preserves snapshot identity and never buffers`, async version => {
+    const handle = jest.fn();
+    const aggregate = new Constructor(null, { handle });
+    const snapshot = { count: 9, items: [] };
+    await aggregate._rehydrate([event(aggregate.id), event(aggregate.id)], version, snapshot);
+    expect(handle).toHaveBeenCalledTimes(2);
+    expect(aggregate._state).toBe(snapshot);
+    expect(aggregate.getVersion()).toBe(version || 2);
+    expect(aggregate.getUncommittedEvents()).toEqual([]);
+    await aggregate._rehydrate([], 0);
+    expect(aggregate.getVersion()).toBe(version || 2);
+    expect(aggregate._getSnapshot()).toBe(snapshot);
+  });
+
+  test(`${label}: replay yields at indices zero and one hundred, not before applying them`, async () => {
+    const aggregate = new Constructor(null, { handle() {} });
+    const yielded: number[] = [];
+    const immediate = global.setImmediate;
+    const spy = jest.spyOn(global, 'setImmediate').mockImplementation(callback => {
+      yielded.push(aggregate.getVersion());
+      return immediate(callback);
+    });
+    try {
+      await aggregate._rehydrate(Array.from({ length: 201 }, () => event(aggregate.id)));
+      expect(yielded).toEqual([1, 101, 201]);
+    } finally { spy.mockRestore(); }
+  });
+
+  test.each(['throw', 'native rejection', 'operational'] as const)(`${label}: %s only clears if operational; no rollback or fallback`, async failure => {
+    const aggregate = new Constructor(null, { handle() {} });
+    aggregate._apply(event(aggregate.id), true);
+    const previous = aggregate.getUncommittedEvents();
+    const error = failure === 'operational' ? Object.assign(new Error('operational'), { isOperational: true }) : new Error('ordinary');
+    const handle = jest.fn(() => {
+      if (failure === 'native rejection') return Promise.reject(error);
+      throw error;
+    });
+    Reflect.set(aggregate, '_commandHandler', { handle });
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(aggregate._process(command(aggregate.id))).rejects.toBe(error);
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(aggregate.getVersion()).toBe(1);
+    expect(previous).toHaveLength(1);
+    if (failure === 'operational') {
+      expect(aggregate.getUncommittedEvents()).not.toBe(previous);
+      expect(aggregate.getUncommittedEvents()).toEqual([]);
+      if (label === 'standalone') expect(log).toHaveBeenCalledTimes(1);
+    } else {
+      expect(aggregate.getUncommittedEvents()).toBe(previous);
+      expect(log).not.toHaveBeenCalled();
+    }
+  });
+
+  test(`${label}: direct process is not queued and assimilates untyped result without replacing it`, async () => {
+    const aggregate = new Constructor();
+    const queue = jest.spyOn(aggregate._commandQueue, 'queueCommand');
+    for (const result of [undefined, { arbitrary: true }, Promise.resolve('settled')]) {
+      Reflect.set(aggregate, '_commandHandler', { handle: () => result });
+      await expect(aggregate._process(command(aggregate.id))).resolves.toBe(await result);
+    }
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  test(`${label}: partial replay preserves earlier events and state side effects on a later failure`, async () => {
+    let applied = 0;
+    const aggregate = new Constructor(null, { handle() { if (++applied === 2) throw new Error('second'); } });
+    const events: Event[] = [event(aggregate.id), event(aggregate.id), event(aggregate.id)];
+    await expect(aggregate._rehydrate(events, 99)).rejects.toThrow('second');
+    expect(applied).toBe(2);
+    expect(aggregate.getVersion()).toBe(1);
+    expect(aggregate.getUncommittedEvents()).toEqual([]);
+  });
+}
+
+test('native process invokes synchronously, assimilates results and has no promise extensions', async () => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge();
+  const foreign = runInNewContext('Promise.resolve("foreign")');
+  let assimilations = 0;
+  const thenable = Object.defineProperty({}, 'then', { value(resolve: (value: string) => void) {
+    assimilations++;
+    resolve('thenable');
+  } });
+  for (const [value, expected] of [[aggregate, aggregate], [Promise.resolve('native'), 'native'], [foreign, 'foreign'], [thenable, 'thenable']]) {
+    const handle = jest.fn(() => value);
+    Reflect.set(aggregate, '_commandHandler', { handle });
+    const result = aggregate._process(command(aggregate.id));
+    expect(handle).toHaveBeenCalledTimes(1);
+    expect(result).toBeInstanceOf(Promise);
+    expect(result.constructor).toBe(Promise);
+    expect('error' in result).toBe(false);
+    expect('nodeify' in result).toBe(false);
+    await expect(result).resolves.toBe(expected);
+  }
+  expect(assimilations).toBe(1);
+});
+
+const throwingMarker = Object.defineProperty({}, 'isOperational', { get() { throw new Error('marker'); } });
+test('operational logging does not expose command data or rejection details', async () => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const previous = aggregate.getUncommittedEvents();
+  const input = { ...command(aggregate.id), payload: { secret: 'payload' }, headers: { authorization: 'secret' }, metadata: { customer: 'private' } };
+  const reason = Object.assign(new Error('sensitive vendor response'), { isOperational: true });
+  Reflect.set(aggregate, '_commandHandler', { handle: () => { throw reason; } });
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  await expect(aggregate._process(input)).rejects.toBe(reason);
+  expect(log.mock.calls).toEqual([['Failed to process command: operational error']]);
+  expect(previous).toHaveLength(1);
+  expect(aggregate.getUncommittedEvents()).toEqual([]);
+  expect(aggregate.getUncommittedEvents()).not.toBe(previous);
+  expect(aggregate.getVersion()).toBe(1);
+});
+
+test.each(['foreign promise', 'thenable'])('native process assimilates rejecting %s without replacing its reason', async kind => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const pending = aggregate.getUncommittedEvents();
+  const reason = new Error('original rejection');
+  const returned = kind === 'foreign promise' ? runInNewContext('Promise.reject(reason)', { reason })
+    : Object.defineProperty({}, 'then', { value(_resolve: unknown, reject: (reason: unknown) => void) { reject(reason); } });
+  Reflect.set(aggregate, '_commandHandler', { handle: () => returned });
+  await expect(aggregate._process(command(aggregate.id))).rejects.toBe(reason);
+  expect(aggregate.getUncommittedEvents()).toBe(pending);
+  expect(aggregate.getVersion()).toBe(1);
+});
+
+const reasons: [string, unknown, boolean][] = [
+  ['marked error', Object.assign(new Error('marked'), { isOperational: true }), true],
+  ['marked object', { isOperational: true }, true],
+  ['marked function', Object.assign(() => {}, { isOperational: true }), true],
+  ['foreign marked error', runInNewContext('Object.assign(new Error("foreign"), {isOperational:true})'), true],
+  ['ordinary error', new Error('ordinary'), false], ['unmarked', {}, false],
+  ['false marker', { isOperational: false }, false], ['truthy marker', { isOperational: 'true' }, false],
+  ['numeric marker', { isOperational: 1 }, false], ['throwing getter', throwingMarker, false],
+  ['throwing proxy', new Proxy({}, { get() { throw new Error('proxy'); } }), false],
+  ['null', null, false], ['undefined', undefined, false], ['string', 'reason', false],
+  ['number', 1, false], ['boolean', true, false], ['symbol', Symbol('reason'), false],
+];
+
+test.each(reasons)('native process preserves %s and clears only an exact operational marker', async (_label, reason, operational) => {
+  const Bridge = createDemeineBridge(definition());
+  const aggregate = new Bridge(null, { handle() {} });
+  aggregate._apply(event(aggregate.id), true);
+  const state = aggregate._state;
+  const previous = aggregate.getUncommittedEvents();
+  const clear = jest.spyOn(aggregate, 'clearUncommittedEvents');
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  Reflect.set(aggregate, '_commandHandler', { handle: () => Promise.reject(reason) });
+  await expect(aggregate._process(command(aggregate.id))).rejects.toBe(reason);
+  expect(clear).toHaveBeenCalledTimes(operational ? 1 : 0);
+  expect(log).toHaveBeenCalledTimes(operational ? 1 : 0);
+  expect(aggregate._state).toBe(state);
+  expect(aggregate.getVersion()).toBe(1);
+  expect(previous).toHaveLength(1);
+  if (operational) {
+    expect(aggregate.getUncommittedEvents()).not.toBe(previous);
+    expect(aggregate.getUncommittedEvents()).toEqual([]);
+  } else expect(aggregate.getUncommittedEvents()).toBe(previous);
+});

@@ -168,6 +168,8 @@ describe('createAggregate API coverage', () => {
 
     expect(afterReturn.orderLines[0].qty).toBe(5);
     expect(afterReturn.returnLines[0].status).toBe('APPROVED');
+    expect(orderEvents[0].type).toBe('order.order_lines.updated.event');
+    expect(returnEvents[0].type).toBe('order.return_lines.updated.event');
   });
 
   test('mixins support entityList/entityMap/valueObjectList/valueObjectMap mounts', () => {
@@ -289,6 +291,8 @@ describe('createAggregate API coverage', () => {
     const command = aggregate.commandCreators.linesPartsChangeValue({ id: 'p1', value: 99 });
     const emitted = aggregate.process(aggregate.initialState, command as any);
 
+    expect(command.type).toBe('order.lines_parts_change_value.command');
+    expect(emitted[0].type).toBe('order.lines.parts_value_changed.event');
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'part-command', level: 2 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'part-event', level: 2 });
   });
@@ -333,6 +337,9 @@ describe('createAggregate API coverage', () => {
     const command = aggregate.commandCreators.linesUpdateQty({ id: 'l1', qty: 7 });
     const emitted = aggregate.process(aggregate.initialState, command as any);
 
+    expect(command.type).toBe('order.lines_update_qty.command');
+    expect(emitted[0].type).toBe('order.lines.qty_updated.event');
+    expect(aggregate.apply(aggregate.initialState, emitted[0]).lines[0].qty).toBe(7);
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'mixin-mounted-entity-command', level: 1 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'mixin-mounted-entity-event', level: 1 });
   });

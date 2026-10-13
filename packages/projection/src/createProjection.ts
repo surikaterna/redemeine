@@ -1,4 +1,5 @@
 import type { ProjectionDeduplicationStrategy } from './deduplication';
+import { resolveEventHandlers } from './resolvedEventHandlers';
 import { defaultIdentity, inherit, isInheritEntry, isInheritExtended } from './inherit';
 import type {
   AggregateStateOf,
@@ -87,7 +88,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
         resolved[key] = value as ProjectionHandler<THandlerState>;
       }
     }
-    return resolved;
+    return resolveEventHandlers(aggregate, resolved);
   }
 
   private _assertMirrorable<THandlerState>(
@@ -133,7 +134,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     for (const [key, handler] of Object.entries(handlers)) {
       if (handler) handlersMap[key] = handler as ProjectionHandler<TState>;
     }
-    this._joinStreams.push({ aggregate, handlers: handlersMap });
+    this._joinStreams.push({ aggregate, handlers: resolveEventHandlers(aggregate, handlersMap) });
     return this;
   }
 
