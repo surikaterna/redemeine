@@ -2,7 +2,7 @@ import { singular } from '@redemeine/aggregate';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { readProperty } from '../runtimeDefinition';
-import { readonlyTraps, readonlyValue } from './readonlyView';
+import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
 function makeMapItemProxy(path: string[], prefix: string[], key: string, context: InvocationContext, ctx: ProxyContext): unknown {
   const name = path.at(-1)!;
@@ -16,6 +16,8 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, context
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {
+      const protocol = readonlyObjectMember(property);
+      if (protocol) return protocol;
       if (typeof property !== 'string' || property === 'then') return undefined;
       const entity = resolveState();
       if (Object.hasOwn(entity, property)) return readonlyValue(readProperty(entity, property));
@@ -29,9 +31,9 @@ export function makeMapProxy(path: string[], prefix: string[], _mount: MountMeta
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {
-      if (typeof property !== 'string') return undefined;
+      if (typeof property !== 'string') return readonlyObjectMember(property);
       const map = ctx.resolvePath(path);
-      if (!map || typeof map !== 'object' || !Object.hasOwn(map, property)) return undefined;
+      if (!map || typeof map !== 'object' || !Object.hasOwn(map, property)) return readonlyObjectMember(property);
       return makeMapItemProxy(path, prefix, property, context, ctx);
     },
     ownKeys: () => Object.keys(ctx.resolvePath(path) ?? {}),

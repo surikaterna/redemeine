@@ -4,6 +4,7 @@ import type { AggregateSelectorsMap } from '../types/aggregate';
 import type { GenericCommandMap } from '../redemeineComponent';
 import { createEmitProxy } from '../proxies/createEmitProxy';
 import { createCommandContextProxy } from '../proxies/createCommandContextProxy';
+import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
 
 export type MountResult<TMeta> = {
     mounts: Record<string, MountedStructureMetadata>;
@@ -68,17 +69,7 @@ export function mountEntities<S, TMeta>(
             scopedProjectorByEventType[scopedEventType] = entityEvents[eventKey];
         });
 
-        // Selector shadowing prevention proxy
-        const entitySelectors = entity.selectors || {};
-        const mergedSelectors = new Proxy({ ...entitySelectors, root: allSelectors }, {
-            get: (target: Record<string, unknown>, prop: string) => {
-                if (prop in entitySelectors && prop in allSelectors && prop !== 'root') {
-                    console.warn(`[Selector Shadowing]: entity "${mountName}" and root both define "${prop}". Use "selectors.root.${prop}" to access the root selector.`);
-                }
-                if (prop in target) return target[prop as keyof typeof target];
-                return allSelectors[prop as keyof typeof allSelectors];
-            }
-        });
+        const mergedSelectors = entitySelectorContext(entity.selectors || {}, allSelectors, mountName);
 
         const entityEmit = createEmitProxy(aggregateName, allEventOverrides, namingStrategy, entityPath);
         const entityCommands = entity.commandFactory(entityEmit, {
@@ -86,6 +77,7 @@ export function mountEntities<S, TMeta>(
             commands: createCommandContextProxy<Record<string, unknown>>()
         });
         mounts[mountName]!.commandNames = Object.keys(entityCommands);
+        mounts[mountName]!.getRoleCommandNames = createRoleCommandResolver(entityEmit, allSelectors, mountName);
         const entityCommandNameOverrides = entity.commandOverrides || {};
         const mountCommandNameOverrides = {
             ...((mountOverrides && mountOverrides.commandOverrides) || {}),

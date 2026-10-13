@@ -3,7 +3,7 @@ import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findEntityInCollection } from './entityCache';
 import { readProperty } from '../runtimeDefinition';
-import { readonlyArrayMember, readonlyTraps, readonlyValue } from './readonlyView';
+import { readonlyArrayMember, readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
 function identityValue(value: unknown, mount: string): string | number {
   if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) return value;
@@ -37,6 +37,8 @@ export function makeEntityMirageProxy(path: string[], prefix: string[], selectio
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {
+      const protocol = readonlyObjectMember(property);
+      if (protocol) return protocol;
       if (typeof property !== 'string' || property === 'then') return undefined;
       const entity = resolveState();
       if (Object.hasOwn(entity, property)) return readonlyValue(readProperty(entity, property));

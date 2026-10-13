@@ -9,6 +9,13 @@ export const readonlyTraps = {
   defineProperty: refuseMutation, setPrototypeOf: refuseMutation
 };
 
+export function readonlyObjectMember(property: PropertyKey): unknown {
+  if (property === Symbol.toPrimitive) return () => '[object Object]';
+  if (property === 'toString') return Object.prototype.toString;
+  if (property === 'valueOf') return Object.prototype.valueOf;
+  return undefined;
+}
+
 const mutators = new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']);
 
 export function readonlyArrayMember(items: readonly unknown[], property: PropertyKey): unknown {

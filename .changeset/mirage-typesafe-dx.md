@@ -25,3 +25,7 @@ Event-count versioning and documented partial-failure semantics remain unchanged
 dispatch/save concurrency and production data migration are not implemented here.
 The test-depot adapter now drains events through public Mirage helpers instead
 of mutating its private core through a symbol.
+
+Preserve safe object coercion on readonly proxies. Resolve subset-role command
+names with real Aggregate construction contexts and mount-local caching rather
+than empty placeholder contexts, preserving explicit subset-role bindings.

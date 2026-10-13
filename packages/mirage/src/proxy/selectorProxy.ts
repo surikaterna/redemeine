@@ -6,20 +6,6 @@ import { selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
 import { invoke, readProperty } from '../runtimeDefinition';
 import { readonlyArrayMember, readonlyTraps } from './readonlyView';
 
-const roleCommandCache = new WeakMap<object, readonly string[]>();
-
-function roleCommands(role: unknown): readonly string[] {
-  if (!role || typeof role !== 'object') throw new Error('Invalid selector role');
-  const cached = roleCommandCache.get(role);
-  if (cached) return cached;
-  const emit = new Proxy({}, { get: () => () => ({ type: '', payload: undefined }) });
-  const commands = invoke(readProperty(role, 'commandFactory'), role, [emit, { selectors: {}, commands: {} }]);
-  if (!commands || typeof commands !== 'object') throw new Error('Invalid selector role command map');
-  const names = Object.keys(commands);
-  roleCommandCache.set(role, names);
-  return names;
-}
-
 function resolveMount(role: unknown, explicit: unknown, ctx: ProxyContext): [string, MountMetadata] {
   const mounts = Object.entries(ctx.mounts);
   const candidates = mounts.filter(([name, mount]) =>
@@ -44,7 +30,8 @@ function bindEntity(entity: unknown, role: unknown, mountName: unknown, context:
 
 function restrictRole(value: unknown, role: unknown, mount: MountMetadata): unknown {
   if (!value || typeof value !== 'object') throw new Error('Invalid entity proxy');
-  const allowed = new Set(roleCommands(role));
+  if (!role || typeof role !== 'object' || !mount.getRoleCommandNames) throw new Error('Missing selector role metadata');
+  const allowed = new Set(mount.getRoleCommandNames(role));
   if ([...allowed].some(name => !mount.commandNames?.includes(name))) throw new Error('Selector role has commands absent from its explicit mount');
   return new Proxy(value, { ...readonlyTraps, get(target, property) {
     if (typeof property === 'string' && mount.commandNames?.includes(property) && !allowed.has(property)) return undefined;

@@ -12,6 +12,7 @@ export type MountMetadata = {
     knownKeys?: readonly string[] | undefined;
     entity?: object | undefined;
     commandNames?: readonly string[] | undefined;
+    getRoleCommandNames?: ((role: object) => readonly string[]) | undefined;
 };
 
 export type InvocationContext = {

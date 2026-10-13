@@ -6,7 +6,7 @@ import { makeCollectionProxy, makeEntityMirageProxy } from './collectionProxy';
 import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
 import { invoke, readProperty, type MirageBuilder } from '../runtimeDefinition';
-import { readonlyTraps, readonlyValue } from './readonlyView';
+import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
 export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
   const context: ProxyContext = {
@@ -63,6 +63,8 @@ function makeDeepProxy(statePath: string[], commandPath: string[], context: Invo
         return Object.freeze({ get version() { return ctx.core.version; },
           getPendingResults: () => structuredClone(ctx.core.getPendingResults()) });
       }
+      const protocol = readonlyObjectMember(property);
+      if (protocol) return protocol;
       if (property === 'then' || typeof property !== 'string') return undefined;
       if (!statePath.length && Object.hasOwn(ctx.selectors, property)) return (...args: unknown[]) => ctx.invokeSelector(property, args, context);
       const target = ctx.resolvePath(statePath);

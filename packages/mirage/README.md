@@ -91,6 +91,11 @@ declared entity definition to its actual mount, never the first object with an
 `id` field. Reusing that definition in several mounts requires `{ mount: 'name' }`.
 For a role that projects a subset of another mounted entity's commands, explicitly
 identify the mount; the role's commands must exist on that mount.
+Subset-role command names are discovered using the target mount's real emitter,
+the role's selectors with root-selector fallback, and Aggregate's command-intent
+context. Names are cached per role and mount, not globally. Factories should be
+deterministic for that construction context. Calls dispatch the mounted entity's
+handlers; a role describes a command subset, not replacement implementations.
 
 Polymorphic views can specify a mount as the fourth argument:
 
@@ -109,6 +114,8 @@ present in the initial data also refuse. Protocol-sensitive names `then`, `toJSO
 `toString`, `valueOf` and `inspect` are reserved. This avoids Promise assimilation
 and inspection behavior silently overriding domain methods. Keep state schemas
 consistent over their lifetime; a projector must not introduce conflicting keys.
+Readonly object proxies retain safe `toString`/`valueOf` and primitive coercion;
+`then`, `toJSON` and `inspect` do not become callable protocol hooks.
 
 ## Helpers and hydration
 

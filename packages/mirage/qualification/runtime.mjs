@@ -10,6 +10,9 @@ const builder = createAggregate('order', { entries: [{ id: 'a', qty: 1 }] })
     selected: state => bindContext(state.entries, entity) })).build();
 const live = createMirage(builder, 'one');
 const other = createMirage(builder, 'two');
+assert.equal(String(live), '[object Object]');
+assert.equal(String(live.entries[0]), '[object Object]');
+assert.equal(await Promise.resolve(live), live);
 assert.throws(() => { live.entries[0].qty = 99; });
 await [...live.entries][0].setQty(3);
 assert.equal(live.byId('a').qty, 3);
@@ -23,4 +26,16 @@ const loaded = await depot.get('one', { snapshot: { state: snapshot, version: 2 
 assert.equal(loaded.byId('a').qty, 4);
 assert.equal((await loaded.noop()).entries[0].qty, 4);
 await depot.save(loaded);
+const role = createEntity('subset').events({}).selectors({ enabled: state => state.id === 'a' })
+  .commands(() => ({ setQty: () => [] }))
+  .commands((_emit, ctx) => {
+    assert.equal(ctx.selectors.enabled({ id: 'a' }), true);
+    assert.ok(ctx.commands.setQty());
+    return { setQty: () => [] };
+  }).build();
+const subsetBuilder = createAggregate('subset-root', { entries: [{ id: 'a', qty: 1 }] })
+  .entityList('entries', entity).events({}).commands(() => ({}))
+  .selectors(({ bindContext }) => ({ selected: state => bindContext(state.entries[0], role, { mount: 'entries' }) })).build();
+const subset = createMirage(subsetBuilder, 'subset-one');
+assert.equal((await subset.selected().setQty(5)).qty, 5);
 console.log('Packed immutable command/selector/collection/Depot behavior passed');
