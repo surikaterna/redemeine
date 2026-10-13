@@ -1,4 +1,5 @@
 import type { Draft } from 'immer';
+import { resolveEventHandlers, type ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 import type { ProjectionDeduplicationStrategy } from './projectionDeduplication';
 
@@ -16,11 +17,11 @@ type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'p
   type: TType;
 };
 
-type AnyProjector = (...args: unknown[]) => unknown;
+type AnyProjector = (...args: never[]) => unknown;
 
 type ProjectorPayload<TProjector> =
-  TProjector extends (state: unknown, event: infer TEvent, ...args: unknown[]) => unknown
-    ? TEvent extends { payload: infer TPayload }
+  TProjector extends (...args: infer Args) => unknown
+    ? Args extends [unknown, { payload: infer TPayload }, ...unknown[]]
       ? TPayload
       : unknown
     : unknown;
@@ -64,16 +65,8 @@ export type AggregateEventPayloadByKey<
   TEventKey extends AggregateEventKeys<TAggregate>
 > = AggregateEventPayloadMap<TAggregate>[TEventKey];
 
-type AggregateTypeOf<TAggregate> =
-  TAggregate extends { aggregateType: infer TAggregateType extends string }
-    ? TAggregateType
-    : string;
-
-type CanonicalEventTypeByKey<TAggregate, TEventKey extends string> =
-  `${AggregateTypeOf<TAggregate>}.${TEventKey}.event`;
-
 type HandlerEventTypeByKey<TAggregate, TEventKey extends string> =
-  TEventKey | CanonicalEventTypeByKey<TAggregate, TEventKey>;
+  ResolvedHandlerEventType<TAggregate, TEventKey>;
 
 /**
  * Aggregate definition interface - defines an aggregate that can be used in projections
@@ -306,7 +299,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
     this._fromStream = {
       aggregate: aggregate as unknown as AggregateDefinition<unknown, Record<string, unknown>>,
-      handlers: handlersMap
+      handlers: resolveEventHandlers(aggregate, handlersMap)
     };
     
     return this;
@@ -327,7 +320,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
     this._joinStreams.push({
       aggregate,
-      handlers: handlersMap
+      handlers: resolveEventHandlers(aggregate, handlersMap)
     });
     
     return this;
@@ -347,7 +340,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
 
     this._reverseSubscribeStreams.push({
       aggregate,
-      handlers: handlersMap
+      handlers: resolveEventHandlers(aggregate, handlersMap)
     });
 
     return this;
