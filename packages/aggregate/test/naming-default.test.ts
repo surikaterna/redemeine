@@ -9,6 +9,19 @@ const overrideName: Equal<ResolveEventName<'order', 'itemAdded', { itemAdded: 'l
 const acronymName: Equal<ResolveEventName<'order', 'itemURL2Changed', {}>, 'order.item_url2_changed.event'> = true;
 void [defaultName, multiwordName, overrideName, acronymName];
 
+const boundaryNames = {
+  item2Added: 'order.item2_added.event',
+  v2Changed: 'order.v2_changed.event',
+  item22Added: 'order.item22_added.event',
+  '2Added': 'order.2_added.event',
+  itemURL2Changed: 'order.item_url2_changed.event',
+  item_Added: 'order.item_added.event',
+  'item-Added': 'order.item-added.event',
+  'item.Added': 'order.item.added.event',
+  éAdded: 'order.éadded.event'
+} as const;
+const typedBoundaryNames: { [K in keyof typeof boundaryNames]: ResolveEventName<'order', K, {}> } = boundaryNames;
+
 const initial = { items: [] as string[], count: 0 };
 
 const createOrder = (strategy?: typeof namingStrategies.targeted) => {
@@ -23,6 +36,10 @@ const createOrder = (strategy?: typeof namingStrategies.targeted) => {
 };
 
 describe('aggregate event naming defaults', () => {
+  test.each(Object.entries(typedBoundaryNames))('runtime and exported literal agree for %s', (key, expected) => {
+    expect(defaultNamingStrategy.event('order', key)).toBe(expected);
+  });
+
   test('flat snake_case is the default, independent of the targeted preset', () => {
     expect(namingStrategies.targeted).not.toBe(defaultNamingStrategy);
     expect(namingStrategies.targeted.event).not.toBe(defaultNamingStrategy.event);

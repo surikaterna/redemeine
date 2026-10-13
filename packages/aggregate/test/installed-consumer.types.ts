@@ -5,7 +5,11 @@ import type { Event } from '@redemeine/kernel';
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 const defaultName: Equal<ResolveEventName<'order', 'itemAdded', {}>, 'order.item_added.event'> = true;
 const overrideName: Equal<ResolveEventName<'order', 'itemAdded', { itemAdded: 'custom.event' }>, 'custom.event'> = true;
-void [defaultName, overrideName];
+const digitName: Equal<ResolveEventName<'order', 'item2Added', {}>, 'order.item2_added.event'> = true;
+const consecutiveDigits: Equal<ResolveEventName<'order', 'v22Changed', {}>, 'order.v22_changed.event'> = true;
+const separatorName: Equal<ResolveEventName<'order', 'item_Added', {}>, 'order.item_added.event'> = true;
+const digitOverride: Equal<ResolveEventName<'order', 'item2Added', { item2Added: 'legacy.event' }>, 'legacy.event'> = true;
+void [defaultName, overrideName, digitName, consecutiveDigits, separatorName, digitOverride];
 
 const aggregate = createAggregate('order', { items: [] as string[] })
   .events({

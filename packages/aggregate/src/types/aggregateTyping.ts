@@ -3,15 +3,14 @@ import type { CommandResult, Event, EventType, PluginExtensions, ReadonlyDeep } 
 // SAFETY: `any` in ReplaceFirstArg required for conditional type inference on arbitrary function shapes
 type ReplaceFirstArg<S, F> = F extends (x: any, ...args: infer P) => infer R ? (state: S, ...args: P) => R : never;
 
+type AsciiLowercase = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l' | 'm'
+  | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't' | 'u' | 'v' | 'w' | 'x' | 'y' | 'z';
+type AsciiDigit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
+
+// Match naming.ts's ASCII boundary before lowercasing the result.
 type SnakeCase<S extends string, Previous extends string = ''> = S extends `${infer First}${infer Rest}`
-  ? `${First extends Uppercase<First>
-      ? Previous extends Lowercase<Previous>
-        ? Previous extends Uppercase<Previous>
-          ? Previous extends `${number}`
-            ? '_'
-            : ''
-          : '_'
-        : ''
+  ? `${First extends Uppercase<AsciiLowercase>
+      ? Previous extends AsciiLowercase | AsciiDigit ? '_' : ''
       : ''}${Lowercase<First>}${SnakeCase<Rest, First>}`
   : S;
 
