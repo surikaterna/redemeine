@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 import { readFileSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { afterEach, expect, jest, test } from '@jest/globals';
 import { awaitStackChild } from '../integration/childRunner';
 
@@ -22,8 +22,7 @@ test('a promptly exited child retains stderr and elapsed time without a live tim
   jest.advanceTimersByTime(25);
   child.stderr.write('scenario diagnostic');
   child.emit('close', 0, null);
-  await expect(pending).resolves.toMatchObject({ scenario: 'normal', code: 0, elapsedMs: 25,
-    stderr: 'scenario diagnostic' });
+  await expect(pending).resolves.toMatchObject({ scenario: 'normal', code: 0, elapsedMs: 25, stderr: 'scenario diagnostic' });
   expect(jest.getTimerCount()).toBe(0);
   jest.advanceTimersByTime(45_000);
   expect(child.kill).not.toHaveBeenCalled();
@@ -50,28 +49,84 @@ function processRunning(pid: number): boolean {
   }
 }
 
+function waitForGrandchildReady(child: ChildProcess): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      child.stderr?.off('data', onData);
+      child.off('error', onError);
+      child.off('close', onClose);
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = (): void => {
+      cleanup();
+      reject(new Error('Child exited before grandchild was ready'));
+    };
+    const onData = (data: Buffer): void => {
+      output += data.toString();
+      const match = output.match(/ready=(\d+)\n/);
+      if (match) {
+        cleanup();
+        resolve(Number(match[1]));
+      }
+    };
+    // Bound startup separately; the 300ms timeout under test begins only after both handlers exist.
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Grandchild readiness handshake timed out'));
+    }, 10_000);
+    child.stderr?.on('data', onData);
+    child.once('error', onError);
+    child.once('close', onClose);
+  });
+}
+
+function killGroupIfPresent(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
+
+async function joinChild(closed: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Child did not close after test cleanup')), 2_500);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 test('Linux timeout SIGKILLs a detached direct child and grandchild and joins close', async () => {
   if (process.platform !== 'linux') return;
+  const grandchildCode = 'process.on("SIGTERM",()=>{});process.stdout.write("ready\\n");setInterval(()=>{},1000)';
   const code = `const {spawn}=require('node:child_process');
-    process.on('SIGTERM',()=>{});
-    const child=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'ignore'});
-    console.error('grandchild='+child.pid);
+    process.on('SIGTERM',()=>process.stderr.write('term=direct\\n'));
+    const child=spawn(process.execPath,['-e',${JSON.stringify(grandchildCode)}],{stdio:['ignore','pipe','ignore']});
+    child.stdout.once('data',()=>process.stderr.write('ready='+child.pid+'\\n'));
     setInterval(()=>{},1000);`;
   const child = spawn(process.execPath, ['-e', code], { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
   let grandchildPid: number | undefined;
-  child.stderr.on('data', (data: Buffer) => {
-    const match = data.toString().match(/grandchild=(\d+)/);
-    if (match) grandchildPid = Number(match[1]);
-  });
   try {
-    await expect(awaitStackChild(child, 'linux-group', 300, Date.now, () => undefined))
-      .rejects.toThrow('linux-group: child timeout');
+    grandchildPid = await waitForGrandchildReady(child);
+    await expect(awaitStackChild(child, 'linux-group', 300, Date.now, () => undefined)).rejects.toThrow(/linux-group: child timeout;.*term=direct/);
     expect(child.signalCode).toBe('SIGKILL');
-    expect(grandchildPid).toBeDefined();
     expect(processRunning(child.pid as number)).toBe(false);
-    expect(processRunning(grandchildPid as number)).toBe(false);
+    expect(processRunning(grandchildPid)).toBe(false);
   } finally {
-    if (child.pid && processRunning(child.pid)) process.kill(-child.pid, 'SIGKILL');
+    if (child.pid) killGroupIfPresent(child.pid);
     if (grandchildPid && processRunning(grandchildPid)) process.kill(grandchildPid, 'SIGKILL');
+    await joinChild(closed);
   }
 });

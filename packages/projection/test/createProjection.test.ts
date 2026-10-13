@@ -443,8 +443,8 @@ describe('createProjection ProjectionDefinition Output', () => {
       .build();
 
     expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
-    expect(projection.fromStream.handlers).toHaveProperty('created');
-    expect(projection.fromStream.handlers).toHaveProperty('paid');
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.created]);
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.paid]);
   });
 
   test('joinStreams contains aggregated handlers', () => {
@@ -462,8 +462,8 @@ describe('createProjection ProjectionDefinition Output', () => {
 
     expect(projection.joinStreams).toHaveLength(1);
     expect(projection.joinStreams?.[0].aggregate).toBe(orderAggregate);
-    expect(projection.joinStreams?.[0].handlers).toHaveProperty('shipped');
-    expect(projection.joinStreams?.[0].handlers).toHaveProperty('itemAdded');
+    expect(projection.joinStreams?.[0].handlers).toHaveProperty([orderAggregate.types.events.shipped]);
+    expect(projection.joinStreams?.[0].handlers).toHaveProperty([orderAggregate.types.events.itemAdded]);
   });
 
   test('subscriptions are captured from handlers', () => {
@@ -500,7 +500,7 @@ describe('createProjection Immer Integration', () => {
       .build();
 
     // Verify that handlers are stored
-    expect(projection.fromStream.handlers.created).toBeDefined();
+    expect(projection.fromStream.handlers[invoiceAggregate.types.events.created]).toBeDefined();
     
     // Call the handler to verify it works with Immer
     const initialState = { count: 0 };
@@ -515,12 +515,12 @@ describe('createProjection Immer Integration', () => {
     
     // The handler is wrapped with produce() - we need to check that produce returns a new state
     // The internal implementation returns undefined (side-effect style), so we verify handlers exist
-    const wrappedHandler = projection.fromStream.handlers.created;
+    const wrappedHandler = projection.fromStream.handlers[invoiceAggregate.types.events.created];
     expect(typeof wrappedHandler).toBe('function');
     
     // Verify that the handler is properly wrapped (will throw if called incorrectly)
     // Note: The actual Immer integration would be tested in integration tests with the daemon
-    expect(projection.fromStream.handlers).toHaveProperty('created');
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.created]);
   });
 
   test('multiple handlers are registered correctly', () => {
@@ -541,8 +541,8 @@ describe('createProjection Immer Integration', () => {
       .build();
 
     // The handlers are wrapped with produce() internally
-    expect(projection.fromStream.handlers.created).toBeDefined();
-    expect(projection.fromStream.handlers.paid).toBeDefined();
+    expect(projection.fromStream.handlers[invoiceAggregate.types.events.created]).toBeDefined();
+    expect(projection.fromStream.handlers[invoiceAggregate.types.events.paid]).toBeDefined();
   });
 });
 
@@ -575,7 +575,7 @@ describe('createProjection Edge Cases', () => {
       .build();
 
     expect(Object.keys(projection.fromStream.handlers)).toHaveLength(1);
-    expect(projection.fromStream.handlers).toHaveProperty('created');
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.created]);
   });
 
   test('projection name can contain special characters', () => {
@@ -653,8 +653,8 @@ describe('createProjection .mirror() builder', () => {
 
     expect(projection.name).toBe('invoice-mirror');
     expect(projection.fromStream.aggregate).toBe(invoiceAggregate);
-    expect(projection.fromStream.handlers).toHaveProperty('created');
-    expect(projection.fromStream.handlers).toHaveProperty('paid');
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.created]);
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.paid]);
     expect(Object.keys(projection.fromStream.handlers)).toHaveLength(2);
   });
 
@@ -701,7 +701,7 @@ describe('createProjection .mirror() builder', () => {
       timestamp: '2024-01-01T00:00:00Z'
     };
 
-    const handler = projection.fromStream.handlers.created;
+    const handler = projection.fromStream.handlers[invoiceAggregate.types.events.created];
     handler(state, event, { subscribeTo: () => {}, unsubscribeFrom: () => {} });
 
     expect(state.id).toBe('cust-1');
@@ -720,11 +720,11 @@ describe('createProjection .mirror() builder', () => {
       })
       .build();
 
-    expect(projection.fromStream.handlers).toHaveProperty('created');
-    expect(projection.fromStream.handlers).toHaveProperty('paid');
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.created]);
+    expect(projection.fromStream.handlers).toHaveProperty([invoiceAggregate.types.events.paid]);
 
     const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
-    projection.fromStream.handlers.paid(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.paid](state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
       aggregateType: 'invoice',
@@ -745,7 +745,7 @@ describe('createProjection .mirror() builder', () => {
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    projection.fromStream.handlers.created(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.created](state, {
       type: 'invoice.created.event',
       payload: { customerId: 'cust-2', amount: 500 },
       aggregateType: 'invoice',
@@ -768,7 +768,7 @@ describe('createProjection .mirror() builder', () => {
       .build();
 
     const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
-    projection.fromStream.handlers.paid(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.paid](state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
       aggregateType: 'invoice',
@@ -830,7 +830,7 @@ describe('createProjection inherit token', () => {
       .build();
 
     const state: InvoiceState = { id: 'inv-1', amount: 100, status: 'pending' };
-    projection.fromStream.handlers.paid(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.paid](state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
       aggregateType: 'invoice',
@@ -855,7 +855,7 @@ describe('createProjection inherit token', () => {
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    projection.fromStream.handlers.paid(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.paid](state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'ref-1' },
       aggregateType: 'invoice',
@@ -881,7 +881,7 @@ describe('createProjection inherit token', () => {
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    projection.fromStream.handlers.created(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.created](state, {
       type: 'invoice.created.event',
       payload: { customerId: 'cust-1', amount: 100 },
       aggregateType: 'invoice',
@@ -938,7 +938,7 @@ describe('createProjection inherit token', () => {
       .build();
 
     const state: InvoiceState = { id: '', amount: 0, status: 'pending' };
-    projection.fromStream.handlers.paid(state, {
+    projection.fromStream.handlers[invoiceAggregate.types.events.paid](state, {
       type: 'invoice.paid.event',
       payload: { paymentMethod: 'card', reference: 'pay-ref-42' },
       aggregateType: 'invoice',
