@@ -43,9 +43,14 @@ function aliases(consumer, command) {
 import type { Payload as A } from './a'; import type { Payload as B } from './b';
 import type { Event } from '@redemeine/kernel';
 type Foo = { upper: string }; type foo = { lower: number }; type Box<T> = { value: T }; type State = { ready: boolean };
+type Leaf = { value: string }; type Parent = { leaf: Leaf };
+type Deep = ${'{ next: '.repeat(9)}Parent${' }'.repeat(9)};
 export const surgical = createAggregate<State, 'surgical'>('surgical', { ready: false })
 .events({ second: (state, event: Event<B>) => { state.ready = !!event.payload; } })
 .commands(emit => ({
+  deep: { pack: (payload: Deep) => payload, handler: () => [] },
+  directParent: { pack: (payload: Parent) => payload, handler: () => [] },
+  directLeaf: { pack: (payload: Leaf) => payload, handler: () => [] },
   a: { pack: (payload: A) => payload, handler: () => [] }, b: { pack: (payload: B) => payload, handler: (state: State, payload: B) => emit.second(payload) },
   upper: { pack: (payload: Foo) => payload, handler: () => [] }, lower: { pack: (payload: foo) => payload, handler: () => [] },
   stringBox: { pack: (payload: Box<string>) => payload, handler: () => [] }, numberBox: { pack: (payload: Box<number>) => payload, handler: () => [] },
@@ -64,5 +69,8 @@ const { commandSchemas: c, eventSchemas: e, stateSchema: s } = await import('./s
 const cases = { a: [{ a: 'a' }, { b: 1 }], b: [{ b: 1 }, { a: 'a' }], upper: [{ upper: 'u' }, { lower: 2 }], lower: [{ lower: 2 }, { upper: 'u' }], stringBox: [{ value: 's' }, { value: 1 }], numberBox: [{ value: 1 }, { value: 's' }] };
 for (const [name, [good, bad]] of Object.entries(cases)) { assert(c[name].safeParse(good).success); assert(!c[name].safeParse(bad).success); }
 assert.equal(c.a, c.repeat); assert.equal(c.b, e.second); assert(s.safeParse({ ready: true }).success); assert(!s.safeParse({ ready: 'yes' }).success);
+assert(c.directLeaf.safeParse({ value: 'ok' }).success); assert(!c.directLeaf.safeParse({ value: 42 }).success);
+assert(c.directParent.safeParse({ leaf: { value: 'ok' } }).success); assert(!c.directParent.safeParse({ leaf: { value: 42 } }).success);
+console.log('Packed depth-truncated aliases do not weaken direct payloads PASS');
 console.log('Packed distinct aliases/case/generics/state, runtime negatives and dedup PASS');` ]));
 }

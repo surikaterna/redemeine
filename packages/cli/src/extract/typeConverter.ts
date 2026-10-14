@@ -13,6 +13,7 @@ export class TypeToZodConverter {
     readonly imports = new Set<string>();
     private readonly overrideSchemas = new Map<string, string>();
     private readonly bindings = new Set(['z', 'commandSchemas', 'eventSchemas', 'stateSchema']);
+    private depthFallbacks = 0;
 
     constructor(
         private checker: ts.TypeChecker,
@@ -23,7 +24,7 @@ export class TypeToZodConverter {
     ) {}
 
     convert(type: ts.Type, depth = 0): string {
-        if (depth > 10) return 'z.any()';
+        if (depth > 10) return this.depthFallback();
 
         const named = this.convertNamedType(type, depth);
         if (named !== null) return named;
@@ -51,12 +52,19 @@ export class TypeToZodConverter {
         const existing = this.resolveExistingSchema(type);
         if (existing) return existing;
 
+        const fallbacksBefore = this.depthFallbacks;
         const zodCode = this.convertStructural(type, depth);
-        // Only completed conversions are memoized; recursive visits retain the depth guard.
+        // A fallback anywhere below this alias makes its result specific to this depth budget.
+        if (this.depthFallbacks !== fallbacksBefore) return zodCode;
         const varName = this.allocateBinding(this.preferredName(typeName));
         this.generatedShared.set(varName, zodCode);
         this.knownSchemas.set(type, varName);
         return varName;
+    }
+
+    private depthFallback(): string {
+        this.depthFallbacks++;
+        return 'z.any()';
     }
 
     private preferredName(typeName: string): string {
@@ -121,7 +129,7 @@ export class TypeToZodConverter {
 
     /** Structural (non-named) type conversion. */
     convertStructural(type: ts.Type, depth: number): string {
-        if (depth > 10) return 'z.any()';
+        if (depth > 10) return this.depthFallback();
 
         const primitive = this.convertPrimitive(type);
         if (primitive) return primitive;

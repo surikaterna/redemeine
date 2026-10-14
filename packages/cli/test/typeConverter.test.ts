@@ -18,7 +18,10 @@ function fixture() {
         type Box<T> = { value: T }; type State = { ready: boolean };
         type Z = { z: string }; type Command = { command: string }; type Event = { event: string };
         type Recursive = { next: Recursive };
-        declare const values: [A, B, Foo, foo, Box<string>, Box<number>, State, Z, Command, Event, Recursive];`);
+        type Leaf = { value: string }; type Parent = { leaf: Leaf };
+        type Deep = ${'{ next: '.repeat(9)}Parent${' }'.repeat(9)};
+        type Opaque = { value: unknown };
+        declare const values: [A, B, Foo, foo, Box<string>, Box<number>, State, Z, Command, Event, Recursive, Deep, Parent, Leaf, Opaque];`);
     const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, skipLibCheck: false, types: [] };
     const program = ts.createProgram([source], options);
     expect(ts.getPreEmitDiagnostics(program)).toEqual([]);
@@ -71,6 +74,40 @@ test('recursive conversion remains bounded and caches only completed conversions
     const name = converter.convert(types[10]!);
     expect(converter.convert(types[10]!)).toBe(name);
     expect(converter.convert(types[10]!, 11)).toBe('z.any()');
-    expect([...converter.generatedShared.values()].join('\n')).toContain('z.any()');
-    expect(converter.generatedShared.get(name)).not.toContain(`: ${name}`);
+    expect(name).toContain('z.any()');
+    expect(converter.knownSchemas.has(types[10]!)).toBe(false);
+    expect(converter.generatedShared.size).toBe(0);
+});
+
+test.each([false, true])('depth-limited aliases cannot weaken direct schemas (shallow first: %s)', shallowFirst => {
+    const { program, checker, types, options } = fixture();
+    const converter = new TypeToZodConverter(checker, program);
+    const entries: [string, ts.Type][] = [['deep', types[11]!], ['parent', types[12]!], ['leaf', types[13]!]];
+    if (shallowFirst) entries.reverse();
+    const output = generateOutput(converter, new Map(entries), new Map([['leafEvent', types[13]!]]), types[6]!, {});
+    const generated = join(dir, 'depth.ts');
+    writeFileSync(generated, output);
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([generated], options))).toEqual([]);
+    const schemas = new Function('z', `${output.replace(/import[^\n]+\n/g, '').replace(/export /g, '').replace(/ as const/g, '')}; return { commandSchemas, eventSchemas };`)(z) as {
+        commandSchemas: Record<string, z.ZodType>; eventSchemas: Record<string, z.ZodType>;
+    };
+    expect(schemas.commandSchemas.leaf!.safeParse({ value: 'ok' }).success).toBe(true);
+    expect(schemas.commandSchemas.leaf!.safeParse({ value: 42 }).success).toBe(false);
+    expect(schemas.commandSchemas.leaf!.safeParse({}).success).toBe(false);
+    expect(schemas.commandSchemas.parent!.safeParse({ leaf: { value: 'ok' } }).success).toBe(true);
+    expect(schemas.commandSchemas.parent!.safeParse({ leaf: { value: 42 } }).success).toBe(false);
+    expect(schemas.eventSchemas.leafEvent).toBe(schemas.commandSchemas.leaf);
+});
+
+test('only depth exhaustion taints memoization, not intentional unknown payloads', () => {
+    const { program, checker, types } = fixture();
+    const converter = new TypeToZodConverter(checker, program);
+    expect(converter.convertStructural(types[12]!, 9)).toContain('z.any()');
+    expect(converter.knownSchemas.has(types[13]!)).toBe(false);
+    expect(converter.knownSchemas.has(types[12]!)).toBe(false);
+    const opaque = converter.convert(types[14]!);
+    expect(converter.generatedShared.get(opaque)).toContain('z.any()');
+    expect(converter.convert(types[14]!)).toBe(opaque);
+    expect(converter.knownSchemas.get(types[14]!)).toBe(opaque);
+    expect(converter.generatedShared.get(converter.convert(types[13]!))).toContain('z.string()');
 });
