@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.contracts.json",
+  "compilerOptions": {
+    "paths": {
+      "@redemeine/mirage": ["./dist/index.d.ts"],
+      "@redemeine/aggregate": ["../aggregate/dist/index.d.ts"],
+      "@redemeine/kernel": ["../kernel/dist/index.d.ts"]
+    }
+  },
+  "files": ["test/dx-contract.types.ts"],
+  "include": []
+}

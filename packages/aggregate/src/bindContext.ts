@@ -14,11 +14,12 @@ type DotPathKeys<T> = T extends Record<string, unknown>
     }[Extract<keyof T, string>]
   : never;
 
-export type MirageContextSingleBinding<TData, TRole extends MirageRoleLike> = {
+export type MirageContextSingleBinding<TData, TRole extends MirageRoleLike, TMount extends string | undefined = string | undefined> = {
   [MirageContextSymbol]: {
     kind: 'single';
     data: TData;
     role: TRole;
+    mount?: TMount;
   };
 };
 
@@ -26,13 +27,15 @@ export type MirageContextSingleBinding<TData, TRole extends MirageRoleLike> = {
 export type MirageContextPolymorphicBinding<
   TData extends readonly any[],
   TKey extends string,
-  TRoleMap extends Record<string, MirageRoleLike>
+  TRoleMap extends Record<string, MirageRoleLike>,
+  TMount extends string | undefined = string | undefined
 > = {
   [MirageContextSymbol]: {
     kind: 'polymorphic';
     data: TData;
     discriminatorKey: TKey;
     roleMap: TRoleMap;
+    mount?: TMount;
   };
 };
 
@@ -41,26 +44,30 @@ export type MirageContextBinding =
   | MirageContextSingleBinding<any, MirageRoleLike>
   | MirageContextPolymorphicBinding<readonly any[], string, Record<string, MirageRoleLike>>;
 
-export function bindContext<TData, const TRole extends MirageRoleLike>(
-  data: TData,
-  roleEntity: TRole
-): MirageContextSingleBinding<TData, TRole>;
+export function bindContext<TData, const TRole extends MirageRoleLike, const TMount extends string | undefined = undefined>(
+    data: TData,
+    roleEntity: TRole,
+    options?: { mount: TMount }
+): MirageContextSingleBinding<TData, TRole, TMount>;
 
 // SAFETY: `any` in const type param required for readonly tuple inference from arbitrary call sites
 export function bindContext<
   const TData extends readonly any[],
   const TKey extends DotPathKeys<TData[number]>,
-  const TRoleMap extends Record<string, MirageRoleLike>
+  const TRoleMap extends Record<string, MirageRoleLike>,
+  const TMount extends string | undefined = undefined
 >(
   data: TData,
   discriminatorKey: TKey,
-  roleMap: TRoleMap
-): MirageContextPolymorphicBinding<TData, TKey, TRoleMap>;
+  roleMap: TRoleMap,
+  options?: { mount: TMount }
+): MirageContextPolymorphicBinding<TData, TKey, TRoleMap, TMount>;
 
 export function bindContext(
   data: unknown,
   roleOrKey: MirageRoleLike | string,
-  maybeRoleMap?: Record<string, MirageRoleLike>
+  maybeRoleMap?: Record<string, MirageRoleLike> | { mount: string },
+  options?: { mount: string }
 ): MirageContextBinding {
   if (typeof roleOrKey === 'string') {
     return {
@@ -68,7 +75,8 @@ export function bindContext(
         kind: 'polymorphic',
         data,
         discriminatorKey: roleOrKey,
-        roleMap: maybeRoleMap || {}
+        roleMap: maybeRoleMap || {},
+        ...(options ? { mount: options.mount } : {})
       }
     } as MirageContextBinding;
   }
@@ -77,7 +85,8 @@ export function bindContext(
     [MirageContextSymbol]: {
       kind: 'single',
       data,
-      role: roleOrKey
+      role: roleOrKey,
+      ...(maybeRoleMap && 'mount' in maybeRoleMap && typeof maybeRoleMap.mount === 'string' ? { mount: maybeRoleMap.mount } : {})
     }
   } as MirageContextBinding;
 }

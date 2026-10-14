@@ -22,9 +22,7 @@ import type { bindContext } from '../bindContext';
 
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
-export type AggregateSelector<S> =
-    | ((state: ReadonlyDeep<S>, ...args: unknown[]) => unknown)
-    | ((state: ReadonlyDeep<S>, utils: AggregateSelectorUtils, ...args: unknown[]) => unknown);
+export type AggregateSelector<S> = (state: ReadonlyDeep<S>, ...args: never[]) => unknown;
 
 export type AggregateSelectorsMap<S> = Record<string, AggregateSelector<S>>;
 

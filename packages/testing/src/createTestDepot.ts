@@ -1,4 +1,4 @@
-import { MirageCoreSymbol, createMirage, dispatch as mirageDispatch, type BuiltAggregate, type Mirage } from '@redemeine/mirage';
+import { createMirage, dispatch as mirageDispatch, extractUncommittedEvents, clearUncommittedEvents, type BuiltAggregate, type Mirage } from '@redemeine/mirage';
 import {
   type ProjectionDefinition as RuntimeProjectionDefinition
 } from '@redemeine/projection';
@@ -236,16 +236,11 @@ export function createTestDepot(options: CreateTestDepotOptions): TestDepot {
 
     await Promise.resolve(mirageDispatch(mirage, command));
 
-    const core = (mirage as any)[MirageCoreSymbol] as {
-      getPendingResults(): { events: DomainEvent[] };
-      clearPendingResults(): void;
-    };
-
-    const pending = core.getPendingResults();
-    core.clearPendingResults();
+    const events = extractUncommittedEvents(mirage);
+    clearUncommittedEvents(mirage);
 
     // TODO: Saga event routing will be implemented when @redemeine/saga ships stable types
-    await processProjectionRuntimes(pending.events, aggregateId);
+    await processProjectionRuntimes(events, aggregateId);
   };
 
   const runQueue = async (): Promise<void> => {

@@ -6,6 +6,7 @@ const ts = require('typescript');
 
 const DEFAULT_SOURCE_ROOTS = [
   'packages/demeine-interop/src',
+  'packages/mirage/src',
   'packages/projection/src',
   'packages/projection-runtime-core/src',
   'packages/projection-runtime-store-inmemory/src',

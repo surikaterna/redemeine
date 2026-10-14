@@ -9,6 +9,10 @@ export type MountedStructureMetadata = {
     statePath: string[];
     pk?: string | readonly string[] | undefined;
     knownKeys?: readonly string[] | undefined;
+    /** Runtime identity for explicit Mirage selector bindings. */
+    entity?: object | undefined;
+    commandNames?: readonly string[] | undefined;
+    getRoleCommandNames?: ((role: object) => readonly string[]) | undefined;
 };
 
 export type MountedEntityPackage = {

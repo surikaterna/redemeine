@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": false,
+    "paths": {
+      "@redemeine/mirage": ["./src/index.ts"],
+      "@redemeine/aggregate": ["../aggregate/src/index.ts"],
+      "@redemeine/kernel": ["../kernel/src/index.ts"]
+    }
+  },
+  "files": ["test/dx-contract.types.ts", "test/Depot.contract.compile.ts"],
+  "include": []
+}

@@ -1,174 +1,83 @@
-import { createReadonlyDeepProxy } from '@redemeine/kernel';
-import type { MountMetadata, InvocationContext, DispatchResult } from '../mirage.types';
+import type { Command } from '@redemeine/kernel';
+import type { MountMetadata, InvocationContext } from '../mirage.types';
 import { MirageCoreSymbol } from '../mirage.types';
-import type { MirageCore } from '../MirageCore';
-import type { ProxyContext } from './proxyContext';
+import type { ProxyContext, ProxyCore } from './proxyContext';
 import { makeCollectionProxy, makeEntityMirageProxy } from './collectionProxy';
 import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
+import { invoke, readProperty, type MirageBuilder } from '../runtimeDefinition';
+import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
-export const createProxyContext = (
-    core: MirageCore<any>,
-    mounts: Record<string, MountMetadata>,
-    selectors: Record<string, (...args: any[]) => any>,
-    builder: any
-): ProxyContext => {
-    const ctx: ProxyContext = {
-        core,
-        mounts,
-        selectors,
-        builder,
-        resolvePath,
-        toCommandName,
-        getMountForRoot,
-        invokeByPath: (commandPath, args, context) => invokeByPathImpl(commandPath, args, context, ctx),
-        invokeSelector: (name, args, context) => invokeSelector(name, args, context, ctx),
-        makeDeepProxy: (statePath, commandPath, context) => makeDeepProxyImpl(statePath, commandPath, context, ctx),
-        makeCollectionProxy: (collectionPath, commandPrefixPath, mount, context) => makeCollectionProxy(collectionPath, commandPrefixPath, mount, context, ctx),
-        makeMapProxy: (mapPath, commandPrefixPath, mount, context) => makeMapProxy(mapPath, commandPrefixPath, mount, context, ctx),
-        makeEntityMirageProxy: (collectionPath, commandPrefixPath, selection) => makeEntityMirageProxy(collectionPath, commandPrefixPath, selection, ctx),
-    };
+export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
+  const context: ProxyContext = {
+    core, mounts, selectors, builder,
+    resolvePath: path => path.reduce<unknown>((value, key) => readProperty(value, key), core.state),
+    toCommandName: path => path.map((part, index) => index ? part.charAt(0).toUpperCase() + part.slice(1) : part).join(''),
+    getMountForRoot: name => mounts[name],
+    invokeByPath: (path, args, selection) => invokeByPath(path, args, selection, context),
+    invokeSelector: (name, args, selection) => invokeSelector(name, args, selection, context),
+    makeDeepProxy: (path, commands, selection) => makeDeepProxy(path, commands, selection, context),
+    makeCollectionProxy: (path, commands, mount, selection) => makeCollectionProxy(path, commands, mount, selection, context),
+    makeMapProxy: (path, commands, mount, selection) => makeMapProxy(path, commands, mount, selection, context),
+    makeEntityMirageProxy: (path, commands, selection) => makeEntityMirageProxy(path, commands, selection, context)
+  };
+  return context;
+}
 
-    function resolvePath(path: string[]) {
-        let current: any = core.state;
-        for (const p of path) {
-            if (current && typeof current === 'object') {
-                current = current[p];
-            } else {
-                return undefined;
-            }
-        }
-        return current;
+function commandArguments(definition: unknown, args: unknown[], context: InvocationContext): unknown[] {
+  if (typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
+  const first = args[0];
+  if (first !== null && typeof first === 'object') return [{ ...context.idsPayload, ...first }];
+  if (Object.keys(context.idsPayload).length) return [{ ...context.idsPayload, ...(first === undefined ? {} : { value: first }) }];
+  return [first];
+}
+
+function invokeByPath(path: string[], args: unknown[], context: InvocationContext, ctx: ProxyContext): unknown {
+  const name = ctx.toCommandName(path);
+  const creator = readProperty(ctx.builder.commandCreators, name);
+  if (!Object.hasOwn(ctx.builder.commandCreators, name) || typeof creator !== 'function') throw new Error(`Command ${name} not found on commandCreators.`);
+  const definition = readProperty(readProperty(readProperty(ctx.builder, 'pure'), 'commandProcessors'), name);
+  const command: unknown = invoke(creator, ctx.builder.commandCreators, commandArguments(definition, args, context));
+  if (!command || typeof command !== 'object' || typeof readProperty(command, 'type') !== 'string' || !('payload' in command)) {
+    throw new TypeError('Command creator returned an invalid envelope');
+  }
+  if (context.entityPk && command.payload && typeof command.payload === 'object') {
+    command.payload = { ...command.payload, __entityPk: context.entityPk };
+  }
+  // Creator output was checked above; payload remains unknown until the domain validates it.
+  const result = ctx.core.dispatch(command as Command<unknown, string>);
+  if (!context.resolveState) return result;
+  const state = () => readonlyValue(context.resolveState!());
+  return result instanceof Promise ? result.then(state) : state();
+}
+
+function makeDeepProxy(statePath: string[], commandPath: string[], context: InvocationContext, ctx: ProxyContext): unknown {
+  const name = ctx.toCommandName(commandPath);
+  if (commandPath.length && Object.hasOwn(ctx.builder.commandCreators, name) && typeof readProperty(ctx.builder.commandCreators, name) === 'function') {
+    return (...args: unknown[]) => ctx.invokeByPath(commandPath, args, context);
+  }
+  return new Proxy({}, {
+    ...readonlyTraps,
+    get(_target, property) {
+      if (property === MirageCoreSymbol && !commandPath.length) {
+        return Object.freeze({ get version() { return ctx.core.version; },
+          getPendingResults: () => structuredClone(ctx.core.getPendingResults()) });
+      }
+      const protocol = readonlyObjectMember(property);
+      if (protocol) return protocol;
+      if (property === 'then' || typeof property !== 'string') return undefined;
+      if (!statePath.length && Object.hasOwn(ctx.selectors, property)) return (...args: unknown[]) => ctx.invokeSelector(property, args, context);
+      const target = ctx.resolvePath(statePath);
+      if (target && typeof target === 'object' && Object.hasOwn(target, property)) {
+        const value = readProperty(target, property);
+        const mount = !statePath.length ? ctx.mounts[property] : undefined;
+        if (mount?.kind === 'list') return ctx.makeCollectionProxy([...statePath, property], [mount.commandPrefix], mount, context);
+        if (mount?.kind === 'map') return ctx.makeMapProxy([...statePath, property], [mount.commandPrefix], mount, context);
+        return readonlyValue(value);
+      }
+      const path = [...commandPath, property];
+      return Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName(path)) && typeof readProperty(ctx.builder.commandCreators, ctx.toCommandName(path)) === 'function'
+        ? (...args: unknown[]) => ctx.invokeByPath(path, args, context) : undefined;
     }
-
-    function toCommandName(path: string[]) {
-        return path.reduce(
-            (acc, p, i) => acc + (i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)),
-            ''
-        );
-    }
-
-    function getMountForRoot(rootProp: string): MountMetadata | undefined {
-        return mounts[rootProp] as MountMetadata | undefined;
-    }
-
-    return ctx;
-};
-
-const invokeByPathImpl = (
-    commandPath: string[],
-    args: unknown[],
-    context: InvocationContext,
-    ctx: ProxyContext
-): DispatchResult<any> => {
-    const commandName = ctx.toCommandName(commandPath);
-    const creator = (ctx.builder.commandCreators as any)[commandName];
-    if (typeof creator !== 'function') {
-        throw new Error('Command ' + commandName + ' not found on commandCreators.');
-    }
-
-    const cmdDef = ctx.builder.pure?.commandProcessors?.[commandName] as any;
-    const isPacked = !!cmdDef && typeof cmdDef !== 'function' && typeof cmdDef.pack === 'function';
-
-    let callArgs: unknown[];
-    if (isPacked) {
-        callArgs = [...context.packPrefix, ...args];
-    } else {
-        const firstArg = args[0];
-        let payload = firstArg;
-        if (typeof payload === 'object' && payload !== null) {
-            payload = { ...context.idsPayload, ...(payload as Record<string, unknown>) };
-        } else if (payload !== undefined) {
-            if (Object.keys(context.idsPayload).length > 0) {
-                payload = { value: payload, ...context.idsPayload };
-            }
-        } else if (Object.keys(context.idsPayload).length > 0) {
-            payload = { ...context.idsPayload };
-        }
-        callArgs = [payload];
-    }
-
-    const cmd = creator(...callArgs);
-
-    if (context.entityPk && cmd && typeof cmd.payload === 'object' && cmd.payload !== null) {
-        cmd.payload = { ...(cmd.payload as Record<string, unknown>), __entityPk: context.entityPk };
-    }
-
-    return ctx.core.dispatch(cmd);
-};
-
-const makeDeepProxyImpl = (
-    statePath: string[],
-    commandPath: string[],
-    context: InvocationContext,
-    ctx: ProxyContext
-): any => {
-    return new Proxy(function() {}, {
-        get(target, prop) {
-            if (commandPath.length === 0) {
-                if (prop === MirageCoreSymbol) return ctx.core;
-            }
-
-            if (typeof prop !== 'string') {
-                return Reflect.get(target, prop);
-            }
-
-            if (prop === 'then') return undefined;
-
-            if (["asymmetricMatch", "nodeType", "@@toStringTag", "toJSON", "toString", "valueOf", "inspect"].includes(prop)) {
-                return Reflect.get(target, prop);
-            }
-
-            if (statePath.length === 0 && prop in ctx.selectors && !(prop in (ctx.builder.commandCreators as Record<string, unknown>))) {
-                return (...args: unknown[]) => ctx.invokeSelector(prop, args, context);
-            }
-
-            const currentTarget = ctx.resolvePath(statePath);
-            if (currentTarget && typeof currentTarget === 'object' && prop in currentTarget) {
-                const value = (currentTarget as any)[prop];
-
-                if (Array.isArray(value)) {
-                    const mount = statePath.length === 0 ? ctx.getMountForRoot(prop) : undefined;
-                    if (mount?.kind === 'valueObjectList') {
-                        return createReadonlyDeepProxy(value);
-                    }
-                    if (mount?.kind === 'list') {
-                        return ctx.makeCollectionProxy([...statePath, prop], [mount.commandPrefix], mount, context);
-                    }
-                    return createReadonlyDeepProxy(value);
-                }
-
-                if (typeof value === 'object' && value !== null) {
-                    const mount = statePath.length === 0 ? ctx.getMountForRoot(prop) : undefined;
-                    if (mount?.kind === 'valueObject' || mount?.kind === 'valueObjectMap') {
-                        return createReadonlyDeepProxy(value);
-                    }
-                    if (mount?.kind === 'map') {
-                        return ctx.makeMapProxy([...statePath, prop], [mount.commandPrefix], mount, context);
-                    }
-                    return ctx.makeDeepProxy([...statePath, prop], [...commandPath, prop], context);
-                }
-
-                if (typeof value === 'function' && Array.isArray(currentTarget)) {
-                    return value.bind(currentTarget);
-                }
-
-                return value;
-            }
-
-            return ctx.makeDeepProxy([...statePath, prop], [...commandPath, prop], context);
-        },
-
-        apply(target, thisArg, args) {
-            return ctx.invokeByPath(commandPath, args, context);
-        },
-
-        set() {
-            throw new Error('Cannot mutate properties directly');
-        },
-
-        deleteProperty() {
-            throw new Error('Cannot mutate properties directly');
-        }
-    });
-};
+  });
+}
