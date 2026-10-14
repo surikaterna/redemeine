@@ -1,5 +1,17 @@
 # @redemeine/projection
 
+## 0.2.0-pre.2
+
+### Patch Changes
+
+- [#116](https://github.com/surikaterna/redemeine/pull/116) [`9cc4763`](https://github.com/surikaterna/redemeine/commit/9cc4763f4a199f310a780f5587cda0389d4b5b9c) Thanks [@spralle](https://github.com/spralle)! - Register projection handlers using the aggregate's resolved event-name map, so
+  multiword snake_case defaults, explicit strategies and overrides dispatch correctly.
+  Handler event types use the resolved map when available rather than inventing
+  camelCase wire names; broad aggregate maps remain honestly typed as strings.
+  Built handler maps are keyed by resolved wire names when a mapping is provided;
+  direct handler-map consumers should use those names. Explicit wire keys and
+  definitions without a name map retain their existing keys.
+
 ## 0.2.0-pre.1
 
 ### Minor Changes
