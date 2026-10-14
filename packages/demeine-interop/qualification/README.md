@@ -167,8 +167,9 @@ feature-branch artifacts or a substitute for main-source release qualification.
 Any runtime, dependency or other
 artifact change requires renewed review before updating this approval fingerprint;
 the same package version or a new internally consistent plan is not approval.
-Append `--allow-legacy-bluebird-baseline` to the command above to apply it.
-Without that flag the runner still exits nonzero. Test the policy with
+The historical 1.3.0 runner required `--allow-legacy-bluebird-baseline` to apply
+that waiver and otherwise exited nonzero on the known diagnostic. Do not append
+the flag to the current 1.3.1 command above. Test the retained policy with
 `node --test packages/demeine-interop/qualification/legacy-types-policy.test.mjs`.
 
 Both strict legacy compiler programs still run with `skipLibCheck: false`.
