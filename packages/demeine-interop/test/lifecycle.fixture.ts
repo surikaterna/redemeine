@@ -4,7 +4,7 @@ import { definition } from './fixture';
 
 export type State = { count: number; items: string[] };
 export const implementations: [string, CompatibleAggregateConstructor<State>][] = [
-  ['demeine 1.3.0', Aggregate<State>],
+  ['demeine 1.3.1', Aggregate<State>],
   ['standalone', createDemeineBridge(definition())],
 ];
 export const event = (id: string): Event => ({ type: 'counter.added.event', aggregateId: id, payload: { amount: 1 } });
