@@ -8,9 +8,12 @@ import { existingSchemaImport } from './schemaImport';
  * schemas, and recursive structural conversion of object/union/array types.
  */
 export class TypeToZodConverter {
-    readonly knownSchemas = new Map<string, string>();
+    readonly knownSchemas = new Map<ts.Type, string>();
     readonly generatedShared = new Map<string, string>();
     readonly imports = new Set<string>();
+    private readonly overrideSchemas = new Map<string, string>();
+    private readonly bindings = new Set(['z', 'commandSchemas', 'eventSchemas', 'stateSchema']);
+    private depthFallbacks = 0;
 
     constructor(
         private checker: ts.TypeChecker,
@@ -21,7 +24,7 @@ export class TypeToZodConverter {
     ) {}
 
     convert(type: ts.Type, depth = 0): string {
-        if (depth > 10) return 'z.any()';
+        if (depth > 10) return this.depthFallback();
 
         const named = this.convertNamedType(type, depth);
         if (named !== null) return named;
@@ -38,22 +41,44 @@ export class TypeToZodConverter {
 
         // Consumer-provided override takes priority
         if (this.typeOverrides[typeName]) {
-            if (!this.knownSchemas.has(typeName)) {
-                const varName = typeName.charAt(0).toLowerCase() + typeName.slice(1) + 'Schema';
+            if (!this.overrideSchemas.has(typeName)) {
+                const varName = this.allocateBinding(this.preferredName(typeName));
                 this.generatedShared.set(varName, this.typeOverrides[typeName]);
-                this.knownSchemas.set(typeName, varName);
+                this.overrideSchemas.set(typeName, varName);
             }
-            return this.knownSchemas.get(typeName)!;
+            return this.overrideSchemas.get(typeName)!;
         }
 
         const existing = this.resolveExistingSchema(type);
         if (existing) return existing;
 
-        const varName = typeName.charAt(0).toLowerCase() + typeName.slice(1) + 'Schema';
+        const fallbacksBefore = this.depthFallbacks;
         const zodCode = this.convertStructural(type, depth);
+        // A fallback anywhere below this alias makes its result specific to this depth budget.
+        if (this.depthFallbacks !== fallbacksBefore) return zodCode;
+        const varName = this.allocateBinding(this.preferredName(typeName));
         this.generatedShared.set(varName, zodCode);
-        this.knownSchemas.set(typeName, varName);
+        this.knownSchemas.set(type, varName);
         return varName;
+    }
+
+    private depthFallback(): string {
+        this.depthFallbacks++;
+        return 'z.any()';
+    }
+
+    private preferredName(typeName: string): string {
+        return typeName.charAt(0).toLowerCase() + typeName.slice(1) + 'Schema';
+    }
+
+    private allocateBinding(preferred: string): string {
+        const sanitized = preferred.replace(/[^A-Za-z0-9_$]/g, '_');
+        const base = /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
+        let name = base;
+        let suffix = 2;
+        while (this.bindings.has(name)) name = `${base}${suffix++}`;
+        this.bindings.add(name);
+        return name;
     }
 
     /**
@@ -64,9 +89,8 @@ export class TypeToZodConverter {
         const aliasSymbol = type.aliasSymbol;
         if (!aliasSymbol) return null;
 
-        const typeName = aliasSymbol.getName();
-        if (this.knownSchemas.has(typeName)) {
-            return this.knownSchemas.get(typeName)!;
+        if (this.knownSchemas.has(type)) {
+            return this.knownSchemas.get(type)!;
         }
 
         const declarations = aliasSymbol.getDeclarations();
@@ -75,8 +99,9 @@ export class TypeToZodConverter {
         for (const decl of declarations) {
             const query = this.detectZodInfer(decl);
             if (query) {
-                const schema = existingSchemaImport(this.checker, this.program, query, this.outFile, `_existingSchema${this.imports.size}`);
-                this.knownSchemas.set(typeName, schema.name);
+                const name = this.allocateBinding(`_existingSchema${this.imports.size}`);
+                const schema = existingSchemaImport(this.checker, this.program, query, this.outFile, name);
+                this.knownSchemas.set(type, schema.name);
                 this.imports.add(schema.statement);
                 return schema.name;
             }
@@ -104,7 +129,7 @@ export class TypeToZodConverter {
 
     /** Structural (non-named) type conversion. */
     convertStructural(type: ts.Type, depth: number): string {
-        if (depth > 10) return 'z.any()';
+        if (depth > 10) return this.depthFallback();
 
         const primitive = this.convertPrimitive(type);
         if (primitive) return primitive;

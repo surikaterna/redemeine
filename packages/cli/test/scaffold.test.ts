@@ -27,11 +27,25 @@ test('intended tree, built export, repeated mounts and duplicate refusal', () =>
   expect(readFileSync(file, 'utf8')).toBe(content);
 });
 
-test.each(['../bad', 'a/b', 'a\\b', '.', '', 'class', 'constructor', 'prototype', '__proto__', 'a;ls', 'a"', 'a\n'])('invalid name %j leaves no output', name => {
+test.each(['../bad', 'a/b', 'a\\b', '.', '', 'class', 'constructor', 'prototype', '__proto__', 'eval', 'arguments', 'a;ls', 'a"', 'a\n'])('invalid name %j leaves no output', name => {
   expect(() => validName(name)).toThrow();
   expect(() => initAggregate(name, root)).toThrow();
   expect(() => addEntity(name, 'orders', root)).toThrow();
+  expect(() => addEntity('line', name, root)).toThrow(/non-reserved/);
   expect(existsSync(join(root, 'src'))).toBe(false);
+});
+
+test.each(['eval', 'arguments'])('restricted name %s preserves every existing sentinel before writes', name => {
+  initAggregate('orders', root);
+  mkdirSync(join(root, `src/domains/${name}`));
+  const paths = ['src/domains/orders/aggregate.ts', `src/domains/${name}/aggregate.ts`, 'src/test-utils.ts', 'schema-registry.json', 'package.json'];
+  paths.forEach(path => writeFileSync(join(root, path), `sentinel ${path}`));
+  expect(() => initAggregate(name, root)).toThrow(/non-reserved/);
+  expect(() => addEntity(name, 'orders', root)).toThrow(/non-reserved/);
+  expect(() => addEntity('line', name, root)).toThrow(/non-reserved/);
+  paths.forEach(path => expect(readFileSync(join(root, path), 'utf8')).toBe(`sentinel ${path}`));
+  expect(existsSync(join(root, `src/domains/orders/entities/${name}`))).toBe(false);
+  expect(existsSync(join(root, `src/domains/${name}/entities`))).toBe(false);
 });
 
 test.each(['selectors', 'createAggregate', 'lineEntity', 'expect', 'reduce'])('accepted name %s uses isolated imports and retains generated mounts', name => {

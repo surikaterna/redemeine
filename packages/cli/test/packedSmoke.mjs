@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { reviewRegressions } from './packedReviewRegressions.mjs';
+import { surgicalRegressions } from './packedSurgicalRegressions.mjs';
 import { jsonSchemaRegressions } from './packedJsonSchema.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -22,14 +23,15 @@ function command(program, args, cwd = consumer) {
 
 function pack(name) {
   const cwd = join(repo, 'packages', name);
-  const inventory = command('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], cwd);
+  const packArgs = ['--config.ignore-scripts=true', '--config.ignore-pnpmfile=true', 'pack', '--json'];
+  const inventory = command('pnpm', [...packArgs, '--dry-run'], cwd);
   writeFileSync(join(run, `${name}-inventory.json`), inventory);
-  const packed = JSON.parse(command('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', run], cwd))[0];
+  const packed = JSON.parse(command('pnpm', [...packArgs, '--pack-destination', run], cwd));
   if (name === 'cli') {
     for (const path of ['dist/bin.js', 'dist/reflector.js', 'dist/reflector.d.ts']) assert(packed.files.some(file => file.path === path));
     assert(packed.files.every(file => !file.path.startsWith('src/')));
   }
-  return join(run, packed.filename);
+  return resolve(run, packed.filename);
 }
 
 const tarballs = Object.fromEntries(['kernel', 'aggregate', 'projection', 'cli'].map(name => [name, pack(name)]));
@@ -46,10 +48,12 @@ console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 
 const bin = join(consumer, 'node_modules/.bin/redemeine');
 jsonSchemaRegressions(consumer, command, bin);
 reviewRegressions(consumer, command);
+surgicalRegressions(consumer, command, bin);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   target: 'ES2022', lib: ['ES2022', 'ESNext.Disposable'], module: 'ESNext', moduleResolution: 'Bundler', strict: true,
   exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, skipLibCheck: false, noEmit: true,
+  types: ['node'], typeRoots: ['./node_modules/@types'],
 }, include: ['src', 'api.ts'] }));
 cli(['init', 'orders', '--no-install']);
 console.log(command('npx', ['--no-install', 'tsc', '--noEmit']));
