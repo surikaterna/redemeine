@@ -63,7 +63,7 @@ describe('Domain Exmaple', () => {
     })
       .mixins(identifiers)
       .entityList('orderLines', orderLineEntity)
-      .selectors({
+      .selectors(({ bindContext }) => ({
         getIdentifier: (state, domain: string) => state.identifiers.find((id) => id.domain === domain),
         findOrderLinesDeep: (state, predicate: (line: ReadonlyDeep<OrderLine>) => boolean) => {
           const matches: ReadonlyDeep<OrderLine>[] = [];
@@ -81,9 +81,9 @@ describe('Domain Exmaple', () => {
           };
 
           visit(state.orderLines);
-          return matches;
+          return bindContext(matches, orderLineEntity);
         }
-      })
+      }))
       .events({
         registered: (state, event: Event<OrderState>) => {
           Object.assign(state, event.payload);

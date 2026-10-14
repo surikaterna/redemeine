@@ -31,7 +31,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Reference',
-      items: ['reference/sagas-reference'],
+      items: ['reference/sagas-reference', 'releasing'],
     },
     {
       type: 'category',

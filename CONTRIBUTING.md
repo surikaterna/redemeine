@@ -32,15 +32,23 @@ Our workflow follows the standard GitHub Flow model:
 
 1. **Fork** the repository and create your feature branch from `main`.
 2. **Clone** your fork locally.
-3. Install dependencies with pnpm:
+3. Use Node **24** (qualification pin **24.20.0**) and root-pinned pnpm **11.9.0**.
+   Bun and mise are not prerequisites. pnpm owns dependency installation and the
+   sole repository lockfile; do not use `npm install` or `bun install` here.
    ```bash
-   pnpm install
+   corepack enable
+   corepack install
+   pnpm install --frozen-lockfile --ignore-scripts
    ```
 4. Run tests frequently:
     ```bash
     pnpm exec turbo run test --continue
     ```
 5. Commit your changes and open a **Pull Request**.
+
+See [Releasing packages](docs/releasing.md) for version PRs, nonpublishing packed
+checks and the explicitly approved publication procedure. Run `pnpm run test:release:simple`
+for offline release regressions; build before checking actual workspace tarballs.
 
 ---
 

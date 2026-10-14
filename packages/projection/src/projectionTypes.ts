@@ -1,4 +1,5 @@
 import type { ProjectionDeduplicationStrategy } from './deduplication';
+import type { ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { InheritExtended, InheritToken } from './inherit';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
@@ -68,9 +69,7 @@ export type AggregateEventKeys<TAggregate> = keyof AggregateEventPayloadMap<TAgg
 
 export type AggregateEventPayloadByKey<TAggregate, TEventKey extends AggregateEventKeys<TAggregate>> = AggregateEventPayloadMap<TAggregate>[TEventKey];
 
-type AggregateTypeOf<TAggregate> = TAggregate extends { aggregateType: infer TAggregateType extends string } ? TAggregateType : string;
-
-type HandlerEventTypeByKey<TAggregate, TEventKey extends string> = TEventKey | `${AggregateTypeOf<TAggregate>}.${TEventKey}.event`;
+type HandlerEventTypeByKey<TAggregate, TEventKey extends string> = ResolvedHandlerEventType<TAggregate, TEventKey>;
 
 export interface AggregateDefinition<TState, TPayloads extends Record<string, unknown>> {
   aggregateType: string;

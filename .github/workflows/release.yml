@@ -1,0 +1,146 @@
+name: Packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      approved_versions:
+        description: 'Exact space-separated name@version candidates from the reviewed version PR (includes first publications)'
+        type: string
+        required: true
+      tag:
+        description: 'Publication channel; latest requires stable versions after Changesets pre exit'
+        type: choice
+        options: [pre, latest]
+        required: true
+        default: pre
+      publish:
+        description: 'false qualifies/uploads only; true performs registry writes for explicitly approved versions'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3; Changesets CLI 2.x
+        with:
+          version: pnpm run version:packages
+          createGithubReleases: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm install --frozen-lockfile
+
+  qualify:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      plan_sha256: ${{ steps.pack.outputs.plan_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - name: Pin release host npm for OIDC publication
+        run: |
+          npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
+          npm --version
+          test "$(npm --version)" = 11.21.0
+      - run: pnpm install --frozen-lockfile
+      - name: Check source approval before build and packing
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/release/simple.mjs approve
+        env:
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+      - run: pnpm -r build
+      - run: pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
+      - name: Pack and check approved source versions
+        id: pack
+        if: github.event_name == 'workflow_dispatch'
+        run: pnpm run release:check-simple "$RUNNER_TEMP/release"
+        env:
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: upload
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: checked-packages
+          path: |
+            ${{ runner.temp }}/release/*.tgz
+            ${{ runner.temp }}/release/plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish == true
+    needs: qualify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - name: Pin release host npm for OIDC publication
+        run: |
+          npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org
+          npm --version
+          test "$(npm --version)" = 11.21.0
+      - run: pnpm --config.ignore-scripts=true --config.ignore-pnpmfile=true install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Publish only checked tarball paths (no build or repack)
+        run: node scripts/release/simple.mjs publish "$RUNNER_TEMP/release"
+        env:
+          RELEASE_APPROVED: 'true'
+          APPROVED_VERSIONS: ${{ inputs.approved_versions }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PLAN_SHA256: ${{ needs.qualify.outputs.plan_sha256 }}

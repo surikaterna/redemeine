@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection-transport",
-  "version": "0.1.0",
+  "version": "0.1.1-pre.0",
   "description": "Private Tapeworm and Rabbit transport adapters for projections",
   "type": "module",
   "private": true,

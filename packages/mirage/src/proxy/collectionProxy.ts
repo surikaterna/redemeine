@@ -1,177 +1,78 @@
 import { singular } from '@redemeine/aggregate';
-import { createReadonlyDeepProxy } from '@redemeine/kernel';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { findEntityInCollection } from './entityCache';
+import { readProperty } from '../runtimeDefinition';
+import { readonlyArrayMember, readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
-export const selectFromList = (mountName: string, mount: MountMetadata, rawPk: unknown): InvocationContext => {
-    if (Array.isArray(mount.pk)) {
-        if (typeof rawPk !== 'object' || rawPk === null) {
-            throw new Error(`Composite key for "${mountName}" must be an object containing: ${mount.pk.join(', ')}`);
-        }
+function identityValue(value: unknown, mount: string): string | number {
+  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) return value;
+  throw new TypeError(`Missing or invalid primary key for ${mount}`);
+}
 
-        const keyObject: Record<string, unknown> = {};
-        mount.pk.forEach((part) => {
-            keyObject[part] = (rawPk as Record<string, unknown>)[part];
-        });
+export function selectFromList(name: string, mount: MountMetadata, raw: unknown): InvocationContext {
+  if (Array.isArray(mount.pk)) {
+    const identity = Object.fromEntries(mount.pk.map(key => [key, identityValue(readProperty(raw, key), name)]));
+    return { idsPayload: identity, packPrefix: mount.pk.map(key => identity[key]), entityPk: identity };
+  }
+  const key = typeof mount.pk === 'string' ? mount.pk : 'id';
+  const value = identityValue(raw, name);
+  return { idsPayload: { id: value, [key]: value, [`${singular(name)}Id`]: value, [`${name}Id`]: value },
+    packPrefix: [value], ...(key === 'id' ? {} : { entityPk: { [key]: value } }) };
+}
 
-        return {
-            idsPayload: { ...keyObject },
-            packPrefix: mount.pk.map((part) => keyObject[part]),
-            entityPk: keyObject
-        };
+export function selectFromListEntity(name: string, mount: MountMetadata, entity: unknown): InvocationContext {
+  return selectFromList(name, mount, Array.isArray(mount.pk) ? entity : readProperty(entity, typeof mount.pk === 'string' ? mount.pk : 'id'));
+}
+
+export function makeEntityMirageProxy(path: string[], prefix: string[], selection: InvocationContext, ctx: ProxyContext): unknown {
+  const resolveState = () => {
+    const collection = ctx.resolvePath(path);
+    const entity = Array.isArray(collection) ? findEntityInCollection(collection, selection, ctx.core.version) : undefined;
+    if (!entity || typeof entity !== 'object') throw new Error(`Entity not found in ${path.join('.')}`);
+    return entity;
+  };
+  resolveState();
+  const context = { ...selection, resolveState };
+  return new Proxy({}, {
+    ...readonlyTraps,
+    get(_target, property) {
+      const protocol = readonlyObjectMember(property);
+      if (protocol) return protocol;
+      if (typeof property !== 'string' || property === 'then') return undefined;
+      const entity = resolveState();
+      if (Object.hasOwn(entity, property)) return readonlyValue(readProperty(entity, property));
+      if (!Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName([...prefix, property]))) return undefined;
+      return ctx.makeDeepProxy([...path, property], [...prefix, property], context);
     }
+  });
+}
 
-    const scalarPk = typeof mount.pk === 'string' ? mount.pk : 'id';
-    const keyName = `${singular(mountName)}Id`;
-    return {
-        idsPayload: {
-            id: rawPk,
-            [scalarPk]: rawPk,
-            [keyName]: rawPk,
-            [`${mountName}Id`]: rawPk
-        },
-        packPrefix: [rawPk]
-    };
-};
-
-export const selectFromListEntity = (mountName: string, mount: MountMetadata, entity: any): InvocationContext | undefined => {
-    if (!entity || typeof entity !== 'object') {
-        return undefined;
-    }
-
-    if (Array.isArray(mount.pk)) {
-        const keyObject: Record<string, unknown> = {};
-        mount.pk.forEach((part) => {
-            keyObject[part] = entity[part];
-        });
-        return selectFromList(mountName, mount, keyObject);
-    }
-
-    const scalarPk = typeof mount.pk === 'string' ? mount.pk : 'id';
-    return selectFromList(mountName, mount, entity[scalarPk]);
-};
-
-export const isListMount = (mount: MountMetadata | undefined): mount is MountMetadata & { kind: 'list' } => {
-    return !!mount && mount.kind === 'list';
-};
-
-export const findListMountForEntity = (entity: any, mounts: Record<string, MountMetadata>): [string, MountMetadata & { kind: 'list' }] | undefined => {
-    if (!entity || typeof entity !== 'object') {
-        return undefined;
-    }
-
-    for (const [mountName, mount] of Object.entries(mounts)) {
-        if (!isListMount(mount)) continue;
-
-        if (Array.isArray(mount.pk)) {
-            if (mount.pk.every((k) => k in entity)) {
-                return [mountName, mount];
-            }
-            continue;
-        }
-
-        const scalarPk = typeof mount.pk === 'string' ? mount.pk : 'id';
-        if (scalarPk in entity) {
-            return [mountName, mount];
-        }
-    }
-
-    return undefined;
-};
-
-export const makeEntityMirageProxy = (
-    collectionPath: string[],
-    commandPrefixPath: string[],
-    selection: InvocationContext,
-    ctx: ProxyContext
-): any => {
-    return new Proxy({}, {
-        get(target, prop) {
-            if (typeof prop !== 'string') return Reflect.get(target, prop);
-            if (prop === 'then') return undefined;
-
-            const collection = ctx.resolvePath(collectionPath);
-            const entity = Array.isArray(collection)
-                ? findEntityInCollection(collection, selection, ctx.core.version)
-                : undefined;
-
-            if (entity && prop in entity) {
-                return createReadonlyDeepProxy(entity[prop]);
-            }
-
-            return ctx.makeDeepProxy([...collectionPath, prop], [...commandPrefixPath, prop], selection);
-        },
-        set() {
-            throw new Error('Cannot mutate properties directly');
-        }
+export function makeCollectionProxy(path: string[], prefix: string[], mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
+  const select = (key: unknown) => {
+    const selected = selectFromList(path.at(-1)!, mount, key);
+    return makeEntityMirageProxy(path, prefix, { ...selected,
+      idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
+  };
+  const items = () => {
+    const collection = ctx.resolvePath(path);
+    if (!Array.isArray(collection)) throw new TypeError(`Expected list at ${path.join('.')}`);
+    return collection.map(entity => {
+      const selected = selectFromListEntity(path.at(-1)!, mount, entity);
+      return makeEntityMirageProxy(path, prefix, { ...selected,
+        idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
     });
-};
-
-export const makeCollectionProxy = (
-    collectionPath: string[],
-    commandPrefixPath: string[],
-    mount: MountMetadata,
-    context: InvocationContext,
-    ctx: ProxyContext
-): any => {
-    const fn = function(pkValue: string | number | Record<string, unknown>) {
-        const selection = selectFromList(collectionPath[collectionPath.length - 1]!, mount, pkValue);
-        return makeEntityMirageProxy(
-            collectionPath,
-            commandPrefixPath,
-            {
-                idsPayload: { ...context.idsPayload, ...selection.idsPayload },
-                packPrefix: [...context.packPrefix, ...selection.packPrefix],
-                entityPk: selection.entityPk
-            },
-            ctx
-        );
-    };
-
-    return new Proxy(fn, {
-        get(target, prop) {
-            if (prop === 'then') return undefined;
-            
-            const collection = ctx.resolvePath(collectionPath) || [];
-
-            if (typeof prop !== 'string') {
-                if (prop === Symbol.iterator) return collection[Symbol.iterator].bind(collection);
-                return Reflect.get(target, prop);
-            }
-
-            if (['set', 'push', 'pop', 'splice'].includes(prop)) {
-                return () => { throw new Error('Cannot mutate collection directly'); };
-            }
-
-            if (prop === 'length') return collection.length;
-
-            if (!isNaN(Number(prop))) {
-                const entity = collection[Number(prop)];
-                const selection = selectFromListEntity(collectionPath[collectionPath.length - 1]!, mount, entity);
-                if (!selection) {
-                    return createReadonlyDeepProxy(entity);
-                }
-                return makeEntityMirageProxy(
-                    collectionPath,
-                    commandPrefixPath,
-                    {
-                        idsPayload: { ...context.idsPayload, ...selection.idsPayload },
-                        packPrefix: [...context.packPrefix, ...selection.packPrefix],
-                        entityPk: selection.entityPk
-                    },
-                    ctx
-                );
-            }
-
-            if (typeof (collection as any)[prop] === 'function') {
-                return (collection as any)[prop].bind(collection);
-            }
-
-            return ctx.makeDeepProxy([...collectionPath, prop], [...commandPrefixPath, prop], context);
-        },
-        set() {
-            throw new Error('Cannot mutate collection directly');
-        }
-    });
-};
+  };
+  return new Proxy(select, {
+    ...readonlyTraps,
+    get(_target, property) {
+      if (property === 'then') return undefined;
+      if (property === Symbol.isConcatSpreadable) return true;
+      if (property === 'length') {
+        const collection = ctx.resolvePath(path);
+        return Array.isArray(collection) ? collection.length : 0;
+      }
+      return readonlyArrayMember(items(), property);
+    }
+  });
+}

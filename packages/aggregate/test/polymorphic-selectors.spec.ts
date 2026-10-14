@@ -62,11 +62,14 @@ describe('polymorphic selector bindContext', () => {
           bindContext(state.lines, 'type.identifier', {
             LEG: legRole,
             STOP: stopRole
-          } as const)
+          } as const, { mount: 'lines' })
       }))
       .build();
 
     const mirage = createMirage(aggregate, 'shipment-1');
+
+    expect(Reflect.get(mirage.getActivities()[0]!, 'arrive')).toBeUndefined();
+    expect(Reflect.get(mirage.getActivities()[1]!, 'depart')).toBeUndefined();
 
     await (mirage.getActivities()[0] as any).depart();
 

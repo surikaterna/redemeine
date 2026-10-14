@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection-runtime-store-mongodb",
-  "version": "0.1.0",
+  "version": "0.1.1-pre.0",
   "description": "MongoDB storage adapter for projection runtime",
   "license": "MIT",
   "repository": {

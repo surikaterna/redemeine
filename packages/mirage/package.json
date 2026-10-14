@@ -1,7 +1,7 @@
 {
   "name": "@redemeine/mirage",
-  "version": "0.2.0-pre.0",
-  "description": "In-memory aggregate repository for testing event-sourced systems",
+  "version": "1.0.0-pre.2",
+  "description": "Type-safe live aggregate proxies with readonly state, scoped commands and event-store persistence",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,7 +34,9 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/mirage/test",
+    "test": "pnpm run test:types && pnpm exec jest --config ../../jest.config.js --roots packages/mirage/test",
+    "test:types": "tsc -p tsconfig.contracts.json && tsc -p tsconfig.declarations.json",
+    "test:packed": "node qualification/packed-dx.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

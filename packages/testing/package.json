@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/testing",
-  "version": "0.2.0-pre.0",
+  "version": "0.2.0-pre.2",
   "description": "Test utilities and harnesses for @redemeine event-sourced applications",
   "license": "MIT",
   "repository": {
@@ -40,12 +40,12 @@
   "dependencies": {
     "@redemeine/mirage": "workspace:*",
     "@redemeine/projection": "workspace:*",
-    "@redemeine/projection-runtime-core": "workspace:*",
-    "@redemeine/projection-runtime-store-inmemory": "workspace:*",
     "@redemeine/saga": "workspace:*",
-    "immer": "^10.1.1"
+    "immer": "^10.2.0"
   },
   "devDependencies": {
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-inmemory": "workspace:*",
     "@types/node": "^24.7.2",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3"

@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection-router-core",
-  "version": "0.1.1-pre.0",
+  "version": "0.1.1-pre.1",
   "description": "Event routing for projection dispatch",
   "license": "MIT",
   "repository": {

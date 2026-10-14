@@ -1,129 +1,72 @@
-import { type Event, type RedemeinePlugin, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
-import type { AggregateEntityRegistry, BuiltAggregate } from '@redemeine/aggregate';
-import { MirageCore } from './MirageCore';
+import { type Command, type Event, type ReadonlyDeep } from '@redemeine/kernel';
+import { MirageCore, assertEventCount } from './MirageCore';
 import { hydrateStateFromEvents } from './hydration';
 import { createProxyContext } from './proxy/deepProxy';
-import type {
-    Mirage,
-    MirageOptions,
-    HydrationEvents,
-    BuiltAggregateCommands,
-    BuiltAggregateState,
-    BuiltAggregateRegistry,
-    BuiltAggregateSelectors,
-    BuiltAggregatePlugins,
-    MountMetadata,
-    InvocationContext,
-} from './mirage.types';
-import { MirageCoreSymbol } from './mirage.types';
+import { getCore, registerCore } from './coreAccess';
+import { builderPlugins, erasePlugins, type MirageBuilder, type RuntimeBuilder } from './runtimeDefinition';
+import type { MirageInstance, MirageOf, MirageSetup, HydrationEvents, BuiltAggregateState, BuiltAggregatePlugins, DispatchResult, NoMirageCollisions } from './mirage.types';
+import { validateMirageNames } from './validateMirageNames';
+import { cloneState } from './stateViews';
 
 export { HYDRATION_REPLAY_YIELD_THRESHOLD } from './hydration';
 export * from './mirage.types';
 
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string,
-    setup: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events: HydrationEvents<Event> }
-): Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>>;
-export function createMirage<BA extends BuiltAggregate<any, any, any, any, any>>(
-    builder: BA,
-    id: string,
-    setup?: MirageOptions<BuiltAggregatePlugins<BA>> & { snapshot?: BuiltAggregateState<BA>; events?: HydrationEvents<Event> }
-): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> | Promise<Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>> {
-
-    const makeMirage = (state: BuiltAggregateState<BA>, plugins: RedemeinePlugin<any>[]): Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>> => {
-        const core = new MirageCore(builder, id, state, setup?.contract, setup?.strict, plugins);
-        const mounts = (builder.mounts || {}) as Record<string, MountMetadata>;
-        const selectors = (builder.selectors || {}) as Record<string, (...args: any[]) => any>;
-
-        const ctx = createProxyContext(core, mounts, selectors, builder);
-        const rootContext: InvocationContext = { idsPayload: {}, packPrefix: [] };
-
-        return ctx.makeDeepProxy([], [], rootContext) as Mirage<BuiltAggregateState<BA>, BuiltAggregateCommands<BA>, BuiltAggregateRegistry<BA>, BuiltAggregateSelectors<BA>>;
-    };
-
-    const baseState = setup?.snapshot ?? builder.initialState;
-    const setupEvents = setup?.events;
-    const plugins = [...(builder.plugins || []), ...(setup?.plugins || [])] as RedemeinePlugin<any>[];
-
-    if (!setupEvents) {
-        return makeMirage(baseState, plugins);
-    }
-
-    return (async () => {
-        const hydratedState = await hydrateStateFromEvents(builder, id, baseState, setupEvents, plugins);
-        return makeMirage(hydratedState, plugins);
-    })();
+export function createMirage<B extends MirageBuilder>(builder: B & NoMirageCollisions<NoInfer<B>>, id: string,
+  setup?: MirageSetup<BuiltAggregateState<B>, BuiltAggregatePlugins<B>> & { events?: undefined }): MirageOf<B>;
+export function createMirage<B extends MirageBuilder>(builder: B & NoMirageCollisions<NoInfer<B>>, id: string,
+  setup: MirageSetup<BuiltAggregateState<B>, BuiltAggregatePlugins<B>> & { events: HydrationEvents<Event> }): Promise<MirageOf<B>>;
+export function createMirage<B extends MirageBuilder>(builder: B & NoMirageCollisions<NoInfer<B>>, id: string,
+  setup: MirageSetup<BuiltAggregateState<B>, BuiltAggregatePlugins<B>>): MirageOf<B> | Promise<MirageOf<B>>;
+export function createMirage<B extends MirageBuilder>(builder: B & NoMirageCollisions<NoInfer<B>>, id: string,
+  setup?: MirageSetup<BuiltAggregateState<B>, BuiltAggregatePlugins<B>>): MirageOf<B> | Promise<MirageOf<B>> {
+  type State = BuiltAggregateState<B>;
+  const initialVersion = setup?.initialVersion === undefined ? 0 : setup.initialVersion;
+  assertEventCount(initialVersion);
+  // These correlated state/process/apply types originate from the same built aggregate.
+  const runtime = builder as unknown as RuntimeBuilder<State>;
+  const state = cloneState(setup?.snapshot ?? builder.initialState) as State;
+  validateMirageNames(builder, state);
+  const plugins = [...builderPlugins(builder), ...erasePlugins(setup?.plugins ?? [])];
+  const make = (current: State, version: number): MirageOf<B> => {
+    const core = new MirageCore(runtime, id, current, setup?.contract, setup?.strict, plugins, version);
+    const context = createProxyContext(core, builder.mounts ?? {}, builder.selectors ?? {}, builder);
+    const instance = context.makeDeepProxy([], [], { idsPayload: {}, packPrefix: [] });
+    if (!instance || typeof instance !== 'object') throw new Error('Invalid root proxy');
+    registerCore(instance, core);
+    // Dynamic property dispatch is implemented by the tested proxy boundary, not a plain object.
+    return instance as MirageOf<B>;
+  };
+  if (!setup?.events) return make(state, initialVersion);
+  return hydrateStateFromEvents(runtime, id, state, setup.events, plugins, initialVersion)
+    .then(result => make(result.state, initialVersion + result.appliedCount));
 }
 
-/**
- * Returns a copy of all uncommitted events currently buffered by a Mirage instance.
- */
-export function extractUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
-    mirage: Mirage<S, M, Registry, Sel>
+export function extractUncommittedEvents<S>(
+  mirage: MirageInstance<S>
 ): Event[] {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    return [...core.uncommitted];
+  return structuredClone(getCore<S>(mirage).uncommitted);
 }
 
-/**
- * Clears the uncommitted event buffer for a Mirage instance.
- */
-export function clearUncommittedEvents<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
-    mirage: Mirage<S, M, Registry, Sel>
+export function clearUncommittedEvents<S>(
+  mirage: MirageInstance<S>
 ): void {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    core.clearPendingResults();
+  getCore<S>(mirage).clearPendingResults();
 }
 
-/**
- * Returns a readonly deep copy of the current state for a Mirage instance.
- */
-export function extractState<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
-    mirage: Mirage<S, M, Registry, Sel>
+export function extractState<S>(
+  mirage: MirageInstance<S>
 ): ReadonlyDeep<S> {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    return createReadonlyDeepProxy(core.state) as ReadonlyDeep<S>;
+  return getCore<S>(mirage).stateView();
 }
 
-/**
- * Subscribes to state changes on a Mirage instance.
- * Returns an unsubscribe function.
- */
-export function subscribe<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
-    mirage: Mirage<S, M, Registry, Sel>,
-    listener: (state: S) => void
+export function subscribe<S>(
+  mirage: MirageInstance<S>, listener: (state: ReadonlyDeep<S>) => void
 ): () => void {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    return core.subscribe(listener);
+  return getCore<S>(mirage).subscribe(listener);
 }
 
-/**
- * Dispatches a raw command to a Mirage instance.
- */
-export function dispatch<S, M extends Record<string, any>, Registry extends AggregateEntityRegistry = {}, Sel extends Record<string, any> = {}>(
-    mirage: Mirage<S, M, Registry, Sel>,
-    command: any
-): any {
-    const core = (mirage as any)[MirageCoreSymbol] as MirageCore<S>;
-    if (!core) {
-        throw new Error('Target is not a valid Mirage Instance.');
-    }
-    return core.dispatch(command);
+export function dispatch<S>(
+  mirage: MirageInstance<S>, command: Command<unknown, string>
+): DispatchResult<S> {
+  return getCore<S>(mirage).dispatch(command);
 }

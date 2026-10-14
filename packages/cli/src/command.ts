@@ -9,7 +9,7 @@ import { validName } from './scaffold/paths';
 const help = `Available commands:
   init <name> [--no-install]
   add-entity <name> --to <aggregateName> [--no-install]
-  extract-schemas --entry <path> --export <name> --out <path> [--kind aggregate|projection] [--tsconfig <path>]
+  extract-schemas --entry <path> --export <name> --out <path> [--kind aggregate|projection] [--format zod|json-schema] [--target draft-7|draft-2020-12] [--tsconfig <path>]
   extract-schema-registries --manifest <path> --out <path>`;
 
 export async function runCommand(argv: string[]): Promise<void> {
@@ -20,7 +20,7 @@ export async function runCommand(argv: string[]): Promise<void> {
   }
   if (command === 'extract-schemas') {
     extractSchemasCommand(options);
-    console.log(`Zod schemas written to ${options.out}`);
+    console.log(`${options.format === 'json-schema' ? 'JSON Schema' : 'Zod schemas'} written to ${options.out}`);
     return;
   }
   if (command === 'extract-schema-registries') {

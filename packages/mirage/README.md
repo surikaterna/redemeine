@@ -1,491 +1,221 @@
 # @redemeine/mirage
 
-Runtime proxy layer that turns a built Redemeine aggregate into a live, interactive object.
+Mirage turns a built Redemeine aggregate into a typed live object: commands are
+methods, state is readonly, selectors are queries and mounted entities are scoped
+proxies. Persistence remains an adapter responsibility.
 
-## Overview
+## Commands and state
 
-Mirage wraps a `BuiltAggregate` (the output of `createAggregate(...).build()`) into a Proxy where state properties, commands, selectors, and entity sub-aggregates all live on a single object. The root namespace belongs entirely to your domain — there are no framework-reserved properties like `.dispatch()` or `.getState()` cluttering the type.
-
-Infrastructure operations (reading raw state, accessing uncommitted events, subscribing to changes) are handled through standalone functions that accept a mirage as their first argument. This keeps the proxy surface clean and avoids naming collisions with your domain model.
-
-Mirage sits between the aggregate builder (`@redemeine/aggregate`) and your application layer. The builder defines *what* your aggregate does; mirage makes it *usable*.
-
-## Installation
-
-```bash
-pnpm add @redemeine/mirage
-```
-
-Peer dependencies: `@redemeine/aggregate`, `@redemeine/kernel`.
-
-## Quick Start
-
-```typescript
+```ts
 import { createAggregate } from '@redemeine/aggregate';
-import { createMirage, extractUncommittedEvents } from '@redemeine/mirage';
+import type { Event } from '@redemeine/kernel';
+import { createMirage } from '@redemeine/mirage';
 
-interface OrderState {
-  status: 'draft' | 'placed' | 'cancelled';
-  total: number;
-  lines: { id: string; product: string; qty: number; price: number }[];
-}
-
-const OrderAggregate = createAggregate<OrderState, 'order'>('order', {
-  status: 'draft',
-  total: 0,
-  lines: []
-})
-  .events({
-    placed: (state) => { state.status = 'placed'; },
-    lineAdded: (state, event) => {
-      state.lines.push(event.payload);
-      state.total += event.payload.qty * event.payload.price;
-    }
-  })
-  .commands((emit) => ({
-    place: (state) => emit.placed(undefined),
-    addLine: (state, line: { id: string; product: string; qty: number; price: number }) =>
-      emit.lineAdded(line)
-  }))
-  .selectors({
-    hasLine: (state, productId: string) => state.lines.some(l => l.product === productId),
-    lineCount: (state) => state.lines.length
-  })
+const Order = createAggregate('order', { total: 0 })
+  .events({ added: (state, event: Event<number>) => { state.total += event.payload; } })
+  .commands(emit => ({ add: (_state, amount: number) => emit.added(amount) }))
+  .selectors({ above: (state, limit: number) => state.total > limit })
   .build();
 
-// Create a live mirage
-const order = createMirage(OrderAggregate, 'order-1');
-
-// Commands are methods
-order.addLine({ id: 'l1', product: 'widget', qty: 2, price: 10 });
-order.place();
-
-// State is properties
-console.log(order.status);  // 'placed'
-console.log(order.total);   // 20
-
-// Selectors are callable on the root
-console.log(order.hasLine('widget'));  // true
-console.log(order.lineCount());       // 1
-
-// Infrastructure via standalone functions
-const events = extractUncommittedEvents(order);
-// [{ type: 'order.lineAdded.event', ... }, { type: 'order.placed.event', ... }]
+const order = createMirage(Order, 'order-1');
+await order.add(3);
+order.above(2); // boolean
+order.total; // readonly number
 ```
 
-## Core Concepts
+Commands decide zero or more events; projectors apply those events to controlled
+state. Each successfully applied event advances the version once. Zero-event
+commands advance it zero times, but still notify after successful dispatch.
+Commands return readonly post-command state. Before-command plugins can make
+dispatch asynchronous, so command results are `ReadonlyDeep<S> | Promise<ReadonlyDeep<S>>`.
 
-### The Mirage Proxy
+Initial state and supplied snapshots are cloned per instance. Root state is a domain
+record; use plain structured-cloneable records and arrays inside it. Read views, selector results and subscribers cannot
+write aggregate state. Command results and subscriber notifications are readonly
+snapshots, not mutable aliases. Event extraction returns detached event copies.
+Snapshots from `extractState` or command results can be supplied to creation or
+Depot hydration; the receiving instance still gets its own copy.
+Do not mutate state through stored external references or internal implementation
+modules. `MirageCoreSymbol` exposes only readonly diagnostics (version and copied
+pending results), not a mutable core. Normal helpers use private instance identity.
 
-A mirage is a `Proxy` object. Property access resolves against the current aggregate state. Method calls route to command handlers. The proxy is deeply immutable on the read side — attempting to assign a property throws.
+## Entity collections
 
-The type signature reflects this:
+For `.entityList('lines', Line)`:
 
-```typescript
-type Mirage<TState, M, Registry, Sel> =
-  MirageCommandMap<TState, M>          // commands as methods
-  & ReadonlyDeep<TState>               // state as properties
-  & MountedMirageProps<TState, Registry> // entity sub-mirages
-  & RootMirageSelectorMap<...>          // selectors
+```ts
+order.lines('line-1').setQty(3);
+order.lines[0]?.setQty(4);
+order.lines.at(-1)?.setQty(5);
+order.lines.find(line => line.qty > 0)?.setQty(6);
+for (const line of order.lines) await line.setQty(7);
 ```
 
-### Commands as Methods
+Indexed reads, iteration and array callbacks receive scoped readonly entity
+proxies. `filter`, `slice` and identity `map` results retain those proxies. A mapper
+that constructs new data returns its own data, not invented entity capabilities.
+The list is callable and array-like, not a native Array object. Collection mutators
+(`push`, `splice`, `sort`, `reverse`, `fill`, etc.) refuse; commands are the write path.
+Direct key selection throws if the entity is absent; normal array `find`/`at`
+operations return `undefined` when no item matches. A retained proxy re-resolves
+its key against the latest state and throws if its entity has been removed.
+Scoped commands return readonly entity state, not root state.
 
-Every command defined in your aggregate builder becomes a callable method on the mirage. The method dispatches the command through the full lifecycle (hooks, validation, event projection) and returns the updated state.
+For entity maps, select a key first: `order.entries.VAT.verify()`. There is no
+`order.entries.verify()` command without a selected entity. Missing keys return
+`undefined`; known-key declarations expose the configured keys in the type system.
+Value objects and non-entity data remain deeply readonly data, without commands.
+Entity maps are iterable: `for (const entry of order.entries)` and
+`[...order.entries]` yield readonly scoped entity proxies in `Object.keys` order,
+not raw state values or key/value pairs. Each yielded proxy retains its map key
+for commands and live reads. The key list is captured when iteration begins;
+retained proxies throw on state reads or command-result resolution after removal.
 
-```typescript
-order.place();                    // void command
-order.addLine({ id: 'l1', ... }); // payload command
+## Selectors and explicit bindings
+
+Selector argument tuples and results are inferred independently. Optional/default
+and rest arguments are supported. Utilities come from the factory closure:
+
+```ts
+.selectors(({ bindContext }) => ({
+  hasLine: (state, id: string) => state.lines.some(line => line.id === id),
+  active: state => bindContext(state.lines.filter(line => line.active), Line),
+  shipping: state => bindContext(state.shipping[0], Line, { mount: 'shipping' })
+}))
 ```
 
-If plugins with `onBeforeCommand` hooks are registered, command dispatch becomes async and returns a `Promise`.
+Mirage invokes selectors as `selector(readonlyState, ...arguments)`. It no longer
+guesses a `(state, utils, ...arguments)` convention from `Function.length`.
+Plain selector data stays readonly data. Use `bindContext` when the result should
+carry scoped commands; bound arrays support indexed reads, iteration, `at` and
+`first`. Null/undefined single bindings remain null/undefined.
 
-### State as Properties
+The developer owns selector correctness and primary-key uniqueness **within a
+mount**. IDs need not be globally unique across collections. Mirage resolves a
+declared entity definition to its actual mount, never the first object with an
+`id` field. Reusing that definition in several mounts requires `{ mount: 'name' }`.
+For a role that projects a subset of another mounted entity's commands, explicitly
+identify the mount; the role's commands must exist on that mount.
+Subset-role command names are discovered using the target mount's real emitter,
+the role's selectors with root-selector fallback, and Aggregate's command-intent
+context. Names are cached per role and mount, not globally. Factories should be
+deterministic for that construction context. Calls dispatch the mounted entity's
+handlers; a role describes a command subset, not replacement implementations.
 
-State properties are readable directly. They reflect the current aggregate state after all applied events.
+Polymorphic views can specify a mount as the fourth argument:
 
-```typescript
-order.status  // 'placed'
-order.total   // 20
-order.lines   // readonly array
+```ts
+bindContext(state.lines, 'kind', { LEG: LegRole, STOP: StopRole }, { mount: 'lines' })
 ```
 
-All state access returns deeply readonly values. You cannot mutate state through the proxy.
+Unknown role mappings, missing mounts and ambiguous bindings throw. No expensive
+provenance scan or global duplicate-key policing is performed.
 
-### Selectors
+## Namespace rules
 
-Selectors are query functions defined on the aggregate that get projected onto the mirage root. They receive the current readonly state and any additional arguments.
+State, commands and selectors must have distinct names. Known root collisions are
+rejected by the types and checked at construction; entity state/command collisions
+present in the initial data also refuse. Protocol-sensitive names `then`, `toJSON`,
+`toString`, `valueOf` and `inspect` are reserved. This avoids Promise assimilation
+and inspection behavior silently overriding domain methods. Keep state schemas
+consistent over their lifetime; a projector must not introduce conflicting keys.
+Readonly object proxies retain safe `toString`/`valueOf` and primitive coercion;
+`then`, `toJSON` and `inspect` do not become callable protocol hooks.
 
-```typescript
-// Definition
-.selectors({
-  hasLine: (state, productId: string) => state.lines.some(l => l.product === productId),
-  lineCount: (state) => state.lines.length
-})
+## Helpers and hydration
 
-// Usage
-order.hasLine('widget')  // true
-order.lineCount()        // 1
-```
+- `extractState(mirage)` returns a readonly state snapshot.
+- `extractUncommittedEvents(mirage)` returns detached pending events.
+- `clearUncommittedEvents(mirage)` clears pending events/intents, not state/version.
+- `subscribe(mirage, listener)` provides readonly notifications and returns an unsubscribe function.
+- `dispatch(mirage, command)` accepts a command envelope and returns typed readonly state or its Promise.
 
-Selectors that collide with command names are shadowed by the command. Selectors that collide with state property names are shadowed by the state property. Design your names accordingly.
+Raw dispatch preserves envelope/state types but does not promise command-name /
+payload correlation beyond the built aggregate's current command envelope API.
+Prefer generated command methods for exact arguments. Helpers reject non-Mirage
+objects through a private instance registry.
 
-Selectors can also return context-bound entities using `bindContext`, enabling scoped sub-mirages from query results. See [Entity Collections](#entity-collections) for details.
-
-### Entity Sub-Mirages
-
-Entities registered via `.entityList()`, `.entityMap()`, etc. become scoped sub-mirages. A list entity is both an array (for reading) and a function (for targeting by primary key).
-
-```typescript
-// Read as array
-order.lines.length        // number of lines
-order.lines[0].qty        // first line's quantity
-
-// Target by primary key
-order.lines('line-1').updateQty(5);
-```
-
-The targeted sub-mirage exposes only that entity's commands and state. Command payloads are automatically enriched with the entity's identity fields.
-
-## API Reference
-
-### `createMirage(builder, id, options?)`
-
-Creates a live mirage instance from a built aggregate.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `builder` | `BuiltAggregate` | Output of `createAggregate(...).build()` |
-| `id` | `string` | Aggregate instance identifier |
-| `options` | `MirageOptions & { snapshot?, events? }` | Optional configuration |
-
-**Options:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | `TState` | Initial state to use instead of the builder's default |
-| `events` | `Iterable<Event> \| AsyncIterable<Event>` | Events to replay for hydration |
-| `contract` | `Contract` | Schema validation contract |
-| `strict` | `boolean` | Throw on missing schemas (default: warn) |
-| `plugins` | `RedemeinePlugin[]` | Plugins to attach |
-
-**Return type:** Returns `Mirage<...>` synchronously when no `events` are provided. Returns `Promise<Mirage<...>>` when `events` are provided (hydration is async).
-
-```typescript
-// Synchronous — no hydration
-const order = createMirage(OrderAggregate, 'order-1');
-
-// Synchronous — from snapshot
-const order = createMirage(OrderAggregate, 'order-1', {
-  snapshot: { status: 'placed', total: 10, lines: [] }
-});
-
-// Async — hydrate from events
-const order = await createMirage(OrderAggregate, 'order-1', {
-  events: storedEvents
-});
-
-// Async — snapshot + catch-up events
-const order = await createMirage(OrderAggregate, 'order-1', {
+```ts
+const fresh = createMirage(Order, 'one'); // synchronous
+const restored = await createMirage(Order, 'one', {
   snapshot: cachedState,
-  events: newEvents
+  initialVersion: 42,
+  events: storedTail
 });
 ```
 
-### Standalone Utility Functions
+`events` accepts sync or async iterables and always makes creation asynchronous.
+`initialVersion` is the persisted starting-state event count, not a final override.
+It defaults to zero and must be a nonnegative safe integer. State alone cannot
+establish its history. Replay adds one for each successfully applied event,
+including accepted unchanged-state events, and does not buffer events or notify.
+Replay yields to the Node event loop every 250 events and preserves plugin order.
+At a snapshot baseline of `Number.MAX_SAFE_INTEGER`, Depot still requests the
+exclusive-beyond-snapshot lower bound `B + 1` (`2^53`). That cursor is exactly
+representable but is not a safe stored event count; adapters must support it or
+reject it explicitly. An empty tail preserves B; any yielded event is rejected
+before application. Depot does not skip the read and silently hide an extra tail.
 
-These functions access mirage internals without polluting the proxy namespace.
+## Depot
 
-#### `extractState(mirage)`
-
-Returns a readonly deep proxy of the current aggregate state.
-
-```typescript
-import { extractState } from '@redemeine/mirage';
-
-const snapshot = extractState(order);
-// snapshot.status, snapshot.total, etc. — all deeply readonly
+```ts
+const depot = createDepot(Order, store);
+const loaded = await depot.get('one');
+loaded.above(2); // same selector arguments/results as direct createMirage
+await loaded.add(1);
+await depot.save(loaded);
 ```
 
-#### `extractUncommittedEvents(mirage)`
+`Depot<BuiltBuilder>` derives the complete `MirageOf<BuiltBuilder>`: state,
+commands, selectors and mounted entities are not separately erased generic fields.
+`get` accepts builder-specific initial state or `{ snapshot: { state, version } }`.
+`save` verifies the instance belongs to the exact builder object owning the Depot.
 
-Returns a copy of all events produced since the last clear/save.
-
-```typescript
-import { extractUncommittedEvents } from '@redemeine/mirage';
-
-order.place();
-const events = extractUncommittedEvents(order);
-// [{ type: 'order.placed.event', payload: undefined }]
-```
-
-#### `clearUncommittedEvents(mirage)`
-
-Clears the uncommitted event buffer. Typically called after persisting events.
-
-```typescript
-import { clearUncommittedEvents } from '@redemeine/mirage';
-
-clearUncommittedEvents(order);
-```
-
-#### `subscribe(mirage, listener)`
-
-Subscribes to state changes. The listener fires after each command dispatch. Returns an unsubscribe function.
-
-```typescript
-import { subscribe } from '@redemeine/mirage';
-
-const unsub = subscribe(order, (state) => {
-  console.log('State changed:', state.status);
-});
-
-order.place();  // logs: "State changed: placed"
-unsub();
-```
-
-#### `dispatch(mirage, command)`
-
-Low-level raw command dispatch. Prefer using the typed methods on the mirage directly.
-
-```typescript
-import { dispatch } from '@redemeine/mirage';
-
-dispatch(order, { type: 'order.place', payload: undefined });
-```
-
-### `createDepot(builder, store, options?)`
-
-Creates a Depot — the persistence bridge between an event store and mirage instances.
-
-```typescript
-import { createDepot } from '@redemeine/mirage';
-
-const depot = createDepot(OrderAggregate, store, { plugins: [auditPlugin] });
-```
-
-The depot provides two methods:
-
-#### `depot.get(id, options?)`
-
-Hydrates a mirage from the event store. Optionally accepts a snapshot for faster hydration.
-
-```typescript
-const order = await depot.get('order-1');
-
-// With snapshot (replays only events after snapshot version)
-const order = await depot.get('order-1', {
-  snapshot: { state: cachedState, version: 42 }
-});
-```
-
-#### `depot.save(mirage)`
-
-Persists uncommitted events to the store and clears the buffer. Runs `onBeforeAppend` and `onAfterCommit` plugin hooks.
-
-```typescript
-order.addLine({ id: 'l2', product: 'gadget', qty: 1, price: 50 });
-await depot.save(order);
-```
-
-### `EventStore` Interface
-
-Implement this to connect mirage to your storage backend.
-
-```typescript
+```ts
 interface EventStore {
   readStream(id: string, options?: { fromVersion?: number }): AsyncIterable<Event>;
   saveEvents(id: string, events: Event[], expectedVersion?: number): Promise<void>;
 }
 ```
 
-`readStream` returns an async iterable of events for a given aggregate ID. `saveEvents` persists events, optionally with optimistic concurrency via `expectedVersion`.
+`fromVersion` is 1-based and inclusive. Snapshot count B reads from B+1; it seeds
+Mirage with baseline B. `saveEvents.expectedVersion` is the persisted event count
+**before** append, captured before awaiting append plugins. The adapter must
+compare-and-append atomically. A backend with zero-based revisions translates
+count B to B−1 using its own new-stream sentinel.
 
-## Hydration
+**Serialize dispatch and save.** The existing overlapping dispatch/save buffer
+race (`redemeine-98zi`) is not fixed by this DX work. Append/pre-append failure
+retains pending events and state; post-commit failure occurs after storage/clear.
+No durable outbox, retry loop, automatic rollback or production adapter is supplied.
 
-Hydration reconstructs aggregate state from stored events. Mirage supports three hydration modes:
+## Failure, versioning and evolution
 
-1. **From events only** — replays all events from the beginning
-2. **From snapshot** — starts from a known state, no event replay
-3. **From snapshot + events** — starts from a snapshot, replays only subsequent events
+The event-count invariant is initial baseline + successful replay + successful
+live applications. It is bounded by `Number.MAX_SAFE_INTEGER`. Overflow refuses
+the offending event before application. A valid prefix is retained if a later
+event fails; there is no whole-command rollback. Event-applied hooks run after
+application/buffering/counting; a throwing hook leaves that event applied.
+Before/after-command hooks retain their pre-application order. Observer failures
+do not roll back committed state. Command intents merge only after the full event
+loop; partial application is not a transactional intent guarantee.
 
-During hydration, events are replayed through the aggregate's `apply` function in order. To avoid blocking the event loop on large aggregates, mirage yields back to Node.js every 250 events (`HYDRATION_REPLAY_YIELD_THRESHOLD`).
+Old command-count/zero-after-replay checkpoints cannot be converted arithmetically.
+Use authoritative history or an operator-verified baseline, and preserve historical
+event naming during replay. Clear/discarding unsaved events requires re-establishing
+an authoritative baseline before persistence. No migration or rollout is automatic.
 
-Plugin `onHydrateEvent` hooks run during replay, allowing payload transformation (e.g., decryption) before projection.
+## Verification
 
-## Entity Collections
+`pnpm --filter @redemeine/mirage test` runs strict source and built-declaration
+contract fixtures before runtime tests. Build dependencies and Mirage first.
+The fixtures cover exact inference, negative calls, accidental-any rejection,
+readonly results/subscribers, selectors, maps and Depot. Mirage production source
+is included in `lint:principles`; dynamic dispatch assertions are localized and
+documented. Source/declaration gates do not replace final packed-consumer and real
+adapter qualification before release.
 
-Mirage supports three entity mount types, each registered on the aggregate builder.
-
-### Lists
-
-Registered via `.entityList(name, entity)`. The mount is both a readable array and a targeting function.
-
-```typescript
-// Array access (readonly)
-order.lines.length
-order.lines[0].qty
-order.lines.filter(l => l.qty > 1)
-
-// Target by primary key
-order.lines('line-1').updateQty(5);
-order.lines('line-1').qty  // read targeted entity state
-```
-
-Composite primary keys use an object argument:
-
-```typescript
-order.assignments({ orderId: 'o1', assignmentId: 'a1' }).reassign('new-owner');
-```
-
-### Maps
-
-Registered via `.entityMap(name, entity)`. Accessed by string key.
-
-```typescript
-order.settings.billing.update({ address: '...' });
-order.settings.billing.address  // read state
-```
-
-### Value Objects
-
-Registered via `.valueObject()`, `.valueObjectList()`, or `.valueObjectMap()`. These are read-only — no commands, no sub-mirage. They return deeply frozen state.
-
-## Selectors
-
-### Definition
-
-Selectors are defined in the aggregate builder's `.selectors()` call. They receive readonly state as the first argument.
-
-```typescript
-.selectors({
-  // Simple query
-  lineCount: (state) => state.lines.length,
-
-  // Parameterized query
-  hasLine: (state, productId: string) => state.lines.some(l => l.product === productId),
-
-  // With utils (bindContext for entity-scoped results)
-  activeLines: (state, utils) =>
-    utils.bindContext(
-      state.lines.filter(l => l.active),
-      LineEntity
-    )
-})
-```
-
-### Collision Rules
-
-The type system prevents selector names from overlapping with state properties or commands — TypeScript will not show them in autocomplete, and colliding selectors are excluded from the `Mirage` type.
-
-At the type level, the priority order is:
-
-1. **Commands** — always present, shadow selectors of the same name
-2. **State properties** — always present, shadow selectors of the same name
-3. **Entity mounts** — always present
-4. **Selectors** — only appear if the name is unique
-
-Avoid collisions by using distinct naming conventions for selectors (e.g., prefix with `has`, `is`, `get`, `find`, `compute`).
-
-### Context-Bound Selectors
-
-Selectors can return entity-scoped mirages using `bindContext`. The returned items are full sub-mirages with commands and state access, not plain data objects.
-
-```typescript
-const active = order.activeLines();
-active[0].updateQty(10);  // command on the scoped entity
-active.length;             // array length
-active.first();            // first entity mirage
-active.at(2);              // entity mirage at index
-```
-
-## Plugins
-
-Plugins hook into the mirage lifecycle at four points. Each plugin must have a unique `key` string.
-
-```typescript
-import { RedemeinePlugin } from '@redemeine/kernel';
-
-const myPlugin: RedemeinePlugin = {
-  key: 'my-plugin',
-  onBeforeCommand: async (ctx) => { /* ... */ },
-  onHydrateEvent: async (ctx) => { /* ... */ },
-  onBeforeAppend: async (ctx) => { /* ... */ },
-  onAfterCommit: async (ctx) => { /* ... */ }
-};
-```
-
-### Hook Lifecycle
-
-| Hook | When | Where | Can modify | Can block |
-|------|------|-------|------------|-----------|
-| `onBeforeCommand` | Before command processing | `createMirage` dispatch | No | Yes (throw) |
-| `onHydrateEvent` | During event replay | `createMirage` hydration | Event payload | No |
-| `onBeforeAppend` | Before persisting events | `depot.save()` | Event payload | Yes (throw) |
-| `onAfterCommit` | After successful persist | `depot.save()` | No | No |
-
-Plugins are registered either on the aggregate builder (`.plugins([...])`) or passed via options to `createMirage` / `createDepot`. Both sources are merged.
-
-When any plugin has an `onBeforeCommand` hook, all command dispatch becomes async (returns `Promise<S>` instead of `S`).
-
-### Error Handling
-
-Plugin hook failures are wrapped in `RedemeinePluginHookError` with the plugin key, hook name, aggregate ID, and original cause. This makes it straightforward to identify which plugin failed and why.
-
-## Testing
-
-### Unit Testing Commands and Events
-
-For isolated unit tests, use `createMirage` directly without a depot or event store.
-
-```typescript
-import { createMirage, extractUncommittedEvents, extractState } from '@redemeine/mirage';
-
-test('placing an order sets status to placed', () => {
-  const order = createMirage(OrderAggregate, 'test-1');
-  order.place();
-
-  expect(order.status).toBe('placed');
-
-  const events = extractUncommittedEvents(order);
-  expect(events).toHaveLength(1);
-  expect(events[0].type).toBe('order.placed.event');
-});
-```
-
-### Testing with Hydration
-
-```typescript
-test('hydrates from stored events', async () => {
-  const events = [
-    { type: 'order.lineAdded.event', payload: { id: 'l1', product: 'x', qty: 1, price: 10 } },
-    { type: 'order.placed.event', payload: undefined }
-  ];
-
-  const order = await createMirage(OrderAggregate, 'test-1', { events });
-  expect(order.status).toBe('placed');
-  expect(order.total).toBe(10);
-});
-```
-
-### Pure Function Testing
-
-The `BuiltAggregate` exposes `.pure.commandProcessors` and `.pure.eventProjectors` for testing domain logic without the proxy layer. These bypass all lifecycle hooks — use them only for isolated unit tests.
-
-## Design Decisions
-
-### Why no reserved keys on the root?
-
-Most aggregate/entity frameworks reserve names like `dispatch`, `getState`, `subscribe` on the instance. This creates naming collisions with your domain. An `Order` aggregate might legitimately have a `dispatch` command (for dispatching shipments). By keeping the root namespace clean, mirage avoids this entire class of problems.
-
-### Why standalone functions?
-
-The alternative was a wrapper object (e.g., `mirage.meta.extractState()`). Standalone functions are tree-shakeable, have simpler types, and don't require a reserved namespace on the proxy. They also compose naturally with functional patterns.
-
-### Why does hydration make createMirage async?
-
-Event replay may involve async iterables (streaming from a database) and plugin hooks that are inherently async. Rather than forcing all mirages to be async, `createMirage` returns synchronously when no events are provided and only becomes async when hydration is needed. The overload signatures make this explicit at the type level.
-
-### Why MirageCoreSymbol?
-
-The internal `MirageCore` (which tracks state, version, uncommitted events, and listeners) is accessed via a Symbol property on the proxy. This keeps it invisible to normal property enumeration and avoids any possible collision with domain names. The standalone utility functions use this symbol internally.
+`pnpm --filter @redemeine/mirage test:packed` uses the operating system temporary
+directory (`os.tmpdir()`, honoring `TMPDIR` where supported) for isolated evidence.
+No agent-specific temporary directory is required. Build dependencies and Mirage
+before running this non-publishing check.

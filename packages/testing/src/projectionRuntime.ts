@@ -60,30 +60,22 @@ export type ProjectionRuntime = {
   readonly daemon: ProjectionDaemonLike<any>;
 };
 
-async function dynamicImport(specifier: string): Promise<unknown> {
-  return import(/* @vite-ignore */ specifier);
-}
-
 /**
- * Loads projection runtime modules without module-level caching.
- * Each depot gets its own import attempt via the caller's closure,
- * preventing a failed import from poisoning subsequent depot creations.
+ * Adds no application-level import cache; module initialization follows host/bundler semantics.
+ * A failed evaluation may remain cached, so later depot creation does not guarantee recovery.
+ * Successfully loaded constructors are shared, but each depot owns its runtime state.
  */
 export async function loadProjectionRuntimeModule(): Promise<ProjectionRuntimeModule> {
   try {
-    const core = await dynamicImport('@redemeine/projection-runtime-core') as ProjectionRuntimeCoreModule;
-    const inmemory = await dynamicImport('@redemeine/projection-runtime-store-inmemory') as ProjectionRuntimeStoreInMemoryModule;
-    return { core, inmemory };
-  } catch (packageImportError) {
-    try {
-      const core = await dynamicImport('../../projection-runtime-core/src/index') as ProjectionRuntimeCoreModule;
-      const inmemory = await dynamicImport('../../projection-runtime-store-inmemory/src/index') as ProjectionRuntimeStoreInMemoryModule;
-      return { core, inmemory };
-    } catch (sourceImportError) {
-      throw new Error(
-        `createTestDepot: unable to load projection runtime v3 core/store-inmemory modules from package or workspace source. package error: ${String(packageImportError)}; source error: ${String(sourceImportError)}`
-      );
-    }
+    // The daemon only reads aggregateType; its legacy builder type also requires unused aggregate members.
+    const core: unknown = await import('@redemeine/projection-runtime-core');
+    const inmemory = await import('@redemeine/projection-runtime-store-inmemory');
+    return { core: core as ProjectionRuntimeCoreModule, inmemory };
+  } catch (error) {
+    throw new Error(
+      `createTestDepot: unable to load bundled projection runtime v3 core/store-inmemory modules: ${String(error)}`,
+      { cause: error }
+    );
   }
 }
 

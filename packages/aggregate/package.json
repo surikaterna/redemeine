@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/aggregate",
-  "version": "0.2.0-pre.0",
+  "version": "0.2.0-pre.2",
   "description": "Event-sourced aggregate builder with type-safe command handlers and state reducers",
   "license": "MIT",
   "repository": {
@@ -24,8 +24,15 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -38,7 +45,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@redemeine/kernel": "0.2.0-pre.0"
+    "@redemeine/kernel": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.4.0",
