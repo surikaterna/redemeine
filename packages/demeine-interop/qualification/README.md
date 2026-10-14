@@ -84,6 +84,12 @@ Record candidate versus final hashes distinctly in the Bead, never a guessed
 future registry resolution.
 # Standalone qualification (`redemeine-ov0e.6`)
 
+The current full fixture pins registry **Demeine 1.3.1**, whose production
+dependencies include its required Bluebird declarations. Run the command below
+**without** `--allow-legacy-bluebird-baseline`: both actual and Demeine-only strict
+programs must pass. The installed inventory records Demeine and its transitive
+typings. Interop itself still has no direct Bluebird/type dependency.
+
 For the standalone major API, use `standalone-packed.mjs`, not the historical
 supplied-base/CLI helpers below. In a disposable snapshot run actual Changesets
 status and `pnpm run version:packages`, build interop and aggregate, then run the existing
@@ -140,7 +146,11 @@ Missing legacy declaration prerequisites remain a **blocked** gate (runner exits
 nonzero after completing independent runtime/browser gates), never a green strict
 compatibility claim or an excuse to add forbidden typings or relax `skipLibCheck`.
 
-### Approved prerelease exception (`redemeine-p169`)
+### Historical prerelease exception (`redemeine-p169`)
+
+This section records the old 1.3.0 waiver only. It is not applicable to current
+1.3.1 qualification; the policy intentionally rejects 1.3.1 when the flag is used.
+Do not refresh the old fingerprints or use the exception for the repaired fixture.
 
 For the reviewed standalone **1.0.0-pre.2** candidate only, the operator approved
 an explicit exception for published **Demeine 1.3.0**'s missing Bluebird typings.

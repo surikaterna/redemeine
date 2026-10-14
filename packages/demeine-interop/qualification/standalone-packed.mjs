@@ -49,7 +49,7 @@ async function run(label, command, args, allowLegacyFailure = false) {
 await run('minimal-types', 'node', [resolve(root, 'packages/demeine-interop/qualification/minimal-types.mjs'), tarball, resolve(output, 'minimal')]);
 await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies: {
   '@redemeine/kernel': '0.2.0-pre.2', '@redemeine/aggregate': aggregateTarball ? `file:${aggregateTarball}` : '0.2.0-pre.2', '@redemeine/demeine-interop': `file:${tarball}`,
-  demeine: '1.3.0', 'regenerator-runtime': '0.13.11', zod: '4.3.6', tapeworm: '0.5.0',
+  demeine: '1.3.1', 'regenerator-runtime': '0.13.11', zod: '4.3.6', tapeworm: '0.5.0',
 }, devDependencies: {
   typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2', '@types/node': nodeTypesVersion,
   '@types/jest': '29.5.14', jest: '29.7.0', 'ts-jest': '29.4.11', tsx: '4.21.0', esbuild: '0.25.12',
@@ -163,7 +163,9 @@ runInNewContext(await readFile(resolve(consumer, 'browser.js'), 'utf8'), browser
 assert.equal((await browser.browserSmoke).count, 2);
 await writeFile(resolve(output, 'browser.json'), JSON.stringify({ passed: true, inputs }, null, 2));
 const lock = JSON.parse(await readFile(resolve(consumer, 'package-lock.json')));
-const installed = ['@redemeine/kernel', '@redemeine/aggregate', '@redemeine/demeine-interop', '@types/node', 'p-queue', 'events', 'uuid'].map(name => ({ name, ...lock.packages[`node_modules/${name}`] }));
+const installed = ['@redemeine/kernel', '@redemeine/aggregate', '@redemeine/demeine-interop', '@types/node', 'demeine', '@types/bluebird', 'p-queue', 'events', 'uuid'].map(name => ({ name, ...lock.packages[`node_modules/${name}`] }));
+assert.equal(lock.packages['node_modules/demeine'].version, '1.3.1');
+assert.ok(lock.packages['node_modules/demeine'].dependencies['@types/bluebird']);
 for (const entry of installed) {
   if (entry.name === '@redemeine/demeine-interop') assert.equal(entry.integrity, artifact.integrity);
   else if (entry.name === '@redemeine/aggregate' && aggregateArtifact) {

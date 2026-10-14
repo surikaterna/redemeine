@@ -159,7 +159,7 @@ deleted-read rejection, or an immutable no-recreation guarantee.
 
 ## Supported boundary
 
-- Differential fixture: actual `demeine@1.3.0` Aggregate **and matching Repository**.
+- Differential fixture: actual `demeine@1.3.1` Aggregate **and matching Repository**.
   It needs host `regenerator-runtime` (the legacy manifest incorrectly lists that
   runtime dependency under devDependencies). Tests explicitly provide 0.13.11.
   Native ESM must default-import this legacy CJS module, then take `Aggregate`;
@@ -168,9 +168,10 @@ deleted-read rejection, or an immutable no-recreation guarantee.
   only. A consuming application's host Repository/Factory or `lynx3-utils` can still
   depend on Demeine transitively; this package does not promise host-wide removal.
 - Interop has no direct Bluebird runtime or test dependency, including its typings.
-  Real legacy Demeine/Tapeworm fixtures may still use it transitively. Their missing
-  declaration prerequisites can block a fresh strict legacy-only type gate; that
-  is reported separately, never repaired with fake types or hidden direct installs.
+  Real legacy Demeine/Tapeworm fixtures use it transitively. Demeine 1.3.1 ships
+  its required Bluebird typings, so current strict legacy qualification needs no
+  exception. The older 1.3.0 missing-declaration baseline remains historical;
+  no fake types, hidden direct installs or skipped-library checks are used.
 - Exposed configured hooks/nonempty plugins fail at creation; non-null defined
   `__intents` (even `{}`) fail before applying events. Opaque wrappers cannot be
   inspected fully. No afterCommit, rollback or plugin parity is promised.
