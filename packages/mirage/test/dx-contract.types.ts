@@ -94,6 +94,17 @@ const mapBuilder = createAggregate('map', { entries: { one: { qty: 0 } } })
   .entityMap('entries', MapEntry, { knownKeys: ['one'] as const }).events({}).commands(() => ({})).build();
 const map = createMirage(mapBuilder, 'map-one');
 map.entries.one.touch();
+const mapItems = [...map.entries];
+const noAnyMapItem: IsAny<(typeof mapItems)[number]> = false;
+const preciseMapQty: Equal<(typeof mapItems)[number]['qty'], number> = true;
+for (const item of map.entries) {
+  item.touch();
+  // @ts-expect-error Iterated entities remain readonly.
+  item.qty = 2;
+  // @ts-expect-error The selected map key is injected, not a caller argument.
+  item.touch('one');
+}
+void [noAnyMapItem, preciseMapQty];
 // @ts-expect-error A map has no selected entity for a command on the collection itself.
 map.entries.touch();
 // @ts-expect-error Known-key maps must not invent other keys.

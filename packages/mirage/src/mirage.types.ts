@@ -78,9 +78,9 @@ type MapKnownKeys<TEntry> = TEntry extends { knownKeys?: readonly (infer K)[] }
     ? Extract<K, string>
     : string;
 
-type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string> = string extends Keys
+type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string> = Iterable<EntityScopedMirage<TEntityState, TEntityCommands, 1>> & (string extends Keys
     ? Readonly<Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1> | undefined>>
-    : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1>>>;
+    : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1>>>);
 
 type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
     [K in keyof Registry & keyof TState]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const output = await mkdtemp('/tmp/opencode/mirage-dx-packed-');
+const output = await mkdtemp(resolve(tmpdir(), 'mirage-dx-packed-'));
 const gates = [];
 async function run(label, command, args, cwd = output) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });

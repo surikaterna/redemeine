@@ -1,6 +1,6 @@
 import { createAggregate, createEntity } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
-import { createMirage, extractUncommittedEvents } from '../src';
+import { createMirage, extractState, extractUncommittedEvents } from '../src';
 
 test('root, entity, map and bound proxies support coercion without protocol side effects', async () => {
   const Item = createEntity<{ id: string }, 'item'>('item').events({}).commands(() => ({ touch: () => [] })).build();
@@ -90,4 +90,29 @@ test('subset roles cannot expose commands absent from their explicit mount', () 
       selected: state => bindContext(state.items[0]!, Role, { mount: 'items' })
     })).build();
   expect(() => createMirage(builder, 'one').selected()).toThrow(/commands absent/);
+});
+
+test('map iteration returns readonly live entities and dispatches commands to each selected key', async () => {
+  const Item = createEntity<{ qty: number }, 'entry'>('entry')
+    .events({ changed: (state, event: Event<{ key: string; qty: number }>) => { state.qty = event.payload.qty; } })
+    .commands(emit => ({ setQty: { pack: (key: string, qty: number) => ({ key, qty }),
+      handler: (_state: unknown, payload: { key: string; qty: number }) => emit.changed(payload) } })).build();
+  const builder = createAggregate('map', { entries: { a: { qty: 1 }, b: { qty: 2 } } })
+    .entityMap('entries', Item, { knownKeys: ['a', 'b'] as const }).events({}).commands(() => ({})).build();
+  const live = createMirage(builder, 'one');
+  const items = [...live.entries];
+  expect(items.map(item => item.qty)).toEqual([1, 2]);
+  expect(() => Reflect.set(items[0]!, 'qty', 100)).toThrow();
+  expect(() => Object.defineProperty(items[0]!, 'qty', { value: 100 })).toThrow();
+  let qty = 5;
+  for (const item of live.entries) {
+    const result = await item.setQty(qty++);
+    expect(() => Reflect.set(result, 'qty', 100)).toThrow();
+  }
+  expect(items.map(item => item.qty)).toEqual([5, 6]);
+  expect(extractState(live).entries).toEqual({ a: { qty: 5 }, b: { qty: 6 } });
+  expect(extractUncommittedEvents(live).map(event => event.payload)).toEqual([{ key: 'a', qty: 5 }, { key: 'b', qty: 6 }]);
+  const empty = createMirage(createAggregate('empty', { entries: {} }).entityMap('entries', Item)
+    .events({}).commands(() => ({})).build(), 'empty');
+  expect([...empty.entries]).toEqual([]);
 });

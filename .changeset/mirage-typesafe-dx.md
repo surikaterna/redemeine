@@ -29,3 +29,5 @@ of mutating its private core through a symbol.
 Preserve safe object coercion on readonly proxies. Resolve subset-role command
 names with real Aggregate construction contexts and mount-local caching rather
 than empty placeholder contexts, preserving explicit subset-role bindings.
+Restore entity-map iteration with typed readonly scoped proxies rather than raw
+values, and use the OS temporary directory for portable packed qualification.

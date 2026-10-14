@@ -38,4 +38,14 @@ const subsetBuilder = createAggregate('subset-root', { entries: [{ id: 'a', qty:
   .selectors(({ bindContext }) => ({ selected: state => bindContext(state.entries[0], role, { mount: 'entries' }) })).build();
 const subset = createMirage(subsetBuilder, 'subset-one');
 assert.equal((await subset.selected().setQty(5)).qty, 5);
+const mapEntity = createEntity('map-entry').events({ changed: (state, event) => { state.qty = event.payload.qty; } })
+  .commands(emit => ({ setQty: { pack: (key, qty) => ({ key, qty }), handler: (_state, payload) => emit.changed(payload) } })).build();
+const mapBuilder = createAggregate('map-root', { entries: { a: { qty: 1 }, b: { qty: 2 } } })
+  .entityMap('entries', mapEntity).events({}).commands(() => ({})).build();
+const map = createMirage(mapBuilder, 'map-one');
+const retained = [...map.entries];
+assert.throws(() => { retained[0].qty = 99; });
+for (const item of map.entries) await item.setQty(item.qty + 1);
+assert.deepEqual(retained.map(item => item.qty), [2, 3]);
+assert.deepEqual(extractUncommittedEvents(map).map(event => event.payload.key), ['a', 'b']);
 console.log('Packed immutable command/selector/collection/Depot behavior passed');

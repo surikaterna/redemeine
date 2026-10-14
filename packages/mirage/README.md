@@ -65,6 +65,11 @@ For entity maps, select a key first: `order.entries.VAT.verify()`. There is no
 `order.entries.verify()` command without a selected entity. Missing keys return
 `undefined`; known-key declarations expose the configured keys in the type system.
 Value objects and non-entity data remain deeply readonly data, without commands.
+Entity maps are iterable: `for (const entry of order.entries)` and
+`[...order.entries]` yield readonly scoped entity proxies in `Object.keys` order,
+not raw state values or key/value pairs. Each yielded proxy retains its map key
+for commands and live reads. The key list is captured when iteration begins;
+retained proxies throw on state reads or command-result resolution after removal.
 
 ## Selectors and explicit bindings
 
@@ -145,6 +150,11 @@ It defaults to zero and must be a nonnegative safe integer. State alone cannot
 establish its history. Replay adds one for each successfully applied event,
 including accepted unchanged-state events, and does not buffer events or notify.
 Replay yields to the Node event loop every 250 events and preserves plugin order.
+At a snapshot baseline of `Number.MAX_SAFE_INTEGER`, Depot still requests the
+exclusive-beyond-snapshot lower bound `B + 1` (`2^53`). That cursor is exactly
+representable but is not a safe stored event count; adapters must support it or
+reject it explicitly. An empty tail preserves B; any yielded event is rejected
+before application. Depot does not skip the read and silently hide an extra tail.
 
 ## Depot
 
@@ -204,3 +214,8 @@ readonly results/subscribers, selectors, maps and Depot. Mirage production sourc
 is included in `lint:principles`; dynamic dispatch assertions are localized and
 documented. Source/declaration gates do not replace final packed-consumer and real
 adapter qualification before release.
+
+`pnpm --filter @redemeine/mirage test:packed` uses the operating system temporary
+directory (`os.tmpdir()`, honoring `TMPDIR` where supported) for isolated evidence.
+No agent-specific temporary directory is required. Build dependencies and Mirage
+before running this non-publishing check.

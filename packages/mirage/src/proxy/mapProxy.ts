@@ -28,9 +28,14 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, context
 }
 
 export function makeMapProxy(path: string[], prefix: string[], _mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
+  const iterate = function* () {
+    const keys = Object.keys(ctx.resolvePath(path) ?? {});
+    for (const key of keys) yield makeMapItemProxy(path, prefix, key, context, ctx);
+  };
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {
+      if (property === Symbol.iterator) return iterate;
       if (typeof property !== 'string') return readonlyObjectMember(property);
       const map = ctx.resolvePath(path);
       if (!map || typeof map !== 'object' || !Object.hasOwn(map, property)) return readonlyObjectMember(property);
