@@ -1,5 +1,12 @@
 # @redemeine/projection-transport
 
+## 0.1.1-pre.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @redemeine/projection-worker-core@1.0.0-pre.2
+
 ## 0.1.1-pre.0
 
 ### Patch Changes

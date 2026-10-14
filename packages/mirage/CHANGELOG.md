@@ -1,5 +1,69 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.3
+
+### Major Changes
+
+- [#137](https://github.com/surikaterna/redemeine/pull/137) [`4744e8d`](https://github.com/surikaterna/redemeine/commit/4744e8d9266faccdc83c16776f57514e46fe4182) Thanks [@spralle](https://github.com/spralle)! - Make native Mirage version an event count: initial persisted baseline plus
+  successfully replayed tail plus successfully applied live events. Add setup-only
+  `initialVersion` (nonnegative safe integer, default zero, always BEFORE replay).
+  Depot propagates snapshot counts and supplies the PRE-APPEND persisted count to
+  `saveEvents.expectedVersion`, rather than a post-command value. Event-applied
+  hooks now observe the just-applied event's version; zero-event commands do not
+  increment it. Domain `version` properties remain unreserved.
+
+  Event counts cannot exceed `Number.MAX_SAFE_INTEGER`. The ceiling is a valid
+  baseline for empty replay/zero-event commands. Overflow throws `RangeError`
+  before applying or buffering the offending live event, preserving any successful
+  prefix. Hydration rejects before that event's hydration plugins or application;
+  no rounded-version instance is returned and prior plugin effects are not undone.
+
+  Breaking migration gate (redemeine-ov0e.7): retain authoritative store event counts,
+  but rebuild historical command-count/reset-to-zero checkpoints from full event
+  history or provide an operator-verified baseline. No arithmetic conversion or
+  automatic data migration is provided. Audit and qualify adapters for pre-append
+  comparison, inclusive 1-based snapshot-tail reads, and zero-based backend revision
+  translation before consumer cutover. State-only snapshots default to baseline 0.
+
+  Dispatch/save must remain serialized. This does not fix the existing concurrent
+  buffer-clearing race (redemeine-98zi). Partial application retains counted events;
+  command intents may not merge on failure. After-command hooks remain pre-apply;
+  after-commit failures do not roll back storage or restore cleared pending events.
+  This change is independent of standalone interop and introduces no shared runtime.
+
+- [#137](https://github.com/surikaterna/redemeine/pull/137) [`f929559`](https://github.com/surikaterna/redemeine/commit/f929559eaa5f5b902f8759d8b8330cd7d2e107a8) Thanks [@spralle](https://github.com/spralle)! - Make Mirage read-side state and command results readonly and isolate supplied
+  initial states/snapshots. Entity-list iteration and array callbacks return scoped
+  proxies; scoped commands return readonly entity state. Remove unsupported map-root
+  commands and require explicit keys. Missing direct entity selections throw.
+
+  Resolve bound selector entities by declared role/mount instead of key shape;
+  ambiguous/reused roles require explicit mount selection. Plain selector data stays
+  readonly data: use bindContext for scoped commands. Selector utilities are captured
+  by the Aggregate selector factory rather than inferred from function arity.
+
+  Preserve selector/state/command inference in Depot and check runtime builder
+  ownership on save. Raw dispatch accepts a command envelope and retains the state
+  return type. Known namespace collisions and protocol names refuse construction.
+  MirageCoreSymbol exposes readonly diagnostics, not a mutable implementation.
+
+  Add mandatory source and built-declaration contract checks, including negative
+  and accidental-any assertions, and include Mirage in code-principles enforcement.
+  Event-count versioning and documented partial-failure semantics remain unchanged;
+  dispatch/save concurrency and production data migration are not implemented here.
+  The test-depot adapter now drains events through public Mirage helpers instead
+  of mutating its private core through a symbol.
+
+  Preserve safe object coercion on readonly proxies. Resolve subset-role command
+  names with real Aggregate construction contexts and mount-local caching rather
+  than empty placeholder contexts, preserving explicit subset-role bindings.
+  Restore entity-map iteration with typed readonly scoped proxies rather than raw
+  values, and use the OS temporary directory for portable packed qualification.
+
+### Patch Changes
+
+- Updated dependencies [[`f929559`](https://github.com/surikaterna/redemeine/commit/f929559eaa5f5b902f8759d8b8330cd7d2e107a8), [`7f5c04f`](https://github.com/surikaterna/redemeine/commit/7f5c04f6272361f14a476ff670fe942672047e73)]:
+  - @redemeine/aggregate@1.0.0-pre.3
+
 ## 1.0.0-pre.2
 
 ### Major Changes

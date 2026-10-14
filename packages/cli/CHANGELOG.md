@@ -1,5 +1,15 @@
 # @redemeine/cli
 
+## 0.2.0-pre.2
+
+### Patch Changes
+
+- [#123](https://github.com/surikaterna/redemeine/pull/123) [`dce55cd`](https://github.com/surikaterna/redemeine/commit/dce55cd815ad7e1da73858d9fa80b9a0f3f43509) Thanks [@spralle](https://github.com/spralle)! - Keep distinct compiler payload types and generated/imported schema bindings independent, and reject strict-mode restricted scaffold names before writing files.
+
+  Do not memoize depth-truncated alias conversions or their enclosing aliases as
+  complete schemas. Later direct payload conversions retain their validation
+  regardless of traversal order; the existing bounded-depth fallback remains.
+
 ## 0.2.0-pre.1
 
 ### Minor Changes
