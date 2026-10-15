@@ -31,7 +31,7 @@ export function preserveValue(value: unknown, seen = new WeakMap<object, (next: 
   if (known) return next => next === value;
   if (value instanceof Date) {
     const time = value.getTime();
-    return next => next instanceof Date && next.getTime() === time;
+    return next => next instanceof Date && Object.is(next.getTime(), time);
   }
   const prototype = Object.getPrototypeOf(value);
   const arrayLength = Array.isArray(value) ? value.length : undefined;

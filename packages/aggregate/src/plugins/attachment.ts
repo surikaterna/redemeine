@@ -1,12 +1,15 @@
-import { current, freeze, isDraft, produce, type Draft } from 'immer';
-import type { Event } from '@redemeine/kernel';
+import { current, isDraft, produce, type Draft } from 'immer';
+import type { Command, Event } from '@redemeine/kernel';
 import type { EventPlugin, PluginRegistration } from './attachmentTypes';
 import { assertSynchronous } from './descriptor';
+import { createEnvelopeRuntime } from './envelopeRuntime';
+import { envelopeSnapshot } from './envelopeData';
 
 type Host = {
   aggregateType: string;
   initialState: unknown;
   applyToDraft: (state: never, event: Event) => void;
+  process: (state: never, command: Command<unknown, string>) => Event[];
   plugins?: readonly unknown[];
   mounts?: Record<string, unknown>;
   types?: { events: Record<string, string> };
@@ -50,13 +53,13 @@ function routes(host: Host, plugin: EventPlugin): Map<string, Handler> {
 
 function applyPlugins(host: Host, plugins: readonly EventPlugin[], tables: readonly Map<string, Handler>[], draft: object, event: Event): void {
   for (const [index, plugin] of plugins.entries()) {
-    const context = Object.freeze({ aggregateType: host.aggregateType, state: freeze(current(draft), true) });
+    const context = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
     const state = Reflect.get(draft, plugin.id);
     const matched = tables[index]?.get(event.type);
-    if (matched) assertSynchronous(matched(state, event, context));
+    if (matched) assertSynchronous(matched(state, envelopeSnapshot(event), context));
     if (plugin.onEvent) {
-      const after = Object.freeze({ aggregateType: host.aggregateType, state: freeze(current(draft), true) });
-      assertSynchronous((plugin.onEvent as Handler)(state, event, after));
+      const after = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
+      assertSynchronous((plugin.onEvent as Handler)(state, envelopeSnapshot(event), after));
     }
   }
 }
@@ -84,10 +87,20 @@ export function decorateAggregate<A extends Host>(host: A, registrations: readon
   }
   const record = { ...previous, lineage: new Set(previous.lineage), plugins: [...previous.plugins, ...added] };
   const applyToDraft = application(host, record);
+  const envelopes = createEnvelopeRuntime(host, record.plugins);
   const result = {
     ...host, initialState,
     plugins: [...host.plugins ?? [], ...registrations.filter(plugin => !('kind' in plugin && plugin.kind === 'aggregate-event'))],
     aggregatePlugins: Object.freeze(record.plugins),
+    prepareCommand: envelopes.prepareCommand,
+    process: envelopes.active ? (state: object, raw: Command<unknown, string>) => {
+      const command = envelopes.prepareCommand(state, raw);
+      const events = record.domain.process(state as never, command);
+      const prepared = events.map(event => envelopes.prepareEvent(state, command, event));
+      const intents = Object.getOwnPropertyDescriptor(events, '__intents');
+      if (intents) Object.defineProperty(prepared, '__intents', intents);
+      return prepared;
+    } : record.domain.process,
     applyToDraft: (draft: object, event: Event) => {
       if (record.plugins.length && !isDraft(draft)) throw new TypeError('Plugin application requires an Immer draft');
       applyToDraft(draft, event);

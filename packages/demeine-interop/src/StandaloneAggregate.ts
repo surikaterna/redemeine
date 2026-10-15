@@ -38,6 +38,7 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
 
   _process(command: Command): Promise<CompatibleAggregate<S>> {
     return new Promise<CompatibleAggregate<S>>(resolve => {
+      command = this._prepareCommand(command);
       // Legacy handlers can return object state; preserve the historical _process contract.
       resolve(this._commandHandler.handle(this, command) as CompatibleAggregate<S>);
     }).catch((reason: unknown) => {
@@ -48,6 +49,8 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
       throw reason;
     });
   }
+
+  protected _prepareCommand(command: Command): Command { return command; }
 
   _sink(commandToSink: Command | PromiseLike<Command>): Promise<CompatibleAggregate<S> | true> {
     // Adopt once across realms/thenable implementations; getters that throw reject
@@ -63,6 +66,7 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
         throw new Error(`command is missing data: ${JSON.stringify(command)}`);
       }
       if (this.type) command.aggregateType = this.type;
+      command = this._prepareCommand(command);
       const result: Promise<CompatibleAggregate<S>> | undefined = this._commandSink.sink(command, this);
       const then: unknown = result?.then;
       if (result && then) return result;

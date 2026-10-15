@@ -1,7 +1,7 @@
 import type { Event, Command, AggregateHooks, PluginExtensions, RedemeinePlugin } from '@redemeine/kernel';
 import type { AggregateEntityRegistry, MountedStructureMetadata } from './createAggregate';
 import type { AnyFunction } from './redemeineComponent';
-import type { AggregateDecoration } from './plugins/attachmentTypes';
+import type { AggregateDecoration, PreparedCommand } from './plugins/attachmentTypes';
 
 /**
  * The compiled output of createAggregate(...).build().
@@ -22,6 +22,8 @@ export interface BuiltAggregate<
     initialState: S;
     /** Processes a command against state, returning domain events */
     process: (state: S, command: Command<unknown, string>) => Event[];
+    /** Canonicalizes/enriches a command for this aggregate plan; raw creators remain unextended. */
+    prepareCommand: <C extends Command<unknown, string>>(state: S, command: C) => PreparedCommand<C['payload'], C['type']>;
     /** Applies an event immutably via Immer — returns new state */
     apply: (state: S, event: Event) => S;
     /** Applies an event to a mutable draft — used by projections to avoid double-Immer */

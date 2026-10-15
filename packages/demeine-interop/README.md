@@ -115,6 +115,39 @@ this adaptation does not promise native void-contract equivalence.
 
 ## Handlers and envelopes
 
+Built definitions with `prepareCommand(state, command)` prepare inside the FIFO
+queue, after legacy id/address normalization and **before** the external sink.
+Direct `_process` and generated `processXxx` dispatch also prepare commands. Raw
+command creators remain unextended: a plugin-provided `dateTime: Date` exists only
+after preparation. A valid provided date is preserved by the plugin; validation
+errors reject before the sink is invoked. Builders without this capability retain
+their original command references and behavior.
+
+For example, a command-envelope plugin can use an injected clock to add a Date,
+and an event-envelope plugin can copy it into `sourceCommandDateTime` alongside
+an `auditRef` derived from the command id. The sink sees the prepared command and
+still decides whether to call `_process`. Unchanged prepared objects use the built
+definition's cache; changed dates/headers/routing are revalidated by that definition.
+Legacy transport `status` and `refs` survive bridge preparation, while other
+unowned extras follow the aggregate's canonical projection policy. Transport
+mutations may cause re-preparation; initializers should preserve supplied values.
+
+Event preparation runs in the aggregate with final aggregate addressing and command
+correlation already available. Conversion must preserve all prepared extension
+values (including Dates), core identity and metadata; all converted events are
+checked before the first apply. Replay (`_rehydrate`) applies persisted events,
+not command/event preparation or clocks. If persistence serializes Dates to JSON,
+decode those fields explicitly before replay. This provides no afterCommit or
+durability guarantee and does not roll back external sink side effects.
+
+**SHOWCASE:** `packages/demeine-interop/test/aggregatePluginEnvelope.test.ts`,
+`adds command dateTime before the sink and preserves it through event replay`.
+The fixed-clock sink asserts a Date before `_process`; events retain their own
+`sourceCommandDateTime`/`auditRef`, and replay rebuilds audit state with a throwing
+clock. See [envelope preparation](../aggregate/ENVELOPES.md) for schema-free and
+optional Zod parser examples. Envelope-only plugins currently require
+`.state(() => ({}))`; command preparation does not change state.
+
 Each nullish handler slot independently receives a generated dispatcher. Supplied
 handlers are full overrides, called once with their original receiver and
 arguments. Errors never trigger fallback. Generated `processXxx`/`applyXxx`
