@@ -204,9 +204,9 @@ test('JSON refuses code-string overrides without evaluating them', () => {
   expect(existsSync(f.out)).toBe(false);
 });
 
-test('imported z.infer is structural only and its side effects never execute', () => {
+test('compiler-only JSON refuses to discard imported Zod constraints and never executes its source', () => {
   const f = fixture('Inferred', 'import type { Inferred } from "./schema";');
   writeFileSync(join(f.directory, 'schema.ts'), `import { z } from 'zod'; export const schema = z.string().min(8); export type Inferred = z.infer<typeof schema>; throw Error('import executed');`);
-  f.extract();
-  expect(f.read().commands.save).toEqual({ $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'string' });
+  expect(() => f.extract()).toThrow(/existing Zod schema.*discard its constraints/);
+  expect(existsSync(f.out)).toBe(false);
 });

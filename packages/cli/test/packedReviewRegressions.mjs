@@ -60,22 +60,24 @@ extractZodSchemas({ tsconfig: 'review/tsconfig.json', entry: 'review/aggregate.t
   const generated = readFileSync(join(fixture, 'generated.ts'), 'utf8');
   assert(!generated.includes(consumer));
   assert(!generated.includes('node_modules'));
-  // TypeScript erases this z.infer alias; the legacy structural path must stay portable too.
-  assert(generated.includes('z.enum(["abc", "xyz"])'));
+  assert(generated.includes('from "review-schema-dependency"'));
+  assert(!generated.includes('z.enum('));
   console.log(command('npx', ['--no-install', 'tsc', '-p', 'review/tsconfig.json']));
   console.log(command('node', ['--input-type=module', '-e', `
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import ts from 'typescript';
+import { payloadSchema as original } from 'review-schema-dependency';
 const source = readFileSync('review/generated.ts', 'utf8');
 writeFileSync('review/generated.mjs', ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
 const { commandSchemas, eventSchemas } = await import('./review/generated.mjs');
 assert.deepEqual(Object.keys(commandSchemas), ['do-work', '__proto__']);
 assert.equal(Object.getPrototypeOf(commandSchemas), Object.prototype);
 for (const schema of [...Object.values(commandSchemas), ...Object.values(eventSchemas)]) {
+  assert.equal(schema, original);
   assert(schema.safeParse('abc').success);
   assert(!schema.safeParse('x').success);
 }
-console.log('Packed dependency structural inlining and unusual keys PASS');
+console.log('Packed public schema references, identity and unusual keys PASS');
 `]));
 }

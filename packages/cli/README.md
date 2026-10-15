@@ -57,16 +57,127 @@ files are refused. `aggregateName` is metadata/prefix matching, not a filename.
 Bundle-only generation still supports names unsuitable for individual files.
 Validation is not a transaction or protection against concurrent filesystem changes.
 
-Legacy `extractZodSchemas` reuses a recognized `z.infer` schema only through its
+## Package schema policy
+
+Schema extraction reads the closest owning `package.json` for each selected entry,
+not the shell's working directory. A nested package does not inherit another
+package's policy implicitly. Aggregate, projection and registry entry points use
+the same configuration:
+
+```json
+{
+  "redemeine": {
+    "schemas": {
+      "mode": "zod-first",
+      "maxDepth": 60
+    }
+  }
+}
+```
+
+Those are the defaults when settings are absent. `mode` accepts `zod-first` or
+`types-first`. `maxDepth` is an integer from 1 to 256; invalid values and unknown
+schema options fail before generation. Root conversion starts at depth zero;
+properties, arrays and composite conversions consume structural depth, not just
+visible object nesting. Recursive expansion is diagnosed separately. Neither
+case silently becomes `z.any()`. Imported authored schemas are referenced rather
+than expanded, so their internal validation is not truncated by this limit.
+
+**Zod-first:** each selected command payload, event payload and included state must
+resolve to an existing importable Zod schema. Generated maps import the originals;
+their refinements/defaults/transform behavior are not reconstructed from types.
+Missing schemas or inaccessible exports fail schema compilation, not aggregate
+runtime construction. This tooling change does not add a schema-accepting overload
+to `createAggregate` or alter application runtime validation.
+
+**Types-first:** existing resolvable Zod schemas still take precedence over
+structural inference, including nested fields. Ordinary types can coexist for a
+gradual migration. Intentional code-string `typeOverrides` remain an explicit
+types-first escape hatch; they are rejected in Zod-first mode. Existing types-only
+projects (including the current scaffold templates) must opt in to this mode.
+
+Use exported schemas and explicit schema-derived annotations, for example:
+
+```ts
+export const identifierSchema = z.string().min(3);
+export type Identifier = z.infer<typeof identifierSchema>;
+// A handler parameter annotated Identifier links identifierSchema, not z.string().
+```
+
+The compiler follows retained aliases and original handler/event/state annotations
+when available, including primitive aliases that TypeScript otherwise erases. It
+does not guess by schema name or associate every `string` with the same schema.
+Ambiguous/erased provenance cannot establish an authored-schema guarantee: provide
+an explicit schema-derived annotation instead. An ordinary type-only declaration
+with no recoverable link is inferred only in types-first mode.
+
+`extractZodSchemas` reuses a recognized `z.infer` schema only through its
 exported value: public dependency imports retain their module specifier, and local
 source imports are relative to the generated file. Private/unroutable schema values
-fail before output writes; export the value or supply `typeOverrides`. It never
-emits dependency implementation paths. When TypeScript erases alias metadata,
-the existing structural conversion applies; runtime refinements are not inferred.
+fail before output writes; export the value or supply a types-first override. A
+schema module export/re-export is sufficient; it need not be in the domain root
+barrel. External imports must respect package exports even for Node10 input
+projects. The referenced value must have a resolved Zod schema type; no dependency
+implementation path or fake ambient declaration is emitted.
 Keep relative source/generated files together when relocating output, and compile
 computed-key output with a modern target (ES2015 or newer).
 
+### Readable aggregate Zod output
+
+Object intersections such as `Job & { cancelJobIds: string[] }`, including resolved
+`Pick`/`Omit`/`Partial` combinations, produce structural object schemas. TypeScript's
+resolved property types and optionality preserve overlapping constraints rather
+than treating the right-hand member as an overwrite. Contradictory properties
+remain impossible (`z.never()`); they do not become `z.any()`.
+
+String-index records and supported mutable-array intersections use
+`z.intersection(...)`. Recognized imported Zod member schemas and explicit
+`typeOverrides` also remain referenced through intersections, preserving their
+authored constraints. Callable, branded primitive/object, mixed array/object,
+numeric-index and Date intersections are not silently widened: they fail
+with the type name before output is written. Supply a schema override where the
+intended validation cannot be represented by the supported structural conversion.
+
+Schema-derived unions/intersections retain their original annotated members even
+when TypeScript normalizes them (for example, `Identifier & string`). A plain
+`string` alternative in `Identifier | string` remains unrestricted. Generic
+compositions whose original members cannot be resolved require an explicitly
+derived Zod schema rather than silently losing refinements. Projection/registry
+conversion likewise requires an explicit derived schema for these compositions;
+its stricter structural policy is not relaxed by the aggregate converter.
+
+Generated TypeScript is formatted by the CLI, with dependency-before-use schema
+ordering, separate schema/map sections, safe normal property names, and computed
+`__proto__` keys. It includes source-relative entry/export provenance and concise
+source JSDoc (whitespace-normalized, escaped and capped at 400 characters), not
+invented domain descriptions. No timestamp or absolute machine path is emitted.
+Repeated generation with the same inputs/tool version is deterministic. An
+application formatter remains optional for its own style conventions.
+
+The public exports remain `commandSchemas`, `eventSchemas`, and optional
+`stateSchema`; map keys are handler property names. Inferred void payloads remain
+`z.void()`. Aggregate types-first conversion supports readonly arrays and resolved
+tuples with optional/trailing-rest elements; `unknown` stays `z.unknown()` and
+explicit declaration-proven `any` stays `z.any()`. Public data fields are retained,
+including underscores. Unsupported functions, Maps/Sets, numeric-index records,
+open template literals, bigint/symbol types, unresolved declarations and recursion
+fail rather than becoming permissive or unrelated object schemas. Supplied schemas
+can describe cases structural conversion cannot. Projection/registry structural
+conversion retains its stricter supported-type policy; authored schema references
+take precedence there too. Structural inference requires strictNullChecks (or
+strict) and does not replace handwritten runtime validation automatically.
+
 ## Standalone JSON Schema (compiler metadata)
+
+Raw `--format json-schema` is a compiler-only **types-first** path. Zod-first mode,
+or a recognized authored schema anywhere in a types-first payload, refuses this
+path instead of dropping constraints or silently executing application code.
+Generate linked Zod/registry modules and evaluate `z.toJSONSchema` on the actual
+schemas in an explicit build step instead. Projection/registry TypeScript outputs
+already expose JSON maps through `z.toJSONSchema`; evaluating them imports your
+schema modules normally. Put schemas in dedicated modules if those modules must
+not execute application setup. Unrepresentable Zod behavior is reported by Zod,
+not converted into a weaker structural JSON schema.
 
 `extract-schemas --format zod|json-schema` defaults to **zod**, retaining existing
 schema names and output semantics. Projection Zod output still exports
@@ -94,7 +205,7 @@ structural intersections (including Pick/Omit/Partial). Constructors are not run
 methods, accessors and non-public instance fields are unsupported. Underscore
 fields are retained. Tuples, functions, symbols, bigint, unresolved/error types,
 unproven implicit any, unsupported/conflicting intersections, recursion and depth
-over 60 fail with export/property paths before output directories/files are written.
+over the configured maxDepth fail with export/property paths before output directories/files are written.
 Projection retains its stricter existing policy, including rejection of
 any/unknown, intersections, classes, empty objects and undefined outside optional
 property boundaries. Existing destination bytes survive conversion failure.
@@ -114,11 +225,9 @@ payloads infer void, so their JSON entries are `false` even though the public
 methods send `{}` and the existing handwritten validator accepts those objects.
 TypeScript does not recover integer/minItems/strict additionalProperties policies,
 custom legacy refs, or runtime Zod refinements. Objects stay structurally open
-unless index constraints apply; statically resolved `z.infer` is structural only.
-No equivalence to handwritten schemas or Zod output is promised. The legacy
-aggregate Zod converter is unchanged: its intersection/depth/any fallbacks and
-underscore omission remain fidelity limits; generating JSON does not fix or use
-those fallbacks.
+unless index constraints apply. Recognized authored Zod schemas are refused in
+this structural JSON path rather than reinterpreted. No equivalence to handwritten
+schemas or Zod output is promised. Conversion never evaluates emitted schema code.
 
 Before CLI publication, consumers can invoke the qualified developer package
 directly (record its exact version **and artifact hash**, including same-version

@@ -109,7 +109,7 @@ describe('typeConverter', () => {
     let stateType: ts.Type;
 
     beforeAll(() => {
-        converter = new TypeToZodConverter(checker, program, 'string');
+        converter = new TypeToZodConverter(checker, program, 'string', {}, path.join(fixturesDir, 'generated.ts'));
         commands = extractCommandPayloads(checker, aggType, sourceFile);
         events = extractEventPayloads(checker, aggType, sourceFile);
         stateType = extractStateType(checker, aggType, sourceFile)!;
@@ -139,10 +139,9 @@ describe('typeConverter', () => {
         expect(result).toContain('z.array(');
     });
 
-    it('should convert deletedAt as z.string() (strict:false widens null away)', () => {
-        // With strict:false in tsconfig, `string | null` is widened to `string`
+    it('should preserve deletedAt nullability with strictNullChecks', () => {
         const result = converter.convert(stateType);
-        expect(result).toContain('["deletedAt"]: z.string()');
+        expect(result).toContain('deletedAt: z.string().nullable()');
     });
 
     it('should handle boolean in state type', () => {
@@ -168,7 +167,7 @@ describe('outputGenerator', () => {
     });
 
     function generate(opts: { includeState?: boolean } = {}): string {
-        const converter = new TypeToZodConverter(checker, program, 'string');
+        const converter = new TypeToZodConverter(checker, program, 'string', {}, path.join(fixturesDir, 'generated.ts'));
         return generateOutput(converter, commandPayloads, eventPayloads, stateType, opts);
     }
 

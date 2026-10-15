@@ -23,7 +23,7 @@ export function extractSchemaRegistries(options: ExtractSchemaRegistriesOptions)
   const selections = discoverRegistrySelections(program, inputs.definitions, inputs.discover);
   const definitions = navigateRegistries(program, selections);
   // Complete every selection and conversion before touching the destination.
-  const output = generateSchemaRegistryOutput(program.getTypeChecker(), definitions);
+  const output = generateSchemaRegistryOutput(program.getTypeChecker(), definitions, { program, outFile });
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, output, 'utf8');
 }
