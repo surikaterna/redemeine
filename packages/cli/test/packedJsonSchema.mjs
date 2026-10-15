@@ -10,15 +10,16 @@ function writeFixture(consumer) {
   }, include: ['*.ts'] }));
   writeFileSync(join(directory, 'imported.ts'), `import { z } from 'zod'; import { writeFileSync } from 'node:fs';
     export const external = z.string().min(99); export type External = z.infer<typeof external>;
+    export type PlainExternal = string;
     writeFileSync('json-review/import-executed', 'bad'); throw Error('IMPORTED SOURCE EXECUTED');`);
   writeFileSync(join(directory, 'conflict.d.ts'), `interface A { x: string } interface B { x: number }
     export interface Conflict extends A, B {}`);
   writeFileSync(join(directory, 'input.ts'), `import { createAggregate } from '@redemeine/aggregate';
     import { createProjection } from '@redemeine/projection'; import type { Event } from '@redemeine/kernel';
-    import { writeFileSync } from 'node:fs'; import type { External } from './imported'; import type { Conflict } from './conflict';
+    import { writeFileSync } from 'node:fs'; import type { External, PlainExternal } from './imported'; import type { Conflict } from './conflict';
     class Money { amount!: number; currency!: { name: 'EUR' | 'GBP' }; }
     type State = { id: string; note: string | null; total: number };
-    type Payload = Pick<State, 'id'> & Partial<Omit<State, 'id'>> & { prices: readonly Money[]; reference: External };
+    type Payload = Pick<State, 'id'> & Partial<Omit<State, 'id'>> & { prices: readonly Money[]; reference: PlainExternal };
     export const aggregate = createAggregate('payment', {} as State)
       .events({ registered: (_state, event: Event<Payload>) => {} })
       .commands(emit => ({ register: (_state, payload: Payload) => emit.registered(payload), confirm: () => [], expire: () => [] })).build();
@@ -28,6 +29,8 @@ function writeFixture(consumer) {
       .commands(emit => ({ save: (_state, payload: Conflict) => emit.saved(payload) })).build();
     type Recursive = { next: Recursive };
     export const cyclic = createProjection('cycle', (): Recursive => ({} as Recursive)).from(aggregate, {}).build();
+    export const schemaBacked = createAggregate('schema-backed', {}).events({})
+      .commands(() => ({ save: (_state, payload: External) => [] })).build();
     writeFileSync('json-review/source-executed', 'bad'); throw Error('USER SOURCE EXECUTED');`);
   return directory;
 }
@@ -67,6 +70,7 @@ function assertFailures(consumer, command, base) {
     ['--format', 'invalid'], ['--target', 'draft-7'], ['--format', 'json-schema', '--target', 'draft-4'],
     ['--format', 'json-schema', '--date-handling', 'date'], ['--kind', 'projection', '--export', 'view', '--no-state'],
     ['--format', 'json-schema', '--kind', 'projection', '--export', 'cyclic'],
+    ['--format', 'json-schema', '--export', 'schemaBacked'],
   ];
   for (const flags of invalid) {
     assert.throws(() => command(process.execPath, [...base, ...flags, '--out', out]));

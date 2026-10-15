@@ -20,7 +20,7 @@ export function convertJsonObject(converter: JsonSchemaConverter, type: ts.Type,
 }
 
 export function validateHeritage(converter: JsonSchemaConverter, type: ts.Type, path: string, seen = new Set<ts.Type>()): void {
-  if (seen.has(type) || seen.size >= 60) converter.fail(type, path, 'cyclic or excessively deep inheritance');
+  if (seen.has(type) || seen.size > converter.maxDepth) converter.fail(type, path, 'cyclic or excessively deep inheritance');
   seen.add(type);
   const declarations = type.getSymbol()?.declarations ?? [];
   for (const declaration of declarations) converter.validateDataDeclaration(declaration, path);

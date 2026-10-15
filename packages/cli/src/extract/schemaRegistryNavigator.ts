@@ -2,6 +2,7 @@ import * as ts from 'typescript';
 import { extractCommandPayloads, extractEventPayloads, extractStateType, resolveAggregateType } from './aggregateNavigator';
 import { resolveProjectionState } from './projectionNavigator';
 import type { SchemaRegistrySelection } from '../schemaRegistryManifest';
+import { aggregateSchemaDeclarations, projectionSchemaDeclaration, type SchemaDeclarations } from './schemaDeclarations';
 
 export type RegistryDefinition = {
   kind: 'aggregate' | 'projection';
@@ -10,6 +11,8 @@ export type RegistryDefinition = {
   state: ts.Type;
   commands: Map<string, ts.Type>;
   events: Map<string, ts.Type>;
+  entry?: string;
+  declarations?: SchemaDeclarations;
 };
 
 function symbolType(checker: ts.TypeChecker, symbol: ts.Symbol, path: string): ts.Type {
@@ -104,6 +107,9 @@ export function navigateRegistries(program: ts.Program, selections: readonly Sch
     const members = selection.kind === 'aggregate' ? aggregateMembers(program, type, selection.export) : {
       state: resolveProjectionState(program, selection.entry, selection.export), commands: new Map<string, ts.Type>(), events: new Map<string, ts.Type>(),
     };
-    return { kind: selection.kind, name, path: selection.export, ...members };
+    const projectionState = selection.kind === 'projection' ? projectionSchemaDeclaration(program, type, selection.entry, selection.export) : undefined;
+    const declarations = selection.kind === 'aggregate' ? aggregateSchemaDeclarations(program, type, selection.entry, selection.export)
+      : { commands: new Map<string, ts.Node>(), events: new Map<string, ts.Node>(), ...(projectionState ? { state: projectionState } : {}) };
+    return { kind: selection.kind, name, path: selection.export, entry: selection.entry, ...members, ...(declarations ? { declarations } : {}) };
   });
 }

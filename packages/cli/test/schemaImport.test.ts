@@ -54,6 +54,18 @@ test('private inferred schema fails explicitly during conversion, before output 
     expect(() => generateOutput(converter, new Map([['accept', type]]), new Map(), null, {})).toThrow('Cannot emit a portable import');
 });
 
+test('Node10 resolution does not authorize a private package subpath for generated schema imports', () => {
+    const dependency = join(dir, 'node_modules/hidden-schema');
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'hidden-schema', exports: { '.': './index.d.ts' } }));
+    writeFileSync(join(dependency, 'index.d.ts'), 'export declare const publicValue: number;');
+    writeFileSync(join(dependency, 'internal.d.ts'), `import { z } from 'zod'; export declare const secret: z.ZodString;`);
+    const source = join(dir, 'input.ts');
+    writeFileSync(source, `import { z } from 'zod'; import { secret } from 'hidden-schema/internal'; export type Payload = z.infer<typeof secret>;`);
+    const p = ts.createProgram([source], { strict: true, target: ts.ScriptTarget.ES2022, moduleResolution: ts.ModuleResolutionKind.Node10 });
+    expect(() => existingSchemaImport(p.getTypeChecker(), p, query(p, source), join(dir, 'output.ts'))).toThrow(/portable import/);
+});
+
 test('non-Zod generic typeof aliases are not misidentified as z.infer', () => {
     const source = join(dir, 'input.ts');
     writeFileSync(source, `type Other<T> = T; const privateValue = 'literal'; export type Payload = Other<typeof privateValue>;`);

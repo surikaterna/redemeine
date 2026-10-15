@@ -57,9 +57,9 @@ function payloadDeclaration(checker: ts.TypeChecker, handlers: ts.Type, key: str
 
 export function aggregateJsonOutput(
   program: ts.Program, aggregate: ts.Type, commands: Map<string, ts.Type>, events: Map<string, ts.Type>,
-  state: ts.Type | null, options: SchemaOutputOptions & { aggregateExport: string; includeState?: boolean },
+  state: ts.Type | null, options: SchemaOutputOptions & { aggregateExport: string; includeState?: boolean; maxDepth?: number },
 ): string {
-  const converter = new JsonSchemaConverter(program);
+  const converter = new JsonSchemaConverter(program, options.maxDepth);
   const { checker } = converter;
   const name = options.aggregateExport;
   const creators = propertyType(checker, aggregate, 'commandCreators', name);

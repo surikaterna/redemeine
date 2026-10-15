@@ -19,7 +19,7 @@ export class JsonSchemaConverter {
   private declarationProgram?: ts.Program;
   readonly checker: ts.TypeChecker;
 
-  constructor(readonly program: ts.Program) {
+  constructor(readonly program: ts.Program, readonly maxDepth = 60) {
     this.checker = program.getTypeChecker();
     const options = program.getCompilerOptions();
     if (!(options.strictNullChecks ?? options.strict)) throw new Error('JSON Schema extraction requires strictNullChecks (or strict)');
@@ -31,7 +31,7 @@ export class JsonSchemaConverter {
 
   convert(type: ts.Type, path: string, declaration?: ts.Node): JsonSchema {
     if (this.active.has(type)) return this.fail(type, path, 'recursive types are unsupported');
-    if (this.active.size >= 60) return this.fail(type, path, 'type exceeds supported depth (60)');
+    if (this.active.size > this.maxDepth) return this.fail(type, path, `type depth exceeds maxDepth (${this.maxDepth})`);
     this.active.add(type);
     try {
       this.validateDeclaration(declaration, path);
@@ -79,17 +79,21 @@ export class JsonSchemaConverter {
   }
 
   private convertArbitrary(type: ts.Type, path: string, declaration?: ts.Node): JsonSchema {
-    if ('intrinsicName' in type && type.intrinsicName === 'error') return this.fail(type, path, 'unresolved compiler-error type');
-    const annotation = this.annotation(declaration);
-    if (!annotation || !this.provesArbitrary(annotation, type, path)) {
-      return this.fail(type, path, 'any/unknown requires an explicit resolvable type declaration');
-    }
+    this.assertArbitraryDeclaration(type, path, declaration);
     console.warn(`${path}: explicit ${this.checker.typeToString(type)} represented as true (JSON values only; no runtime refinements)`);
     return true;
   }
 
+  assertArbitraryDeclaration(type: ts.Type, path: string, declaration?: ts.Node): void {
+    if ('intrinsicName' in type && type.intrinsicName === 'error') this.fail(type, path, 'unresolved compiler-error type');
+    const annotation = this.annotation(declaration);
+    if (!annotation || !this.provesArbitrary(annotation, type, path)) {
+      this.fail(type, path, 'any/unknown requires an explicit resolvable type declaration');
+    }
+  }
+
   private provesArbitrary(node: ts.TypeNode, type: ts.Type, path: string, seen = new Set<ts.Node>()): boolean {
-    if (seen.has(node) || seen.size >= 60) return false;
+    if (seen.has(node) || seen.size > this.maxDepth) return false;
     seen.add(node);
     this.validateDeclaration(node, path);
     if (node.kind === ts.SyntaxKind.AnyKeyword || node.kind === ts.SyntaxKind.UnknownKeyword) {
@@ -114,7 +118,7 @@ export class JsonSchemaConverter {
   validateDeclaration(node: ts.Node | undefined, path: string, seen = new Set<ts.Node>(), depth = 0): void {
     const annotation = this.annotation(node);
     if (!annotation || seen.has(annotation)) return;
-    if (depth >= 60) throw new Error(`${path}: type declaration exceeds supported depth (60)`);
+    if (depth > this.maxDepth) throw new Error(`${path}: type declaration depth exceeds maxDepth (${this.maxDepth})`);
     seen.add(annotation);
     this.validateDiagnosticScope(annotation, path);
     this.validateReferences(annotation, path, seen, depth);
