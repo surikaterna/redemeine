@@ -4,6 +4,7 @@ export * from './createEntity';
 export * from './createMixin';
 export * from './bindContext';
 export * from './naming';
+export * from './plugins';
 export type { BuiltAggregate } from './builtAggregate';
 export type {
   ResolveEventName,

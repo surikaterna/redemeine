@@ -5,6 +5,7 @@ import { createComponentBehaviorState, bindFluentMethods } from './redemeineComp
 import { bindContext } from './bindContext';
 import { defaultNamingStrategy } from './naming';
 import { buildAggregate } from './buildAggregate';
+import type { PluginRegistration } from './plugins/attachmentTypes';
 import type {
     AggregateBuilder,
     AggregateMixinLike,
@@ -50,6 +51,9 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
     let _hooks: AggregateHooks<S> = {};
     // SAFETY: `any` required — RedemeinePlugin generic param must satisfy PluginExtensions constraint
     let _plugins: RedemeinePlugin<any>[] = [];
+    let _aggregatePlugins: PluginRegistration[] = [];
+    const _parents: object[][] = [];
+    const _built: object[] = [];
     let _unmatchedEventHandler: UnmatchedEventHandler | undefined;
     let _contract: Contract | undefined;
 
@@ -66,9 +70,11 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
         overrideCommandNames: (overrides: Record<string, string>) => component.addCommandOverrides(overrides)
     });
 
-    Object.assign(builder, {
+    Object.defineProperties(builder, Object.getOwnPropertyDescriptors({
         extends: (parentBuilder: AggregateBuilder<S, string, unknown, unknown, unknown, unknown, any, TMeta, TPlugins>) => {
             const parentState = parentBuilder._state;
+            _parents.push(parentState.builtSources);
+            _aggregatePlugins = [...parentState.aggregatePlugins, ..._aggregatePlugins];
             component.inherit(parentState);
             _hooks = { ...parentState.hooks, ..._hooks };
             _plugins = [...parentState.plugins, ..._plugins];
@@ -142,9 +148,12 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             return builder;
         },
 
-        // SAFETY: `any` required — PluginExtensions constraint
-        plugins: (...plugins: RedemeinePlugin<any>[]) => {
-            _plugins.push(...plugins);
+        // Classification keeps event descriptors out of legacy lifecycle hosts.
+        plugins: (...plugins: PluginRegistration[]) => {
+            for (const plugin of plugins) {
+                if ('kind' in plugin && plugin.kind === 'aggregate-event') _aggregatePlugins.push(plugin);
+                else _plugins.push(plugin as RedemeinePlugin<TPlugins>);
+            }
             return builder;
         },
 
@@ -179,13 +188,15 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 mixins: _mixins,
                 selectors: snapshot.selectors,
                 hooks: _hooks,
+                aggregatePlugins: _aggregatePlugins,
+                builtSources: _built,
                 plugins: _plugins as RedemeinePlugin<TPlugins>[]
             };
         },
 
         build: () => {
             const snapshot = component.getSnapshot();
-            return buildAggregate<S, TMeta>({
+            const built = buildAggregate<S, TMeta>({
                 aggregateName,
                 initialState,
                 snapshot,
@@ -195,11 +206,15 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 namingStrategy: _namingStrategy,
                 hooks: _hooks,
                 plugins: _plugins,
+                aggregatePlugins: _aggregatePlugins,
+                parents: [..._parents.flat(), ..._built],
                 ...(_unmatchedEventHandler ? { unmatchedEventHandler: _unmatchedEventHandler } : {}),
                 ...(_contract ? { contract: _contract } : {})
             });
+            _built.push(built);
+            return built;
         }
-    });
+    }));
 
     return builder as unknown as AggregateBuilder<S, Name, {}, {}, {}, {}, {}, TMeta, TPlugins>;
 }

@@ -13,6 +13,8 @@ import type { Draft } from 'immer';
 import { resolveEvents, finalizeProjectorMap } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
 import type { ReadonlyDeep } from '@redemeine/kernel';
+import { decorateAggregate, inheritAggregateIdentity } from './plugins/attachment';
+import type { PluginRegistration } from './plugins/attachmentTypes';
 
 export type BuildAggregateInput<S, TMeta> = {
     aggregateName: string;
@@ -30,6 +32,8 @@ export type BuildAggregateInput<S, TMeta> = {
     namingStrategy: NamingStrategy;
     hooks: AggregateHooks<S>;
     plugins: RedemeinePlugin<any>[];
+    aggregatePlugins?: PluginRegistration[];
+    parents?: object[];
     unmatchedEventHandler?: UnmatchedEventHandler;
     contract?: Contract;
 };
@@ -94,7 +98,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     const projectorByEventTypeObj: Record<string, Function> = {};
     projectorByEventType.forEach((fn, key) => { projectorByEventTypeObj[key] = fn; });
 
-    return {
+    const host = decorateAggregate({
         aggregateType: aggregateName,
         initialState,
         process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType, contract),
@@ -114,7 +118,9 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
         metadata: { commands: metadataByCommandType, events: metadataByEventType },
         types: { commands: commandTypesByKey, events: eventTypesByKey },
         plugins
-    };
+    });
+    inheritAggregateIdentity(host, input.parents ?? []);
+    return decorateAggregate(host, input.aggregatePlugins);
 }
 
 function buildEventMetadata<TMeta>(

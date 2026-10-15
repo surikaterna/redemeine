@@ -28,6 +28,11 @@ export type RuntimeExtensions = { meta: Record<string, unknown>; intents: Record
 export type RuntimePlugin = RedemeinePlugin<RuntimeExtensions>;
 
 export function erasePlugins(plugins: readonly unknown[]): RuntimePlugin[] {
+  for (const plugin of plugins) {
+    if (readProperty(plugin, 'kind') === 'aggregate-event') {
+      throw new TypeError('Attach aggregate event plugins via Aggregate.plugins(...) or built.withPlugins(...), not host setup.plugins.');
+    }
+  }
   // Hooks share the builder's metadata/intent contracts; heterogeneous plugin extensions are erased only here.
   return [...plugins] as RuntimePlugin[];
 }

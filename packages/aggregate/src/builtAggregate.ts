@@ -1,6 +1,7 @@
 import type { Event, Command, AggregateHooks, PluginExtensions, RedemeinePlugin } from '@redemeine/kernel';
 import type { AggregateEntityRegistry, MountedStructureMetadata } from './createAggregate';
 import type { AnyFunction } from './redemeineComponent';
+import type { AggregateDecoration } from './plugins/attachmentTypes';
 
 /**
  * The compiled output of createAggregate(...).build().
@@ -14,7 +15,7 @@ export interface BuiltAggregate<
     Registry extends AggregateEntityRegistry = AggregateEntityRegistry,
     Sel extends Record<string, any> = Record<string, any>,
     TPlugins extends PluginExtensions = {}
-> {
+> extends AggregateDecoration<S, Registry> {
     /** The aggregate type identifier (e.g., 'invoice', 'order') */
     aggregateType: string;
     /** Default initial state for new aggregate instances */
