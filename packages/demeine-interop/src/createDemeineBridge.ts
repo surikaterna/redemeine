@@ -1,8 +1,8 @@
-import { createDispatch } from './dispatch';
+import { createDispatch, requireLegacyPayload } from './dispatch';
 import { rejectLifecycle, requireSync, validateHandler } from './guards';
 import { installMethods } from './methods';
 import { StandaloneAggregate } from './StandaloneAggregate';
-import type { CommandHandler, CommandSink, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
+import type { Command, CommandHandler, CommandSink, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
 import type { BridgeableAggregate, BridgeConstructor, BridgeOptions, CommandCreators } from './types';
 
 export function createDemeineBridge<S extends object, C extends CommandCreators>(
@@ -12,6 +12,10 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   rejectLifecycle(builder);
   const dispatch = createDispatch(builder, options);
   class Bridge extends StandaloneAggregate<S> {
+    protected override _prepareCommand(command: Command): Command {
+      if (!builder.prepareCommand || command.type === '$stream.delete.command') return command;
+      return requireLegacyPayload(dispatch.prepare(this, command));
+    }
     constructor(sink?: CommandSink<S> | null, events?: EventHandler<S> | null, commands?: CommandHandler<S> | ObjectCommandHandler | null) {
       validateHandler(events, 'eventHandler');
       validateHandler(commands, 'commandHandler');

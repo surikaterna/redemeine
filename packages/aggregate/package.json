@@ -40,7 +40,9 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm run typecheck:envelopes && pnpm run typecheck:plugins",
+    "typecheck:envelopes": "tsc --noEmit -p tsconfig.envelopes.json",
+    "typecheck:plugins": "tsc --noEmit -p test/typefixtures/aggregate-plugins/tsconfig.json",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/aggregate/test",
     "lint": "tsc --noEmit"
   },

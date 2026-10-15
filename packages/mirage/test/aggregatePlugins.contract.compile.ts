@@ -1,4 +1,4 @@
-import { createAggregate, createAggregatePluginFor } from '@redemeine/aggregate';
+import { createAggregate, createAggregatePlugin, createAggregatePluginFor } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createMirage, createDepot, type EventStore } from '@redemeine/mirage';
 
@@ -31,3 +31,27 @@ async function consume() {
 createDepot(Counter, store, { plugins: [audit] });
 void total;
 void consume;
+
+function datedAudit(clock: () => Date) {
+  return createAggregatePlugin('datedAudit').state(() => ({ dates: [] as string[] }))
+    .commandEnvelope(() => ({ dateTime: clock() }))
+    .eventEnvelope((_, context) => ({ commandDate: new Date(context.command.dateTime.getTime()) }))
+    .onEvent((draft, event) => { if ('commandDate' in event && event.commandDate instanceof Date) draft.dates.push(event.commandDate.toISOString()); }).build();
+}
+const Dated = Counter.withPlugins(datedAudit(() => new Date()));
+const raw = Dated.commandCreators.add(1);
+// @ts-expect-error raw command creators do not promise prepared extensions
+raw.dateTime;
+const prepared = Dated.prepareCommand(Dated.initialState, raw);
+const date: Date = prepared.dateTime;
+const payload: number = prepared.payload;
+const dated = createMirage(Dated, 'dated');
+const returned = dated.add(1);
+// @ts-expect-error Mirage returns state, not the prepared command envelope
+returned.dateTime;
+// @ts-expect-error prepared dates are not public Mirage state
+dated.dateTime;
+// @ts-expect-error plugin state remains deeply readonly
+dated.datedAudit.dates.push('mutation');
+void date;
+void payload;

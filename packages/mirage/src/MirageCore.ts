@@ -213,10 +213,25 @@ export class MirageCore<S> {
             throw new TypeError('Dispatch requires a command envelope with type and payload');
         }
 
+        command = this.prepareCommand(command);
+
         if (this.hasBeforeCommandPlugins) {
             return this.dispatchWithPlugins(command);
         }
 
         return this.processAndApply(command);
+    }
+
+    private prepareCommand(command: Command): Command {
+        const { prepareCommand, aggregatePlugins } = this.builder;
+        if (!prepareCommand || !aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope)) return command;
+        for (const key of ['aggregateId', 'aggregateType']) {
+            const value: unknown = Reflect.get(command, key);
+            if (value !== undefined && typeof value !== 'string') throw new TypeError(`Invalid envelope routing field: ${key}`);
+        }
+        // Routing belongs to this instance; preserve the command identity and finalized scoped payload.
+        return prepareCommand.call(this.builder, this.state, {
+            ...command, aggregateId: this.id, aggregateType: this.builder.aggregateType
+        });
     }
 }
