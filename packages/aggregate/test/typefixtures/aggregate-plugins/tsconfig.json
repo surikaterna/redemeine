@@ -1,5 +1,5 @@
 {
   "extends": "../../../tsconfig.json",
   "compilerOptions": { "noEmit": true },
-  "include": ["./*.ts", "../../aggregatePluginBuilder.test.ts", "../../aggregatePluginAttachment.test.ts", "../../../src"]
+  "include": ["./*.ts", "../../aggregatePluginBuilder.test.ts", "../../aggregatePluginAttachment.test.ts", "../../aggregatePluginReview.test.ts", "../../../src"]
 }

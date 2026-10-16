@@ -46,12 +46,25 @@ not once per applied event. Return fresh plugin-owned Immer-compatible objects;
 the factory is trusted, not sandboxed. Normal immutable application preserves the
 host's initial state.
 
+Direct arguments and `as const` tuples guarantee their mounted namespaces.
+Spreading an ordinary array guarantees no elements (it may be empty), so each
+possible event-plugin ID has optional state, preserving that ID's own state type
+even for heterogeneous arrays. Narrow a namespace before reading its state.
+Empty and entirely legacy arrays add no mounted state. Array elements still need
+literal, non-union IDs that do not collide with any host-state branch. Since
+arrays prove neither presence nor order, source prerequisites must already exist
+on every host-state branch; attach prerequisites first or use an ordered tuple.
+Runtime uniqueness and source-identity checks still apply to the actual elements.
+
 Application runs the domain projector first, then each registration's matched
 handler followed by its catchall. Replay uses the same pure application path;
 command processing never runs event plugins. `applyToDraft` uses the caller's
 Immer transaction; let failures escape that transaction to discard its changes.
 Callbacks must be synchronous. A missing plugin namespace is an error before any
 domain write: migrate older snapshots explicitly rather than lazily backfilling.
+Mirage and Depot also check namespace presence when accepting initial/snapshot
+state, even without replay events. This check does not validate the namespace's
+schema and never reruns initializers to repair a snapshot.
 Alternatively rebuild state by full replay from the decorated initial state.
 This is an event-level transaction, not a multi-event command/persistence transaction.
 Nested plugin state uses Immer `Draft<S>`; never retain a draft outside its callback.
@@ -97,6 +110,9 @@ Factories must return fresh owned, Immer-compatible data. Drafting does not make
 itself. Prefer plain objects/arrays; treat Dates as immutable values and replace
 them instead of calling mutating methods. Plugin callbacks are trusted application
 code, not a sandbox. Snapshot serializers must preserve supported value types.
+Plugin readonly input types retain Date readers (such as `getTime` and
+`toISOString`) while omitting `set*` mutators; freezing a Date does not itself
+make its internal timestamp immutable.
 
 **Deferred, not shipped:** command `dateTime` stamping/pre-sink preparation,
 universal command payload extensions, full persistence-plugin migration, a new

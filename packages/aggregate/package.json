@@ -40,7 +40,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p test/typefixtures/aggregate-plugins/tsconfig.json",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/aggregate/test",
     "lint": "tsc --noEmit"
   },

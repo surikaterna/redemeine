@@ -22,7 +22,9 @@ type ResolvedEventType<A, K extends string> = A extends { types: { events: infer
   ? K extends keyof Names ? Extract<Names[K], string> : string
   : K | `${A extends { aggregateType: infer Name extends string } ? Name : string}.${K}.event`;
 
-type PluginReadonlyDeep<T> = T extends object ? { readonly [K in keyof T]: PluginReadonlyDeep<T[K]> } : T;
+type PluginReadonlyDeep<T> = T extends Date ? Readonly<Omit<Date, `set${string}`>>
+  : T extends (...args: never[]) => unknown ? T
+  : T extends object ? { readonly [K in keyof T]: PluginReadonlyDeep<T[K]> } : T;
 
 export type AggregatePluginContext<A> = Readonly<{
   aggregateType: string;
@@ -34,7 +36,7 @@ export type AggregatePluginHandler<S, A, E = Event<unknown, string>> = (
 ) => undefined;
 
 export type AggregatePluginEvents<S, A> = {
-  [K in keyof Payloads<A> & string]?: AggregatePluginHandler<S, A, Event<A extends AggregatePluginSource ? NonNullable<Payloads<A>[K]> : unknown, ResolvedEventType<A, K>>>;
+  [K in keyof Payloads<A> & string]?: AggregatePluginHandler<S, A, Event<A extends AggregatePluginSource ? Payloads<A>[K] : unknown, ResolvedEventType<A, K>>>;
 };
 
 export interface AggregateEventPlugin<Id extends string, S extends object, A = undefined> {
