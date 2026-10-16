@@ -94,6 +94,9 @@ importers:
       '@redemeine/kernel':
         specifier: workspace:*
         version: link:../kernel
+      immer:
+        specifier: ^10.1.1
+        version: 10.2.0
     devDependencies:
       tsup:
         specifier: ^8.4.0

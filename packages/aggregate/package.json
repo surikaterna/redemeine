@@ -40,12 +40,13 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p test/typefixtures/aggregate-plugins/tsconfig.json",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/aggregate/test",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@redemeine/kernel": "workspace:*"
+    "@redemeine/kernel": "workspace:*",
+    "immer": "^10.1.1"
   },
   "devDependencies": {
     "tsup": "^8.4.0",

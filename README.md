@@ -68,6 +68,9 @@ counter.increment(5);
 // counter state is now { count: 5 }
 ```
 
+For reusable event-derived state, see [Aggregate event plugins](./packages/aggregate/src/plugins/README.md)
+for typed builders, Mirage/Depot/bridge capabilities, and snapshot migration limits.
+
 ### Compose with Entities
 
 ```typescript
