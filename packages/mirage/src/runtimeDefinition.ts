@@ -18,6 +18,8 @@ export interface RuntimeBuilder<S> {
   initialState: S;
   process(state: S, command: Command<unknown, string>): Event[];
   apply(state: S, event: Event): S;
+  prepareCommand?(state: S, command: Command<unknown, string>): Command<unknown, string>;
+  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
   hooks?: AggregateHooks<S>;
   metadata?: {
     events?: Record<string, { meta?: Record<string, unknown> }>;

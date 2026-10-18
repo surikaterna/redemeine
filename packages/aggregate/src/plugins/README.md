@@ -1,7 +1,7 @@
 # Aggregate event plugins
 
-This API maintains **event-derived, plugin-owned aggregate state**. It is not a
-universal command preparation API. No plugin schema or Zod dependency is required:
+This API maintains **event-derived, plugin-owned aggregate state** and supports
+symmetric command/event envelope preparation. No plugin schema or Zod dependency is required:
 normal TypeScript contracts describe state and payloads. Existing host contract
 validation (including existing Zod-based contracts) remains optional and unchanged.
 
@@ -58,7 +58,7 @@ Runtime uniqueness and source-identity checks still apply to the actual elements
 
 Application runs the domain projector first, then each registration's matched
 handler followed by its catchall. Replay uses the same pure application path;
-command processing never runs event plugins. `applyToDraft` uses the caller's
+command processing enriches events but does not apply state reducers. `applyToDraft` uses the caller's
 Immer transaction; let failures escape that transaction to discard its changes.
 Callbacks must be synchronous. A missing plugin namespace is an error before any
 domain write: migrate older snapshots explicitly rather than lazily backfilling.
@@ -114,7 +114,10 @@ Plugin readonly input types retain Date readers (such as `getTime` and
 `toISOString`) while omitting `set*` mutators; freezing a Date does not itself
 make its internal timestamp immutable.
 
-**Deferred, not shipped:** command `dateTime` stamping/pre-sink preparation,
-universal command payload extensions, full persistence-plugin migration, a new
-bridge persistence adapter, and projection hooks. The narrower stateful builder
-delivery does not satisfy those original broader feature requirements.
+See [envelope preparation](../../ENVELOPES.md) for typed command `dateTime`,
+event extensions, optional parsers, Mirage/bridge pre-sink integration, and the
+executable fixed-clock/replay showcase. Envelope-only plugins currently require
+`.state(() => ({}))`. Command preparation itself never updates state.
+
+**Deferred, not shipped:** universal command payload extensions, full
+persistence-plugin migration, a new bridge persistence adapter, and projection hooks.

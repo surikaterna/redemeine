@@ -135,6 +135,43 @@ payload correlation beyond the built aggregate's current command envelope API.
 Prefer generated command methods for exact arguments. Helpers reject non-Mirage
 objects through a private instance registry.
 
+### Aggregate envelope plugins
+
+Attach command/event envelope descriptors to the Aggregate via `.plugins(...)` or
+`built.withPlugins(...)`, not Mirage/Depot setup plugins. Mirage uses the optional
+`built.prepareCommand` capability only when an attached descriptor has envelope
+plugins. Both raw dispatch and shortcuts prepare after scoped entity payloads are
+finalized, with the Mirage instance's aggregate ID/type, before legacy
+`onBeforeCommand` plugins, builder hooks, validation and domain processing.
+Legacy interceptors retain their existing context (they do not expose the full
+envelope); builder `onBeforeCommand` hooks can inspect prepared fields.
+
+Command creators still return raw commands; methods still return readonly state,
+not prepared envelopes. For example, a factory can use
+`.state(() => ({})).commandEnvelope(() => ({ dateTime: clock() }))` without a
+schema. For retry-safe dates, validate/preserve an existing `input.dateTime`
+instead of always calling the clock. Dates loaded from JSON need an explicit
+decoder; Mirage does not turn arbitrary strings into Dates.
+
+Aggregate processing reuses the same prepared object without duplicate recipes.
+A before-command hook that mutates it invalidates that cache: Aggregate revalidates
+and prepares again before domain processing. Do not rely on hooks bypassing envelope
+validation. Unrecognized top-level extras are projected out when envelope plugins
+are active; canonical metadata and headers are preserved. Without envelope plugins,
+Mirage leaves the original command reference and legacy behavior unchanged.
+
+Event enrichment belongs to Aggregate processing, before event application and
+exposure. Depot saves those enriched events; hydration applies persisted events
+without invoking command/event preparation or clocks. Plugin-owned audit state
+therefore rebuilds from events, not command-time state mutations. Existing readonly
+state and lifecycle persistence semantics are unchanged.
+
+See [Aggregate envelope preparation](../aggregate/ENVELOPES.md) for optional
+TypeScript/Zod parsers and the executable bridge pre-sink/replay showcase:
+`packages/demeine-interop/test/aggregatePluginEnvelope.test.ts`,
+`adds command dateTime before the sink and preserves it through event replay`.
+Envelope-only plugins currently require `.state(() => ({}))`.
+
 ```ts
 const fresh = createMirage(Order, 'one'); // synchronous
 const restored = await createMirage(Order, 'one', {

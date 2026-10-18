@@ -81,7 +81,10 @@ describe('aggregate event plugin descriptors', () => {
       const descriptor = { exports: {} };
       new Function('exports', ${JSON.stringify(compile('descriptor.ts'))})(descriptor.exports);
       const builder = { exports: {} };
-      new Function('exports', 'require', ${JSON.stringify(compile('createAggregatePlugin.ts'))})(builder.exports, () => descriptor.exports);
+      const envelopes = { exports: {} };
+      new Function('exports', 'require', ${JSON.stringify(compile('envelopeDescriptor.ts'))})(envelopes.exports, () => descriptor.exports);
+      new Function('exports', 'require', ${JSON.stringify(compile('createAggregatePlugin.ts'))})(builder.exports,
+        name => name === './envelopeDescriptor' ? envelopes.exports : descriptor.exports);
       const { createAggregatePlugin } = builder.exports;
       let guarded = 0;
       for (const delayed of [false, true]) {
