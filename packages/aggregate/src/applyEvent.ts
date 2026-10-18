@@ -3,6 +3,7 @@ import type { Event } from '@redemeine/kernel';
 import type { AnyFunction } from './redemeineComponent';
 import type { UnmatchedEventHandler } from './createAggregate';
 import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
+import { assertSynchronous } from './plugins/descriptor';
 
 /**
  * Resolves an event path segment to the matching entity container in the draft.
@@ -113,13 +114,13 @@ export function applyEventToDraft<S>(
 
     const directScopedProjector = scopedProjectorByEventType[event.type];
     if (directScopedProjector) {
-        directScopedProjector(targetDraft, event);
+        assertSynchronous(directScopedProjector(targetDraft, event));
         return;
     }
 
     const directProjector = projectorByEventType[eventName] || projectorByEventType[event.type];
     if (directProjector) {
-        directProjector(targetDraft, event);
+        assertSynchronous(directProjector(targetDraft, event));
         return;
     }
 
@@ -136,11 +137,11 @@ export function applyEventToDraft<S>(
         const scopedProjector = scopedPath ? scopedEventProjectors[`${scopedPath}:${eventKey}`] : undefined;
         const projector = scopedProjector || allEvents[eventKey];
         if (projector) {
-            projector(targetDraft, event);
+            assertSynchronous(projector(targetDraft, event));
         }
     } else {
         if (unmatchedEventHandler) {
-            unmatchedEventHandler(event.type, aggregateName);
+            assertSynchronous(unmatchedEventHandler(event.type, aggregateName));
         } else {
             console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
         }

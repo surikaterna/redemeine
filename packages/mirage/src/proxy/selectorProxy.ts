@@ -1,4 +1,4 @@
-import { createReadonlyDeepProxy } from '@redemeine/kernel';
+import { readonlySelectorResult } from '../stateViews';
 import { isMirageContextBinding, MirageContextSymbol } from '@redemeine/aggregate';
 import type { InvocationContext, MountMetadata } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
@@ -44,7 +44,7 @@ function boundArray(items: unknown[]): readonly unknown[] {
 }
 
 function wrapSelectorResult(result: unknown, context: InvocationContext, ctx: ProxyContext): unknown {
-  if (!isMirageContextBinding(result)) return createReadonlyDeepProxy(result);
+  if (!isMirageContextBinding(result)) return readonlySelectorResult(result);
   const binding: unknown = readProperty(result, MirageContextSymbol);
   const data = readProperty(binding, 'data');
   if (readProperty(binding, 'kind') === 'single') {

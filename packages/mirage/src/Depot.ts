@@ -1,4 +1,5 @@
-import type { Event, ReadonlyDeep } from '@redemeine/kernel';
+import type { Event } from '@redemeine/kernel';
+import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import { createMirage } from './createMirage';
 import type { MirageOptions, BuiltAggregateState, BuiltAggregatePlugins, MirageOf, NoMirageCollisions } from './mirage.types';
 import { getCore } from './coreAccess';
