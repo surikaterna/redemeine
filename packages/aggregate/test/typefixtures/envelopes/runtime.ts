@@ -5,6 +5,17 @@ import { createAggregate, createAggregatePlugin, type AggregateEventPlugin } fro
 const base = createAggregate('order', { count: 0 })
   .events({ added(state, event: Event<{ amount: number }>) { state.count += event.payload.amount; } })
   .commands(emit => ({ add: (_state, payload: { amount: number }) => emit.added(payload) })).build();
+
+function routingRequiresRuntimeValidation() {
+  // C extends Command accepts extra ingress fields; only the runtime guard proves routing.
+  const prepared = base.prepareCommand(base.initialState, { type: 'raw.command', payload: 1, aggregateId: 42 });
+  const aggregateId: string | undefined = prepared.aggregateId;
+  // @ts-expect-error canonical prepared routing must never advertise the invalid input number
+  const invalid: number = prepared.aggregateId;
+  return [aggregateId, invalid];
+}
+void routingRequiresRuntimeValidation;
+
 const date = createAggregatePlugin('date').state(() => ({}))
   .commandEnvelope(() => ({ dateTime: new Date() }))
   .eventEnvelope((_, context) => ({ sourceCommandDateTime: new Date(context.command.dateTime.getTime()) })).build();

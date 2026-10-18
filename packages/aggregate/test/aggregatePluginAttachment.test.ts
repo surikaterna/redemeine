@@ -10,6 +10,38 @@ function source() {
 }
 
 describe('Aggregate event plugin attachment', () => {
+  test.each([1, null, undefined, 'invalid', false])('rejects invalid JS initializer %s atomically', value => {
+    const host = source();
+    const first = jest.fn(() => ({ nested: { count: 0 } }));
+    const last = jest.fn(() => value);
+    // Intentional JS boundary: the public object constraint cannot protect runtime callers.
+    const invalid = last as unknown as () => object;
+    const good = createAggregatePlugin('first').state(first).build();
+    const bad = createAggregatePlugin('last').state(invalid).build();
+    expect(first).not.toHaveBeenCalled();
+    expect(last).not.toHaveBeenCalled();
+    let returned: unknown;
+    expect(() => { returned = host.withPlugins(good, bad); }).toThrow(/plugin last initializer must return a non-null object/);
+    expect(returned).toBeUndefined();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(last).toHaveBeenCalledTimes(1);
+    expect(host.initialState).toEqual({ amount: 0 });
+    expect(host.aggregatePlugins).toEqual([]);
+    expect(host.withPlugins(good).initialState.first).toEqual({ nested: { count: 0 } });
+  });
+
+  test('array plugin state remains a valid object and receives nested Immer drafts', () => {
+    const initialize = jest.fn(() => [{ nested: { count: 0 } }]);
+    const plugin = createAggregatePlugin('list').state(initialize)
+      .onEvent(draft => { draft[0]!.nested.count++; draft.push({ nested: { count: 2 } }); }).build();
+    expect(initialize).not.toHaveBeenCalled();
+    const host = source().withPlugins(plugin);
+    expect(initialize).toHaveBeenCalledTimes(1);
+    const next = host.apply(host.initialState, { type: 'order.added.event', payload: 1 });
+    expect(next.list).toEqual([{ nested: { count: 1 } }, { nested: { count: 2 } }]);
+    expect(host.initialState.list).toEqual([{ nested: { count: 0 } }]);
+  });
+
   test('no-op and legacy-only decoration preserve array state shape and reference', () => {
     const initialState: number[] = [];
     const array = createAggregate('array', initialState)

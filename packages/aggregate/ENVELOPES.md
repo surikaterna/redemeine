@@ -80,7 +80,11 @@ mutating identity, routing, headers, extensions, payload, metadata, or adding st
 invalidates it. Raw inputs are not cached. Different plans do not share caches.
 Reconstructed retries run initializers again: preserving supplied valid dates and
 explicitly decoding JSON dates is the plugin/caller's responsibility. With no
-envelope descriptors, command preparation returns the input reference unchanged.
+envelope descriptors, direct `prepareCommand` still validates the four string routing
+fields above, then returns the input reference unchanged: no ID generation, cloning,
+namespace checks or recipes. Absent and explicitly undefined routing fields are valid.
+Inactive `process`, Mirage and bridge dispatch retain their existing preparation bypass;
+they do not gain this direct-call validation.
 
 ## Host integration and executable showcase
 

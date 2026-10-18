@@ -167,6 +167,29 @@ describe('aggregate envelope runtime', () => {
     expect(host.process(host.initialState, raw)[0]).not.toHaveProperty('correlationId');
   });
 
+  test.each(['aggregateId', 'aggregateType', 'correlationId', 'causationId'])('inactive direct preparation validates %s before its no-op', key => {
+    const base = domain();
+    const stateOnly = base.withPlugins(createAggregatePlugin('empty').state(() => ({})).build());
+    // Intentional runtime migration boundary: inactive preparation must not inspect namespaces.
+    const missing = base.initialState as typeof stateOnly.initialState;
+    for (const host of [base, base.withPlugins({ key: 'legacy' }), stateOnly]) {
+      // A missing plugin namespace and hostile payload prove validation precedes state/data work.
+      const payload = { get amount(): number { throw new Error('payload read'); } };
+      for (const value of [42, false, null, {}, []]) {
+        const raw = { type: 'order.add.command', payload, [key]: value };
+        expect(() => host.prepareCommand(missing, raw)).toThrow(`Invalid envelope routing field: ${key}`);
+      }
+      for (const routing of [{}, { [key]: undefined }, { [key]: 'exact-name' }]) {
+        const raw = { type: 'order.add.command', payload, ...routing };
+        expect(host.prepareCommand(missing, raw)).toBe(raw);
+        expect(raw).not.toHaveProperty('id');
+      }
+      expect(host.process).toBe(base.process);
+      const malformed = { ...base.commandCreators.add({ amount: 1 }), [key]: 42 };
+      expect(() => host.process(stateOnly.initialState, malformed)).not.toThrow();
+    }
+  });
+
   test('canonical projection preserves core data, drops unowned extras, and detaches all caller aliases', () => {
     const base = domain();
     const host = base.withPlugins(datePlugin(() => new Date(instant)));

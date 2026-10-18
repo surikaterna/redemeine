@@ -99,15 +99,22 @@ function validatePluginState(plugins: readonly EventPlugin[], state: unknown): v
   }
 }
 
+function initializePlugin(plugin: EventPlugin): object {
+  const state = plugin.initialize();
+  assertSynchronous(state);
+  if (state === null || typeof state !== 'object') {
+    throw new TypeError(`Aggregate plugin ${plugin.id} initializer must return a non-null object`);
+  }
+  return state;
+}
+
 export function decorateAggregate<A extends Host>(host: A, registrations: readonly PluginRegistration[] = []): A {
   const previous = attachments.get(host) ?? { domain: host, lineage: new Set<object>([host]), plugins: [] };
   const added = registrations.filter((plugin): plugin is EventPlugin => 'kind' in plugin && plugin.kind === 'aggregate-event');
   validate(host, previous, added);
   const initialState = added.length ? produce(host.initialState as object, draft => {
     for (const plugin of added) {
-      const state = plugin.initialize();
-      assertSynchronous(state);
-      Reflect.set(draft, plugin.id, state);
+      Reflect.set(draft, plugin.id, initializePlugin(plugin));
     }
   }) : host.initialState;
   const record = { ...previous, lineage: new Set(previous.lineage), plugins: [...previous.plugins, ...added] };
