@@ -67,3 +67,22 @@ test('snapshots and cached comparisons detach Dates, preserve aliases and detect
   snapshot.date.setTime(789);
   expect(date.getTime()).toBe(456);
 });
+
+test.each([() => ({ x: 1 }), () => new Date(123)])('graph comparisons detect alias splitting and collapsing: %p', make => {
+  const shared = make();
+  const aliased = { a: shared, b: shared };
+  const separate = { a: make(), b: make() };
+  expect(sameEnvelopeData(aliased, separate)).toBe(false);
+  expect(sameEnvelopeData(separate, aliased)).toBe(false);
+  expect(sameEnvelopeData(aliased, cloneEnvelopeData(aliased))).toBe(true);
+});
+
+test('cyclic graphs preserve correspondence and sparse array shape', () => {
+  const graph: { self?: unknown; items: unknown[] } = { items: new Array(3) };
+  graph.self = graph;
+  graph.items[1] = graph;
+  expect(sameEnvelopeData(graph, cloneEnvelopeData(graph))).toBe(true);
+  const changed = cloneEnvelopeData(graph);
+  changed.items[0] = undefined;
+  expect(sameEnvelopeData(graph, changed)).toBe(false);
+});

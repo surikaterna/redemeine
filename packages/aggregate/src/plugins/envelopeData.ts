@@ -56,9 +56,11 @@ export function envelopeSnapshot<T>(value: T): T {
   return result;
 }
 
-export function sameEnvelopeData(left: unknown, right: unknown, seen = new Map<object, object>()): boolean {
-  if (Object.is(left, right)) return true;
-  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+export function sameEnvelopeData(left: unknown, right: unknown, seen = new Map<object, object>(), reverse = new Map<object, object>()): boolean {
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return Object.is(left, right);
+  if (seen.has(left) || reverse.has(right)) return seen.get(left) === right && reverse.get(right) === left;
+  seen.set(left, right);
+  reverse.set(right, left);
   const leftTime = dateTime(left);
   const rightTime = dateTime(right);
   if (leftTime !== undefined || rightTime !== undefined) return leftTime !== undefined && rightTime !== undefined && Object.is(leftTime, rightTime);
@@ -66,13 +68,11 @@ export function sameEnvelopeData(left: unknown, right: unknown, seen = new Map<o
   const leftPrototype = Object.getPrototypeOf(left);
   const rightPrototype = Object.getPrototypeOf(right);
   if (!Array.isArray(left) && leftPrototype !== rightPrototype && !(leftPrototype !== null && rightPrototype !== null && isPlainPrototype(leftPrototype) && isPlainPrototype(rightPrototype))) return false;
-  if (seen.has(left)) return seen.get(left) === right;
-  seen.set(left, right);
   const keys = Reflect.ownKeys(left);
   if (keys.length !== Reflect.ownKeys(right).length) return false;
   return keys.every(key => {
     const a = Object.getOwnPropertyDescriptor(left, key)!;
     const b = Object.getOwnPropertyDescriptor(right, key);
-    return b !== undefined && 'value' in a && 'value' in b && sameEnvelopeData(a.value, b.value, seen);
+    return b !== undefined && 'value' in a && 'value' in b && sameEnvelopeData(a.value, b.value, seen, reverse);
   });
 }

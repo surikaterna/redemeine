@@ -25,7 +25,7 @@ type ProjectorPayload<P> = P extends (...args: infer Args) => unknown
     : unknown
   : unknown;
 
-type Payloads<A> = A extends AggregatePluginSource
+export type PluginPayloads<A> = A extends AggregatePluginSource
   ? { [K in keyof A['pure']['eventProjectors'] & string]: ProjectorPayload<A['pure']['eventProjectors'][K]> }
   : Record<string, unknown>;
 
@@ -54,15 +54,15 @@ export type AggregatePluginHandler<S, A, E = Event<unknown, string>> = (
 ) => undefined;
 
 export type AggregatePluginEvents<S, A> = {
-  [K in keyof Payloads<A> & string]?: AggregatePluginHandler<
+  [K in keyof PluginPayloads<A> & string]?: AggregatePluginHandler<
     S,
     A,
-    Event<A extends AggregatePluginSource ? Payloads<A>[K] : unknown, ResolvedEventType<A, K>>
+    Event<A extends AggregatePluginSource ? PluginPayloads<A>[K] : unknown, ResolvedEventType<A, K>>
   >;
 };
 export type PluginSourceEvent<A> = {
-  [K in keyof Payloads<A> & string]: Event<Payloads<A>[K], ResolvedEventType<A, K>>;
-}[keyof Payloads<A> & string];
+  [K in keyof PluginPayloads<A> & string]: Event<PluginPayloads<A>[K], ResolvedEventType<A, K>>;
+}[keyof PluginPayloads<A> & string];
 
 export interface AggregateEventPlugin<Id extends string, S extends object, A = undefined, C extends object = {}, E extends object = {}, HasC extends boolean = boolean, HasE extends boolean = boolean> {
   readonly kind: 'aggregate-event';
@@ -83,22 +83,23 @@ export interface AggregatePluginBuilder<
   C extends object = {},
   E extends object = {},
   HasC extends boolean = false,
-  HasE extends boolean = false
+  HasE extends boolean = false,
+  Matched extends keyof AggregatePluginEvents<S, A> = never
 > {
-  events(handlers: AggregatePluginEvents<S, A>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE>;
-  onEvent(handler: AggregatePluginHandler<S, A>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE>;
-  build(): AggregateEventPlugin<Id, S, A, C, E, HasC, HasE>;
+  events<const H extends AggregatePluginEvents<S, A>>(handlers: H & Record<Exclude<keyof H, keyof AggregatePluginEvents<S, A>>, never>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched | Extract<keyof H, keyof AggregatePluginEvents<S, A>>>;
+  onEvent(handler: AggregatePluginHandler<S, A>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched>;
+  build(): Omit<AggregateEventPlugin<Id, S, A, C, E, HasC, HasE>, 'events'> & { readonly events: Readonly<Pick<AggregatePluginEvents<S, A>, Matched>> };
   commandEnvelope: HasC extends true
     ? never
     : {
         <X extends object>(
           initialize: EnvelopeInitializer<X, CommandEnvelopeContext<S, A>> & (X extends EnvelopeExtension<X> ? unknown : never),
           parser?: undefined
-        ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE>;
+        ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
         <I extends object, X extends object>(
           initialize: EnvelopeInitializer<I, CommandEnvelopeContext<S, A>> & (I extends EnvelopeExtension<I> ? unknown : never),
           parser: EnvelopeParser<X> & (X extends EnvelopeExtension<X> ? unknown : never)
-        ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE>;
+        ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
       };
   eventEnvelope: HasE extends true
     ? never
@@ -106,14 +107,14 @@ export interface AggregatePluginBuilder<
         <X extends object>(
           initialize: EnvelopeInitializer<X, EventEnvelopeContext<S, A, C>> & (X extends EnvelopeExtension<X> ? unknown : never),
           parser?: undefined
-        ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true>;
+        ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true, Matched>;
         <I extends object, X extends object>(
           initialize: EnvelopeInitializer<I, EventEnvelopeContext<S, A, C>> & (I extends EnvelopeExtension<I> ? unknown : never),
           parser: EnvelopeParser<X> & (X extends EnvelopeExtension<X> ? unknown : never)
-        ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true>;
+        ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true, Matched>;
       };
-  prepareCommand: HasC extends true ? (recipe: EnvelopeRecipe<C, CommandEnvelopeContext<S, A>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE> : never;
-  prepareEvent: HasE extends true ? (recipe: EnvelopeRecipe<E, EventEnvelopeContext<S, A, C>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE> : never;
+  prepareCommand: HasC extends true ? (recipe: EnvelopeRecipe<C, CommandEnvelopeContext<S, A>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;
+  prepareEvent: HasE extends true ? (recipe: EnvelopeRecipe<E, EventEnvelopeContext<S, A, C>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;
 }
 
 export interface AggregatePluginStateBuilder<Id extends string, A> {

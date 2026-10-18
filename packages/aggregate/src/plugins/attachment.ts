@@ -13,6 +13,7 @@ type Host = {
   plugins?: readonly unknown[];
   mounts?: Record<string, unknown>;
   types?: { events: Record<string, string> };
+  pure?: { eventProjectors: Record<string, unknown> };
 };
 type Attachment = { domain: Host; lineage: Set<object>; plugins: readonly EventPlugin[] };
 type Handler = (draft: object, event: Event, context: unknown) => unknown;
@@ -37,7 +38,21 @@ function validate(host: Host, record: Attachment, plugins: readonly EventPlugin[
       throw new Error(`Aggregate plugin namespace collision: ${plugin.id}`);
     }
     if (plugin.source && !record.lineage.has(plugin.source as object)) throw new Error(`Incompatible aggregate plugin source: ${plugin.id}`);
+    validateSourceEvents(host, plugin);
     keys.add(plugin.id);
+  }
+}
+
+function validateSourceEvents(host: Host, plugin: EventPlugin): void {
+  if (!plugin.source) return;
+  const source = plugin.source as Host;
+  for (const key of Object.keys(plugin.events)) {
+    if (!plugin.events[key]) continue;
+    const projector = source.pure?.eventProjectors[key];
+    // Without runtime payload schemas, only unchanged projectors prove an inherited contract.
+    if (!projector || projector !== host.pure?.eventProjectors[key]) {
+      throw new Error(`Incompatible aggregate plugin event contract: ${plugin.id}.${key}; bind the plugin to the host`);
+    }
   }
 }
 
@@ -53,10 +68,12 @@ function routes(host: Host, plugin: EventPlugin): Map<string, Handler> {
 
 function applyPlugins(host: Host, plugins: readonly EventPlugin[], tables: readonly Map<string, Handler>[], draft: object, event: Event): void {
   for (const [index, plugin] of plugins.entries()) {
-    const context = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
     const state = Reflect.get(draft, plugin.id);
     const matched = tables[index]?.get(event.type);
-    if (matched) assertSynchronous(matched(state, envelopeSnapshot(event), context));
+    if (matched) {
+      const context = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
+      assertSynchronous(matched(state, envelopeSnapshot(event), context));
+    }
     if (plugin.onEvent) {
       const after = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
       assertSynchronous((plugin.onEvent as Handler)(state, envelopeSnapshot(event), after));

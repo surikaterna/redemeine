@@ -28,7 +28,8 @@ Order.withPlugins(totals, totals);
 // @ts-expect-error duplicate builder namespace
 createAggregate('duplicate', {}).plugins(totals).plugins(totals);
 void [count, builderCount];
-const parent = createAggregate('parent', { amount: 0 }).plugins(totals);
+const parent = createAggregate('parent', { amount: 0 }).plugins(totals)
+  .events({ added(state, event: Event<number>) { state.amount += event.payload; } });
 const child = createAggregate('child', { amount: 0 }).extends(parent).build();
 const childCount: number = child.initialState.totals.count;
 const dependent = createAggregatePluginFor(decorated, 'dependent').state(() => ({})).build();

@@ -1,5 +1,5 @@
 import type { Command, Event, ExtractPluginExtensions, RedemeinePlugin } from '@redemeine/kernel';
-import type { AggregatePluginId } from './types';
+import type { AggregatePluginId, AggregatePluginSource, PluginPayloads } from './types';
 import type { EnvelopeSlot } from './envelopeDescriptor';
 import type { EnvelopeDescriptor } from './envelopeTypes';
 
@@ -51,6 +51,15 @@ type PreviousEnvelope<A, K extends 'command' | 'event'> = A extends { readonly _
 type CommandExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'command'> & MountedEnvelopes<P, 'commandEnvelope'>;
 type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'event'> & MountedEnvelopes<P, 'eventEnvelope'>;
 type BranchKeys<S> = S extends unknown ? keyof S : never;
+type InvalidSourceEvent<A, H> = H extends { source: infer Source extends AggregatePluginSource; events: infer Handlers }
+  ? A extends AggregatePluginSource ? {
+    [K in keyof Handlers]-?: K extends keyof PluginPayloads<Source>
+      ? K extends keyof PluginPayloads<A> ? [PluginPayloads<A>[K]] extends [PluginPayloads<Source>[K]] ? never : K : K
+      : K
+  }[keyof Handlers] : never : never;
+export type ValidSourceEvents<A, P extends readonly unknown[]> = {
+  [K in keyof P]: [InvalidSourceEvent<A, P[K]>] extends [never] ? P[K] : never;
+};
 // Arrays provide no presence or ordering proof; prerequisites must already hold on every host branch.
 type InvalidArrayMember<S, H> = H extends EventPlugin
   ? [H['id']] extends [AggregatePluginId<H['id']>]
@@ -87,9 +96,9 @@ export interface AggregateDecoration<S, Reserved = {}> {
   readonly aggregatePlugins?: readonly EventPlugin[];
   validateState?(state: unknown): void;
   withPlugins<const P extends RegistrationTuple>(
-    ...plugins: P & ValidRegistrations<S & Reserved, P>
+    ...plugins: P & ValidRegistrations<S & Reserved, P> & ValidSourceEvents<this, P>
   ): DecoratedAggregate<this & { initialState: S }, P>;
   withPlugins<const P extends readonly PluginRegistration[]>(
-    ...plugins: P & ValidRegistrationArray<S & Reserved, P>
+    ...plugins: P & ValidRegistrationArray<S & Reserved, P> & ValidSourceEvents<this, P>
   ): DecoratedAggregate<this & { initialState: S }, P>;
 }

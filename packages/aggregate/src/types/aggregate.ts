@@ -19,7 +19,7 @@ import type {
 } from './entityMount';
 import type { RedemeineEventDefinition, NormalizeEventDefinitions, RedemeineCommandDefinition } from '../redemeineComponent';
 import type { bindContext } from '../bindContext';
-import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions } from '../plugins/attachmentTypes';
+import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions, ValidSourceEvents } from '../plugins/attachmentTypes';
 
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
@@ -98,7 +98,7 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
 export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = []> {
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry, ParentPS, ParentEP extends readonly unknown[]>(
         parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry, TMeta, TPlugins, ParentPS, ParentEP>
-    ) => AggregateBuilder<S, Name, M & ParentM, E & ParentE, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, [...ParentEP, ...EP]>;
+    ) => AggregateBuilder<S, Name, M & ParentM, Omit<ParentE, keyof E> & E, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, [...ParentEP, ...EP]>;
 
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
@@ -158,7 +158,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
         events: NewE
-    ) => AggregateBuilder<S, Name, M, E & NormalizeEventDefinitions<NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, Omit<E, keyof NewE> & NormalizeEventDefinitions<NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
 
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
@@ -179,7 +179,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     contract: (contract: Contract) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
 
-    build: () => {
+    build: (...validation: EP extends ValidSourceEvents<{ aggregateType: Name; initialState: S & PS; pure: { eventProjectors: AggregateEventProjectorsMap<E> } }, EP> ? [] : [incompatibleSourceEvents: never]) => {
         aggregateType: Name;
         initialState: S & PS;
         prepareCommand: <C extends Command<unknown, string>>(state: S & PS, command: C) => PreparedCommand<C['payload'], C['type'], MountedEnvelopes<EP, 'commandEnvelope'>>;

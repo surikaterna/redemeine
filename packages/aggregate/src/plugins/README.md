@@ -121,3 +121,15 @@ executable fixed-clock/replay showcase. Envelope-only plugins currently require
 
 **Deferred, not shipped:** universal command payload extensions, full
 persistence-plugin migration, a new bridge persistence adapter, and projection hooks.
+
+## Source-bound descendant event contracts
+
+Matched source-bound handlers require host payloads assignable to the source payloads.
+Only registered keys participate; catchall handlers and envelope callbacks retain unknown
+payloads and do not impose this matched-event requirement. Descendants may rename inherited
+events, add events, and replace unrelated projectors.
+
+Runtime payload types are erased. Attachment therefore conservatively requires each matched
+key to retain its source projector identity. Replacing a matched projector is rejected even
+when its declared payload is compatible: bind the plugin to the built descendant instead.
+This check runs before plugin state initialization or event application.
