@@ -4,6 +4,7 @@ import type { EventPlugin, PluginRegistration } from './attachmentTypes';
 import { assertSynchronous } from './descriptor';
 import { createEnvelopeRuntime } from './envelopeRuntime';
 import { envelopeSnapshot } from './envelopeData';
+import { stateContextSnapshot } from './stateContextSnapshot';
 
 type Host = {
   aggregateType: string;
@@ -71,11 +72,11 @@ function applyPlugins(host: Host, plugins: readonly EventPlugin[], tables: reado
     const state = Reflect.get(draft, plugin.id);
     const matched = tables[index]?.get(event.type);
     if (matched) {
-      const context = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
+      const context = stateContextSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
       assertSynchronous(matched(state, envelopeSnapshot(event), context));
     }
     if (plugin.onEvent) {
-      const after = envelopeSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
+      const after = stateContextSnapshot({ aggregateType: host.aggregateType, state: current(draft) });
       assertSynchronous((plugin.onEvent as Handler)(state, envelopeSnapshot(event), after));
     }
   }
@@ -102,12 +103,13 @@ export function decorateAggregate<A extends Host>(host: A, registrations: readon
   const previous = attachments.get(host) ?? { domain: host, lineage: new Set<object>([host]), plugins: [] };
   const added = registrations.filter((plugin): plugin is EventPlugin => 'kind' in plugin && plugin.kind === 'aggregate-event');
   validate(host, previous, added);
-  const initialState = added.length ? { ...host.initialState as object } : host.initialState;
-  for (const plugin of added) {
-    const state = plugin.initialize();
-    assertSynchronous(state);
-    Object.defineProperty(initialState as object, plugin.id, { value: state, enumerable: true, writable: true, configurable: true });
-  }
+  const initialState = added.length ? produce(host.initialState as object, draft => {
+    for (const plugin of added) {
+      const state = plugin.initialize();
+      assertSynchronous(state);
+      Reflect.set(draft, plugin.id, state);
+    }
+  }) : host.initialState;
   const record = { ...previous, lineage: new Set(previous.lineage), plugins: [...previous.plugins, ...added] };
   const applyToDraft = application(host, record);
   const envelopes = createEnvelopeRuntime(host, record.plugins);

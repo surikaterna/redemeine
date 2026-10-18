@@ -38,18 +38,18 @@ test('Date readers remain callable in event payloads and nested nullable context
     .toEqual({ time: date.getTime(), iso: date.toISOString() });
 });
 
-test('readonly plugin contexts do not freeze caller-owned unchanged state', () => {
+test('readonly plugin contexts snapshot shared state frozen by mounting', () => {
   const source = createAggregate('unchanged', { nested: { value: 1 } })
     .onUnmatchedEvent(() => undefined).build();
   const plugin = createAggregatePluginFor(source, 'audit').state(() => ({})).onEvent((_draft, _event, context) => {
     expect(context.state.nested).not.toBe(source.initialState.nested);
     expect(Object.isFrozen(context.state.nested)).toBe(true);
-    expect(Object.isFrozen(source.initialState.nested)).toBe(false);
+    expect(Object.isFrozen(source.initialState.nested)).toBe(true);
   }).build();
   const host = source.withPlugins(plugin);
   const immer = new Immer({ autoFreeze: false });
   immer.produce(host.initialState, draft => host.applyToDraft(draft, { type: 'unknown.event', payload: {} }));
-  expect(Object.isFrozen(host.initialState)).toBe(false);
-  source.initialState.nested.value = 2;
-  expect(host.initialState.nested.value).toBe(2);
+  expect(Object.isFrozen(host.initialState)).toBe(true);
+  expect(host.initialState.nested).toBe(source.initialState.nested);
+  expect(host.initialState.nested.value).toBe(1);
 });

@@ -1,4 +1,5 @@
-import { type Command, type Event, type ReadonlyDeep } from '@redemeine/kernel';
+import { type Command, type Event } from '@redemeine/kernel';
+import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import { MirageCore, assertEventCount } from './MirageCore';
 import { hydrateStateFromEvents } from './hydration';
 import { createProxyContext } from './proxy/deepProxy';

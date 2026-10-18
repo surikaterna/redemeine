@@ -1,4 +1,5 @@
-import { type Command as KernelCommand, type Event, type CommandInterceptorContext, RedemeinePluginHookError, type Contract, type ReadonlyDeep, createReadonlyDeepProxy } from '@redemeine/kernel';
+import { type Command as KernelCommand, type Event, type CommandInterceptorContext, RedemeinePluginHookError, type Contract, createReadonlyDeepProxy } from '@redemeine/kernel';
+import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import type { RuntimeBuilder, RuntimePlugin, RuntimeExtensions } from './runtimeDefinition';
 import type { DispatchResult } from './mirage.types';
 import { readonlySnapshot } from './stateViews';

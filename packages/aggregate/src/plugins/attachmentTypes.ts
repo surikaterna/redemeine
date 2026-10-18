@@ -2,6 +2,8 @@ import type { Command, Event, ExtractPluginExtensions, RedemeinePlugin } from '@
 import type { AggregatePluginId, AggregatePluginSource, PluginPayloads } from './types';
 import type { EnvelopeSlot } from './envelopeDescriptor';
 import type { EnvelopeDescriptor } from './envelopeTypes';
+import type { Draft } from 'immer';
+import type { AggregateStateModel, AggregateStateView } from '../types/aggregateState';
 
 // Existential callback signatures: implementations are invoked only with their own mounted state.
 export type EventPlugin = {
@@ -81,24 +83,25 @@ export type ValidRegistrationArray<S, P extends readonly PluginRegistration[]> =
   number extends P['length'] ? true extends InvalidArrayMember<S, P[number]> ? never : P : never;
 
 export type DecoratedAggregate<A extends { initialState: unknown }, P extends readonly unknown[]> =
-  Omit<A, 'initialState' | 'apply' | 'applyToDraft' | 'process' | 'prepareCommand' | 'withPlugins' | 'plugins' | '__envelopeTypes'> & {
-    initialState: A['initialState'] & MountedPlugins<P>;
-    apply: (state: A['initialState'] & MountedPlugins<P>, event: Event) => A['initialState'] & MountedPlugins<P>;
-    applyToDraft: (draft: A['initialState'] & MountedPlugins<P>, event: Event) => void;
-    prepareCommand: <C extends Command<unknown, string>>(state: A['initialState'] & MountedPlugins<P>, command: C) => PreparedCommand<C['payload'], C['type'], CommandExtensions<A, P>>;
-    process: (state: A['initialState'] & MountedPlugins<P>, command: Command<unknown, string>) => (Event & EnvelopeRouting & EventExtensions<A, P>)[];
+  Omit<A, 'initialState' | '__stateType' | 'apply' | 'applyToDraft' | 'process' | 'prepareCommand' | 'withPlugins' | 'plugins' | '__envelopeTypes'> & {
+    readonly initialState: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>;
+    readonly __stateType?: AggregateStateModel<A> & MountedPlugins<P>;
+    apply: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>;
+    applyToDraft: (draft: Draft<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => void;
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: C) => PreparedCommand<C['payload'], C['type'], CommandExtensions<A, P>>;
+    process: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: Command<unknown, string>) => (Event & EnvelopeRouting & EventExtensions<A, P>)[];
     readonly __envelopeTypes?: { command: CommandExtensions<A, P>; event: EventExtensions<A, P> };
     plugins: A extends { plugins?: (infer Legacy)[] }
       ? RedemeinePlugin<ExtractPluginExtensions<Legacy> & RegistrationExtensions<P[number]>>[] : never;
-  } & AggregateDecoration<A['initialState'] & MountedPlugins<P>, A extends { __registryType?: infer Registry } ? Registry : {}>;
+  } & AggregateDecoration<AggregateStateModel<A> & MountedPlugins<P>, A extends { __registryType?: infer Registry } ? Registry : {}>;
 
 export interface AggregateDecoration<S, Reserved = {}> {
   readonly aggregatePlugins?: readonly EventPlugin[];
   validateState?(state: unknown): void;
   withPlugins<const P extends RegistrationTuple>(
     ...plugins: P & ValidRegistrations<S & Reserved, P> & ValidSourceEvents<this, P>
-  ): DecoratedAggregate<this & { initialState: S }, P>;
+  ): DecoratedAggregate<this & { readonly initialState: AggregateStateView<S> }, P>;
   withPlugins<const P extends readonly PluginRegistration[]>(
     ...plugins: P & ValidRegistrationArray<S & Reserved, P> & ValidSourceEvents<this, P>
-  ): DecoratedAggregate<this & { initialState: S }, P>;
+  ): DecoratedAggregate<this & { readonly initialState: AggregateStateView<S> }, P>;
 }

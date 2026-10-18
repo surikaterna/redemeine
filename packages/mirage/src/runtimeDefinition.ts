@@ -1,4 +1,5 @@
-import type { AggregateHooks, Command, Event, RedemeinePlugin } from '@redemeine/kernel';
+import type { Command, Event, RedemeinePlugin } from '@redemeine/kernel';
+import type { AggregateStateView } from '@redemeine/aggregate';
 import type { MountMetadata } from './mirage.types';
 
 /** Existential input shape; concrete builder generics are retained by MirageOf. */
@@ -20,7 +21,11 @@ export interface RuntimeBuilder<S> {
   apply(state: S, event: Event): S;
   prepareCommand?(state: S, command: Command<unknown, string>): Command<unknown, string>;
   aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
-  hooks?: AggregateHooks<S>;
+  hooks?: {
+    onBeforeCommand?: (command: Command<unknown, string>, state: AggregateStateView<S>) => void;
+    onAfterCommand?: (command: Command<unknown, string>, events: Event[], state: AggregateStateView<S>) => void;
+    onEventApplied?: (event: Event, state: AggregateStateView<S>) => void;
+  };
   metadata?: {
     events?: Record<string, { meta?: Record<string, unknown> }>;
     commands?: Record<string, { meta?: Record<string, unknown> }>;

@@ -1,4 +1,6 @@
-import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, type ReadonlyDeep, createReadonlyDeepProxy, createIdentity, type Contract, ContractError } from '@redemeine/kernel';
+import { type Event, type Command, type CommandResult, type EventCommandLink, type EnvelopeHeaders, type PluginExtensions, type PluginIntents, createIdentity, type Contract, ContractError } from '@redemeine/kernel';
+import { commandStateView } from './commandStateView';
+import type { AggregateStateView } from './types/aggregateState';
 import type { GenericCommandMap } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
@@ -9,7 +11,7 @@ type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = 
 };
 
 type CommandHandler<S> = (
-    state: ReadonlyDeep<S>,
+    state: AggregateStateView<S>,
     payload: unknown
 ) => Event | Event[] | { events: Event[]; intents?: Record<string, unknown> };
 
@@ -94,7 +96,7 @@ export function createCommandProcessor<S>(
         return acc;
     }, {} as Record<string, CommandHandler<S>>);
 
-    return (state: S, command: Command<unknown, string>): Event[] => {
+    return (state: AggregateStateView<S>, command: Command<unknown, string>): Event[] => {
         const commandWithId = ensureCommandId(command);
         const commandType = commandWithId.type;
         const payload = commandWithId.payload;
@@ -113,8 +115,8 @@ export function createCommandProcessor<S>(
             }
         }
         
-        const readonlyState = createReadonlyDeepProxy(state);
-        const result = handler(readonlyState as ReadonlyDeep<S>, payload);
+        const readonlyState = commandStateView(state);
+        const result = handler(readonlyState as AggregateStateView<S>, payload);
         const normalized = normalizeCommandExecutionResult(result as Event | CommandResult<Event, PluginExtensions>);
         const linkedEvents = normalized.events.map(event => withCommandLink(event, commandWithId));
         Object.defineProperty(linkedEvents, '__intents', {

@@ -2,6 +2,8 @@ import type { Event, Command, AggregateHooks, PluginExtensions, RedemeinePlugin 
 import type { AggregateEntityRegistry, MountedStructureMetadata } from './createAggregate';
 import type { AnyFunction } from './redemeineComponent';
 import type { AggregateDecoration, PreparedCommand } from './plugins/attachmentTypes';
+import type { Draft } from 'immer';
+import type { AggregateStateView } from './types/aggregateState';
 
 /**
  * The compiled output of createAggregate(...).build().
@@ -19,15 +21,16 @@ export interface BuiltAggregate<
     /** The aggregate type identifier (e.g., 'invoice', 'order') */
     aggregateType: string;
     /** Default initial state for new aggregate instances */
-    initialState: S;
+    readonly initialState: AggregateStateView<S>;
+    readonly __stateType?: S;
     /** Processes a command against state, returning domain events */
-    process: (state: S, command: Command<unknown, string>) => Event[];
+    process: (state: AggregateStateView<S>, command: Command<unknown, string>) => Event[];
     /** Canonicalizes/enriches a command for this aggregate plan; raw creators remain unextended. */
-    prepareCommand: <C extends Command<unknown, string>>(state: S, command: C) => PreparedCommand<C['payload'], C['type']>;
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S>, command: C) => PreparedCommand<C['payload'], C['type']>;
     /** Applies an event immutably via Immer — returns new state */
-    apply: (state: S, event: Event) => S;
+    apply: (state: AggregateStateView<S>, event: Event) => AggregateStateView<S>;
     /** Applies an event to a mutable draft — used by projections to avoid double-Immer */
-    applyToDraft: (draft: S, event: Event) => void;
+    applyToDraft: (draft: Draft<S>, event: Event) => void;
     /** Type-safe command creator functions keyed by command name */
     commandCreators: {
         // SAFETY: `any[]` required for variadic tuple inference in command arg spreading

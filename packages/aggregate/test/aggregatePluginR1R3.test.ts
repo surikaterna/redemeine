@@ -59,10 +59,12 @@ test.each(['empty', 'unmatched', 'envelope'] as const)('%s plugins take no appli
     : kind === 'envelope' ? base.eventEnvelope(() => ({ tag: 'ok' })).build() : base.build();
   const host = createAggregate('host', { date: new Date(123) }).events({ changed() {} }).plugins(plugin).build();
   const snapshot = jest.spyOn(data, 'envelopeSnapshot');
+  const stateSnapshot = jest.spyOn(stateData, 'stateContextSnapshot');
   try {
     host.apply(host.initialState, { type: 'host.changed.event', payload: null });
     expect(snapshot).not.toHaveBeenCalled();
-  } finally { snapshot.mockRestore(); }
+    expect(stateSnapshot).not.toHaveBeenCalled();
+  } finally { snapshot.mockRestore(); stateSnapshot.mockRestore(); }
 });
 
 test('matched and catchall callbacks get separate event and post-write state snapshots', () => {
@@ -74,14 +76,17 @@ test('matched and catchall callbacks get separate event and post-write state sna
   const host = createAggregate('host', {}).events({ changed() {} }).plugins(plugin).build();
   const event = { type: 'host.changed.event', payload: { value: 1 } };
   const snapshot = jest.spyOn(data, 'envelopeSnapshot');
+  const stateSnapshot = jest.spyOn(stateData, 'stateContextSnapshot');
   try {
     host.apply(host.initialState, event);
-    expect(snapshot).toHaveBeenCalledTimes(4);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(stateSnapshot).toHaveBeenCalledTimes(2);
     expect(contexts[0]).toMatchObject({ state: { audit: { count: 0 } } });
     expect(contexts[1]).toMatchObject({ state: { audit: { count: 1 } } });
     expect(contexts[0]).not.toBe(contexts[1]);
     expect(events[0]).not.toBe(events[1]);
     expect(events[0]).not.toBe(event);
     expect(Object.isFrozen(events[0])).toBe(true);
-  } finally { snapshot.mockRestore(); }
+  } finally { snapshot.mockRestore(); stateSnapshot.mockRestore(); }
 });
+import * as stateData from '../src/plugins/stateContextSnapshot';

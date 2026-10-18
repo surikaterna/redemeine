@@ -1,5 +1,6 @@
 import type { Event } from '@redemeine/kernel';
 import type { Draft } from 'immer';
+import type { AggregateStateView } from '../types/aggregateState';
 import type {
   CommandEnvelopeContext,
   CommandEnvelopeDescriptor,
@@ -36,11 +37,7 @@ type ResolvedEventType<A, K extends string> = A extends { types: { events: infer
     : string
   : K | `${A extends { aggregateType: infer Name extends string } ? Name : string}.${K}.event`;
 
-export type PluginReadonlyDeep<T> = T extends Date
-  ? Readonly<Pick<Date, Exclude<keyof Date, `set${string}`>>>
-  : T extends (...args: never[]) => unknown ? T : T extends object
-    ? { readonly [K in keyof T]: PluginReadonlyDeep<T[K]> }
-    : T;
+export type PluginReadonlyDeep<T> = AggregateStateView<T>;
 
 export type AggregatePluginContext<A> = Readonly<{
   aggregateType: string;

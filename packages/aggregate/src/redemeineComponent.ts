@@ -4,6 +4,8 @@ import type { Merge } from './types/Merge';
 import type { AllKeys } from './types/AllKeys';
 import type { ReplaceFirstArg } from './types/ReplaceFirstArg';
 import type { PackedCommandWithMeta, ShorthandCommandWithMeta } from './types/aggregateTyping';
+import type { Draft } from 'immer';
+import type { AggregateStateView } from './types/aggregateState';
 
 export type GenericSelectors = Record<string, unknown>;
 // SAFETY: `any` required — GenericCommandMap must accept commands with any state type (contravariant)
@@ -29,7 +31,7 @@ export function resolveCommandFactoryContext(
 }
 
 // SAFETY: `any` in Event type params required — projectors accept events with heterogeneous payloads
-export type RedemeineEventProjector<S> = (state: S, event: Event<any, any>) => void;
+export type RedemeineEventProjector<S> = (state: Draft<S>, event: Event<any, any>) => void;
 export type RedemeineEventDefinition<S, TMeta extends Record<string, unknown> = Record<string, unknown>> =
   | RedemeineEventProjector<S>
   | {
@@ -46,8 +48,13 @@ export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDef
       : never;
 };
 
+// Keep replacement keys scoped when TypeScript emits inferred downstream declarations.
+// SAFETY: `any` matches NormalizeEventDefinitions' existential projector constraint, not the inferred event map.
+export type MergeEventDefinitions<Existing, Incoming extends Record<string, RedemeineEventDefinition<any, any>>> =
+  Omit<Existing, keyof Incoming> & NormalizeEventDefinitions<Incoming>;
+
 export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[], TPlugins extends PluginExtensions = {}> = (
-  state: ReadonlyDeep<S>,
+  state: AggregateStateView<S>,
   ...args: Args
 ) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
 
@@ -99,7 +106,7 @@ export type MergeComponentCommandKeys<T extends readonly RedemeineComponent<any,
 export type PublicCommandArgsFromDefinition<S, TDef> =
   TDef extends { pack: (...args: infer A) => unknown }
     ? A
-    : ReplaceFirstArg<never, Extract<TDef, (state: ReadonlyDeep<S>, ...args: unknown[]) => unknown>> extends (
+    : ReplaceFirstArg<never, Extract<TDef, (state: AggregateStateView<S>, ...args: unknown[]) => unknown>> extends (
         state: never,
         ...args: infer A
       ) => unknown
@@ -125,13 +132,13 @@ export function composeCommandFactories(
 
 export function resolveCommandHandler<S>(
   commandDef: RedemeineCommandDefinition<S>
-): (state: ReadonlyDeep<S>, payload: unknown) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}> {
+): (state: AggregateStateView<S>, payload: unknown) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}> {
   const handler = typeof commandDef === 'function'
     ? commandDef
     : commandDef.handler;
 
   return handler as (
-    state: ReadonlyDeep<S>,
+    state: AggregateStateView<S>,
     payload: unknown
   ) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}>;
 }

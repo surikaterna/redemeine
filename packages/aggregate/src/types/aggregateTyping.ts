@@ -1,4 +1,5 @@
-import type { CommandResult, Event, EventType, PluginExtensions, ReadonlyDeep } from '@redemeine/kernel';
+import type { CommandResult, Event, EventType, PluginExtensions } from '@redemeine/kernel';
+import type { AggregateStateView } from './aggregateState';
 
 // SAFETY: `any` in ReplaceFirstArg required for conditional type inference on arbitrary function shapes
 type ReplaceFirstArg<S, F> = F extends (x: any, ...args: infer P) => infer R ? (state: S, ...args: P) => R : never;
@@ -44,7 +45,7 @@ export type PackedCommand<S, Args extends any[], P, TPlugins extends PluginExten
    * Defines the public API signature and serializable Command payload structure.
    */
   pack: (...args: Args) => P;
-  handler: (state: ReadonlyDeep<S>, payload: P) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
+  handler: (state: AggregateStateView<S>, payload: P) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
 };
 
 export type PackedCommandWithMeta<S, Args extends any[], P, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> =
@@ -54,7 +55,7 @@ export type PackedCommandWithMeta<S, Args extends any[], P, TMeta extends Record
 
 // SAFETY: `any[]` in Args required for variadic command argument inference
 export type ShorthandCommandWithMeta<S, Args extends any[] = any[], TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}> = {
-  handler: (state: ReadonlyDeep<S>, ...args: Args) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
+  handler: (state: AggregateStateView<S>, ...args: Args) => Event<unknown, string> | CommandResult<Event<unknown, string>, TPlugins>;
   meta?: TMeta;
 };
 

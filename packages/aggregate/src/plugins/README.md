@@ -133,3 +133,17 @@ Runtime payload types are erased. Attachment therefore conservatively requires e
 key to retain its source projector identity. Replacing a matched projector is rejected even
 when its declared payload is compatible: bind the plugin to the built descendant instead.
 This check runs before plugin state initialization or event application.
+## Initial state ownership
+
+Aggregate templates are borrowed readonly from creation, not deep-cloned.
+Mounting event plugins uses Immer to add only the new namespaces: it creates a
+new root and shares untouched domain/prior-plugin branches. Default Immer
+auto-freeze may freeze that shared caller data; retaining an alias does not
+retain mutation rights. Before mounting/applying there is no runtime-freeze
+promise. Date readers remain available in the readonly API, but freezing does
+not universally prevent Date internal-slot mutation. See the Aggregate README
+for the common `AggregateStateView<S>`/`Draft<S>` contract.
+
+Initializers run once per new registration, must return fresh plugin-owned
+state, and are not rerun when decorating an already decorated aggregate.
+No-op/legacy-only registrations preserve the initial-state reference.

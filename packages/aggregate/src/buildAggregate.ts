@@ -12,7 +12,7 @@ import { applyEvent, applyEventToDraft } from './applyEvent';
 import type { Draft } from 'immer';
 import { resolveEvents, finalizeProjectorMap } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
-import type { ReadonlyDeep } from '@redemeine/kernel';
+import type { AggregateStateView } from './types/aggregateState';
 import { decorateAggregate, inheritAggregateIdentity } from './plugins/attachment';
 import type { PluginRegistration } from './plugins/attachmentTypes';
 
@@ -100,11 +100,11 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
 
     const host = decorateAggregate({
         aggregateType: aggregateName,
-        initialState,
+        initialState: initialState as AggregateStateView<S>,
         process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType, contract),
-        apply: (state: S, event: Event): S => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler),
-        applyToDraft: (draft: S, event: Event): void => {
-            applyEventToDraft(aggregateName, draft as Draft<S>, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler);
+        apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler),
+        applyToDraft: (draft: Draft<S>, event: Event): void => {
+            applyEventToDraft<S>(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler);
         },
         commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
         eventCreators: emit,

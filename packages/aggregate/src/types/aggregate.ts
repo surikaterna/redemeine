@@ -1,4 +1,6 @@
-import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, RedemeinePlugin, ReadonlyDeep, Contract } from '@redemeine/kernel';
+import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, RedemeinePlugin, Contract } from '@redemeine/kernel';
+import type { Draft } from 'immer';
+import type { AggregateStateView } from './aggregateState';
 import type { EntityPackage } from '../createEntity';
 import type { GenericCommandFactory, AnyFunction } from '../redemeineComponent';
 import type { Merge } from './Merge';
@@ -17,13 +19,13 @@ import type {
     EntityRegistryValueObjectListEntry,
     EntityRegistryValueObjectMapEntry
 } from './entityMount';
-import type { RedemeineEventDefinition, NormalizeEventDefinitions, RedemeineCommandDefinition } from '../redemeineComponent';
+import type { RedemeineEventDefinition, MergeEventDefinitions, RedemeineCommandDefinition } from '../redemeineComponent';
 import type { bindContext } from '../bindContext';
 import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions, ValidSourceEvents } from '../plugins/attachmentTypes';
 
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
-export type AggregateSelector<S> = (state: ReadonlyDeep<S>, ...args: never[]) => unknown;
+export type AggregateSelector<S> = (state: AggregateStateView<S>, ...args: never[]) => unknown;
 
 export type AggregateSelectorsMap<S> = Record<string, AggregateSelector<S>>;
 
@@ -158,7 +160,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
         events: NewE
-    ) => AggregateBuilder<S, Name, M, Omit<E, keyof NewE> & NormalizeEventDefinitions<NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, MergeEventDefinitions<E, NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
 
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
@@ -181,12 +183,13 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     build: (...validation: EP extends ValidSourceEvents<{ aggregateType: Name; initialState: S & PS; pure: { eventProjectors: AggregateEventProjectorsMap<E> } }, EP> ? [] : [incompatibleSourceEvents: never]) => {
         aggregateType: Name;
-        initialState: S & PS;
-        prepareCommand: <C extends Command<unknown, string>>(state: S & PS, command: C) => PreparedCommand<C['payload'], C['type'], MountedEnvelopes<EP, 'commandEnvelope'>>;
-        process: (state: S & PS, command: Command<unknown, string>) => (Event & EnvelopeRouting & MountedEnvelopes<EP, 'eventEnvelope'>)[];
+        readonly initialState: AggregateStateView<S & PS>;
+        readonly __stateType?: S & PS;
+        prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C['payload'], C['type'], MountedEnvelopes<EP, 'commandEnvelope'>>;
+        process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => (Event & EnvelopeRouting & MountedEnvelopes<EP, 'eventEnvelope'>)[];
         readonly __envelopeTypes?: { command: MountedEnvelopes<EP, 'commandEnvelope'>; event: MountedEnvelopes<EP, 'eventEnvelope'> };
-        apply: (state: S & PS, event: Event) => S & PS;
-        applyToDraft: (draft: S & PS, event: Event) => void;
+        apply: (state: AggregateStateView<S & PS>, event: Event) => AggregateStateView<S & PS>;
+        applyToDraft: (draft: Draft<S & PS>, event: Event) => void;
         commandCreators: {
             [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
                 ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
