@@ -87,3 +87,19 @@ reservedRoot.commandEnvelope(() => ({ aggregateId: 'bad' }));
 const thenExtension = { then: 1 };
 // @ts-expect-error then is reserved even when it is not callable
 reservedRoot.eventEnvelope(() => thenExtension);
+
+const plugins = [date, audit];
+const arrayHosts = [base.withPlugins(...plugins), createAggregate('array', { count: 0 }).plugins(...plugins).build()];
+for (const arrayHost of arrayHosts) {
+  const command = arrayHost.prepareCommand(arrayHost.initialState, raw);
+  const optionalDate: Date | undefined = command.dateTime;
+  const optionalTag: string | undefined = command.auditTag;
+  const event = arrayHost.process(arrayHost.initialState, raw)[0]!;
+  const optionalEventDate: Date | undefined = event.sourceCommandDateTime;
+  const optionalRef: string | undefined = event.auditRef;
+  // @ts-expect-error ordinary arrays can be empty; no required command extension
+  const requiredDate: Date = command.dateTime;
+  // @ts-expect-error ordinary arrays cannot guarantee an event extension
+  const requiredEventDate: Date = event.sourceCommandDateTime;
+  void [optionalDate, optionalTag, optionalEventDate, optionalRef, requiredDate, requiredEventDate];
+}

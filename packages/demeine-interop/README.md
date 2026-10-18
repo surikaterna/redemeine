@@ -115,13 +115,16 @@ this adaptation does not promise native void-contract equivalence.
 
 ## Handlers and envelopes
 
-Built definitions with `prepareCommand(state, command)` prepare inside the FIFO
+Built definitions with an active command or event descriptor in `aggregatePlugins`
+and `prepareCommand(state, command)` prepare inside the FIFO
 queue, after legacy id/address normalization and **before** the external sink.
 Direct `_process` and generated `processXxx` dispatch also prepare commands. Raw
 command creators remain unextended: a plugin-provided `dateTime: Date` exists only
 after preparation. A valid provided date is preserved by the plugin; validation
-errors reject before the sink is invoked. Builders without this capability retain
-their original command references and behavior.
+errors reject before the sink is invoked. Method presence alone does not activate
+preparation: zero-plugin and state-only definitions retain their original command
+references and behavior. Handbuilt definitions must expose their envelope descriptors;
+active descriptors without a preparation method are rejected at bridge creation.
 
 For example, a command-envelope plugin can use an injected clock to add a Date,
 and an event-envelope plugin can copy it into `sourceCommandDateTime` alongside
@@ -139,6 +142,11 @@ checked before the first apply. Replay (`_rehydrate`) applies persisted events,
 not command/event preparation or clocks. If persistence serializes Dates to JSON,
 decode those fields explicitly before replay. This provides no afterCommit or
 durability guarantee and does not roll back external sink side effects.
+
+With either envelope phase active, conversion protects all prepared top-level
+fields, even for command-only plans. Event-only plans also prepare command routing
+before the sink. Without an active plan, legacy conversion may change or remove
+ordinary headers and domain extras; identity, addressing and metadata remain protected.
 
 **SHOWCASE:** `packages/demeine-interop/test/aggregatePluginEnvelope.test.ts`,
 `adds command dateTime before the sink and preserves it through event replay`.

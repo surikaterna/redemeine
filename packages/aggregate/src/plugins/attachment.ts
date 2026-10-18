@@ -67,12 +67,18 @@ function applyPlugins(host: Host, plugins: readonly EventPlugin[], tables: reado
 function application(host: Host, record: Attachment) {
   const tables = record.plugins.map(plugin => routes(host, plugin));
   return (draft: object, event: Event): void => {
-    for (const plugin of record.plugins) {
-      if (!Object.hasOwn(draft, plugin.id)) throw new Error(`Missing aggregate plugin namespace: ${plugin.id}; migrate the snapshot explicitly`);
-    }
+    validatePluginState(record.plugins, draft);
     record.domain.applyToDraft(draft as never, event);
     applyPlugins(host, record.plugins, tables, draft, event);
   };
+}
+
+function validatePluginState(plugins: readonly EventPlugin[], state: unknown): void {
+  for (const plugin of plugins) {
+    if (state === null || typeof state !== 'object' || !Object.hasOwn(state, plugin.id)) {
+      throw new Error(`Missing aggregate plugin namespace: ${plugin.id}; migrate the snapshot explicitly`);
+    }
+  }
 }
 
 export function decorateAggregate<A extends Host>(host: A, registrations: readonly PluginRegistration[] = []): A {
@@ -101,6 +107,7 @@ export function decorateAggregate<A extends Host>(host: A, registrations: readon
       if (intents) Object.defineProperty(prepared, '__intents', intents);
       return prepared;
     } : record.domain.process,
+    validateState: (state: unknown) => validatePluginState(record.plugins, state),
     applyToDraft: (draft: object, event: Event) => {
       if (record.plugins.length && !isDraft(draft)) throw new TypeError('Plugin application requires an Immer draft');
       applyToDraft(draft, event);

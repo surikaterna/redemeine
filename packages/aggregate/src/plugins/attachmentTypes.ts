@@ -19,18 +19,24 @@ export type EventPlugin = {
 type RegistrationHook<F> = F extends (...args: infer A) => infer R ? { hook(...args: A): R }['hook'] : F;
 export type LegacyRegistration = { [K in keyof RedemeinePlugin]: RegistrationHook<RedemeinePlugin[K]> };
 export type PluginRegistration = LegacyRegistration | EventPlugin;
+export type RegistrationTuple = readonly [] | readonly [PluginRegistration, ...PluginRegistration[]];
 type Intersection<U> = (U extends unknown ? (value: U) => void : never) extends ((value: infer I) => void) ? I : never;
 export type RegistrationExtensions<P> = Intersection<ExtractPluginExtensions<Exclude<P, EventPlugin>>>;
+type ArrayMounts<P> = {
+  [Id in Extract<P, EventPlugin>['id']]?: ReturnType<Extract<P, { id: Id } & EventPlugin>['initialize']>;
+};
 export type MountedPlugins<P extends readonly unknown[]> = P extends readonly [infer H, ...infer T]
   ? (H extends { kind: 'aggregate-event'; id: infer Id extends string; initialize: () => infer S } ? Record<Id, S> : {}) & MountedPlugins<T>
-  : {};
-type DescriptorExtension<D> = D extends EnvelopeDescriptor<infer X, infer _Context> ? X : {};
+  : ArrayMounts<P[number]>;
+type DescriptorExtension<D> = [D] extends [never] ? {}
+  : D extends EnvelopeDescriptor<infer X, infer _Context> ? X : {};
 type ExtensionOf<H, K extends 'commandEnvelope' | 'eventEnvelope'> = H extends { kind: 'aggregate-event' }
   ? K extends keyof H ? undefined extends H[K] ? Partial<DescriptorExtension<NonNullable<H[K]>>>
     : DescriptorExtension<H[K]> : {}
   : {};
 export type MountedEnvelopes<P extends readonly unknown[], K extends 'commandEnvelope' | 'eventEnvelope'> =
-  P extends readonly [infer H, ...infer T] ? ExtensionOf<H, K> & MountedEnvelopes<T, K> : {};
+  P extends readonly [infer H, ...infer T] ? ExtensionOf<H, K> & MountedEnvelopes<T, K>
+    : [P[number]] extends [never] ? {} : Partial<Intersection<ExtensionOf<P[number], K>>>;
 export type EnvelopeRouting = {
   aggregateId?: string;
   aggregateType?: string;
@@ -45,15 +51,25 @@ type PreviousEnvelope<A, K extends 'command' | 'event'> = A extends { readonly _
 type CommandExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'command'> & MountedEnvelopes<P, 'commandEnvelope'>;
 type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'event'> & MountedEnvelopes<P, 'eventEnvelope'>;
 type BranchKeys<S> = S extends unknown ? keyof S : never;
+// Arrays provide no presence or ordering proof; prerequisites must already hold on every host branch.
+type InvalidArrayMember<S, H> = H extends EventPlugin
+  ? [H['id']] extends [AggregatePluginId<H['id']>]
+    ? Extract<H['id'], BranchKeys<S>> extends never
+      ? H extends { source: { initialState: infer Required } } ? [S] extends [Required] ? never : true : never
+      : true
+    : true
+  : never;
 export type ValidRegistrations<S, P extends readonly unknown[]> = P extends readonly [infer H, ...infer T]
   ? [H] extends [{ kind: 'aggregate-event'; id: infer Id extends string; initialize: () => infer State }]
     ? [Id] extends [AggregatePluginId<Id>] ? Id extends BranchKeys<S> ? never
       : H extends { source: { initialState: infer Required } }
-        ? S extends Required ? readonly [H, ...ValidRegistrations<S & Record<Id, State>, T>] : never
+        ? [S] extends [Required] ? readonly [H, ...ValidRegistrations<S & Record<Id, State>, T>] : never
         : readonly [H, ...ValidRegistrations<S & Record<Id, State>, T>]
       : never
     : readonly [H, ...ValidRegistrations<S, T>]
-  : P;
+  : { [K in keyof P]: P[K] & (true extends InvalidArrayMember<S, P[K]> ? never : unknown) };
+export type ValidRegistrationArray<S, P extends readonly PluginRegistration[]> =
+  number extends P['length'] ? true extends InvalidArrayMember<S, P[number]> ? never : P : never;
 
 export type DecoratedAggregate<A extends { initialState: unknown }, P extends readonly unknown[]> =
   Omit<A, 'initialState' | 'apply' | 'applyToDraft' | 'process' | 'prepareCommand' | 'withPlugins' | 'plugins' | '__envelopeTypes'> & {
@@ -69,7 +85,11 @@ export type DecoratedAggregate<A extends { initialState: unknown }, P extends re
 
 export interface AggregateDecoration<S, Reserved = {}> {
   readonly aggregatePlugins?: readonly EventPlugin[];
-  withPlugins<const P extends readonly PluginRegistration[]>(
+  validateState?(state: unknown): void;
+  withPlugins<const P extends RegistrationTuple>(
     ...plugins: P & ValidRegistrations<S & Reserved, P>
+  ): DecoratedAggregate<this & { initialState: S }, P>;
+  withPlugins<const P extends readonly PluginRegistration[]>(
+    ...plugins: P & ValidRegistrationArray<S & Reserved, P>
   ): DecoratedAggregate<this & { initialState: S }, P>;
 }

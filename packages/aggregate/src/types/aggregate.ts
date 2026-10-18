@@ -19,7 +19,7 @@ import type {
 } from './entityMount';
 import type { RedemeineEventDefinition, NormalizeEventDefinitions, RedemeineCommandDefinition } from '../redemeineComponent';
 import type { bindContext } from '../bindContext';
-import type { AggregateDecoration, PluginRegistration, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, RegistrationExtensions } from '../plugins/attachmentTypes';
+import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions } from '../plugins/attachmentTypes';
 
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
@@ -138,9 +138,14 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         ...mixins: CompatibleMixins<S, T>
     ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>, TMeta, TPlugins, PS, EP>;
 
-    plugins: <const P extends readonly PluginRegistration[]>(
+    plugins: {
+      <const P extends RegistrationTuple>(
         ...plugins: P & ValidRegistrations<S & PS & Registry, P>
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, [...EP, ...P]>;
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, [...EP, ...P]>;
+      <const P extends readonly PluginRegistration[]>(
+        ...plugins: P & ValidRegistrationArray<S & PS & Registry, P>
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, [...EP, ...P]>;
+    };
 
     selectors: {
         <NewSel extends AggregateSelectorsMap<S>>(

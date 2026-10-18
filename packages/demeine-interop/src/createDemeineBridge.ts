@@ -13,7 +13,7 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   const dispatch = createDispatch(builder, options);
   class Bridge extends StandaloneAggregate<S> {
     protected override _prepareCommand(command: Command): Command {
-      if (!builder.prepareCommand || command.type === '$stream.delete.command') return command;
+      if (!dispatch.activeEnvelopes || command.type === '$stream.delete.command') return command;
       return requireLegacyPayload(dispatch.prepare(this, command));
     }
     constructor(sink?: CommandSink<S> | null, events?: EventHandler<S> | null, commands?: CommandHandler<S> | ObjectCommandHandler | null) {

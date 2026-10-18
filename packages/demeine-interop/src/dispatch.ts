@@ -38,8 +38,10 @@ export function createDispatch<S extends object, C extends CommandCreators>(
   builder: BridgeableAggregate<S, C>, options: BridgeOptions<S>,
 ) {
   const commandTypes = new Set(Object.values(builder.types.commands));
+  const activeEnvelopes = !!builder.aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope);
+  if (activeEnvelopes && !builder.prepareCommand) throw new TypeError('Envelope plugins require builder.prepareCommand');
   function prepare(aggregate: BridgeContext<S>, command: BridgeCommand): BridgeCommand {
-    if (!builder.prepareCommand || command.type === '$stream.delete.command') return command;
+    if (!activeEnvelopes || !builder.prepareCommand || command.type === '$stream.delete.command') return command;
     command.aggregateId ??= aggregate.id;
     if (command.aggregateId !== aggregate.id) throw new Error('command aggregateId does not match aggregate');
     if (aggregate.type) command.aggregateType = aggregate.type;
@@ -56,7 +58,7 @@ export function createDispatch<S extends object, C extends CommandCreators>(
     command = prepare(aggregate, command);
     const events = requireSync(builder.process(aggregate._state, command), 'builder.process');
     if ('__intents' in events && events.__intents != null) throw new Error('demeine-interop does not support intents');
-    const converted = events.map(event => convertEvent(event, command, aggregate, options.envelope, !!builder.prepareCommand));
+    const converted = events.map(event => convertEvent(event, command, aggregate, options.envelope, activeEnvelopes));
     for (const event of converted) aggregate._apply(requireLegacyPayload(event), true);
     return aggregate;
   }
@@ -67,7 +69,7 @@ export function createDispatch<S extends object, C extends CommandCreators>(
     }
     aggregate._state = requireSync(builder.apply(aggregate._state, event), 'builder.apply');
   }
-  return { process, apply, prepare };
+  return { process, apply, prepare, activeEnvelopes };
 }
 
 export function requireLegacyPayload<T extends { payload: unknown }>(message: T): T & { payload: object } {

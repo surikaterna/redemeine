@@ -11,6 +11,7 @@ export interface BridgeableAggregate<S extends object, C extends CommandCreators
   aggregateType?: string;
   process(state: S, command: Command<unknown, string>): Event[];
   prepareCommand?(state: S, command: Command<unknown, string>): BridgeCommand;
+  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
   apply(state: S, event: Event<unknown, string>): S;
   types: { commands: Record<string, string>; events: Record<string, string> };
   commandCreators: C;
