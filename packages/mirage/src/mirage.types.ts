@@ -1,4 +1,5 @@
-import type { Event, PluginExtensions, RedemeinePlugin, Contract, ReadonlyDeep } from '@redemeine/kernel';
+import type { Event, PluginExtensions, RedemeinePlugin, Contract } from '@redemeine/kernel';
+import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import type { AggregateEntityRegistry } from '@redemeine/aggregate';
 import type { MirageContextPolymorphicBinding, MirageContextSingleBinding } from '@redemeine/aggregate';
 
@@ -278,7 +279,11 @@ export type BuiltAggregateCommands<T> = T extends { commandCreators: infer C } ?
     [K in keyof C]: C[K] extends (...args: infer Args) => infer Cmd
         ? { args: Args; payload: Cmd extends { payload: infer P } ? P : unknown } : never
 } : {};
-export type BuiltAggregateState<T> = T extends { initialState: infer S } ? S : never;
+export type BuiltAggregateState<T> = T extends unknown
+    ? '__stateType' extends keyof T
+        ? T extends { readonly __stateType?: infer S } ? S : never
+        : T extends { initialState: infer S } ? S : never
+    : never;
 export type BuiltAggregateRegistry<T> = T extends { __registryType?: infer R extends AggregateEntityRegistry } ? R : {};
 export type BuiltAggregateSelectors<T> = T extends { selectors: infer Sel extends object } ? Sel : {};
 export type BuiltAggregatePlugins<T> = T extends { plugins: RedemeinePlugin<infer P>[] } ? P : {};

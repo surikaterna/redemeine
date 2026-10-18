@@ -111,6 +111,23 @@ Ambiguous/erased provenance cannot establish an authored-schema guarantee: provi
 an explicit schema-derived annotation instead. An ordinary type-only declaration
 with no recoverable link is inferred only in types-first mode.
 
+For genuine Aggregate declarations, state means the canonical model retained by
+`__stateType`, not the borrowed readonly `initialState` view (in particular, a
+readonly Date facade is not treated as a Date model). Markerless legacy contracts
+still use `initialState`; an unresolvable or noncanonical marker fails closed.
+An authored creator-state schema is reused only when it covers the complete model.
+Plugin-mounted namespaces are part of that model, even when their fields are
+optional: a base-only schema cannot validate the whole aggregate state. Supply an
+explicit whole-model schema rather than allowing extraction to omit that state.
+
+Generic wrappers containing schema-derived arguments (for example,
+`Box<z.infer<typeof identifier>>`) require an explicit exported derived Zod schema;
+extraction fails before writing rather than silently losing the argument's
+refinements. Ordinary types-first wrappers such as `Box<string>` remain supported.
+Record keys and values are linked separately, including authored string-key
+constraints. Readonly arrays and nullable tuple aliases retain element-level
+annotations; a neighboring plain string does not inherit a schema's refinements.
+
 `extractZodSchemas` reuses a recognized `z.infer` schema only through its
 exported value: public dependency imports retain their module specifier, and local
 source imports are relative to the generated file. Private/unroutable schema values

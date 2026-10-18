@@ -1,11 +1,14 @@
 import * as ts from 'typescript';
 import { resolve } from 'node:path';
 import { typeAnnotation } from './schemaReference';
+import { containsSchema, referenceTarget } from './schemaProvenance';
+import { aggregateStateModel } from './aggregateStateModel';
 
 export interface SchemaDeclarations {
     commands: Map<string, ts.Node>;
     events: Map<string, ts.Node>;
     state?: ts.Node;
+    creatorState?: ts.Node;
 }
 
 function property(checker: ts.TypeChecker, type: ts.Type | undefined, name: string): ts.Type | undefined {
@@ -24,10 +27,59 @@ function handlers(checker: ts.TypeChecker, container: ts.Type | undefined, comma
     for (const symbol of container?.getProperties() ?? []) {
         const type = property(checker, container, symbol.name);
         const handler = commands ? property(checker, type, 'handler') ?? type : type;
-        const declaration = parameter(handler, 1);
-        if (declaration) result.set(symbol.name, declaration);
+        const declaration = (commands ? factoryCallback(checker, symbol) : undefined) ?? parameter(handler, 1);
+        if (declaration) result.set(symbol.name, commands ? declaration : eventPayloadAnnotation(checker, declaration) ?? declaration);
     }
     return result;
+}
+
+function factoryCall(checker: ts.TypeChecker, node?: ts.Node, seen = new Set<ts.Node>()): ts.CallExpression | undefined {
+    if (!node) return undefined;
+    if (seen.has(node)) throw new Error('Command factory provenance cycle; supply an explicit schema-linked handler');
+    if (seen.size >= 256) throw new Error('Command factory provenance exceeds 256 nodes; supply an explicit schema-linked handler');
+    seen.add(node);
+    if (ts.isCallExpression(node)) return node;
+    if (ts.isVariableDeclaration(node) || ts.isPropertyAssignment(node)) return factoryCall(checker, node.initializer, seen);
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)
+        || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node)) return factoryCall(checker, node.expression, seen);
+    const symbol = ts.isShorthandPropertyAssignment(node) ? checker.getShorthandAssignmentValueSymbol(node)
+        : ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) ? checker.getSymbolAtLocation(node) : undefined;
+    const target = symbol && (symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol);
+    return factoryCall(checker, target?.valueDeclaration, seen);
+}
+
+function factoryCallback(checker: ts.TypeChecker, property: ts.Symbol): ts.Node | undefined {
+    const call = factoryCall(checker, property.valueDeclaration);
+    if (!call) return undefined;
+    const factory = checker.getResolvedSignature(call)?.getDeclaration();
+    if (factory && ts.isFunctionDeclaration(factory) && factory.body) {
+        const returns = factory.body.statements.filter(ts.isReturnStatement);
+        const expression = returns.length === 1 ? returns[0]?.expression : undefined;
+        const field = expression && ts.isObjectLiteralExpression(expression)
+            ? expression.properties.find(item => item.name?.getText() === 'handler') : undefined;
+        const value = field && (ts.isShorthandPropertyAssignment(field) ? field.name : ts.isPropertyAssignment(field) ? field.initializer : undefined);
+        const symbol = field && ts.isShorthandPropertyAssignment(field) ? checker.getShorthandAssignmentValueSymbol(field)
+            : value && checker.getSymbolAtLocation(value);
+        const index = factory.parameters.findIndex(item => checker.getSymbolAtLocation(item.name) === symbol);
+        const argument = index >= 0 ? call.arguments[index] : undefined;
+        if (argument) return parameter(checker.getTypeAtLocation(argument), 1);
+    }
+    const hasSchema = call.arguments.some(argument => containsSchema(checker, parameter(checker.getTypeAtLocation(argument), 1)));
+    if (hasSchema) throw new Error(`${property.name}: schema-derived generic command factory requires an explicit schema-linked handler; cannot prove callback provenance`);
+    return undefined;
+}
+
+/** Project a directly declared generic payload parameter by position, not equal compiler types. */
+function eventPayloadAnnotation(checker: ts.TypeChecker, declaration: ts.Node): ts.TypeNode | undefined {
+    const node = typeAnnotation(declaration);
+    if (!node || !ts.isTypeReferenceNode(node)) return undefined;
+    const target = referenceTarget(checker, node);
+    const contract = target?.declarations?.find(ts.isInterfaceDeclaration);
+    const payload = contract?.members.find(member => ts.isPropertySignature(member) && member.name.getText() === 'payload');
+    if (!payload || !ts.isPropertySignature(payload) || !payload.type || !ts.isTypeReferenceNode(payload.type)) return undefined;
+    const parameter = checker.getSymbolAtLocation(payload.type.typeName);
+    const index = contract?.typeParameters?.findIndex(item => checker.getSymbolAtLocation(item.name) === parameter) ?? -1;
+    return index >= 0 ? node.typeArguments?.[index] : undefined;
 }
 
 function commandAnnotations(program: ts.Program, entry: string, name: string): Map<string, ts.Node> {
@@ -87,8 +139,12 @@ function stateAnnotation(program: ts.Program, entry: string, name: string, facto
 export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.Type, entry: string, name: string): SchemaDeclarations {
     const checker = program.getTypeChecker();
     const pure = property(checker, aggregate, 'pure');
-    const stateProperty = checker.getPropertyOfType(aggregate, 'initialState');
-    const state = stateAnnotation(program, entry, name) ?? stateProperty?.valueDeclaration ?? stateProperty?.declarations?.[0];
+    const annotation = stateAnnotation(program, entry, name);
+    const model = aggregateStateModel(checker, aggregate, property(checker, aggregate, 'initialState') ?? null);
+    if (annotation && model && checker.getTypeAtLocation(annotation) !== model && containsSchema(checker, annotation)) {
+        throw new Error(`${name}.state: authored creator state does not cover the complete model; supply an explicit whole-model schema`);
+    }
+    const state = annotation && model === checker.getTypeAtLocation(annotation) ? annotation : undefined;
     const commands = handlers(checker, property(checker, pure, 'commandProcessors'), true);
     const creators = property(checker, aggregate, 'commandCreators');
     for (const key of creators?.getProperties() ?? []) {
@@ -97,7 +153,8 @@ export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.T
     }
     for (const [key, declaration] of commandAnnotations(program, entry, name)) commands.set(key, declaration);
     return { commands,
-        events: handlers(checker, property(checker, pure, 'eventProjectors'), false), ...(state ? { state } : {}) };
+        events: handlers(checker, property(checker, pure, 'eventProjectors'), false),
+        ...(annotation ? { creatorState: annotation } : {}), ...(state ? { state } : {}) };
 }
 
 export function projectionSchemaDeclaration(program: ts.Program, definition: ts.Type, entry: string, name: string): ts.Node | undefined {

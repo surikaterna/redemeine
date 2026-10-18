@@ -8,6 +8,7 @@ import type { SchemaPolicy } from './schemaConfig';
 import { JsonSchemaConverter } from './jsonSchemaConverter';
 import { validateHeritage } from './jsonSchemaObjects';
 import { schemaComposition, type SchemaComposition } from './schemaComposition';
+import { arrayAnnotation, assertSupportedGenerics, branchAnnotation } from './schemaProvenance';
 
 /**
  * Converts TypeScript types to Zod schema source code strings.
@@ -45,6 +46,7 @@ export class TypeToZodConverter {
         const existing = this.resolveExistingSchema(type, declaration);
         if (existing && this.importedSchemaTypes.has(type)) return existing;
         if (this.policy.mode === 'zod-first') return this.fail(type, path, 'no importable Zod schema; export a schema-derived type or opt in to types-first');
+        assertSupportedGenerics(this.checker, type, path, declaration);
         if ('intrinsicName' in type && type.intrinsicName === 'error') return this.fail(type, path, 'unresolved compiler-error type');
         if (depth > this.policy.maxDepth) return this.fail(type, path, `structural depth exceeds maxDepth (${this.policy.maxDepth})`);
         if (this.active.has(type)) return this.fail(type, path, 'recursive type requires an existing Zod schema');
@@ -208,7 +210,7 @@ export class TypeToZodConverter {
         if (this.checker.isTupleType(type)) return tupleSchema(type as ts.TypeReference, depth, path, this, declaration);
         if (this.isArrayType(type)) {
             const el = this.getArrayElementType(type);
-            return el ? `z.array(${this.convert(el, depth + 1, `${path}[]`, declaration)})` : this.fail(type, path, 'unresolved array element');
+            return el ? `z.array(${this.convert(el, depth + 1, `${path}[]`, arrayAnnotation(this.checker, declaration ?? type.aliasSymbol?.declarations?.[0]))})` : this.fail(type, path, 'unresolved array element');
         }
 
         if (type.flags & ts.TypeFlags.Object) return objectSchema(type, depth, path, this, declaration);
@@ -270,11 +272,11 @@ export class TypeToZodConverter {
         }
 
         if (nonNull.length === 1 && nonNull[0]) {
-            const base = this.convert(nonNull[0], depth + 1, path, declaration);
+            const base = this.convert(nonNull[0], depth + 1, path, branchAnnotation(this.checker, nonNull[0], declaration));
             return hasNull ? `${base}.nullable()` : base;
         }
 
-        const members = nonNull.map(t => this.convert(t, depth + 1, path, declaration));
+        const members = nonNull.map(t => this.convert(t, depth + 1, path, branchAnnotation(this.checker, t, declaration)));
         const base = `z.union([${members.join(', ')}])`;
         return hasNull ? `${base}.nullable()` : base;
     }

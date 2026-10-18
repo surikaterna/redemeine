@@ -9,6 +9,8 @@ import { surgicalRegressions } from './packedSurgicalRegressions.mjs';
 import { jsonSchemaRegressions } from './packedJsonSchema.mjs';
 import { intersectionRegressions } from './packedIntersectionRegressions.mjs';
 import { schemaPolicyRegressions } from './packedSchemaPolicy.mjs';
+import { canonicalModelRegressions } from './packedCanonicalModel.mjs';
+import { packedAggregateDeclarations } from '../../aggregate/test/packedDeclarations.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -54,6 +56,8 @@ reviewRegressions(consumer, command);
 surgicalRegressions(consumer, command, bin);
 intersectionRegressions(consumer, command, bin);
 schemaPolicyRegressions(consumer, command, bin);
+canonicalModelRegressions(consumer, command, bin);
+packedAggregateDeclarations(consumer, command);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   target: 'ES2022', lib: ['ES2022', 'ESNext.Disposable'], module: 'ESNext', moduleResolution: 'Bundler', strict: true,

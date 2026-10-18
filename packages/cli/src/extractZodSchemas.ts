@@ -79,7 +79,7 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     );
 
     const output = options.format === 'json-schema'
-        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, { ...options, maxDepth: policy.maxDepth })
+        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, { ...options, maxDepth: policy.maxDepth }, declarations)
         : generateOutput(
         converter, commandPayloads, eventPayloads, stateType, { ...options, declarations,
             source: { entry: relative(dirname(resolve(options.tsconfig)), resolve(options.entry)).split(sep).join('/'), export: options.aggregateExport } }

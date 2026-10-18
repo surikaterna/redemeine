@@ -34,15 +34,8 @@ export function schemaReference(checker: ts.TypeChecker, type: ts.Type, declarat
                 if (found) return found;
             }
         }
-        if (ts.isTypeReferenceNode(node)) {
-            for (const argument of node.typeArguments ?? []) {
-                const found = visit(argument);
-                if (found) return found;
-            }
-        }
         if (ts.isParenthesizedTypeNode(node) || ts.isTypeOperatorNode(node) || ts.isOptionalTypeNode(node)
             || ts.isRestTypeNode(node) || ts.isNamedTupleMember(node)) return visit(node.type);
-        if (ts.isArrayTypeNode(node)) return visit(node.elementType);
         if (ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) {
             // A constituent schema is not the schema of the complete composition,
             // even when TypeScript normalizes both to the same primitive identity.

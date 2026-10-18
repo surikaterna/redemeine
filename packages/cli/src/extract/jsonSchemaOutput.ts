@@ -1,5 +1,6 @@
 import * as ts from 'typescript';
 import { JsonSchemaConverter, type JsonSchema } from './jsonSchemaConverter';
+import type { SchemaDeclarations } from './schemaDeclarations';
 
 export interface SchemaOutputOptions {
   format?: 'zod' | 'json-schema';
@@ -58,6 +59,7 @@ function payloadDeclaration(checker: ts.TypeChecker, handlers: ts.Type, key: str
 export function aggregateJsonOutput(
   program: ts.Program, aggregate: ts.Type, commands: Map<string, ts.Type>, events: Map<string, ts.Type>,
   state: ts.Type | null, options: SchemaOutputOptions & { aggregateExport: string; includeState?: boolean; maxDepth?: number },
+  declarations?: SchemaDeclarations,
 ): string {
   const converter = new JsonSchemaConverter(program, options.maxDepth);
   const { checker } = converter;
@@ -73,8 +75,7 @@ export function aggregateJsonOutput(
       return [key, jsonSchemaDocument(converter.convert(type, `${name}.${group}[${JSON.stringify(key)}]`, declaration), options.target)];
     }));
   if (options.includeState !== false && !state) throw new Error(`${name}.state: missing resolved initialState`);
-  const stateSymbol = checker.getPropertyOfType(aggregate, 'initialState');
-  const stateDeclaration = stateSymbol?.valueDeclaration ?? stateSymbol?.declarations?.[0];
+  const stateDeclaration = declarations?.state;
   const output = {
     commands: convertMap(commands, 'commands', creators),
     events: convertMap(events, 'events', projectors),

@@ -17,7 +17,9 @@ import {
   type SagaAggregateState,
   type SagaObserveSourceEventCommandPayload
 } from './SagaAggregate';
-import { toCamelCase } from '@redemeine/aggregate';
+import { toCamelCase, type AggregateStateView } from '@redemeine/aggregate';
+
+type SagaAggregateStateView = AggregateStateView<SagaAggregateState>;
 
 export type SagaResponseHandlerTokenBindings = Record<string, { phase: 'response' | 'error' | 'retry' }>;
 
@@ -78,7 +80,7 @@ export interface SagaExecutionBridgeDispatchResult<TState> {
   readonly intents: readonly SagaIntent[];
   readonly adapterResults: readonly SagaRuntimeReferenceFlowResult[];
   readonly sagaState: TState | undefined;
-  readonly aggregateState: SagaAggregateState;
+  readonly aggregateState: SagaAggregateStateView;
 }
 
 export interface CreateSagaExecutionBridgeOptions<TState> {
@@ -88,8 +90,8 @@ export interface CreateSagaExecutionBridgeOptions<TState> {
   readonly adapters?: SagaRuntimeReferenceAdapters;
   readonly getSagaState?: (sagaId: string) => TState | undefined;
   readonly setSagaState?: (sagaId: string, state: TState) => void;
-  readonly getAggregateState?: (sagaId: string) => SagaAggregateState | undefined;
-  readonly setAggregateState?: (sagaId: string, state: SagaAggregateState) => void;
+  readonly getAggregateState?: (sagaId: string) => SagaAggregateStateView | undefined;
+  readonly setAggregateState?: (sagaId: string, state: SagaAggregateStateView) => void;
 }
 
 type RuntimeSagaHandler<TState> = (
@@ -166,7 +168,7 @@ export function createSagaExecutionBridge<TState>(
 ): {
   readonly adapters: SagaRuntimeReferenceAdapters;
   getSagaState: (sagaId: string) => TState | undefined;
-  getAggregateState: (sagaId: string) => SagaAggregateState;
+  getAggregateState: (sagaId: string) => SagaAggregateStateView;
   dispatch: (input: SagaExecutionBridgeDispatchInput) => Promise<SagaExecutionBridgeDispatchResult<TState>>;
 } {
   const sagaAggregate = options.sagaAggregate ?? createSagaAggregate({ aggregateName: 'saga' });
@@ -174,7 +176,7 @@ export function createSagaExecutionBridge<TState>(
   const tokenBindings = createTokenBindings(options.definition as SagaDefinitionLike<unknown>);
 
   const sagaStateById = new Map<string, TState>();
-  const aggregateStateById = new Map<string, SagaAggregateState>();
+  const aggregateStateById = new Map<string, SagaAggregateStateView>();
   const intentSequenceBySaga = new Map<string, number>();
 
   const getSagaState = (sagaId: string): TState | undefined => sagaStateById.get(sagaId) ?? options.getSagaState?.(sagaId);
@@ -184,18 +186,18 @@ export function createSagaExecutionBridge<TState>(
     options.setSagaState?.(sagaId, state);
   };
 
-  const getAggregateState = (sagaId: string): SagaAggregateState => {
+  const getAggregateState = (sagaId: string): SagaAggregateStateView => {
     return aggregateStateById.get(sagaId)
       ?? options.getAggregateState?.(sagaId)
       ?? sagaAggregate.initialState;
   };
 
-  const setAggregateState = (sagaId: string, state: SagaAggregateState): void => {
+  const setAggregateState = (sagaId: string, state: SagaAggregateStateView): void => {
     aggregateStateById.set(sagaId, state);
     options.setAggregateState?.(sagaId, state);
   };
 
-  const applyAggregateCommand = (sagaId: string, command: { type: string; payload: unknown }): SagaAggregateState => {
+  const applyAggregateCommand = (sagaId: string, command: { type: string; payload: unknown }): SagaAggregateStateView => {
     const currentState = getAggregateState(sagaId);
     const events = sagaAggregate.process(currentState, command);
 
@@ -208,7 +210,7 @@ export function createSagaExecutionBridge<TState>(
     return nextState;
   };
 
-  const ensureAggregateInstance = (sagaId: string, sagaType: string): SagaAggregateState => {
+  const ensureAggregateInstance = (sagaId: string, sagaType: string): SagaAggregateStateView => {
     const current = getAggregateState(sagaId);
     if (current.id) {
       return current;

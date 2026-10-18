@@ -9,6 +9,6 @@
       "@redemeine/kernel": ["../kernel/src/index.ts"]
     }
   },
-  "files": ["test/dx-contract.types.ts", "test/Depot.contract.compile.ts"],
+  "files": ["test/dx-contract.types.ts", "test/Depot.contract.compile.ts", "test/aggregatePlugins.contract.compile.ts"],
   "include": []
 }

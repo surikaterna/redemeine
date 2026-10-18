@@ -2,6 +2,7 @@ import * as ts from 'typescript';
 import type { SchemaPolicy } from './schemaConfig';
 import { schemaReference } from './schemaReference';
 import { schemaComposition } from './schemaComposition';
+import { containsSchema } from './schemaProvenance';
 
 export function requireStructuralJson(policy: SchemaPolicy): void {
     if (policy.mode === 'zod-first') throw new Error('zod-first requires linked Zod output; compiler-only JSON cannot execute authored schemas. Generate Zod/registry maps and use z.toJSONSchema on those values.');
@@ -10,7 +11,7 @@ export function requireStructuralJson(policy: SchemaPolicy): void {
 /** Refuse lossy JSON extraction when the declaration graph contains an authored Zod schema. */
 export function assertStructuralJson(checker: ts.TypeChecker, type: ts.Type, path: string, declaration?: ts.Node,
     maxDepth = 60, seen = new Set<ts.Type>(), depth = 0): void {
-    if (schemaReference(checker, type, declaration) || schemaComposition(checker, type, declaration)) {
+    if (containsSchema(checker, declaration ?? type.aliasSymbol?.declarations?.[0]) || schemaReference(checker, type, declaration) || schemaComposition(checker, type, declaration)) {
         throw new Error(`${path}: existing Zod schema requires linked Zod/registry output; compiler-only JSON would discard its constraints`);
     }
     if (seen.has(type)) return;

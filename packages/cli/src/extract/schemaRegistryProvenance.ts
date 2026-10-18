@@ -68,7 +68,7 @@ function declarationEvidence(node: ts.Node, cache: Map<string, string | undefine
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
     if (!ts.isInterfaceDeclaration(current) && !ts.isTypeAliasDeclaration(current)) continue;
     const name = current.name.text;
-    if (packageId === '@redemeine/aggregate' && name === 'BuiltAggregate') return { kind: 'aggregate', commit: false };
+    if (packageId === '@redemeine/aggregate' && ['BuiltAggregate', 'DecoratedAggregate'].includes(name)) return { kind: 'aggregate', commit: false };
     if (packageId !== '@redemeine/aggregate' && ['ProjectionDefinition', 'ProjectionCommitDefinition'].includes(name)) {
       return { kind: 'projection', commit: name === 'ProjectionCommitDefinition' };
     }
@@ -79,6 +79,10 @@ function declarationEvidence(node: ts.Node, cache: Map<string, string | undefine
       if (ts.isPropertySignature(member) && member.name.getText() === 'build') return { kind: 'aggregate', commit: false };
     }
   }
+}
+
+export function canonicalAggregateDeclaration(node: ts.Node): boolean {
+  return declarationEvidence(node, new Map())?.kind === 'aggregate';
 }
 
 export function definitionEvidence(checker: ts.TypeChecker, symbol: ts.Symbol, type: ts.Type,

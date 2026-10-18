@@ -1,4 +1,5 @@
-import { type Command, type Event, type ReadonlyDeep } from '@redemeine/kernel';
+import { type Command, type Event } from '@redemeine/kernel';
+import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import { MirageCore, assertEventCount } from './MirageCore';
 import { hydrateStateFromEvents } from './hydration';
 import { createProxyContext } from './proxy/deepProxy';
@@ -25,6 +26,12 @@ export function createMirage<B extends MirageBuilder>(builder: B & NoMirageColli
   // These correlated state/process/apply types originate from the same built aggregate.
   const runtime = builder as unknown as RuntimeBuilder<State>;
   const state = cloneState(setup?.snapshot ?? builder.initialState) as State;
+  try {
+    builder.validateState?.(state);
+  } catch (error) {
+    if (setup?.events) return Promise.reject(error);
+    throw error;
+  }
   validateMirageNames(builder, state);
   const plugins = [...builderPlugins(builder), ...erasePlugins(setup?.plugins ?? [])];
   const make = (current: State, version: number): MirageOf<B> => {

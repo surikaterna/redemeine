@@ -1,4 +1,5 @@
-import type { AggregateHooks, Command, Event, RedemeinePlugin } from '@redemeine/kernel';
+import type { Command, Event, RedemeinePlugin } from '@redemeine/kernel';
+import type { AggregateStateView } from '@redemeine/aggregate';
 import type { MountMetadata } from './mirage.types';
 
 /** Existential input shape; concrete builder generics are retained by MirageOf. */
@@ -7,6 +8,7 @@ export interface MirageBuilder {
   initialState: object;
   process: (...args: never[]) => Event[];
   apply: (...args: never[]) => unknown;
+  validateState?(state: unknown): void;
   commandCreators: Record<string, (...args: never) => Command<unknown, string>>;
   selectors?: object;
   mounts?: Record<string, MountMetadata>;
@@ -17,7 +19,13 @@ export interface RuntimeBuilder<S> {
   initialState: S;
   process(state: S, command: Command<unknown, string>): Event[];
   apply(state: S, event: Event): S;
-  hooks?: AggregateHooks<S>;
+  prepareCommand?(state: S, command: Command<unknown, string>): Command<unknown, string>;
+  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
+  hooks?: {
+    onBeforeCommand?: (command: Command<unknown, string>, state: AggregateStateView<S>) => void;
+    onAfterCommand?: (command: Command<unknown, string>, events: Event[], state: AggregateStateView<S>) => void;
+    onEventApplied?: (event: Event, state: AggregateStateView<S>) => void;
+  };
   metadata?: {
     events?: Record<string, { meta?: Record<string, unknown> }>;
     commands?: Record<string, { meta?: Record<string, unknown> }>;
@@ -28,6 +36,11 @@ export type RuntimeExtensions = { meta: Record<string, unknown>; intents: Record
 export type RuntimePlugin = RedemeinePlugin<RuntimeExtensions>;
 
 export function erasePlugins(plugins: readonly unknown[]): RuntimePlugin[] {
+  for (const plugin of plugins) {
+    if (readProperty(plugin, 'kind') === 'aggregate-event') {
+      throw new TypeError('Attach aggregate event plugins via Aggregate.plugins(...) or built.withPlugins(...), not host setup.plugins.');
+    }
+  }
   // Hooks share the builder's metadata/intent contracts; heterogeneous plugin extensions are erased only here.
   return [...plugins] as RuntimePlugin[];
 }

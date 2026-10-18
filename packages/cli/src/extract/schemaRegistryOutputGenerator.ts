@@ -16,8 +16,8 @@ function renderHandlers(converter: Converter, handlers: Map<string, ts.Type>, pa
   ).join(', ')}}`;
 }
 
-function renderEntry(converter: Converter, definition: RegistryDefinition): string {
-   const state = converter.convert(definition.state, `${definition.path}.initialState`, definition.declarations?.state);
+function renderEntry(converter: Converter, definition: RegistryDefinition, stateConverter = converter): string {
+   const state = stateConverter.convert(definition.state, `${definition.path}.initialState`, definition.declarations?.state);
   const value = definition.kind === 'projection' ? state :
     `{state: ${state}, commands: ${renderHandlers(converter, definition.commands, `${definition.path}.commands`, definition.declarations?.commands)}, events: ${renderHandlers(converter, definition.events, `${definition.path}.events`, definition.declarations?.events)}}`;
   return `  [${JSON.stringify(definition.name)}, ${value}]`;
@@ -28,8 +28,12 @@ export function generateSchemaRegistryOutput(checker: ts.TypeChecker, definition
   const imports: string[] = [];
   const rendered = sorted.map((definition, index) => {
     const linked = context && definition.entry ? schemaAwareConversion(context.program, schemaPolicyForEntry(definition.entry), context.outFile, `_registry${index}_`, true) : undefined;
-    const value = renderEntry(linked ?? new ProjectionTypeConverter(checker, true), definition);
+    const model = definition.canonicalModel && context && definition.entry
+      ? schemaAwareConversion(context.program, schemaPolicyForEntry(definition.entry), context.outFile, `_model${index}_`, true, true) : undefined;
+    const stateConverter = model ?? new ProjectionTypeConverter(checker, true, 60, undefined, !!definition.canonicalModel);
+    const value = renderEntry(linked ?? new ProjectionTypeConverter(checker, true), definition, model ?? (linked && !definition.canonicalModel ? linked : stateConverter));
     if (linked) imports.push(...linked.imports);
+    if (model) imports.push(...model.imports);
     return { kind: definition.kind, value };
   });
   const aggregate = rendered.filter(item => item.kind === 'aggregate').map(item => item.value);

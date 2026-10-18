@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "test/typefixtures/envelopes/*.ts", "test/aggregatePluginEnvelopeBuilder.test.ts", "test/aggregatePluginEnvelope.test.ts"]
+}

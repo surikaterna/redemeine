@@ -53,8 +53,12 @@ export type MirrorableAggregateConstraint = ProjectionAggregateSource & {
   applyToDraft: MirrorableAggregateSource['applyToDraft'];
 };
 
-/** Extract the state type from an aggregate that exposes initialState */
-export type AggregateStateOf<T> = T extends { initialState: infer S } ? S : never;
+/** Prefer the aggregate model marker; structural sources fall back to initialState without an aggregate dependency. */
+export type AggregateStateOf<T> = T extends unknown
+  ? '__stateType' extends keyof T
+    ? T extends { readonly __stateType?: infer S } ? S : never
+    : T extends { initialState: infer S } ? S : never
+  : never;
 
 /** Extract aggregate event payloads from built aggregates or explicit definitions. */
 export type AggregateEventPayloadMap<TAggregate> = [EventProjectorsOf<TAggregate>] extends [never]

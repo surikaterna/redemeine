@@ -5,7 +5,7 @@ import type { SchemaPolicy } from './schemaConfig';
 import { schemaComposition } from './schemaComposition';
 
 /** Registry/projection structural restrictions remain; authored schemas take precedence. */
-export function schemaAwareConversion(program: ts.Program, policy: SchemaPolicy, outFile: string, prefix = '', sortProperties = false) {
+export function schemaAwareConversion(program: ts.Program, policy: SchemaPolicy, outFile: string, prefix = '', sortProperties = false, aggregateModel = false) {
     const references = new TypeToZodConverter(program.getTypeChecker(), program, 'string', {}, outFile, policy, prefix);
     const resolveSchema = (type: ts.Type, declaration?: ts.Node): string | null => {
         const schema = references.resolveExistingSchema(type, declaration);
@@ -15,7 +15,7 @@ export function schemaAwareConversion(program: ts.Program, policy: SchemaPolicy,
         return schema;
     };
     const structural = new ProjectionTypeConverter(program.getTypeChecker(), sortProperties, policy.maxDepth,
-        resolveSchema);
+        resolveSchema, aggregateModel);
     return {
         imports: references.imports,
         convert(type: ts.Type, path: string, declaration?: ts.Node): string {
