@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { defaultMaxProvenanceDepth } from './provenanceTraversal';
 
 export type SchemaMode = 'zod-first' | 'types-first';
-export interface SchemaPolicy { mode: SchemaMode; maxDepth: number }
-export const defaultSchemaPolicy: SchemaPolicy = { mode: 'zod-first', maxDepth: 60 };
+export interface SchemaPolicy { mode: SchemaMode; maxDepth: number; maxProvenanceDepth?: number }
+export const defaultSchemaPolicy: SchemaPolicy = { mode: 'zod-first', maxDepth: 60, maxProvenanceDepth: defaultMaxProvenanceDepth };
 
 function record(value: unknown, label: string): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -13,14 +14,18 @@ function record(value: unknown, label: string): Record<string, unknown> {
 export function validateSchemaPolicy(value: unknown, label = 'redemeine.schemas'): SchemaPolicy {
     if (value === undefined) return { ...defaultSchemaPolicy };
     const options = record(value, label);
-    for (const key of Object.keys(options)) if (!['mode', 'maxDepth'].includes(key)) throw new Error(`${label}: unknown option ${key}`);
+    for (const key of Object.keys(options)) if (!['mode', 'maxDepth', 'maxProvenanceDepth'].includes(key)) throw new Error(`${label}: unknown option ${key}`);
     const mode = options.mode === undefined ? defaultSchemaPolicy.mode : options.mode;
     const maxDepth = options.maxDepth === undefined ? defaultSchemaPolicy.maxDepth : options.maxDepth;
     if (mode !== 'zod-first' && mode !== 'types-first') throw new Error(`${label}.mode must be zod-first or types-first`);
     if (typeof maxDepth !== 'number' || !Number.isSafeInteger(maxDepth) || maxDepth < 1 || maxDepth > 256) {
         throw new Error(`${label}.maxDepth must be an integer from 1 to 256`);
     }
-    return { mode, maxDepth };
+    const maxProvenanceDepth = options.maxProvenanceDepth === undefined ? defaultMaxProvenanceDepth : options.maxProvenanceDepth;
+    if (typeof maxProvenanceDepth !== 'number' || !Number.isSafeInteger(maxProvenanceDepth) || maxProvenanceDepth < 1 || maxProvenanceDepth > 1024) {
+        throw new Error(`${label}.maxProvenanceDepth must be an integer from 1 to 1024`);
+    }
+    return { mode, maxDepth, maxProvenanceDepth };
 }
 
 /** The closest owning package wins, including when commands run from a monorepo root. */

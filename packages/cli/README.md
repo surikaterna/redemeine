@@ -69,7 +69,8 @@ the same configuration:
   "redemeine": {
     "schemas": {
       "mode": "zod-first",
-      "maxDepth": 60
+      "maxDepth": 60,
+      "maxProvenanceDepth": 256
     }
   }
 }
@@ -82,6 +83,22 @@ properties, arrays and composite conversions consume structural depth, not just
 visible object nesting. Recursive expansion is diagnosed separately. Neither
 case silently becomes `z.any()`. Imported authored schemas are referenced rather
 than expanded, so their internal validation is not truncated by this limit.
+
+`maxProvenanceDepth` independently limits declaration/alias resolution. It accepts
+an integer from 1 to 1024, defaulting to 256. Each provenance traversal starts at
+depth one; following an unresolved syntax/alias edge increases depth, while sibling
+branches do not consume each other's allowance. Already visited nodes are reused
+to terminate cycles and shared branches. The graph walkers use explicit stacks,
+so wide interfaces are not rejected just for containing more than 256 syntax nodes.
+Declaration diagnostics and schema-reference checks use this limit; structural
+conversion and inheritance checks retain `maxDepth`.
+
+For an unusually deep alias chain, set `"maxProvenanceDepth": 512` in the entry's
+owning package. This setting applies to Aggregate, Projection and registry
+extraction (including each alias route), and to the compiler-only JSON path.
+Exceeding the configured limit fails before output writes; increasing it does not
+allow unsupported schema-derived generics, discard authored refinements, or turn
+recursive structural types into `z.any()`.
 
 **Zod-first:** each selected command payload, event payload and included state must
 resolve to an existing importable Zod schema. Generated maps import the originals;

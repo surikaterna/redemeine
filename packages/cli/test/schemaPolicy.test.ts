@@ -29,13 +29,13 @@ export const aggregate = createAggregate('demo', { value: 0 }).events({})
 
 test('nearest package owns policy; missing settings default to zod-first and maxDepth 60', () => {
     const options = setup(structural);
-    expect(schemaPolicyForEntry(options.entry)).toEqual({ mode: 'zod-first', maxDepth: 60 });
+    expect(schemaPolicyForEntry(options.entry)).toEqual({ mode: 'zod-first', maxDepth: 60, maxProvenanceDepth: 256 });
     writeFileSync(options.outFile, 'sentinel');
     expect(() => extractZodSchemas(options)).toThrow(/no importable Zod schema/);
     expect(readFileSync(options.outFile, 'utf8')).toBe('sentinel');
     mkdirSync(join(directory, 'nested'));
     writeFileSync(join(directory, 'nested/package.json'), JSON.stringify({ redemeine: { schemas: { mode: 'types-first', maxDepth: 4 } } }));
-    expect(schemaPolicyForEntry(join(directory, 'nested/source.ts'))).toEqual({ mode: 'types-first', maxDepth: 4 });
+    expect(schemaPolicyForEntry(join(directory, 'nested/source.ts'))).toEqual({ mode: 'types-first', maxDepth: 4, maxProvenanceDepth: 256 });
 });
 
 test.each([0, -1, 1.5, 257, '60', null])('invalid maxDepth %j fails configuration', maxDepth => {

@@ -29,11 +29,11 @@ export function extractProjectionSchemas(options: ExtractProjectionOptions): voi
   const path = `${options.projectionExport}.initialState`;
   if (options.format === 'json-schema') {
     requireStructuralJson(policy);
-    assertStructuralJson(program.getTypeChecker(), state, path, declaration, policy.maxDepth);
+    assertStructuralJson(program.getTypeChecker(), state, path, declaration, policy.maxDepth, policy.maxProvenanceDepth);
   }
   const zod = converter.convert(state, path, declaration);
   const output = options.format === 'json-schema'
-    ? `${JSON.stringify(jsonSchemaDocument(new JsonSchemaConverter(program, policy.maxDepth).convert(state, path), options.target), null, 2)}\n`
+    ? `${JSON.stringify(jsonSchemaDocument(new JsonSchemaConverter(program, policy.maxDepth, policy.maxProvenanceDepth).convert(state, path), options.target), null, 2)}\n`
     : generateProjectionOutput(zod, [...converter.imports]);
   const outPath = resolve(options.outFile);
   mkdirSync(dirname(outPath), { recursive: true });
