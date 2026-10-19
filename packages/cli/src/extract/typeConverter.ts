@@ -5,6 +5,7 @@ import { intersectionSchema } from './intersectionSchema';
 import { objectSchema, tupleSchema } from './zodContainers';
 import { schemaReference } from './schemaReference';
 import type { SchemaPolicy } from './schemaConfig';
+import { defaultMaxProvenanceDepth } from './provenanceTraversal';
 import { JsonSchemaConverter } from './jsonSchemaConverter';
 import { validateHeritage } from './jsonSchemaObjects';
 import { schemaComposition, type SchemaComposition } from './schemaComposition';
@@ -38,6 +39,8 @@ export class TypeToZodConverter {
         private readonly bindingPrefix = ''
     ) {}
 
+    get maxProvenanceDepth(): number { return this.policy.maxProvenanceDepth ?? defaultMaxProvenanceDepth; }
+
     convert(type: ts.Type, depth = 0, path = 'schema', declaration?: ts.Node): string {
         if (this.policy.mode === 'types-first' && type.aliasSymbol && this.typeOverrides[type.aliasSymbol.name]) {
             return this.convertNamedType(type, depth, path)!;
@@ -45,12 +48,12 @@ export class TypeToZodConverter {
         const existing = this.resolveExistingSchema(type, declaration);
         if (existing) return existing;
         if (this.policy.mode === 'zod-first') return this.fail(type, path, 'no importable Zod schema; export a schema-derived type or opt in to types-first');
-        assertSupportedGenerics(this.checker, type, path, declaration);
+        assertSupportedGenerics(this.checker, type, path, declaration, this.maxProvenanceDepth);
         if ('intrinsicName' in type && type.intrinsicName === 'error') return this.fail(type, path, 'unresolved compiler-error type');
         if (depth > this.policy.maxDepth) return this.fail(type, path, `structural depth exceeds maxDepth (${this.policy.maxDepth})`);
         if (this.active.has(type)) return this.fail(type, path, 'recursive type requires an existing Zod schema');
         this.validate(type, path, declaration);
-        const composition = schemaComposition(this.checker, type, declaration);
+        const composition = schemaComposition(this.checker, type, declaration, this.maxProvenanceDepth);
         if (composition) return this.convertComposition(type, composition, depth, path);
         this.active.add(type);
         try {
@@ -95,7 +98,7 @@ export class TypeToZodConverter {
     private validate(type: ts.Type, path: string, declaration?: ts.Node): void {
         const options = this.program.getCompilerOptions();
         if (!(options.strictNullChecks ?? options.strict)) this.fail(type, path, 'enable strictNullChecks (or strict) for faithful Zod schemas');
-        const diagnostics = this.diagnostics ??= new JsonSchemaConverter(this.program, this.policy.maxDepth);
+        const diagnostics = this.diagnostics ??= new JsonSchemaConverter(this.program, this.policy.maxDepth, this.maxProvenanceDepth);
         const origin = declaration ?? type.aliasSymbol?.declarations?.[0];
         diagnostics.validateDeclaration(origin, path);
         if (type.flags & ts.TypeFlags.Any) diagnostics.assertArbitraryDeclaration(type, path, origin);
@@ -134,7 +137,7 @@ export class TypeToZodConverter {
      * Cache by annotation query: equal compiler types need not share an authored schema.
      */
     resolveExistingSchema(type: ts.Type, declaration?: ts.Node): string | null {
-        const query = schemaReference(this.checker, type, declaration);
+        const query = schemaReference(this.checker, type, declaration, this.maxProvenanceDepth);
         if (query) {
             const cached = this.schemaReferences.get(query);
             if (cached) return cached;
@@ -167,7 +170,7 @@ export class TypeToZodConverter {
         if (this.checker.isTupleType(type)) return tupleSchema(type as ts.TypeReference, depth, path, this, declaration);
         if (this.isArrayType(type)) {
             const el = this.getArrayElementType(type);
-            return el ? `z.array(${this.convert(el, depth + 1, `${path}[]`, arrayAnnotation(this.checker, declaration ?? type.aliasSymbol?.declarations?.[0]))})` : this.fail(type, path, 'unresolved array element');
+            return el ? `z.array(${this.convert(el, depth + 1, `${path}[]`, arrayAnnotation(this.checker, declaration ?? type.aliasSymbol?.declarations?.[0], this.maxProvenanceDepth))})` : this.fail(type, path, 'unresolved array element');
         }
 
         if (type.flags & ts.TypeFlags.Object) return objectSchema(type, depth, path, this, declaration);
@@ -228,11 +231,11 @@ export class TypeToZodConverter {
         }
 
         if (nonNull.length === 1 && nonNull[0]) {
-            const base = this.convert(nonNull[0], depth + 1, path, branchAnnotation(this.checker, nonNull[0], declaration));
+            const base = this.convert(nonNull[0], depth + 1, path, branchAnnotation(this.checker, nonNull[0], declaration, this.maxProvenanceDepth));
             return hasNull ? `${base}.nullable()` : base;
         }
 
-        const members = nonNull.map(t => this.convert(t, depth + 1, path, branchAnnotation(this.checker, t, declaration)));
+        const members = nonNull.map(t => this.convert(t, depth + 1, path, branchAnnotation(this.checker, t, declaration, this.maxProvenanceDepth)));
         const base = `z.union([${members.join(', ')}])`;
         return hasNull ? `${base}.nullable()` : base;
     }

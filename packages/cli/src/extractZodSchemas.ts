@@ -69,9 +69,9 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     const declarations = aggregateSchemaDeclarations(program, aggType, resolve(options.entry), options.aggregateExport);
     if (options.format === 'json-schema') {
         requireStructuralJson(policy);
-        for (const [key, type] of commandPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.commands.${key}`, declarations.commands.get(key), policy.maxDepth);
-        for (const [key, type] of eventPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.events.${key}`, declarations.events.get(key), policy.maxDepth);
-        if (stateType && options.includeState !== false) assertStructuralJson(checker, stateType, `${options.aggregateExport}.state`, declarations.state, policy.maxDepth);
+        for (const [key, type] of commandPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.commands.${key}`, declarations.commands.get(key), policy.maxDepth, policy.maxProvenanceDepth);
+        for (const [key, type] of eventPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.events.${key}`, declarations.events.get(key), policy.maxDepth, policy.maxProvenanceDepth);
+        if (stateType && options.includeState !== false) assertStructuralJson(checker, stateType, `${options.aggregateExport}.state`, declarations.state, policy.maxDepth, policy.maxProvenanceDepth);
     }
 
     const converter = new TypeToZodConverter(
@@ -79,7 +79,7 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     );
 
     const output = options.format === 'json-schema'
-        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, { ...options, maxDepth: policy.maxDepth }, declarations)
+        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, { ...options, maxDepth: policy.maxDepth, maxProvenanceDepth: converter.maxProvenanceDepth }, declarations)
         : generateOutput(
         converter, commandPayloads, eventPayloads, stateType, { ...options, declarations,
             source: { entry: relative(dirname(resolve(options.tsconfig)), resolve(options.entry)).split(sep).join('/'), export: options.aggregateExport } }

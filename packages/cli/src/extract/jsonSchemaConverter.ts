@@ -1,5 +1,6 @@
 import * as ts from 'typescript';
 import { convertJsonObject, validateHeritage } from './jsonSchemaObjects';
+import { defaultMaxProvenanceDepth, searchProvenance, syntaxChildren } from './provenanceTraversal';
 
 export type JsonSchema = boolean | {
   $schema?: string;
@@ -19,7 +20,7 @@ export class JsonSchemaConverter {
   private declarationProgram?: ts.Program;
   readonly checker: ts.TypeChecker;
 
-  constructor(readonly program: ts.Program, readonly maxDepth = 60) {
+  constructor(readonly program: ts.Program, readonly maxDepth = 60, readonly maxProvenanceDepth = defaultMaxProvenanceDepth) {
     this.checker = program.getTypeChecker();
     const options = program.getCompilerOptions();
     if (!(options.strictNullChecks ?? options.strict)) throw new Error('JSON Schema extraction requires strictNullChecks (or strict)');
@@ -92,19 +93,20 @@ export class JsonSchemaConverter {
     }
   }
 
-  private provesArbitrary(node: ts.TypeNode, type: ts.Type, path: string, seen = new Set<ts.Node>()): boolean {
-    if (seen.has(node) || seen.size > this.maxDepth) return false;
-    seen.add(node);
-    this.validateDeclaration(node, path);
-    if (node.kind === ts.SyntaxKind.AnyKeyword || node.kind === ts.SyntaxKind.UnknownKeyword) {
-      return this.checker.getTypeAtLocation(node) === type;
-    }
-    if (ts.isTypeReferenceNode(node)) {
-      const symbol = this.checker.getSymbolAtLocation(node.typeName);
-      const resolved = symbol && (symbol.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(symbol) : symbol);
-      if (resolved?.declarations?.some(decl => ts.isTypeAliasDeclaration(decl) && this.provesArbitrary(decl.type, type, path, seen))) return true;
-    }
-    return ts.forEachChild(node, child => ts.isTypeNode(child) && this.provesArbitrary(child, type, path, seen) ? true : undefined) ?? false;
+  private provesArbitrary(root: ts.TypeNode, type: ts.Type, path: string): boolean {
+    return searchProvenance([root], node => {
+      this.validateDeclaration(node, path);
+      if (node.kind === ts.SyntaxKind.AnyKeyword || node.kind === ts.SyntaxKind.UnknownKeyword) {
+        return this.checker.getTypeAtLocation(node) === type ? { value: true } : {};
+      }
+      const aliases: ts.TypeNode[] = [];
+      if (ts.isTypeReferenceNode(node)) {
+        const symbol = this.checker.getSymbolAtLocation(node.typeName);
+        const resolved = symbol && (symbol.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(symbol) : symbol);
+        aliases.push(...resolved?.declarations?.filter(ts.isTypeAliasDeclaration).map(decl => decl.type) ?? []);
+      }
+      return { children: [...aliases, ...syntaxChildren(node).filter(ts.isTypeNode)] };
+    }, this.maxProvenanceDepth, path) ?? false;
   }
 
   private annotation(node?: ts.Node): ts.TypeNode | undefined {
@@ -115,13 +117,14 @@ export class JsonSchemaConverter {
     return undefined;
   }
 
-  validateDeclaration(node: ts.Node | undefined, path: string, seen = new Set<ts.Node>(), depth = 0): void {
+  validateDeclaration(node: ts.Node | undefined, path: string): void {
     const annotation = this.annotation(node);
-    if (!annotation || seen.has(annotation)) return;
-    if (depth > this.maxDepth) throw new Error(`${path}: type declaration depth exceeds maxDepth (${this.maxDepth})`);
-    seen.add(annotation);
-    this.validateDiagnosticScope(annotation, path);
-    this.validateReferences(annotation, path, seen, depth);
+    const paths = new Map<ts.Node, string>();
+    searchProvenance(annotation ? [annotation] : [], current => {
+      const currentPath = paths.get(current) ?? path;
+      this.validateDiagnosticScope(current, currentPath);
+      return { children: this.validateReferences(current, currentPath, paths) };
+    }, this.maxProvenanceDepth, path);
   }
 
   validateDataDeclaration(node: ts.Node, path: string): void {
@@ -175,8 +178,9 @@ export class JsonSchemaConverter {
     return ts.createProgram({ rootNames: this.program.getSourceFiles().map(source => source.fileName), options, host });
   }
 
-  private validateReferences(annotation: ts.TypeNode, path: string, seen: Set<ts.Node>, depth: number): void {
-    const visit = (node: ts.Node): void => {
+  private validateReferences(annotation: ts.Node, path: string, paths: Map<ts.Node, string>): ts.TypeNode[] {
+    const aliases: ts.TypeNode[] = [];
+    searchProvenance([annotation], node => {
       if (ts.isTypeReferenceNode(node) || ts.isTypeQueryNode(node)) {
         const referencePath = this.diagnosticPath(annotation, node.getStart(), path);
         const type = this.checker.getTypeAtLocation(node);
@@ -185,12 +189,14 @@ export class JsonSchemaConverter {
         const symbol = this.checker.getSymbolAtLocation(ts.isTypeReferenceNode(node) ? node.typeName : node.exprName);
         const resolved = symbol && (symbol.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(symbol) : symbol);
         for (const declaration of resolved?.declarations ?? []) {
-          if (ts.isTypeAliasDeclaration(declaration)) this.validateDeclaration(declaration, referencePath, seen, depth + 1);
+          if (!ts.isTypeAliasDeclaration(declaration)) continue;
+          if (!paths.has(declaration.type)) paths.set(declaration.type, referencePath);
+          aliases.push(declaration.type);
         }
       }
-      ts.forEachChild(node, visit);
-    };
-    visit(annotation);
+      return { children: syntaxChildren(node) };
+    }, this.maxProvenanceDepth, path);
+    return aliases;
   }
 
   private diagnosticPath(node: ts.Node, position: number, path: string): string {

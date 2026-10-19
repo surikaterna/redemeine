@@ -55,5 +55,31 @@ export function schemaPolicyRegressions(consumer, command, bin) {
   writeFileSync(join(directory, 'schemas.ts'), existing.replace('export const identifier', 'const identifier'));
   assert.throws(() => command(process.execPath, generate('linked')), error => /portable import/.test(`${error.stdout}${error.stderr}`));
   writeFileSync(join(directory, 'schemas.ts'), existing);
+  provenanceDepthChecks(directory, configure, command, bin);
   console.log('Packed package schema policy, linked refinements, gradual migration, depth and export checks PASS');
+}
+
+function provenanceDepthChecks(directory, configure, command, bin) {
+  const fields = Array.from({ length: 160 }, (_, index) => `field${index}: string;`).join('\n');
+  const aliases = Array.from({ length: 48 }, (_, index) => `type Link${index} = ${index === 47 ? '{ value: string }' : `Link${index + 1}`};`).join('\n');
+  writeFileSync(join(directory, 'provenance.ts'), `import { createAggregate } from '@redemeine/aggregate';
+    interface Wide { ${fields} } ${aliases}
+    export const wide = createAggregate<Wide, 'wide'>('wide', {} as Wide).events({}).commands(() => ({})).build();
+    export const deepAliases = createAggregate<Link0, 'aliases'>('aliases', {} as Link0).events({}).commands(() => ({})).build();
+    throw new Error('DOMAIN_EXECUTED');`);
+  const args = name => [bin, 'extract-schemas', '--entry', 'schema-policy/provenance.ts', '--export', name,
+    '--tsconfig', 'schema-policy/tsconfig.json', '--out', 'schema-policy/generated.ts'];
+  configure({ mode: 'types-first', maxDepth: 4, maxProvenanceDepth: 32 });
+  command(process.execPath, args('wide'));
+  const wide = readFileSync(join(directory, 'generated.ts'), 'utf8');
+  assert.match(wide, /field159/);
+  assert.match(wide, /maxProvenanceDepth: 32/);
+  assert.throws(() => command(process.execPath, args('deepAliases')),
+    error => /maxProvenanceDepth \(32\)/.test(`${error.stdout}${error.stderr}`));
+  assert.equal(readFileSync(join(directory, 'generated.ts'), 'utf8'), wide);
+  configure({ mode: 'types-first', maxDepth: 4, maxProvenanceDepth: 128 });
+  command(process.execPath, args('deepAliases'));
+  assert.match(readFileSync(join(directory, 'generated.ts'), 'utf8'), /value: z.string/);
+  command('npx', ['--no-install', 'tsc', '-p', 'schema-policy/tsconfig.json']);
+  console.log('Packed wide/deep provenance and package override checks PASS');
 }

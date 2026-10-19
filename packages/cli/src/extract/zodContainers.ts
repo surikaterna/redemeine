@@ -1,12 +1,13 @@
 import * as ts from 'typescript';
 import { documentationComment, propertyName } from './schemaSource';
-import { schemaReference, typeAnnotation } from './schemaReference';
-import { recordAnnotations } from './schemaProvenance';
+import { schemaReference } from './schemaReference';
+import { recordAnnotations, resolvedAnnotation } from './schemaProvenance';
 import { instantiatedProperty } from './instantiatedProperty';
 
 export interface ZodTraversal {
     checker: ts.TypeChecker;
     program: ts.Program;
+    readonly maxProvenanceDepth?: number;
     convert(type: ts.Type, depth: number, path: string, declaration?: ts.Node): string;
     fail(type: ts.Type, path: string, reason: string): never;
 }
@@ -18,7 +19,8 @@ export function tupleSchema(type: ts.TypeReference, depth: number, path: string,
     if (flags.some((flag, index) => !!(flag & ts.ElementFlags.Variadic) || (!!(flag & ts.ElementFlags.Rest) && index !== flags.length - 1))) {
         return context.fail(type, path, 'only resolved tuples with a trailing rest element are supported');
     }
-    const node = tupleDeclaration(context.checker, declaration) ?? tupleDeclaration(context.checker, type.aliasSymbol?.declarations?.[0]);
+    const node = tupleDeclaration(context.checker, declaration, context.maxProvenanceDepth)
+        ?? tupleDeclaration(context.checker, type.aliasSymbol?.declarations?.[0], context.maxProvenanceDepth);
     const members = elements.map((element, index) => context.convert(element, depth + 1, `${path}[${index}]`, node?.elements[index])
         + ((flags[index]! & ts.ElementFlags.Optional) ? '.optional()' : ''));
     const rest = flags.at(-1)! & ts.ElementFlags.Rest ? members.pop() : undefined;
@@ -41,8 +43,8 @@ export function objectSchema(type: ts.Type, depth: number, path: string, context
     const object = `z.object({\n${fields.join(',\n')}${fields.length ? ',' : ''}\n})`;
     if (!indexes.length) return object;
     const index = indexes[0]!;
-    const annotations = recordAnnotations(checker, declaration ?? type.aliasSymbol?.declarations?.[0]);
-    const origin = schemaReference(checker, index.type, index.declaration) ? index.declaration
+    const annotations = recordAnnotations(checker, declaration ?? type.aliasSymbol?.declarations?.[0], context.maxProvenanceDepth);
+    const origin = schemaReference(checker, index.type, index.declaration, context.maxProvenanceDepth) ? index.declaration
         : annotations?.[1] ?? index.declaration;
     const value = context.convert(index.type, depth + 1, `${path}[string]`, origin);
     const key = annotations?.[0] ? context.convert(index.keyType, depth + 1, `${path}[key]`, annotations[0]) : 'z.string()';
@@ -50,16 +52,9 @@ export function objectSchema(type: ts.Type, depth: number, path: string, context
     return properties.length ? `${object}.catchall(${value})` : `z.record(${key}, ${value})`;
 }
 
-function tupleDeclaration(checker: ts.TypeChecker, declaration?: ts.Node, seen = new Set<ts.Node>()): ts.TupleTypeNode | undefined {
-    const node = typeAnnotation(declaration);
-    if (!node || seen.has(node)) return undefined;
-    seen.add(node);
-    if (ts.isTupleTypeNode(node)) return node;
-    if (ts.isTypeOperatorNode(node) || ts.isParenthesizedTypeNode(node)) return tupleDeclaration(checker, node.type, seen);
-    if (!ts.isTypeReferenceNode(node)) return undefined;
-    const symbol = checker.getSymbolAtLocation(node.typeName);
-    const target = symbol && (symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol);
-    return tupleDeclaration(checker, target?.declarations?.find(ts.isTypeAliasDeclaration), seen);
+function tupleDeclaration(checker: ts.TypeChecker, declaration?: ts.Node, maxProvenanceDepth?: number): ts.TupleTypeNode | undefined {
+    const node = resolvedAnnotation(checker, declaration, maxProvenanceDepth);
+    return node && ts.isTupleTypeNode(node) ? node : undefined;
 }
 
 function propertySchema(property: ts.Symbol, parent: ts.Type, depth: number, path: string, context: ZodTraversal): string {
