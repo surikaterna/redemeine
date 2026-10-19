@@ -7,6 +7,11 @@ import { tmpdir } from 'node:os';
 import { reviewRegressions } from './packedReviewRegressions.mjs';
 import { surgicalRegressions } from './packedSurgicalRegressions.mjs';
 import { jsonSchemaRegressions } from './packedJsonSchema.mjs';
+import { intersectionRegressions } from './packedIntersectionRegressions.mjs';
+import { schemaPolicyRegressions } from './packedSchemaPolicy.mjs';
+import { canonicalModelRegressions } from './packedCanonicalModel.mjs';
+import { packedAggregateDeclarations } from '../../aggregate/test/packedDeclarations.mjs';
+import { schemaReconciliationRegressions } from './packedSchemaReconciliation.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -38,6 +43,7 @@ const tarballs = Object.fromEntries(['kernel', 'aggregate', 'projection', 'cli']
 const dependencies = Object.fromEntries(Object.entries(tarballs).map(([name, path]) => [`@redemeine/${name}`, `file:${path}`]));
 writeFileSync(join(consumer, 'package.json'), JSON.stringify({
   name: 'packed-cli-consumer', private: true, type: 'module',
+  redemeine: { schemas: { mode: 'types-first' } },
   dependencies: { ...dependencies, typescript: '5.9.3', zod: '4.4.3', 'independent-zod': 'npm:zod@4.3.6', vitest: '3.2.4', '@types/node': '24.13.2', ajv: '8.17.1' },
   overrides: { '@redemeine/kernel': `file:${tarballs.kernel}` },
 }));
@@ -49,6 +55,11 @@ const bin = join(consumer, 'node_modules/.bin/redemeine');
 jsonSchemaRegressions(consumer, command, bin);
 reviewRegressions(consumer, command);
 surgicalRegressions(consumer, command, bin);
+intersectionRegressions(consumer, command, bin);
+schemaPolicyRegressions(consumer, command, bin);
+canonicalModelRegressions(consumer, command, bin);
+schemaReconciliationRegressions(consumer, command);
+packedAggregateDeclarations(consumer, command);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   target: 'ES2022', lib: ['ES2022', 'ESNext.Disposable'], module: 'ESNext', moduleResolution: 'Bundler', strict: true,

@@ -2,14 +2,20 @@ import * as ts from 'typescript';
 import { extractCommandPayloads, extractEventPayloads, extractStateType, resolveAggregateType } from './aggregateNavigator';
 import { resolveProjectionState } from './projectionNavigator';
 import type { SchemaRegistrySelection } from '../schemaRegistryManifest';
+import { aggregateSchemaDeclarations, projectionSchemaDeclaration, type SchemaDeclarations } from './schemaDeclarations';
+import { aggregateContract } from './schemaRegistryDefinitionClassifier';
+import { canonicalAggregateDeclaration } from './schemaRegistryProvenance';
 
 export type RegistryDefinition = {
   kind: 'aggregate' | 'projection';
   name: string;
   path: string;
   state: ts.Type;
+  canonicalModel?: boolean;
   commands: Map<string, ts.Type>;
   events: Map<string, ts.Type>;
+  entry?: string;
+  declarations?: SchemaDeclarations;
 };
 
 function symbolType(checker: ts.TypeChecker, symbol: ts.Symbol, path: string): ts.Type {
@@ -45,8 +51,10 @@ export function registryName(checker: ts.TypeChecker, type: ts.Type, selection: 
   return literal;
 }
 
-function validateHandlers(checker: ts.TypeChecker, handlers: ts.Type, path: string, event: boolean): void {
-  resolvedObject(checker, handlers, path);
+function validateHandlers(checker: ts.TypeChecker, handlers: ts.Type, path: string, event: boolean, canonical = false): void {
+  if (canonical && handlers.isIntersection()) {
+    for (const part of handlers.types) resolvedObject(checker, part, path);
+  } else resolvedObject(checker, handlers, path);
   for (const handler of checker.getPropertiesOfType(handlers)) {
     const handlerPath = `${path}[${JSON.stringify(handler.getName())}]`;
     if (handler.flags & ts.SymbolFlags.Optional || handler.escapedName !== ts.escapeLeadingUnderscores(handler.getName())) {
@@ -75,19 +83,29 @@ function eventParameter(checker: ts.TypeChecker, signature: ts.Signature, path: 
 
 function aggregateMembers(program: ts.Program, type: ts.Type, path: string) {
   const checker = program.getTypeChecker();
-  resolvedObject(checker, type, path);
+  if (type.isIntersection()) {
+    const declarations = checker.getPropertyOfType(type, 'initialState')?.declarations ?? [];
+    if (!declarations.length || declarations.some(node => !canonicalAggregateDeclaration(node)) ||
+        checker.getIndexInfosOfType(type).length || type.getCallSignatures().length || type.getConstructSignatures().length) {
+      throw new Error(`${path}: expected a canonical aggregate build intersection`);
+    }
+    aggregateContract(checker, type, path);
+  } else resolvedObject(checker, type, path);
   const state = property(checker, type, 'initialState', path);
   if (checker.getSignaturesOfType(state, ts.SignatureKind.Call).length) throw new Error(`${path}: expected aggregate initialState value, not factory`);
   const commands = property(checker, type, 'commandCreators', path);
   const pure = property(checker, type, 'pure', path);
   const events = property(checker, pure, 'eventProjectors', `${path}.pure`);
+  const eventDeclarations = checker.getPropertyOfType(pure, 'eventProjectors')?.declarations ?? [];
+  const canonicalEvents = eventDeclarations.length > 0 && eventDeclarations.every(canonicalAggregateDeclaration);
   validateHandlers(checker, commands, `${path}.commandCreators`, false);
-  validateHandlers(checker, events, `${path}.pure.eventProjectors`, true);
+  validateHandlers(checker, events, `${path}.pure.eventProjectors`, true, canonicalEvents);
   const node = program.getSourceFiles()[0];
   if (!node) throw new Error(`${path}: missing compiler source`);
   const extractedState = extractStateType(checker, type, node);
   if (!extractedState) throw new Error(`${path}: unresolved initialState`);
-  return { state: extractedState, commands: extractCommandPayloads(checker, type, node), events: extractEventPayloads(checker, type, node) };
+   return { state: extractedState, canonicalModel: !!checker.getPropertyOfType(type, '__stateType'),
+     commands: extractCommandPayloads(checker, type, node), events: extractEventPayloads(checker, type, node) };
 }
 
 export function navigateRegistries(program: ts.Program, selections: readonly SchemaRegistrySelection[]): RegistryDefinition[] {
@@ -104,6 +122,9 @@ export function navigateRegistries(program: ts.Program, selections: readonly Sch
     const members = selection.kind === 'aggregate' ? aggregateMembers(program, type, selection.export) : {
       state: resolveProjectionState(program, selection.entry, selection.export), commands: new Map<string, ts.Type>(), events: new Map<string, ts.Type>(),
     };
-    return { kind: selection.kind, name, path: selection.export, ...members };
+    const projectionState = selection.kind === 'projection' ? projectionSchemaDeclaration(program, type, selection.entry, selection.export) : undefined;
+    const declarations = selection.kind === 'aggregate' ? aggregateSchemaDeclarations(program, type, selection.entry, selection.export)
+      : { commands: new Map<string, ts.Node>(), events: new Map<string, ts.Node>(), ...(projectionState ? { state: projectionState } : {}) };
+    return { kind: selection.kind, name, path: selection.export, entry: selection.entry, ...members, ...(declarations ? { declarations } : {}) };
   });
 }

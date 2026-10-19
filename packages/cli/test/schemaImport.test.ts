@@ -1,9 +1,10 @@
 import * as ts from 'typescript';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { existingSchemaImport } from '../src/extract/schemaImport';
 import { TypeToZodConverter } from '../src/extract/typeConverter';
 import { generateOutput } from '../src/extract/outputGenerator';
+import { extractProjectionSchemas } from '../src/extractProjectionSchemas';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(__dirname, '.schema-import-')); });
@@ -45,13 +46,72 @@ test('private inferred schema fails explicitly during conversion, before output 
     const p = program(source);
     const checker = p.getTypeChecker();
     const declaration = p.getSourceFile(source)!.statements.find(ts.isTypeAliasDeclaration)!;
-    const aliasSymbol = checker.getSymbolAtLocation(declaration.name)!;
-    // Exercise the named-alias branch even on TS versions which erase z.infer alias metadata.
-    const type = new Proxy(checker.getTypeAtLocation(declaration), { get(target, key) {
-        return key === 'aliasSymbol' ? aliasSymbol : Reflect.get(target, key);
-    } });
+    const type = checker.getTypeAtLocation(declaration);
     const converter = new TypeToZodConverter(checker, p, 'string', {}, join(dir, 'absent/output.ts'));
-    expect(() => generateOutput(converter, new Map([['accept', type]]), new Map(), null, {})).toThrow('Cannot emit a portable import');
+    expect(() => generateOutput(converter, new Map([['accept', type]]), new Map(), null, {
+        declarations: { commands: new Map([['accept', declaration]]), events: new Map() }
+    })).toThrow('Cannot emit a portable import');
+});
+
+test('projection extraction preserves consumer conditions for public schema imports', () => {
+    const dependency = join(dir, 'node_modules/conditional-schema');
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'conditional-schema', exports: {
+        '.': { production: { types: './schema.d.ts', default: './schema.js' } }
+    } }));
+    writeFileSync(join(dependency, 'schema.d.ts'), `import { z } from 'zod';
+        export declare const schema: z.ZodString; export type State = z.infer<typeof schema>;`);
+    writeFileSync(join(dependency, 'schema.js'), `throw new Error('SCHEMA_SOURCE_EXECUTED');`);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ private: true, redemeine: { schemas: { mode: 'zod-first' } } }));
+    const entry = join(dir, 'input.ts');
+    const tsconfig = join(dir, 'tsconfig.json');
+    const outFile = join(dir, 'output.ts');
+    const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+        customConditions: ['production'], types: [], esModuleInterop: true };
+    writeFileSync(entry, `import type { State } from 'conditional-schema';
+        export const view = { name: 'view', fromStream: 'events', identity: {}, subscriptions: [],
+          initialState: (): State => { throw new Error('FACTORY_EXECUTED'); } };`);
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { ...options,
+        target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' }, files: ['input.ts'] }));
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([entry], options))).toEqual([]);
+    expect(ts.resolveModuleName('conditional-schema', entry, { ...options, customConditions: [] }, ts.sys).resolvedModule).toBeUndefined();
+    extractProjectionSchemas({ entry, tsconfig, outFile, projectionExport: 'view' });
+    expect(readFileSync(outFile, 'utf8')).toContain('from "conditional-schema"');
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([outFile], options))).toEqual([]);
+});
+
+test('consumer conditions do not authorize a path alias bypassing private package exports', () => {
+    const dependency = join(dir, 'node_modules/conditional-private');
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'conditional-private', exports: {
+        '.': { production: './index.d.ts' }
+    } }));
+    writeFileSync(join(dependency, 'index.d.ts'), 'export declare const publicValue: number;');
+    writeFileSync(join(dependency, 'internal.d.ts'), `import { z } from 'zod'; export declare const secret: z.ZodString;`);
+    const source = join(dir, 'input.ts');
+    writeFileSync(source, `import { z } from 'zod'; import { secret } from 'conditional-private/internal';
+        export type Payload = z.infer<typeof secret>;`);
+    const options: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+        customConditions: ['production'], baseUrl: dir,
+        paths: { 'conditional-private/internal': ['./node_modules/conditional-private/internal.d.ts'] },
+        types: [], esModuleInterop: true };
+    const p = ts.createProgram([source], options);
+    expect(ts.getPreEmitDiagnostics(p)).toEqual([]);
+    expect(() => existingSchemaImport(p.getTypeChecker(), p, query(p, source), join(dir, 'output.ts'))).toThrow(/portable import/);
+});
+
+test('Node10 resolution does not authorize a private package subpath for generated schema imports', () => {
+    const dependency = join(dir, 'node_modules/hidden-schema');
+    mkdirSync(dependency, { recursive: true });
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'hidden-schema', exports: { '.': './index.d.ts' } }));
+    writeFileSync(join(dependency, 'index.d.ts'), 'export declare const publicValue: number;');
+    writeFileSync(join(dependency, 'internal.d.ts'), `import { z } from 'zod'; export declare const secret: z.ZodString;`);
+    const source = join(dir, 'input.ts');
+    writeFileSync(source, `import { z } from 'zod'; import { secret } from 'hidden-schema/internal'; export type Payload = z.infer<typeof secret>;`);
+    const p = ts.createProgram([source], { strict: true, target: ts.ScriptTarget.ES2022, moduleResolution: ts.ModuleResolutionKind.Node10 });
+    expect(() => existingSchemaImport(p.getTypeChecker(), p, query(p, source), join(dir, 'output.ts'))).toThrow(/portable import/);
 });
 
 test('non-Zod generic typeof aliases are not misidentified as z.infer', () => {

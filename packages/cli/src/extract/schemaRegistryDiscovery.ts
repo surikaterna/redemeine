@@ -30,7 +30,7 @@ function discoveredRoutes(program: ts.Program, discoveries: readonly SchemaRegis
   });
 }
 
-function mergeGroup(program: ts.Program, routes: Route[]): SchemaRegistrySelection {
+function mergeGroup(program: ts.Program, routes: Route[], context?: { program: ts.Program; outFile: string }): SchemaRegistrySelection {
   const checker = program.getTypeChecker();
   const first = routes[0];
   if (!first) throw new Error('empty canonical definition group');
@@ -47,7 +47,7 @@ function mergeGroup(program: ts.Program, routes: Route[]): SchemaRegistrySelecti
     effective = resolved;
   }
   const selections = routes.map((route) => ({ ...route.selection, ...(effective === undefined ? {} : { name: effective }) }));
-  reconcileSchemaViews(program, selections);
+  reconcileSchemaViews(program, selections, context);
   return { ...first.selection, ...(effective === undefined ? {} : { name: effective }) };
 }
 
@@ -60,7 +60,7 @@ function validateRoute(route: Route): void {
 }
 
 export function discoverRegistrySelections(program: ts.Program, definitions: readonly SchemaRegistrySelection[],
-  discoveries: readonly SchemaRegistryDiscovery[]): SchemaRegistrySelection[] {
+  discoveries: readonly SchemaRegistryDiscovery[], context?: { program: ts.Program; outFile: string }): SchemaRegistrySelection[] {
   if (!discoveries.length) return [...definitions];
   const checker = program.getTypeChecker();
   const routes: Route[] = definitions.map((selection) => {
@@ -77,5 +77,5 @@ export function discoverRegistrySelections(program: ts.Program, definitions: rea
     kinds.set(route.selection.kind, group);
     groups.set(route.symbol, kinds);
   }
-  return [...groups.values()].flatMap((kinds) => [...kinds.values()].map((group) => mergeGroup(program, group)));
+  return [...groups.values()].flatMap((kinds) => [...kinds.values()].map((group) => mergeGroup(program, group, context)));
 }

@@ -1,4 +1,5 @@
 export { createAggregatePlugin, createAggregatePluginFor } from './createAggregatePlugin';
+export type { AggregateDecoration } from './attachmentTypes';
 export type {
   CommandEnvelopeContext,
   CommandEnvelopeDescriptor,

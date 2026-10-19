@@ -1,4 +1,5 @@
 import { counter, primitive } from './definitions';
+import { createAggregate } from '../../../../packages/aggregate/src';
 
 export const badState = { ...counter, initialState: undefined };
 export const badCommand = { ...counter, commandCreators: { broken: () => ({ payload: undefined }) } };
@@ -21,12 +22,12 @@ export const tupleCommand = { ...counter, commandCreators: { broken: () => ({ pa
 export const intersectionEvent = { ...counter, pure: { eventProjectors: { broken: (state: object, event: { payload: { a: string } & { b: number } }) => {} } } };
 export const unresolvedIdentity = { ...counter, aggregateType: JSON.parse('null') };
 export const stableA = {
-  ...counter, aggregateType: 'stable' as const, initialState: { z: '', a: 0 },
+  ...createAggregate('stable', { z: '', a: 0 }).build(),
   commandCreators: { z: () => ({ payload: { z: '', a: 0 } }), a: () => ({ payload: 0 }) },
   pure: { eventProjectors: { z: (state: object, event: { payload: { z: string; a: number } }) => {}, a: (state: object, event: { payload: number }) => {} } },
 };
 export const stableB = {
-  ...counter, aggregateType: 'stable' as const, initialState: { a: 0, z: '' },
+  ...createAggregate('stable', { a: 0, z: '' }).build(),
   commandCreators: { a: () => ({ payload: 0 }), z: () => ({ payload: { a: 0, z: '' } }) },
   pure: { eventProjectors: { a: (state: object, event: { payload: number }) => {}, z: (state: object, event: { payload: { a: number; z: string } }) => {} } },
 };

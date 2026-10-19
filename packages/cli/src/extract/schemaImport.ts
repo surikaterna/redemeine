@@ -7,6 +7,7 @@ export function existingSchemaImport(
     const symbol = checker.getSymbolAtLocation(query);
     if (!symbol) throw new Error('Cannot resolve inferred schema value');
     const target = unalias(checker, symbol);
+    assertSchemaValue(checker, target);
     const name = localName ?? (ts.isIdentifier(query) ? query.text : query.right.text);
     const external = packageExport(checker, program, target);
     if (external) return { name, statement: importStatement(external.name, name, external.module) };
@@ -14,7 +15,7 @@ export function existingSchemaImport(
     const moduleSymbol = source && checker.getSymbolAtLocation(source);
     const exported = moduleSymbol && valueExport(checker, moduleSymbol, target);
     if (!source || source.isDeclarationFile || /[/\\]node_modules[/\\]/.test(source.fileName) || !exported || !outFile) {
-        throw new Error(`Cannot emit a portable import for inferred schema ${name}; export its value from a source module or package, or supply typeOverrides.`);
+        throw new Error(`Cannot emit a portable import for inferred schema ${name}; export its value from a source module or package, or supply a types-first typeOverrides schema.`);
     }
     let path = relative(dirname(resolve(outFile)), resolve(source.fileName)).replace(/\\/g, '/').replace(/\.[cm]?tsx?$/, '');
     if (!path.startsWith('.')) path = './' + path;
@@ -31,10 +32,31 @@ function packageExport(checker: ts.TypeChecker, program: ts.Program, target: ts.
             if (module.startsWith('.') || module.startsWith('/') || /^[A-Za-z]:/.test(module)) continue;
             const symbol = checker.getSymbolAtLocation(statement.moduleSpecifier);
             const name = symbol && valueExport(checker, symbol, target);
-            if (name) return { module, name };
+            if (name && publicModuleResolves(module, source.fileName, program.getCompilerOptions().customConditions)) return { module, name };
         }
     }
     return null;
+}
+
+function publicModuleResolves(module: string, containingFile: string, customConditions?: string[]): boolean {
+    // Even Node10/path-mapped input projects must not authorize private package exports in generated imports.
+    return !!ts.resolveModuleName(module, containingFile, {
+        module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
+        resolvePackageJsonExports: true,
+        ...(customConditions ? { customConditions } : {})
+    }, ts.sys).resolvedModule;
+}
+
+function assertSchemaValue(checker: ts.TypeChecker, target: ts.Symbol): void {
+    const declaration = target.valueDeclaration ?? target.declarations?.[0];
+    if (!declaration) throw new Error('Inferred schema has no value declaration');
+    const type = checker.getTypeOfSymbolAtLocation(target, declaration);
+    const parse = checker.getPropertyOfType(type, 'safeParse');
+    const parseDeclaration = parse?.valueDeclaration ?? parse?.declarations?.[0];
+    if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) || !checker.getPropertyOfType(type, '_output')
+        || !parse || !parseDeclaration || !checker.getTypeOfSymbolAtLocation(parse, parseDeclaration).getCallSignatures().length) {
+        throw new Error(`Inferred schema ${target.name} is not a resolved Zod schema value`);
+    }
 }
 
 function valueExport(checker: ts.TypeChecker, module: ts.Symbol, target: ts.Symbol): string | undefined {

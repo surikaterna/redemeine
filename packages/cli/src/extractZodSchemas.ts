@@ -1,4 +1,4 @@
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, relative, sep } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import {
     createProgramFromConfig,
@@ -10,6 +10,9 @@ import {
 import { TypeToZodConverter } from './extract/typeConverter';
 import { generateOutput } from './extract/outputGenerator';
 import { aggregateJsonOutput, validateSchemaOutput, type SchemaOutputOptions } from './extract/jsonSchemaOutput';
+import { schemaPolicyForEntry } from './extract/schemaConfig';
+import { aggregateSchemaDeclarations } from './extract/schemaDeclarations';
+import { assertStructuralJson, requireStructuralJson } from './extract/jsonSchemaPolicy';
 
 export interface ExtractZodOptions extends SchemaOutputOptions {
     /** Path to tsconfig.json */
@@ -41,6 +44,10 @@ export interface ExtractZodOptions extends SchemaOutputOptions {
  */
 export function extractZodSchemas(options: ExtractZodOptions): void {
     validateSchemaOutput(options);
+    const policy = schemaPolicyForEntry(options.entry);
+    if (policy.mode === 'zod-first' && options.typeOverrides && Object.keys(options.typeOverrides).length) {
+        throw new Error('typeOverrides require types-first mode; zod-first links existing exported schema values');
+    }
     const program = createProgramFromConfig(options.tsconfig);
     const checker = program.getTypeChecker();
 
@@ -52,19 +59,30 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     const aggType = resolveAggregateType(
         program, checker, options.entry, options.aggregateExport
     );
+    if (!checker.getPropertyOfType(aggType, 'commandCreators') || !checker.getPropertyOfType(aggType, 'initialState')) {
+        throw new Error(`${options.aggregateExport}: unresolved aggregate definition; check its imports and declarations`);
+    }
 
     const commandPayloads = extractCommandPayloads(checker, aggType, sourceFile);
     const eventPayloads = extractEventPayloads(checker, aggType, sourceFile);
     const stateType = extractStateType(checker, aggType, sourceFile);
+    const declarations = aggregateSchemaDeclarations(program, aggType, resolve(options.entry), options.aggregateExport);
+    if (options.format === 'json-schema') {
+        requireStructuralJson(policy);
+        for (const [key, type] of commandPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.commands.${key}`, declarations.commands.get(key), policy.maxDepth);
+        for (const [key, type] of eventPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.events.${key}`, declarations.events.get(key), policy.maxDepth);
+        if (stateType && options.includeState !== false) assertStructuralJson(checker, stateType, `${options.aggregateExport}.state`, declarations.state, policy.maxDepth);
+    }
 
     const converter = new TypeToZodConverter(
-        checker, program, options.dateHandling ?? 'string', options.typeOverrides, options.outFile
+        checker, program, options.dateHandling ?? 'string', options.typeOverrides, options.outFile, policy
     );
 
     const output = options.format === 'json-schema'
-        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, options)
+        ? aggregateJsonOutput(program, aggType, commandPayloads, eventPayloads, stateType, { ...options, maxDepth: policy.maxDepth }, declarations)
         : generateOutput(
-        converter, commandPayloads, eventPayloads, stateType, options
+        converter, commandPayloads, eventPayloads, stateType, { ...options, declarations,
+            source: { entry: relative(dirname(resolve(options.tsconfig)), resolve(options.entry)).split(sep).join('/'), export: options.aggregateExport } }
     );
 
     const outPath = resolve(options.outFile);

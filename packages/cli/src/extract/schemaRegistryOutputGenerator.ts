@@ -1,31 +1,46 @@
 import type * as ts from 'typescript';
 import { ProjectionTypeConverter } from './projectionTypeConverter';
 import type { RegistryDefinition } from './schemaRegistryNavigator';
+import { schemaAwareConversion } from './schemaAwareConversion';
+import { schemaPolicyForEntry } from './schemaConfig';
+
+type Converter = { convert(type: ts.Type, path: string, declaration?: ts.Node): string };
 
 function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function renderHandlers(converter: ProjectionTypeConverter, handlers: Map<string, ts.Type>, path: string): string {
+function renderHandlers(converter: Converter, handlers: Map<string, ts.Type>, path: string, declarations?: Map<string, ts.Node>): string {
   return `{${[...handlers].sort(([a], [b]) => compare(a, b)).map(([name, type]) =>
-    `[${JSON.stringify(name)}]: ${converter.convert(type, `${path}[${JSON.stringify(name)}].payload`)}`,
+    `[${JSON.stringify(name)}]: ${converter.convert(type, `${path}[${JSON.stringify(name)}].payload`, declarations?.get(name))}`,
   ).join(', ')}}`;
 }
 
-function renderEntry(converter: ProjectionTypeConverter, definition: RegistryDefinition): string {
-  const state = converter.convert(definition.state, `${definition.path}.initialState`);
+function renderEntry(converter: Converter, definition: RegistryDefinition, stateConverter = converter): string {
+   const state = stateConverter.convert(definition.state, `${definition.path}.initialState`, definition.declarations?.state);
   const value = definition.kind === 'projection' ? state :
-    `{state: ${state}, commands: ${renderHandlers(converter, definition.commands, `${definition.path}.commands`)}, events: ${renderHandlers(converter, definition.events, `${definition.path}.events`)}}`;
+    `{state: ${state}, commands: ${renderHandlers(converter, definition.commands, `${definition.path}.commands`, definition.declarations?.commands)}, events: ${renderHandlers(converter, definition.events, `${definition.path}.events`, definition.declarations?.events)}}`;
   return `  [${JSON.stringify(definition.name)}, ${value}]`;
 }
 
-export function generateSchemaRegistryOutput(checker: ts.TypeChecker, definitions: readonly RegistryDefinition[]): string {
-  const converter = new ProjectionTypeConverter(checker, true);
+export function generateSchemaRegistryOutput(checker: ts.TypeChecker, definitions: readonly RegistryDefinition[], context?: { program: ts.Program; outFile: string }): string {
   const sorted = [...definitions].sort((a, b) => compare(a.kind, b.kind) || compare(a.name, b.name));
-  const aggregate = sorted.filter((definition) => definition.kind === 'aggregate').map((definition) => renderEntry(converter, definition));
-  const projection = sorted.filter((definition) => definition.kind === 'projection').map((definition) => renderEntry(converter, definition));
+  const imports: string[] = [];
+  const rendered = sorted.map((definition, index) => {
+    const linked = context && definition.entry ? schemaAwareConversion(context.program, schemaPolicyForEntry(definition.entry), context.outFile, `_registry${index}_`, true) : undefined;
+    const model = definition.canonicalModel && context && definition.entry
+      ? schemaAwareConversion(context.program, schemaPolicyForEntry(definition.entry), context.outFile, `_model${index}_`, true, true) : undefined;
+    const stateConverter = model ?? new ProjectionTypeConverter(checker, true, 60, undefined, !!definition.canonicalModel);
+    const value = renderEntry(linked ?? new ProjectionTypeConverter(checker, true), definition, model ?? (linked && !definition.canonicalModel ? linked : stateConverter));
+    if (linked) imports.push(...linked.imports);
+    if (model) imports.push(...model.imports);
+    return { kind: definition.kind, value };
+  });
+  const aggregate = rendered.filter(item => item.kind === 'aggregate').map(item => item.value);
+  const projection = rendered.filter(item => item.kind === 'projection').map(item => item.value);
   return `// Generated schema registries. Do not edit.
 import { z } from 'zod';
+${imports.join('\n')}
 
 type AggregateSchemaBundle = { state: z.ZodType; commands: Record<string, z.ZodType>; events: Record<string, z.ZodType> };
 function jsonSchema(schema: z.ZodType) { return z.toJSONSchema(schema); }

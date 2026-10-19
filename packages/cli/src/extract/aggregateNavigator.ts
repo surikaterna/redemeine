@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import { resolve, dirname, join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
+import { aggregateStateModel } from './aggregateStateModel';
 
 /**
  * Creates a TypeScript program from a tsconfig path.
@@ -282,5 +283,5 @@ export function extractStateType(
     aggType: ts.Type,
     node: ts.Node
 ): ts.Type | null {
-    return getPropertyType(checker, aggType, 'initialState', node);
+    return aggregateStateModel(checker, aggType, getPropertyType(checker, aggType, 'initialState', node));
 }

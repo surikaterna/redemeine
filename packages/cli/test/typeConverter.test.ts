@@ -68,13 +68,12 @@ test('name overrides remain authoritative expressions across distinct same-name 
     expect([...converter.generatedShared.values()]).toEqual([expression]);
 });
 
-test('recursive conversion remains bounded and caches only completed conversions', () => {
+test('recursive conversion fails without caching partial schemas', () => {
     const { program, checker, types } = fixture();
     const converter = new TypeToZodConverter(checker, program);
-    const name = converter.convert(types[10]!);
-    expect(converter.convert(types[10]!)).toBe(name);
-    expect(converter.convert(types[10]!, 11)).toBe('z.any()');
-    expect(name).toContain('z.any()');
+    expect(() => converter.convert(types[10]!)).toThrow(/recursive/);
+    expect(() => converter.convert(types[10]!)).toThrow(/recursive/);
+    expect(() => converter.convert(types[10]!, 61)).toThrow(/maxDepth/);
     expect(converter.knownSchemas.has(types[10]!)).toBe(false);
     expect(converter.generatedShared.size).toBe(0);
 });
@@ -99,14 +98,14 @@ test.each([false, true])('depth-limited aliases cannot weaken direct schemas (sh
     expect(schemas.eventSchemas.leafEvent).toBe(schemas.commandSchemas.leaf);
 });
 
-test('only depth exhaustion taints memoization, not intentional unknown payloads', () => {
+test('depth exhaustion fails without poisoning later shallow schemas or intentional unknown payloads', () => {
     const { program, checker, types } = fixture();
-    const converter = new TypeToZodConverter(checker, program);
-    expect(converter.convertStructural(types[12]!, 9)).toContain('z.any()');
+    const converter = new TypeToZodConverter(checker, program, 'string', {}, undefined, { mode: 'types-first', maxDepth: 1 });
+    expect(() => converter.convert(types[12]!)).toThrow(/maxDepth/);
     expect(converter.knownSchemas.has(types[13]!)).toBe(false);
     expect(converter.knownSchemas.has(types[12]!)).toBe(false);
     const opaque = converter.convert(types[14]!);
-    expect(converter.generatedShared.get(opaque)).toContain('z.any()');
+    expect(converter.generatedShared.get(opaque)).toContain('z.unknown()');
     expect(converter.convert(types[14]!)).toBe(opaque);
     expect(converter.knownSchemas.get(types[14]!)).toBe(opaque);
     expect(converter.generatedShared.get(converter.convert(types[13]!))).toContain('z.string()');

@@ -75,8 +75,10 @@ function declarationProgram(entryName = 'declarations'): ts.Program {
   const source = createProgramFromConfig(join(fixtures, `${entryName}.json`));
   const declarations = new Map<string, string>();
   const emitter = ts.createProgram(source.getRootFileNames(), { ...source.getCompilerOptions(), noEmit: false,
-    declaration: true, emitDeclarationOnly: true, declarationMap: false });
+    // Include the real direct dependency so inferred Draft references have a portable module name.
+    types: ['node', 'jest', 'immer'], declaration: true, emitDeclarationOnly: true, declarationMap: false });
   const result = emitter.emit(undefined, (file, text) => declarations.set(file, text));
+  expect(result.diagnostics).toEqual([]);
   expect(result.emitSkipped).toBe(false);
   const options = source.getCompilerOptions();
   const host = ts.createCompilerHost(options);

@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { aggregateReferenceEvidence, canonicalCreatorSignature, definitionEvidence, runtimeProjectionContract, type DefinitionEvidence } from './schemaRegistryProvenance';
+import { aggregateReferenceEvidence, canonicalAggregateDeclaration, canonicalCreatorSignature, definitionEvidence, runtimeProjectionContract, type DefinitionEvidence } from './schemaRegistryProvenance';
 import { valueType } from './schemaRegistryIdentity';
 
 function concrete(type: ts.Type, path: string): void {
@@ -79,7 +79,9 @@ function message(checker: ts.TypeChecker, type: ts.Type, path: string): void {
 function aggregateFunction(checker: ts.TypeChecker, type: ts.Type, state: ts.Type, key: string, path: string): void {
   const signature = callable(checker, member(checker, type, key, path), `${path}.${key}`, 2);
   const input = parameter(checker, signature, 0, `${path}.${key}.state`);
-  if (!checker.isTypeAssignableTo(state, input)) throw new Error(`${path}.${key}: incompatible state parameter`);
+  const canonicalDraft = key === 'applyToDraft' && signature.declaration && canonicalAggregateDeclaration(signature.declaration);
+  const compatible = canonicalDraft ? checker.isTypeAssignableTo(input, state) : checker.isTypeAssignableTo(state, input);
+  if (!compatible) throw new Error(`${path}.${key}: incompatible state parameter`);
   message(checker, parameter(checker, signature, 1, `${path}.${key}.message`), `${path}.${key}.message`);
   const result = checker.getReturnTypeOfSignature(signature);
   if (result.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter)) throw new Error(`${path}.${key}: unresolved return`);
@@ -109,7 +111,7 @@ function arrayElement(checker: ts.TypeChecker, type: ts.Type, path: string): ts.
   return element;
 }
 
-function aggregateContract(checker: ts.TypeChecker, type: ts.Type, path: string): void {
+export function aggregateContract(checker: ts.TypeChecker, type: ts.Type, path: string): void {
   stringType(member(checker, type, 'aggregateType', path), `${path}.aggregateType`);
   const state = member(checker, type, 'initialState', path);
   for (const key of ['process', 'apply', 'applyToDraft']) aggregateFunction(checker, type, state, key, path);
