@@ -56,7 +56,7 @@ type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'eve
 type BranchKeys<S> = S extends unknown ? keyof S : never;
 type InvalidSourceEvent<A, H> = H extends { source: infer Source extends AggregatePluginSource; events: infer Handlers }
   ? A extends AggregatePluginSource ? {
-    [K in keyof Handlers]-?: K extends keyof PluginPayloads<Source>
+    [K in keyof Handlers]-?: [Handlers[K]] extends [undefined] ? never : K extends keyof PluginPayloads<Source>
       ? K extends keyof PluginPayloads<A> ? [PluginPayloads<A>[K]] extends [PluginPayloads<Source>[K]] ? never : K : K
       : K
   }[keyof Handlers] : never : never;

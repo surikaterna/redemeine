@@ -1,5 +1,5 @@
 import type { Event } from '@redemeine/kernel';
-import { createAggregate, createAggregatePlugin, createAggregatePluginFor } from '../../../src';
+import { createAggregate, createAggregatePlugin, createAggregatePluginFor, type AggregateEventPlugin } from '../../../src';
 
 const source = createAggregate('counter', { count: 0 })
   .events({ added(state, event: Event<number>) { state.count += event.payload; } })
@@ -48,3 +48,12 @@ array.initialState.transport;
 const builder = createAggregate('builder', { count: 0 }).plugins(createAggregatePlugin('stamp').commandEnvelope(() => ({ stamp: 1 })).build()).build();
 const stamp: number = builder.prepareCommand(builder.initialState, { type: 'noop', payload: {} }).stamp;
 void [date, execution, seen, optionalSeen, stamp];
+
+const descriptor: AggregateEventPlugin<'manual', undefined> = createAggregatePlugin('manual').build();
+// @ts-expect-error Public stateless descriptors cannot declare a catchall reducer.
+const catchall: typeof descriptor = { ...descriptor, onEvent: () => undefined };
+// @ts-expect-error Public stateless descriptors cannot declare matched reducers.
+const matched: typeof descriptor = { ...descriptor, events: { added: () => undefined } };
+// @ts-expect-error Inferred descriptors enforce the same constraint.
+const inferred: typeof plugin = { ...plugin, events: { added: () => undefined } };
+void [catchall, matched, inferred];

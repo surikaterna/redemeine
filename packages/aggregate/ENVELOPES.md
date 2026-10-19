@@ -36,8 +36,9 @@ To maintain plugin-owned state, call `.state(initializer)` before declaring hand
 or envelopes. `.state(() => ({}))` remains stateful and still requires its namespace
 in snapshots; it is not silently converted to a stateless plugin. `.events` and
 `.onEvent` are unavailable without declared state. Command preparation does not
-update plugin state. Audit state must be derived from enriched events in these handlers so replay
-rebuilds it. Raw creators have no `dateTime`; `prepared.dateTime` above is a typed Date.
+update plugin state. If a plugin declares audit state, derive it from enriched events
+in these handlers so replay rebuilds it. The stateless example above has no audit
+state to rebuild. Raw creators have no `dateTime`; `prepared.dateTime` above is a typed Date.
 An external command's valid Date is retained; invalid Dates or strings fail before
 host sinks. Serialized dates require an explicit decoder at ingress and replay.
 
