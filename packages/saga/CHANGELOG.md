@@ -1,5 +1,12 @@
 # @redemeine/saga
 
+## 0.1.1-pre.5
+
+### Patch Changes
+
+- Updated dependencies [[`72d0a7b`](https://github.com/surikaterna/redemeine/commit/72d0a7b8f3ca11413b06215d9076a27bc5c3fbdd)]:
+  - @redemeine/aggregate@1.0.0-pre.5
+
 ## 0.1.1-pre.4
 
 ### Patch Changes

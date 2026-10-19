@@ -1,5 +1,14 @@
 # @redemeine/testing
 
+## 0.2.0-pre.5
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @redemeine/mirage@1.0.0-pre.5
+  - @redemeine/projection@0.2.0-pre.3
+  - @redemeine/saga@0.1.1-pre.5
+
 ## 0.2.0-pre.4
 
 ### Patch Changes
