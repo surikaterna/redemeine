@@ -22,7 +22,6 @@ export class TypeToZodConverter {
     readonly sharedComments = new Map<string, string>();
     readonly imports = new Set<string>();
     private readonly overrideSchemas = new Map<string, string>();
-    private readonly importedSchemaTypes = new Set<ts.Type>();
     private readonly schemaReferences = new Map<ts.EntityName, string>();
     private readonly bindings = new Set(['z', 'commandSchemas', 'eventSchemas', 'stateSchema']);
     private readonly active = new Set<ts.Type>();
@@ -44,7 +43,7 @@ export class TypeToZodConverter {
             return this.convertNamedType(type, depth, path)!;
         }
         const existing = this.resolveExistingSchema(type, declaration);
-        if (existing && this.importedSchemaTypes.has(type)) return existing;
+        if (existing) return existing;
         if (this.policy.mode === 'zod-first') return this.fail(type, path, 'no importable Zod schema; export a schema-derived type or opt in to types-first');
         assertSupportedGenerics(this.checker, type, path, declaration);
         if ('intrinsicName' in type && type.intrinsicName === 'error') return this.fail(type, path, 'unresolved compiler-error type');
@@ -61,7 +60,7 @@ export class TypeToZodConverter {
         }
     }
 
-    /** Attempt dedup/z.infer resolution for alias-named types. */
+    /** Deduplicate structural aliases independently of authored schema references. */
     private convertNamedType(type: ts.Type, depth: number, path: string, declaration?: ts.Node): string | null {
         const aliasSymbol = type.aliasSymbol;
         if (!aliasSymbol) return null;
@@ -78,7 +77,7 @@ export class TypeToZodConverter {
             return this.overrideSchemas.get(typeName)!;
         }
 
-        const existing = this.resolveExistingSchema(type, declaration);
+        const existing = this.knownSchemas.get(type);
         if (existing) return existing;
 
         const zodCode = this.convertStructural(type, depth, path, declaration);
@@ -132,7 +131,7 @@ export class TypeToZodConverter {
 
     /**
      * Check if a type alias resolves to `z.infer<typeof X>`.
-     * If so, register X as a known schema and return its variable name.
+     * Cache by annotation query: equal compiler types need not share an authored schema.
      */
     resolveExistingSchema(type: ts.Type, declaration?: ts.Node): string | null {
         const query = schemaReference(this.checker, type, declaration);
@@ -143,51 +142,9 @@ export class TypeToZodConverter {
             const schema = existingSchemaImport(this.checker, this.program, query, this.outFile, name);
             this.imports.add(schema.statement);
             this.schemaReferences.set(query, schema.name);
-            // Primitive type identities are shared: do not bind every string to one inferred schema.
-            if (type.aliasSymbol) this.knownSchemas.set(type, schema.name);
-            this.importedSchemaTypes.add(type);
             return schema.name;
         }
-        const aliasSymbol = type.aliasSymbol;
-        if (!aliasSymbol) return null;
-
-        if (this.knownSchemas.has(type)) {
-            return this.knownSchemas.get(type)!;
-        }
-
-        const declarations = aliasSymbol.getDeclarations();
-        if (!declarations) return null;
-
-        for (const decl of declarations) {
-            const query = this.detectZodInfer(decl);
-            if (query) {
-                const name = this.allocateBinding(`_existingSchema${this.imports.size}`);
-                const schema = existingSchemaImport(this.checker, this.program, query, this.outFile, name);
-                this.knownSchemas.set(type, schema.name);
-                this.importedSchemaTypes.add(type);
-                this.imports.add(schema.statement);
-                return schema.name;
-            }
-        }
-
         return null;
-    }
-
-    /** Detect `z.infer<typeof X>` pattern in a type alias declaration. */
-    private detectZodInfer(decl: ts.Declaration): ts.EntityName | null {
-        if (!ts.isTypeAliasDeclaration(decl) || !decl.type) return null;
-        if (!ts.isTypeReferenceNode(decl.type)) return null;
-
-        const typeRef = decl.type;
-        const reference = this.checker.getSymbolAtLocation(typeRef.typeName);
-        const resolved = reference && (reference.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(reference) : reference);
-        if (!resolved?.declarations?.some(node => /[/\\]zod[/\\]/.test(node.getSourceFile().fileName))) return null;
-        if (!typeRef.typeArguments || typeRef.typeArguments.length !== 1) return null;
-
-        const typeArg = typeRef.typeArguments[0];
-        if (!typeArg || !ts.isTypeQueryNode(typeArg)) return null;
-
-        return typeArg.exprName;
     }
 
     /** Structural (non-named) type conversion. */
@@ -238,8 +195,7 @@ export class TypeToZodConverter {
                 return { type: member, schema: this.convert(member, depth + 1, path) };
             }
             const existing = this.resolveExistingSchema(member);
-            const schema = this.importedSchemaTypes.has(member) ? existing : null;
-            return { type: member, schema };
+            return { type: member, schema: existing };
         });
         return intersectionSchema(type, members, this.checker, depth, {
             convert: (member, level) => this.convert(member, level, path),

@@ -104,7 +104,22 @@ function definitionNode(program: ts.Program, entry: string, name: string): ts.De
     const symbol = source && checker.getSymbolAtLocation(source);
     const exported = symbol && checker.getExportsOfModule(symbol).find(item => item.name === name);
     const target = exported && (exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported);
-    return target?.valueDeclaration ?? target?.declarations?.[0];
+    return definitionOrigin(checker, target?.valueDeclaration ?? target?.declarations?.[0], `${entry}:${name}`);
+}
+
+function definitionOrigin(checker: ts.TypeChecker, node: ts.Declaration | undefined, path: string, seen = new Set<ts.Node>()): ts.Declaration | undefined {
+    if (!node) return undefined;
+    if (seen.has(node) || seen.size >= 256) throw new Error(`${path}: cyclic or excessive definition alias provenance; select the original definition`);
+    seen.add(node);
+    let expression = ts.isVariableDeclaration(node) ? node.initializer : undefined;
+    while (expression && (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression)
+        || ts.isTypeAssertionExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isNonNullExpression(expression))) expression = expression.expression;
+    if (!expression || (!ts.isIdentifier(expression) && !ts.isPropertyAccessExpression(expression))) return node;
+    const symbol = checker.getSymbolAtLocation(expression);
+    const target = symbol && (symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol);
+    const declarations = target?.declarations;
+    if (declarations && declarations.length > 1) throw new Error(`${path}: ambiguous definition alias provenance; select the original definition`);
+    return definitionOrigin(checker, target?.valueDeclaration ?? declarations?.[0], path, seen);
 }
 
 function expressionAnnotation(checker: ts.TypeChecker, expression?: ts.Expression): ts.TypeNode | undefined {

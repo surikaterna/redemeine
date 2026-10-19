@@ -20,7 +20,7 @@ export function extractSchemaRegistries(options: ExtractSchemaRegistriesOptions)
   const outFile = resolve(requiredString(input.outFile, 'options.outFile'));
   const inputs = registryInputs(input);
   const program = createProgramFromConfig(tsconfig);
-  const selections = discoverRegistrySelections(program, inputs.definitions, inputs.discover);
+  const selections = discoverRegistrySelections(program, inputs.definitions, inputs.discover, { program, outFile });
   const definitions = navigateRegistries(program, selections);
   // Complete every selection and conversion before touching the destination.
   const output = generateSchemaRegistryOutput(program.getTypeChecker(), definitions, { program, outFile });

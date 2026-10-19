@@ -11,6 +11,7 @@ import { intersectionRegressions } from './packedIntersectionRegressions.mjs';
 import { schemaPolicyRegressions } from './packedSchemaPolicy.mjs';
 import { canonicalModelRegressions } from './packedCanonicalModel.mjs';
 import { packedAggregateDeclarations } from '../../aggregate/test/packedDeclarations.mjs';
+import { schemaReconciliationRegressions } from './packedSchemaReconciliation.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -57,6 +58,7 @@ surgicalRegressions(consumer, command, bin);
 intersectionRegressions(consumer, command, bin);
 schemaPolicyRegressions(consumer, command, bin);
 canonicalModelRegressions(consumer, command, bin);
+schemaReconciliationRegressions(consumer, command);
 packedAggregateDeclarations(consumer, command);
 function cli(args) { console.log(command(bin, args)); }
 writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({ compilerOptions: {

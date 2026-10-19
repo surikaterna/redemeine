@@ -45,13 +45,11 @@ test('private inferred schema fails explicitly during conversion, before output 
     const p = program(source);
     const checker = p.getTypeChecker();
     const declaration = p.getSourceFile(source)!.statements.find(ts.isTypeAliasDeclaration)!;
-    const aliasSymbol = checker.getSymbolAtLocation(declaration.name)!;
-    // Exercise the named-alias branch even on TS versions which erase z.infer alias metadata.
-    const type = new Proxy(checker.getTypeAtLocation(declaration), { get(target, key) {
-        return key === 'aliasSymbol' ? aliasSymbol : Reflect.get(target, key);
-    } });
+    const type = checker.getTypeAtLocation(declaration);
     const converter = new TypeToZodConverter(checker, p, 'string', {}, join(dir, 'absent/output.ts'));
-    expect(() => generateOutput(converter, new Map([['accept', type]]), new Map(), null, {})).toThrow('Cannot emit a portable import');
+    expect(() => generateOutput(converter, new Map([['accept', type]]), new Map(), null, {
+        declarations: { commands: new Map([['accept', declaration]]), events: new Map() }
+    })).toThrow('Cannot emit a portable import');
 });
 
 test('Node10 resolution does not authorize a private package subpath for generated schema imports', () => {
