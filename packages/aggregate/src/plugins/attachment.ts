@@ -33,8 +33,11 @@ function validate(host: Host, record: Attachment, plugins: readonly EventPlugin[
   if (plugins.length && (host.initialState === null || typeof host.initialState !== 'object' || Array.isArray(host.initialState))) {
     throw new TypeError('Aggregate event plugins require object aggregate state');
   }
-  const keys = new Set(Reflect.ownKeys(Object(host.initialState)));
+  const keys = new Set([...Reflect.ownKeys(Object(host.initialState)), ...record.plugins.map(plugin => plugin.id)]);
   for (const plugin of plugins) {
+    if (plugin.initialize === undefined && (plugin.onEvent || Object.values(plugin.events).some(Boolean))) {
+      throw new TypeError(`Aggregate plugin ${plugin.id} reducers require declared state`);
+    }
     if (!plugin.id || plugin.id === 'prototype' || plugin.id in Object.prototype || keys.has(plugin.id) || Object.hasOwn(host.mounts ?? {}, plugin.id)) {
       throw new Error(`Aggregate plugin namespace collision: ${plugin.id}`);
     }
@@ -69,6 +72,7 @@ function routes(host: Host, plugin: EventPlugin): Map<string, Handler> {
 
 function applyPlugins(host: Host, plugins: readonly EventPlugin[], tables: readonly Map<string, Handler>[], draft: object, event: Event): void {
   for (const [index, plugin] of plugins.entries()) {
+    if (!plugin.initialize) continue;
     const state = Reflect.get(draft, plugin.id);
     const matched = tables[index]?.get(event.type);
     if (matched) {
@@ -93,13 +97,14 @@ function application(host: Host, record: Attachment) {
 
 function validatePluginState(plugins: readonly EventPlugin[], state: unknown): void {
   for (const plugin of plugins) {
+    if (!plugin.initialize) continue;
     if (state === null || typeof state !== 'object' || !Object.hasOwn(state, plugin.id)) {
       throw new Error(`Missing aggregate plugin namespace: ${plugin.id}; migrate the snapshot explicitly`);
     }
   }
 }
 
-function initializePlugin(plugin: EventPlugin): object {
+function initializePlugin(plugin: EventPlugin & { initialize: () => object }): object {
   const state = plugin.initialize();
   assertSynchronous(state);
   if (state === null || typeof state !== 'object') {
@@ -112,8 +117,9 @@ export function decorateAggregate<A extends Host>(host: A, registrations: readon
   const previous = attachments.get(host) ?? { domain: host, lineage: new Set<object>([host]), plugins: [] };
   const added = registrations.filter((plugin): plugin is EventPlugin => 'kind' in plugin && plugin.kind === 'aggregate-event');
   validate(host, previous, added);
-  const initialState = added.length ? produce(host.initialState as object, draft => {
-    for (const plugin of added) {
+  const stateful = added.filter((plugin): plugin is EventPlugin & { initialize: () => object } => plugin.initialize !== undefined);
+  const initialState = stateful.length ? produce(host.initialState as object, draft => {
+    for (const plugin of stateful) {
       Reflect.set(draft, plugin.id, initializePlugin(plugin));
     }
   }) : host.initialState;

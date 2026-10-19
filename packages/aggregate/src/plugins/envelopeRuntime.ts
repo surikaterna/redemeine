@@ -65,12 +65,13 @@ function merge(target: Core, value: object): void {
 
 function assertNamespaces(state: object, plugins: readonly EventPlugin[]): void {
   for (const plugin of plugins) {
+    if (!plugin.initialize) continue;
     if (!Object.hasOwn(state, plugin.id)) throw new Error(`Missing aggregate plugin namespace: ${plugin.id}; migrate the snapshot explicitly`);
   }
 }
 
 function context(host: Host, state: object, plugin: EventPlugin, command: object, event?: object): object {
-  return envelopeSnapshot({ aggregateType: host.aggregateType, state, ownState: Reflect.get(state, plugin.id), command, ...(event ? { event } : {}) });
+  return envelopeSnapshot({ aggregateType: host.aggregateType, state, ownState: plugin.initialize ? Reflect.get(state, plugin.id) : undefined, command, ...(event ? { event } : {}) });
 }
 
 function prepareLinkedEvent(host: Host, plugins: readonly EventPlugin[], own: Map<EventPlugin, object> | undefined, state: object, command: Command<unknown, string>, raw: Event): Event {

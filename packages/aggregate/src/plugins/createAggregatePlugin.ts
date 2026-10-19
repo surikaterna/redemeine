@@ -9,10 +9,10 @@ import type {
   AggregatePluginStateBuilder
 } from './types';
 
-function builder<Id extends string, S extends object, A extends AggregatePluginSource | undefined>(
+function builder<Id extends string, S extends object | undefined, A extends AggregatePluginSource | undefined>(
   id: Id,
   source: A,
-  initialize: () => S,
+  initialize: (() => S) | undefined,
   events: Readonly<AggregatePluginEvents<S, A>> = Object.freeze({}) as AggregatePluginEvents<S, A>,
   onEvent?: AggregatePluginHandler<S, A>,
   envelopes: EnvelopeSlots = {}
@@ -20,8 +20,10 @@ function builder<Id extends string, S extends object, A extends AggregatePluginS
   // The public builder tracks extension/phase types; runtime storage preserves each callback without invoking it.
   return Object.freeze({
     ...envelopeMethods(envelopes, (next) => builder(id, source, initialize, events, onEvent, next)),
-    events: (handlers: AggregatePluginEvents<S, A>) => builder(id, source, initialize, snapshotEvents({ ...events, ...handlers }), onEvent, envelopes),
-    onEvent: (handler: AggregatePluginHandler<S, A>) => builder(id, source, initialize, events, guardCallback(handler), envelopes),
+    ...(initialize ? {
+      events: (handlers: AggregatePluginEvents<S, A>) => builder(id, source, initialize, snapshotEvents({ ...events, ...handlers }), onEvent, envelopes),
+      onEvent: (handler: AggregatePluginHandler<S, A>) => builder(id, source, initialize, events, guardCallback(handler), envelopes)
+    } : {}),
     build: () =>
       Object.freeze({
         kind: 'aggregate-event' as const,
@@ -40,11 +42,12 @@ function builder<Id extends string, S extends object, A extends AggregatePluginS
 function start<Id extends string, A extends AggregatePluginSource | undefined>(id: Id, source: A): AggregatePluginStateBuilder<Id, A> {
   if (!id || id === 'prototype' || id in Object.prototype) throw new TypeError('Invalid aggregate plugin id');
   return Object.freeze({
+    ...builder<Id, undefined, A>(id, source, undefined),
     state: <S extends object>(initialize: (() => S) & (S extends PromiseLike<unknown> ? never : unknown)) => builder(id, source, guardCallback(initialize))
   });
 }
 
-/** Declare plugin-owned state before registering synchronous event handlers. */
+/** Declare envelopes directly, or opt into plugin-owned state before registering reducers. */
 export function createAggregatePlugin<const Id extends string>(id: Id & AggregatePluginId<Id>): AggregatePluginStateBuilder<Id, undefined> {
   return start(id, undefined);
 }

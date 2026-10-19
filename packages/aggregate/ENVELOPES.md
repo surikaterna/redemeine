@@ -7,7 +7,7 @@ also prepares, then runs the domain processor, then prepares its linked events.
 envelope initializers, recipes, parsers or clocks.
 
 ```ts
-const audit = createAggregatePlugin('audit').state(() => ({}))
+const audit = createAggregatePlugin('audit')
   .commandEnvelope(input => {
     const dateTime = input.dateTime === undefined ? clock() : input.dateTime;
     if (!(dateTime instanceof Date) || !Number.isFinite(dateTime.getTime())) {
@@ -25,9 +25,18 @@ const prepared = built.prepareCommand(built.initialState, Order.commandCreators.
 const events = built.process(built.initialState, prepared);
 ```
 
-Envelope-only plugins currently require `.state(() => ({}))`; there is no
-state-less declaration overload. Command preparation does not update plugin state.
-Audit state must be derived from enriched events in `.onEvent` / `.events` so replay
+Envelope-only plugins may omit `.state()`. They mount no namespace, preserve the
+original state type and initial-state reference, and need no snapshot migration.
+Their context has `ownState: undefined`; `createAggregatePluginFor` still provides
+typed readonly domain state. Prepared command/event extension types are independent
+of aggregate state. Plugin IDs remain unique and cannot collide with domain fields
+or mounts, even when no state is declared.
+
+To maintain plugin-owned state, call `.state(initializer)` before declaring handlers
+or envelopes. `.state(() => ({}))` remains stateful and still requires its namespace
+in snapshots; it is not silently converted to a stateless plugin. `.events` and
+`.onEvent` are unavailable without declared state. Command preparation does not
+update plugin state. Audit state must be derived from enriched events in these handlers so replay
 rebuilds it. Raw creators have no `dateTime`; `prepared.dateTime` above is a typed Date.
 An external command's valid Date is retained; invalid Dates or strings fail before
 host sinks. Serialized dates require an explicit decoder at ingress and replay.
@@ -127,7 +136,7 @@ const dates = {
     return { dateTime };
   }
 };
-const audit = createAggregatePlugin('audit').state(() => ({}))
+const audit = createAggregatePlugin('audit')
   .commandEnvelope(input => ({ dateTime: input.dateTime ?? clock() }), dates)
   .build();
 ```
