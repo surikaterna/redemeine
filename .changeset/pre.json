@@ -22,7 +22,12 @@
   },
   "changesets": [
     "accepted-projection-baseline",
+    "aggregate-event-plugin-builder",
+    "aggregate-public-decoration",
+    "aggregate-readonly-state",
+    "bridge-command-envelopes",
     "bright-commits-project",
+    "cli-intersections-readable",
     "cli-publication-repository",
     "cli-surgical-vbny",
     "compiler-json-schema-output",
@@ -33,7 +38,9 @@
     "legacy-lifecycle-interop",
     "legacy-no-payload-shortcuts",
     "link-held-cli-kernel",
+    "mirage-command-envelopes",
     "mirage-event-count",
+    "mirage-event-plugin-placement",
     "mirage-typesafe-dx",
     "neat-sagas-organize",
     "observed-projection-tail",
@@ -46,6 +53,7 @@
     "snake-aggregate-events",
     "standalone-cli-vk7d",
     "standalone-legacy-lifecycle",
+    "symmetric-plugin-envelopes",
     "tired-dodos-sleep"
   ]
 }

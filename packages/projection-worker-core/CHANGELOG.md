@@ -1,5 +1,13 @@
 # @redemeine/projection-worker-core
 
+## 1.0.0-pre.3
+
+### Patch Changes
+
+- Updated dependencies [[`4d5f4de`](https://github.com/surikaterna/redemeine/commit/4d5f4de5ee0240a995396251a1cbde76bd471d4c)]:
+  - @redemeine/projection@0.2.0-pre.3
+  - @redemeine/projection-router-core@0.1.1-pre.3
+
 ## 1.0.0-pre.2
 
 ### Patch Changes

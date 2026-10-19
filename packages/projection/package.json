@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection",
-  "version": "0.2.0-pre.2",
+  "version": "0.2.0-pre.3",
   "description": "Projection builder for deriving read models from event streams",
   "license": "MIT",
   "repository": {

@@ -1,5 +1,11 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.3
+
+### Minor Changes
+
+- [#144](https://github.com/surikaterna/redemeine/pull/144) [`7c76529`](https://github.com/surikaterna/redemeine/commit/7c765293c17ba62fc89b701b96f8fb9c2aa20b76) Thanks [@spralle](https://github.com/spralle)! - Prepare aggregate plugin command envelopes before external sinks and direct processing, preserve prepared event extensions through conversion, and replay persisted extensions without rerunning preparation.
+
 ## 1.0.0-pre.2
 
 ### Major Changes

@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/projection-worker-core",
-  "version": "1.0.0-pre.2",
+  "version": "1.0.0-pre.3",
   "description": "Worker orchestration for projection processing",
   "license": "MIT",
   "repository": {
