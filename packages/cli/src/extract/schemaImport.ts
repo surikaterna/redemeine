@@ -32,17 +32,18 @@ function packageExport(checker: ts.TypeChecker, program: ts.Program, target: ts.
             if (module.startsWith('.') || module.startsWith('/') || /^[A-Za-z]:/.test(module)) continue;
             const symbol = checker.getSymbolAtLocation(statement.moduleSpecifier);
             const name = symbol && valueExport(checker, symbol, target);
-            if (name && publicModuleResolves(module, source.fileName)) return { module, name };
+            if (name && publicModuleResolves(module, source.fileName, program.getCompilerOptions().customConditions)) return { module, name };
         }
     }
     return null;
 }
 
-function publicModuleResolves(module: string, containingFile: string): boolean {
+function publicModuleResolves(module: string, containingFile: string, customConditions?: string[]): boolean {
     // Even Node10/path-mapped input projects must not authorize private package exports in generated imports.
     return !!ts.resolveModuleName(module, containingFile, {
         module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
-        resolvePackageJsonExports: true
+        resolvePackageJsonExports: true,
+        ...(customConditions ? { customConditions } : {})
     }, ts.sys).resolvedModule;
 }
 
