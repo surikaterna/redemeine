@@ -61,21 +61,21 @@ export type PluginSourceEvent<A> = {
   [K in keyof PluginPayloads<A> & string]: Event<PluginPayloads<A>[K], ResolvedEventType<A, K>>;
 }[keyof PluginPayloads<A> & string];
 
-export interface AggregateEventPlugin<Id extends string, S extends object, A = undefined, C extends object = {}, E extends object = {}, HasC extends boolean = boolean, HasE extends boolean = boolean> {
+export interface AggregateEventPlugin<Id extends string, S extends object | undefined, A = undefined, C extends object = {}, E extends object = {}, HasC extends boolean = boolean, HasE extends boolean = boolean> {
   readonly kind: 'aggregate-event';
   readonly id: Id;
   readonly source: A;
-  readonly initialize: () => S;
-  readonly events: Readonly<AggregatePluginEvents<S, A>>;
+  readonly initialize: S extends object ? () => S : undefined;
+  readonly events: S extends object ? Readonly<AggregatePluginEvents<S, A>> : Readonly<Record<string, never>>;
   readonly eventTypes: Readonly<Record<string, string>>;
-  readonly onEvent: AggregatePluginHandler<S, A> | undefined;
+  readonly onEvent: S extends object ? AggregatePluginHandler<S, A> | undefined : undefined;
   readonly commandEnvelope: HasC extends true ? CommandEnvelopeDescriptor<S, A, C> : HasC extends false ? undefined : CommandEnvelopeDescriptor<S, A, C> | undefined;
   readonly eventEnvelope: HasE extends true ? EventEnvelopeDescriptor<S, A, C, E> : HasE extends false ? undefined : EventEnvelopeDescriptor<S, A, C, E> | undefined;
 }
 
 export interface AggregatePluginBuilder<
   Id extends string,
-  S extends object,
+  S extends object | undefined,
   A,
   C extends object = {},
   E extends object = {},
@@ -83,9 +83,9 @@ export interface AggregatePluginBuilder<
   HasE extends boolean = false,
   Matched extends keyof AggregatePluginEvents<S, A> = never
 > {
-  events<const H extends AggregatePluginEvents<S, A>>(handlers: H & Record<Exclude<keyof H, keyof AggregatePluginEvents<S, A>>, never>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched | Extract<keyof H, keyof AggregatePluginEvents<S, A>>>;
-  onEvent(handler: AggregatePluginHandler<S, A>): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched>;
-  build(): Omit<AggregateEventPlugin<Id, S, A, C, E, HasC, HasE>, 'events'> & { readonly events: Readonly<Pick<AggregatePluginEvents<S, A>, Matched>> };
+  events: S extends object ? <const H extends AggregatePluginEvents<S, A>>(handlers: H & Record<Exclude<keyof H, keyof AggregatePluginEvents<S, A>>, never>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched | Extract<keyof H, keyof AggregatePluginEvents<S, A>>> : never;
+  onEvent: S extends object ? (handler: AggregatePluginHandler<S, A>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;
+  build(): Omit<AggregateEventPlugin<Id, S, A, C, E, HasC, HasE>, 'events'> & { readonly events: S extends object ? Readonly<Pick<AggregatePluginEvents<S, A>, Matched>> : Readonly<Record<string, never>> };
   commandEnvelope: HasC extends true
     ? never
     : {
@@ -114,7 +114,7 @@ export interface AggregatePluginBuilder<
   prepareEvent: HasE extends true ? (recipe: EnvelopeRecipe<E, EventEnvelopeContext<S, A, C>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;
 }
 
-export interface AggregatePluginStateBuilder<Id extends string, A> {
+export interface AggregatePluginStateBuilder<Id extends string, A> extends Omit<AggregatePluginBuilder<Id, undefined, A>, 'events' | 'onEvent'> {
   /** Trusted factory: return fresh, plugin-owned Immer-compatible state for independent host instances; not sandboxed. */
   state<S extends object>(initialize: (() => S) & (S extends PromiseLike<unknown> ? never : unknown)): AggregatePluginBuilder<Id, S, A>;
 }

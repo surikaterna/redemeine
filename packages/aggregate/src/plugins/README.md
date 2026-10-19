@@ -40,7 +40,7 @@ const Other = createAggregate('other', {}).plugins(observed).build();
 ```
 
 Register descriptors with builder `.plugins(...)` or immutable built
-`.withPlugins(...)`. State is mounted directly at `state[plugin.id]`. Initializers
+`.withPlugins(...)`. When `.state()` is declared, state is mounted directly at `state[plugin.id]`. Initializers
 are lazy until build/decoration and run once for each newly attached descriptor,
 not once per applied event. Return fresh plugin-owned Immer-compatible objects;
 the factory is trusted, not sandboxed. Normal immutable application preserves the
@@ -48,9 +48,9 @@ host's initial state.
 
 Direct arguments and `as const` tuples guarantee their mounted namespaces.
 Spreading an ordinary array guarantees no elements (it may be empty), so each
-possible event-plugin ID has optional state, preserving that ID's own state type
+possible stateful plugin ID has optional state, preserving that ID's own state type
 even for heterogeneous arrays. Narrow a namespace before reading its state.
-Empty and entirely legacy arrays add no mounted state. Array elements still need
+Empty, stateless-only and entirely legacy arrays add no mounted state. Array elements still need
 literal, non-union IDs that do not collide with any host-state branch. Since
 arrays prove neither presence nor order, source prerequisites must already exist
 on every host-state branch; attach prerequisites first or use an ordered tuple.
@@ -60,7 +60,7 @@ Application runs the domain projector first, then each registration's matched
 handler followed by its catchall. Replay uses the same pure application path;
 command processing enriches events but does not apply state reducers. `applyToDraft` uses the caller's
 Immer transaction; let failures escape that transaction to discard its changes.
-Callbacks must be synchronous. A missing plugin namespace is an error before any
+Callbacks must be synchronous. A missing stateful plugin namespace is an error before any
 domain write: migrate older snapshots explicitly rather than lazily backfilling.
 Mirage and Depot also check namespace presence when accepting initial/snapshot
 state, even without replay events. This check does not validate the namespace's
@@ -116,8 +116,11 @@ make its internal timestamp immutable.
 
 See [envelope preparation](../../ENVELOPES.md) for typed command `dateTime`,
 event extensions, optional parsers, Mirage/bridge pre-sink integration, and the
-executable fixed-clock/replay showcase. Envelope-only plugins currently require
-`.state(() => ({}))`. Command preparation itself never updates state.
+executable fixed-clock/replay showcase. Envelope-only plugins omit `.state()` and
+mount no namespace; their `ownState` is `undefined`. The same fluent envelope API
+works with `createAggregatePlugin` and source-bound `createAggregatePluginFor`.
+State reducers require `.state()` first. Explicit `.state(() => ({}))` remains
+stateful, including its snapshot requirements. Command preparation itself never updates state.
 
 **Deferred, not shipped:** universal command payload extensions, full
 persistence-plugin migration, a new bridge persistence adapter, and projection hooks.
@@ -146,4 +149,4 @@ for the common `AggregateStateView<S>`/`Draft<S>` contract.
 
 Initializers run once per new registration, must return fresh plugin-owned
 state, and are not rerun when decorating an already decorated aggregate.
-No-op/legacy-only registrations preserve the initial-state reference.
+No-op, stateless-only and legacy-only registrations preserve the initial-state reference.

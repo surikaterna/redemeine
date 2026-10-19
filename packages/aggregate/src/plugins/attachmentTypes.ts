@@ -12,7 +12,7 @@ export type EventPlugin = {
   readonly kind: 'aggregate-event';
   readonly id: string;
   readonly source: unknown;
-  readonly initialize: () => object;
+  readonly initialize: (() => object) | undefined;
   readonly eventTypes: Readonly<Record<string, string>>;
   readonly events: Readonly<Record<string, ((...args: never[]) => unknown) | undefined>>;
   readonly onEvent: ((...args: never[]) => unknown) | undefined;
@@ -24,8 +24,9 @@ export type PluginRegistration = LegacyRegistration | EventPlugin;
 export type RegistrationTuple = readonly [] | readonly [PluginRegistration, ...PluginRegistration[]];
 type Intersection<U> = (U extends unknown ? (value: U) => void : never) extends ((value: infer I) => void) ? I : never;
 export type RegistrationExtensions<P> = Intersection<ExtractPluginExtensions<Exclude<P, EventPlugin>>>;
+type StatefulPlugin = EventPlugin & { readonly initialize: () => object };
 type ArrayMounts<P> = {
-  [Id in Extract<P, EventPlugin>['id']]?: ReturnType<Extract<P, { id: Id } & EventPlugin>['initialize']>;
+  [Id in Extract<P, StatefulPlugin>['id']]?: ReturnType<Extract<P, { id: Id } & StatefulPlugin>['initialize']>;
 };
 export type MountedPlugins<P extends readonly unknown[]> = P extends readonly [infer H, ...infer T]
   ? (H extends { kind: 'aggregate-event'; id: infer Id extends string; initialize: () => infer S } ? Record<Id, S> : {}) & MountedPlugins<T>
@@ -55,7 +56,7 @@ type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'eve
 type BranchKeys<S> = S extends unknown ? keyof S : never;
 type InvalidSourceEvent<A, H> = H extends { source: infer Source extends AggregatePluginSource; events: infer Handlers }
   ? A extends AggregatePluginSource ? {
-    [K in keyof Handlers]-?: K extends keyof PluginPayloads<Source>
+    [K in keyof Handlers]-?: [Handlers[K]] extends [undefined] ? never : K extends keyof PluginPayloads<Source>
       ? K extends keyof PluginPayloads<A> ? [PluginPayloads<A>[K]] extends [PluginPayloads<Source>[K]] ? never : K : K
       : K
   }[keyof Handlers] : never : never;
@@ -70,14 +71,14 @@ type InvalidArrayMember<S, H> = H extends EventPlugin
       : true
     : true
   : never;
-export type ValidRegistrations<S, P extends readonly unknown[]> = P extends readonly [infer H, ...infer T]
-  ? [H] extends [{ kind: 'aggregate-event'; id: infer Id extends string; initialize: () => infer State }]
-    ? [Id] extends [AggregatePluginId<Id>] ? Id extends BranchKeys<S> ? never
+export type ValidRegistrations<S, P extends readonly unknown[], Seen extends string = never> = P extends readonly [infer H, ...infer T]
+  ? [H] extends [EventPlugin & { id: infer Id extends string }]
+    ? [Id] extends [AggregatePluginId<Id>] ? Id extends BranchKeys<S> | Seen ? never
       : H extends { source: { initialState: infer Required } }
-        ? [S] extends [Required] ? readonly [H, ...ValidRegistrations<S & Record<Id, State>, T>] : never
-        : readonly [H, ...ValidRegistrations<S & Record<Id, State>, T>]
+        ? [S] extends [Required] ? readonly [H, ...ValidRegistrations<S & MountedPlugins<[H]>, T, Seen | Id>] : never
+        : readonly [H, ...ValidRegistrations<S & MountedPlugins<[H]>, T, Seen | Id>]
       : never
-    : readonly [H, ...ValidRegistrations<S, T>]
+    : readonly [H, ...ValidRegistrations<S, T, Seen>]
   : { [K in keyof P]: P[K] & (true extends InvalidArrayMember<S, P[K]> ? never : unknown) };
 export type ValidRegistrationArray<S, P extends readonly PluginRegistration[]> =
   number extends P['length'] ? true extends InvalidArrayMember<S, P[number]> ? never : P : never;
