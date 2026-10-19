@@ -1,5 +1,16 @@
 # @redemeine/aggregate
 
+## 1.0.0-pre.5
+
+### Minor Changes
+
+- [#148](https://github.com/surikaterna/redemeine/pull/148) [`72d0a7b`](https://github.com/surikaterna/redemeine/commit/72d0a7b8f3ca11413b06215d9076a27bc5c3fbdd) Thanks [@spralle](https://github.com/spralle)! - Allow createAggregatePlugin and createAggregatePluginFor to declare command/event
+  envelopes without calling state(). Stateless plugins enrich prepared envelope types
+  without mounting aggregate state or requiring snapshot namespaces. Preserve readonly
+  domain context, source/identity checks, ordered recipes and existing bridge pre-sink
+  preparation. State reducers still require an explicit state initializer; existing
+  state(() => ({})) plugins retain their stateful behavior and migration requirements.
+
 ## 1.0.0-pre.4
 
 ### Major Changes

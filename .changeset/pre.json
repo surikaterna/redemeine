@@ -54,6 +54,7 @@
     "snake-aggregate-events",
     "standalone-cli-vk7d",
     "standalone-legacy-lifecycle",
+    "stateless-envelope-plugins",
     "symmetric-plugin-envelopes",
     "tired-dodos-sleep"
   ]
