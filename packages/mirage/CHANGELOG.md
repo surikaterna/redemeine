@@ -1,5 +1,36 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.4
+
+### Major Changes
+
+- [#143](https://github.com/surikaterna/redemeine/pull/143) [`4d5f4de`](https://github.com/surikaterna/redemeine/commit/4d5f4de5ee0240a995396251a1cbde76bd471d4c) Thanks [@spralle](https://github.com/spralle)! - BREAKING: expose coherent readonly aggregate state views for initial templates,
+  commands, selectors, preparation and immutable application results, while keeping
+  the original model for writable Immer drafts. Event-plugin mounting now uses
+  Immer structural sharing and default auto-freeze instead of a writable shallow
+  copy. Callers relinquish mutation rights to shared template data from creation;
+  they must not assign readonly results to mutable model variables or mutate aliases.
+
+  Mirage and Projection recover the original model marker for snapshot and reducer
+  inference (with an initialState fallback for structural sources). Mirage public
+  state views preserve callable Date readers without exposing setters. The Saga
+  execution bridge now honestly exposes/stores readonly aggregate results; persistence
+  callbacks must accept readonly views rather than assuming mutable model ownership.
+
+  Keep replacement event-map generics scoped in inferred downstream declarations,
+  fixing a pre-existing free `NewE` reference in Saga Runtime's generated public API.
+
+### Minor Changes
+
+- [#144](https://github.com/surikaterna/redemeine/pull/144) [`7c76529`](https://github.com/surikaterna/redemeine/commit/7c765293c17ba62fc89b701b96f8fb9c2aa20b76) Thanks [@spralle](https://github.com/spralle)! - Prepare aggregate command envelopes after Mirage routing and before legacy lifecycle hooks, preserving enriched events through Depot persistence and replay.
+
+### Patch Changes
+
+- [#143](https://github.com/surikaterna/redemeine/pull/143) [`ec16bcb`](https://github.com/surikaterna/redemeine/commit/ec16bcba7a193cd1ed687f48acc4a57ef72d4656) Thanks [@spralle](https://github.com/spralle)! - Reject aggregate event descriptors passed as host lifecycle plugins with guidance to attach them through Aggregate.plugins or built.withPlugins. Stateful aggregate event plugins execute through the existing application path.
+
+- Updated dependencies [[`ec16bcb`](https://github.com/surikaterna/redemeine/commit/ec16bcba7a193cd1ed687f48acc4a57ef72d4656), [`4d5f4de`](https://github.com/surikaterna/redemeine/commit/4d5f4de5ee0240a995396251a1cbde76bd471d4c), [`7c76529`](https://github.com/surikaterna/redemeine/commit/7c765293c17ba62fc89b701b96f8fb9c2aa20b76)]:
+  - @redemeine/aggregate@1.0.0-pre.4
+
 ## 1.0.0-pre.3
 
 ### Major Changes
