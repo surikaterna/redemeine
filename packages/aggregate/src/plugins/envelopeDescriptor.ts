@@ -9,7 +9,7 @@ export interface EnvelopeSlot {
   readonly parser: EnvelopeParser<object> | undefined;
   readonly recipes: readonly Recipe[];
 }
-export type EnvelopeSlots = Readonly<{ commandEnvelope?: EnvelopeSlot; eventEnvelope?: EnvelopeSlot }>;
+export type EnvelopeSlots = Readonly<{ commandEnvelope?: EnvelopeSlot; eventEnvelope?: EnvelopeSlot; propagateCommandHeadersToEvents?: boolean }>;
 
 export function declareEnvelope(existing: EnvelopeSlot | undefined, initialize: Callback, parser?: EnvelopeParser<object>): EnvelopeSlot {
   if (existing) throw new TypeError('Envelope initializer already declared');
@@ -28,6 +28,7 @@ export function appendRecipe(existing: EnvelopeSlot | undefined, recipe: Recipe)
 
 export function envelopeMethods<T>(slots: EnvelopeSlots, next: (slots: EnvelopeSlots) => T) {
   return {
+    propagateCommandHeadersToEvents: () => next({ ...slots, propagateCommandHeadersToEvents: true }),
     commandEnvelope: (initialize: Callback, parser?: EnvelopeParser<object>) =>
       next({ ...slots, commandEnvelope: declareEnvelope(slots.commandEnvelope, initialize, parser) }),
     eventEnvelope: (initialize: Callback, parser?: EnvelopeParser<object>) =>

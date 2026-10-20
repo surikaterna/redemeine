@@ -11,7 +11,7 @@ export interface BridgeableAggregate<S extends object, C extends CommandCreators
   aggregateType?: string;
   process(state: S, command: Command<unknown, string>): Event[];
   prepareCommand?(state: S, command: Command<unknown, string>): BridgeCommand;
-  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
+  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown; propagateCommandHeadersToEvents?: boolean }[];
   apply(state: S, event: Event<unknown, string>): S;
   types: { commands: Record<string, string>; events: Record<string, string> };
   commandCreators: C;
@@ -25,8 +25,17 @@ export interface BridgeOptions<S extends object> {
   envelope?: (event: BridgeEvent, command: BridgeCommand, aggregate: BridgeContext<S>) => BridgeEvent;
 }
 
+/** Legacy shortcut arguments; only a single required, empty-compatible object may be omitted. */
+export type BridgeArguments<C extends (...args: never[]) => unknown> =
+  Parameters<C> extends [] ? [payload?: Record<string, never>]
+    : Parameters<C> extends [infer Payload]
+      ? [Payload] extends [object]
+        ? {} extends Payload ? [payload?: Payload] : Parameters<C>
+        : Parameters<C>
+      : Parameters<C>;
+
 type BridgeInstance<S extends object, C extends CommandCreators> = CompatibleAggregate<S> & {
-  [K in keyof C]: (...args: Parameters<C[K]>) => ReturnType<CompatibleAggregate<S>['_sink']>;
+  [K in keyof C]: (...args: BridgeArguments<C[K]>) => ReturnType<CompatibleAggregate<S>['_sink']>;
 };
 
 export type BridgeConstructor<S extends object, C extends CommandCreators> = {

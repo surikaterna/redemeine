@@ -150,3 +150,9 @@ for the common `AggregateStateView<S>`/`Draft<S>` contract.
 Initializers run once per new registration, must return fresh plugin-owned
 state, and are not rerun when decorating an already decorated aggregate.
 No-op, stateless-only and legacy-only registrations preserve the initial-state reference.
+
+### Command header propagation
+
+Call `.propagateCommandHeadersToEvents()` on a stateless, stateful, or source-bound plugin builder to inherit detached prepared command headers on newly emitted events. A header-only plugin activates host preparation without mounting state. Repeated opt-in is harmless.
+
+Propagation runs before all event-envelope callbacks. It applies only when the event has **no own `headers` property**: explicit `{}` and explicit `undefined` are preserved. Headers are not merged, missing keys are not synthesized, and principal is not duplicated at the root. Metadata and replay/application behavior are unchanged; `headers` remains reserved in envelope extensions. Caller-owned headers are detached, not frozen or mutated.

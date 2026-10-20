@@ -63,6 +63,7 @@ export type PluginSourceEvent<A> = {
 
 export interface AggregateEventPlugin<Id extends string, S extends object | undefined, A = undefined, C extends object = {}, E extends object = {}, HasC extends boolean = boolean, HasE extends boolean = boolean> {
   readonly kind: 'aggregate-event';
+  readonly propagateCommandHeadersToEvents?: boolean;
   readonly id: Id;
   readonly source: A;
   readonly initialize: S extends object ? () => S : undefined;
@@ -83,6 +84,7 @@ export interface AggregatePluginBuilder<
   HasE extends boolean = false,
   Matched extends keyof AggregatePluginEvents<S, A> = never
 > {
+  propagateCommandHeadersToEvents(): AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched>;
   events: S extends object ? <const H extends AggregatePluginEvents<S, A>>(handlers: H & Record<Exclude<keyof H, keyof AggregatePluginEvents<S, A>>, never>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched | Extract<keyof H, keyof AggregatePluginEvents<S, A>>> : never;
   onEvent: S extends object ? (handler: AggregatePluginHandler<S, A>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;
   build(): Omit<AggregateEventPlugin<Id, S, A, C, E, HasC, HasE>, 'events'> & { readonly events: S extends object ? Readonly<Pick<AggregatePluginEvents<S, A>, Matched>> : Readonly<Record<string, never>> };

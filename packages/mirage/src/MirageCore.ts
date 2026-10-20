@@ -225,7 +225,7 @@ export class MirageCore<S> {
 
     private prepareCommand(command: Command): Command {
         const { prepareCommand, aggregatePlugins } = this.builder;
-        if (!prepareCommand || !aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope)) return command;
+        if (!prepareCommand || !aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope || plugin.propagateCommandHeadersToEvents === true)) return command;
         for (const key of ['aggregateId', 'aggregateType']) {
             const value: unknown = Reflect.get(command, key);
             if (value !== undefined && typeof value !== 'string') throw new TypeError(`Invalid envelope routing field: ${key}`);

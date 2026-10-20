@@ -52,12 +52,15 @@ export class StandaloneAggregate<S extends object> implements CompatibleAggregat
 
   protected _prepareCommand(command: Command): Command { return command; }
 
+  protected _normalizeCommand(command: Command): Command { return command; }
+
   _sink(commandToSink: Command | PromiseLike<Command>): Promise<CompatibleAggregate<S> | true> {
     // Adopt once across realms/thenable implementations; getters that throw reject
     // this promise, while command mutation and sink invocation remain FIFO work.
     const input = new Promise<Command>(resolve => resolve(commandToSink));
     void input.catch(() => undefined);
     return this._commandQueue.queueCommand(() => input.then<CompatibleAggregate<S> | true>(command => {
+      command = this._normalizeCommand(command);
       if (!command.id) {
         console.warn('No command id set, setting it automatically');
         command.id = uuid();

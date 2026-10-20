@@ -76,6 +76,9 @@ function context(host: Host, state: object, plugin: EventPlugin, command: object
 
 function prepareLinkedEvent(host: Host, plugins: readonly EventPlugin[], own: Map<EventPlugin, object> | undefined, state: object, command: Command<unknown, string>, raw: Event): Event {
   const event = project(raw);
+  if (!Object.hasOwn(raw, 'headers') && Object.hasOwn(command, 'headers') && plugins.some(plugin => plugin.propagateCommandHeadersToEvents === true)) {
+    Object.defineProperty(event, 'headers', { value: cloneEnvelopeData(command.headers), enumerable: true, writable: true, configurable: true });
+  }
   event.correlationId = command.id;
   const aggregateId: unknown = Reflect.get(command, 'aggregateId');
   if (aggregateId !== undefined) {
@@ -92,7 +95,7 @@ function prepareLinkedEvent(host: Host, plugins: readonly EventPlugin[], own: Ma
 
 export function createEnvelopeRuntime(host: Host, plugins: readonly EventPlugin[]) {
   const cache = new WeakMap<object, Prepared>();
-  const active = plugins.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope);
+  const active = plugins.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope || plugin.propagateCommandHeadersToEvents === true);
   function prepareCommand(state: object, raw: Command<unknown, string>): Command<unknown, string> {
     assertRouting(raw);
     if (!active) return raw;

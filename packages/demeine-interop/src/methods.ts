@@ -31,7 +31,9 @@ export function installMethods<S extends object, C extends CommandCreators>(
     const creator = builder.commandCreators[key];
     if (typeof creator !== 'function') throw new Error(`Missing command creator: ${key}`);
     define(key, function (this: BridgeContext<S>, ...args: unknown[]) {
-      const command: BridgeCommand = Reflect.apply(creator, builder.commandCreators, args);
+      // Creator wrappers erase TS arity. Default only an absent argument list;
+      // explicit undefined must still reach authored defaults and pack functions.
+      const command: BridgeCommand = Reflect.apply(creator, builder.commandCreators, args.length === 0 ? [{}] : args);
       // A creator's absent payload becomes the same legacy object for sink and
       // processor/contract; preserve every non-undefined pack result unchanged.
       const payload = command.payload === undefined ? {} : command.payload;

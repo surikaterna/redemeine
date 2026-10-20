@@ -7,6 +7,7 @@ import type { AggregateStateModel, AggregateStateView } from '../types/aggregate
 
 // Existential callback signatures: implementations are invoked only with their own mounted state.
 export type EventPlugin = {
+  readonly propagateCommandHeadersToEvents?: boolean;
   readonly commandEnvelope?: EnvelopeSlot | undefined;
   readonly eventEnvelope?: EnvelopeSlot | undefined;
   readonly kind: 'aggregate-event';

@@ -1,4 +1,4 @@
-import { createAggregate, createAggregatePluginFor } from '@redemeine/aggregate';
+import { createAggregate, createAggregatePlugin, createAggregatePluginFor } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
 import { createDemeineBridge } from '../src';
 
@@ -53,4 +53,30 @@ test('invalid supplied dates fail before the external sink and event adapters ca
   } }))();
   await expect(invalid.add({ amount: 1 })).rejects.toThrow('Envelope must preserve');
   expect(invalid._state.count).toBe(0);
+});
+
+test('header-only capability detaches before the external sink and propagates without plugin state', async () => {
+  const base = createAggregate('counter', { count: 0 })
+    .events({ added(state) { state.count++; } })
+    .commands(emit => ({ add: () => emit.added({}) })).build();
+  const built = base.withPlugins(createAggregatePlugin('transport').propagateCommandHeadersToEvents().build());
+  const headers = { principal: { user: 'one' } };
+  const Bridge = createDemeineBridge(built);
+  const live = new Bridge({ sink(command, aggregate) {
+    expect(command.headers).toEqual(headers);
+    expect(command.headers).not.toBe(headers);
+    expect(command.aggregateType).toBe('counter');
+    headers.principal.user = 'caller-mutated';
+    return aggregate._process(command);
+  } });
+  await live._sink({ ...built.commandCreators.add(), payload: {}, aggregateId: live.id, headers });
+  expect(live._state).toEqual({ count: 1 });
+  const events = live.getUncommittedEvents();
+  expect(events[0]!.headers).toEqual({ principal: { user: 'one' } });
+  expect(events[0]).not.toHaveProperty('principal');
+  expect(Object.isFrozen(headers.principal)).toBe(false);
+  const replay = new Bridge();
+  replay.id = live.id;
+  await replay._rehydrate(events, 1, { count: 0 });
+  expect(replay._state).toEqual(live._state);
 });

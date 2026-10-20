@@ -33,7 +33,8 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/demeine-interop/test --runInBand",
+    "test:types": "tsc -p test/typefixtures/tsconfig.json",
+    "test": "pnpm exec jest --config ../../jest.config.js --roots packages/demeine-interop/test --runInBand && pnpm run test:types",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

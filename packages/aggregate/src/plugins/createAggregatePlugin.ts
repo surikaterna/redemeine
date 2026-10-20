@@ -34,7 +34,8 @@ function builder<Id extends string, S extends object | undefined, A extends Aggr
         eventTypes: eventTypesFor(source, Object.keys(events)),
         onEvent,
         commandEnvelope: envelopes.commandEnvelope,
-        eventEnvelope: envelopes.eventEnvelope
+        eventEnvelope: envelopes.eventEnvelope,
+        propagateCommandHeadersToEvents: envelopes.propagateCommandHeadersToEvents
       })
   }) as unknown as AggregatePluginBuilder<Id, S, A>;
 }
