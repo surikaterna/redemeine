@@ -16,7 +16,7 @@ function definition() {
   const source = createAggregate('counter', { count: 0 })
     .events({ added(state, input: Event<typeof payload>) { state.count += input.payload.amount; } })
     .commands(emit => ({ add: () => [emit.added(payload), emit.added(payload)] })).build();
-  const built = source.withPlugins(createAggregatePlugin('host').propagateCommandHeadersToEvents()
+  const built = source.withPlugins(createAggregatePlugin('host')
     .commandEnvelope(input => {
       command();
       const position = input.position ?? { x: 0 };
@@ -25,7 +25,7 @@ function definition() {
     })
     .eventEnvelope((_, context) => {
       event();
-      return { position: context.command.position };
+      return { position: context.command.position, headers: context.command.headers };
     }).build());
   return { built, command, event, payload, headers };
 }
@@ -174,9 +174,9 @@ test('post-sink class changes reprepare once when no transport extras invalidate
   expect(live.getUncommittedEvents()[0]).toMatchObject({ position: { x: 8 } });
 });
 
-test('header-only capability activates class normalization without envelope callbacks', async () => {
+test('header-only event plugin activates class normalization', async () => {
   const source = createAggregate('headers', {}).commands(() => ({ add: () => [] })).build();
-  const built = source.withPlugins(createAggregatePlugin('headers').propagateCommandHeadersToEvents().build());
+  const built = source.withPlugins(createAggregatePlugin('headers').eventEnvelope((_, ctx) => ({ headers: ctx.command.headers })).build());
   const headers = { position: new PositionData(1) };
   const live = new (createDemeineBridge(built))({ sink(prepared, aggregate) {
     expect(Object.getPrototypeOf(prepared.headers!.position)).toBe(Object.prototype);

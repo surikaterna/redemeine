@@ -4,4 +4,4 @@
 "@redemeine/mirage": patch
 ---
 
-Add opt-in command-to-event header propagation to Aggregate plugins, including header-only capability detection in bridge and Mirage hosts. Inherit detached prepared command headers only when the event has no own headers property; explicit empty or undefined headers remain unchanged.
+Let eventEnvelope output own typed headers, using its existing initializer/parser/recipe API in Aggregate, bridge and Mirage. Replace the unreleased boolean propagation flag with an explicit plugin-owned selection/validation policy. One writer may replace raw event headers; a second writer throws without implicit merging. Required header properties (whose value may be undefined) preserve sound prepared types, and installed data is detached. Callbacks retain registration order; there is no header prepass or universal copy default. An output with own undefined headers now creates that property even when the input omitted it. Command headers remain reserved in command extensions; metadata and replay are unchanged.

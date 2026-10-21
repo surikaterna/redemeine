@@ -59,7 +59,7 @@ test('header-only capability detaches before the external sink and propagates wi
   const base = createAggregate('counter', { count: 0 })
     .events({ added(state) { state.count++; } })
     .commands(emit => ({ add: () => emit.added({}) })).build();
-  const built = base.withPlugins(createAggregatePlugin('transport').propagateCommandHeadersToEvents().build());
+  const built = base.withPlugins(createAggregatePlugin('transport').eventEnvelope((_, ctx) => ({ headers: ctx.command.headers })).build());
   const headers = { principal: { user: 'one' } };
   const Bridge = createDemeineBridge(built);
   const live = new Bridge({ sink(command, aggregate) {
@@ -79,4 +79,20 @@ test('header-only capability detaches before the external sink and propagates wi
   replay.id = live.id;
   await replay._rehydrate(events, 1, { count: 0 });
   expect(replay._state).toEqual(live._state);
+});
+
+test.each(['erase', 'replace', 'mutate'] as const)('adapter cannot %s plugin-prepared headers', async mode => {
+  const base = createAggregate('protectedHeaders', { count: 0 })
+    .events({ added(state) { state.count++; } })
+    .commands(emit => ({ add: () => emit.added({}) })).build();
+  const built = base.withPlugins(createAggregatePlugin('writer').eventEnvelope(() => ({ headers: { traceId: 'one' } })).build());
+  const live = new (createDemeineBridge(built, { envelope(event) {
+    if (mode === 'erase') Reflect.deleteProperty(event, 'headers');
+    if (mode === 'replace') event.headers = { traceId: 'other' };
+    if (mode === 'mutate') event.headers!.traceId = 'other';
+    return event;
+  } }))();
+  await expect(live.add()).rejects.toThrow('Envelope must preserve');
+  expect(live._state.count).toBe(0);
+  expect(live.getUncommittedEvents()).toEqual([]);
 });

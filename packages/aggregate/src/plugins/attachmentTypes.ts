@@ -7,7 +7,6 @@ import type { AggregateStateModel, AggregateStateView } from '../types/aggregate
 
 // Existential callback signatures: implementations are invoked only with their own mounted state.
 export type EventPlugin = {
-  readonly propagateCommandHeadersToEvents?: boolean;
   readonly commandEnvelope?: EnvelopeSlot | undefined;
   readonly eventEnvelope?: EnvelopeSlot | undefined;
   readonly kind: 'aggregate-event';
@@ -50,10 +49,17 @@ export type EnvelopeRouting = {
   correlation?: unknown;
 };
 export type PreparedCommand<P, T extends string, X extends object = {}> = Command<P, T> & EnvelopeRouting & X;
+type GuaranteedHeaders<X> = [X] extends [{ headers: unknown }] ? Pick<X, Extract<'headers', keyof X>> : {};
+type PreparedEvent<X> = Omit<Event, keyof GuaranteedHeaders<X>> & EnvelopeRouting & X;
 type PreviousEnvelope<A, K extends 'command' | 'event'> = A extends { readonly __envelopeTypes?: infer X }
   ? K extends keyof NonNullable<X> ? NonNullable<X>[K] : {} : {};
 type CommandExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'command'> & MountedEnvelopes<P, 'commandEnvelope'>;
-type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'event'> & MountedEnvelopes<P, 'eventEnvelope'>;
+// Only required tuple members prove writer presence; possible writers must not narrow canonical or guaranteed headers.
+type MountedEventHeaders<P extends readonly unknown[]> = P extends readonly [infer H, ...infer T]
+  ? GuaranteedHeaders<ExtensionOf<H, 'eventEnvelope'>> & MountedEventHeaders<T> : {};
+type EventExtensions<A, P extends readonly unknown[]> =
+  Omit<PreviousEnvelope<A, 'event'>, 'headers'> & Omit<MountedEnvelopes<P, 'eventEnvelope'>, 'headers'> &
+  GuaranteedHeaders<PreviousEnvelope<A, 'event'>> & MountedEventHeaders<P>;
 type BranchKeys<S> = S extends unknown ? keyof S : never;
 type InvalidSourceEvent<A, H> = H extends { source: infer Source extends AggregatePluginSource; events: infer Handlers }
   ? A extends AggregatePluginSource ? {
@@ -91,7 +97,7 @@ export type DecoratedAggregate<A extends { initialState: unknown }, P extends re
     apply: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>;
     applyToDraft: (draft: Draft<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => void;
     prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: C) => PreparedCommand<C['payload'], C['type'], CommandExtensions<A, P>>;
-    process: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: Command<unknown, string>) => (Event & EnvelopeRouting & EventExtensions<A, P>)[];
+    process: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: Command<unknown, string>) => PreparedEvent<EventExtensions<A, P>>[];
     readonly __envelopeTypes?: { command: CommandExtensions<A, P>; event: EventExtensions<A, P> };
     plugins: A extends { plugins?: (infer Legacy)[] }
       ? RedemeinePlugin<ExtractPluginExtensions<Legacy> & RegistrationExtensions<P[number]>>[] : never;

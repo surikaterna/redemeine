@@ -5,6 +5,13 @@ import type { EnvelopeRouting } from './attachmentTypes';
 
 export type EnvelopeReservedKey = 'id' | 'type' | 'payload' | 'metadata' | 'headers' | keyof EnvelopeRouting | keyof Object | '__proto__' | 'prototype' | 'then';
 export type EnvelopeExtension<X extends object> = X extends PromiseLike<unknown> ? never : Extract<EnvelopeReservedKey, keyof X> extends never ? X : never;
+type KeysOfUnion<X> = X extends unknown ? keyof X : never;
+export type EventEnvelopeExtension<X extends object> =
+  Extract<Exclude<EnvelopeReservedKey, 'headers'>, KeysOfUnion<X>> extends never
+    ? 'headers' extends KeysOfUnion<X>
+      ? [X] extends [{ headers: Record<string, unknown> | undefined }] ? X : never
+      : X extends PromiseLike<unknown> ? never : X
+    : never;
 export interface EnvelopeParser<X extends object> {
   /** Validates/transforms initializer output, not the incoming command/event. Must be synchronous. */
   parse(value: unknown): X;

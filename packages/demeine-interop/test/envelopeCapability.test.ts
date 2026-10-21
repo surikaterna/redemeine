@@ -40,7 +40,7 @@ test.each(['command', 'event', 'headers'] as const)('%s-only plan prepares routi
   const root = createAggregatePlugin('phase').state(() => ({}));
   const plugin = phase === 'command' ? root.commandEnvelope(() => ({ commandStamp: true })).build()
     : phase === 'event' ? root.eventEnvelope(() => ({ eventStamp: true })).build()
-      : createAggregatePlugin('headers').propagateCommandHeadersToEvents().build();
+      : createAggregatePlugin('headers').eventEnvelope((_, ctx) => ({ headers: ctx.event.headers })).build();
   const built = source().withPlugins(plugin);
   const sink = jest.fn((command, aggregate) => {
     expect(command.aggregateId).toBe(aggregate.id);

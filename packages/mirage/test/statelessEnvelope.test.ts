@@ -35,7 +35,7 @@ test('header-only capability prepares before native lifecycle and persists uncha
   const built = createAggregate('counter', { count: 0 })
     .events({ added(state) { state.count++; } })
     .commands(emit => ({ add: () => emit.added() })).build()
-    .withPlugins(createAggregatePlugin('headers').propagateCommandHeadersToEvents().build());
+    .withPlugins(createAggregatePlugin('headers').eventEnvelope((_, ctx) => ({ headers: ctx.command.headers })).build());
   const headers = { principal: { user: 'one' } };
   const hook = jest.fn(command => {
     expect(command.headers).toEqual(headers);

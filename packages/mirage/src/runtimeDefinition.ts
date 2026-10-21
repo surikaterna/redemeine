@@ -20,7 +20,7 @@ export interface RuntimeBuilder<S> {
   process(state: S, command: Command<unknown, string>): Event[];
   apply(state: S, event: Event): S;
   prepareCommand?(state: S, command: Command<unknown, string>): Command<unknown, string>;
-  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown; propagateCommandHeadersToEvents?: boolean }[];
+  aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];
   hooks?: {
     onBeforeCommand?: (command: Command<unknown, string>, state: AggregateStateView<S>) => void;
     onAfterCommand?: (command: Command<unknown, string>, events: Event[], state: AggregateStateView<S>) => void;

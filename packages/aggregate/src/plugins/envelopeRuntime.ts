@@ -29,22 +29,33 @@ function extras(input: object): Record<string, unknown> {
   return Object.fromEntries(Object.entries(input).filter(([key]) => !coreKeys.includes(key as typeof coreKeys[number])));
 }
 
-function extension(value: unknown): object {
+function extension(value: unknown, event = false): object {
   assertSynchronous(value);
   if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
     throw new TypeError('Envelope extension must be a plain object');
   }
   for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string' || reserved.has(key) || key in Object.prototype) throw new TypeError(`Reserved envelope extension key: ${String(key)}`);
+    if (typeof key !== 'string' || (reserved.has(key) && !(event && key === 'headers')) || key in Object.prototype) throw new TypeError(`Reserved envelope extension key: ${String(key)}`);
     const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
     if (!('value' in descriptor) || !descriptor.enumerable) throw new TypeError('Envelope extensions require enumerable data properties');
+    if (event && key === 'headers' && descriptor.value !== undefined) assertHeaders(descriptor.value);
   }
   return cloneEnvelopeData(value);
 }
 
-function invoke(slot: EnvelopeSlot, input: object, context: () => object): object {
-  const initialized = extension(Reflect.apply(slot.initialize, undefined, [envelopeSnapshot(input), context()]));
-  const parsed = extension(slot.parser ? slot.parser.parse(initialized) : initialized);
+function assertHeaders(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw new TypeError('Event headers must be a plain data record or undefined');
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (typeof key !== 'string' || !('value' in descriptor) || !descriptor.enumerable) throw new TypeError('Event headers require enumerable data properties');
+  }
+}
+
+function invoke(slot: EnvelopeSlot, input: object, context: () => object, event = false): object {
+  const initialized = extension(Reflect.apply(slot.initialize, undefined, [envelopeSnapshot(input), context()]), event);
+  const parsed = extension(slot.parser ? slot.parser.parse(initialized) : initialized, event);
   const prepared = produce(parsed, draft => {
     for (const recipe of slot.recipes) {
       const result = Reflect.apply(recipe, undefined, [draft, context()]);
@@ -52,13 +63,16 @@ function invoke(slot: EnvelopeSlot, input: object, context: () => object): objec
       if (result !== undefined) throw new TypeError('Envelope recipes must not return replacements');
     }
   });
-  const checked = extension(prepared);
-  return extension(slot.parser ? slot.parser.parse(checked) : checked);
+  const checked = extension(prepared, event);
+  return extension(slot.parser ? slot.parser.parse(checked) : checked, event);
 }
 
-function merge(target: Core, value: object): void {
+function merge(target: Core, value: object, headerWriter?: Set<string>): void {
   for (const key of Object.keys(value)) {
-    if (Object.hasOwn(target, key)) throw new TypeError(`Envelope extension collision: ${key}`);
+    if (key === 'headers' && headerWriter) {
+      if (headerWriter.has(key)) throw new TypeError('Envelope extension collision: headers');
+      headerWriter.add(key);
+    } else if (Object.hasOwn(target, key)) throw new TypeError(`Envelope extension collision: ${key}`);
     Object.defineProperty(target, key, { value: Reflect.get(value, key), enumerable: true, writable: true, configurable: true });
   }
 }
@@ -76,9 +90,7 @@ function context(host: Host, state: object, plugin: EventPlugin, command: object
 
 function prepareLinkedEvent(host: Host, plugins: readonly EventPlugin[], own: Map<EventPlugin, object> | undefined, state: object, command: Command<unknown, string>, raw: Event): Event {
   const event = project(raw);
-  if (!Object.hasOwn(raw, 'headers') && Object.hasOwn(command, 'headers') && plugins.some(plugin => plugin.propagateCommandHeadersToEvents === true)) {
-    Object.defineProperty(event, 'headers', { value: cloneEnvelopeData(command.headers), enumerable: true, writable: true, configurable: true });
-  }
+  const headerWriter = new Set<string>();
   event.correlationId = command.id;
   const aggregateId: unknown = Reflect.get(command, 'aggregateId');
   if (aggregateId !== undefined) {
@@ -88,14 +100,14 @@ function prepareLinkedEvent(host: Host, plugins: readonly EventPlugin[], own: Ma
   for (const plugin of plugins) {
     if (!plugin.eventEnvelope) continue;
     const ownCommand = { ...project(command), ...own?.get(plugin) };
-    merge(event, invoke(plugin.eventEnvelope, extras(raw), () => context(host, state, plugin, ownCommand, project(event))));
+    merge(event, invoke(plugin.eventEnvelope, extras(raw), () => context(host, state, plugin, ownCommand, project(event)), true), headerWriter);
   }
   return event as Event;
 }
 
 export function createEnvelopeRuntime(host: Host, plugins: readonly EventPlugin[]) {
   const cache = new WeakMap<object, Prepared>();
-  const active = plugins.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope || plugin.propagateCommandHeadersToEvents === true);
+  const active = plugins.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope);
   function prepareCommand(state: object, raw: Command<unknown, string>): Command<unknown, string> {
     assertRouting(raw);
     if (!active) return raw;

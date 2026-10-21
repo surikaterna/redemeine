@@ -58,9 +58,8 @@ const matched: typeof descriptor = { ...descriptor, events: { added: () => undef
 const inferred: typeof plugin = { ...plugin, events: { added: () => undefined } };
 void [catchall, matched, inferred];
 
-const headerOnly = createAggregatePluginFor(source, 'headers').propagateCommandHeadersToEvents()
-  .propagateCommandHeadersToEvents().eventEnvelope((_, context) => {
-    // @ts-expect-error Propagated event headers are readonly.
+const headerOnly = createAggregatePluginFor(source, 'headers').eventEnvelope((_, context) => {
+    // @ts-expect-error Context event headers are readonly.
     context.event.headers!.trace = 'changed';
     // @ts-expect-error Command headers remain readonly too.
     context.command.headers!.trace = 'changed';
@@ -70,6 +69,4 @@ const headerHost = source.withPlugins(headerOnly);
 const sameState: typeof source.initialState = headerHost.initialState;
 // @ts-expect-error Header-only plugins do not mount state.
 headerHost.initialState.headers;
-// @ts-expect-error Headers remain reserved after opting in.
-createAggregatePlugin('badHeaders').propagateCommandHeadersToEvents().eventEnvelope(() => ({ headers: {} }));
 void sameState;

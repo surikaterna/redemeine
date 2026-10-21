@@ -39,7 +39,7 @@ export function createDispatch<S extends object, C extends CommandCreators>(
   builder: BridgeableAggregate<S, C>, options: BridgeOptions<S>,
 ) {
   const commandTypes = new Set(Object.values(builder.types.commands));
-  const activeEnvelopes = !!builder.aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope || plugin.propagateCommandHeadersToEvents === true);
+  const activeEnvelopes = !!builder.aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope);
   if (activeEnvelopes && !builder.prepareCommand) throw new TypeError('Envelope plugins require builder.prepareCommand');
   function normalize<T extends BridgeCommand>(command: T): T {
     if (!activeEnvelopes) return command;
