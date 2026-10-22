@@ -14,3 +14,6 @@ typing-fix convention: previously accepted multi-argument shorthand programs
 already dropped arguments at runtime. No valid runtime behavior or packing
 policy changes. Broad shorthand annotations that erase safe arity must retain
 concrete signatures instead. No manifest versions are changed by this Changeset.
+
+Update the domain example's multi-argument identifier command to the supported
+`{ pack, handler }` form and exercise its emitted event and projected identifier.

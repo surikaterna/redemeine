@@ -25,7 +25,7 @@ export function createProxyContext(core: ProxyCore, mounts: Record<string, Mount
 }
 
 function commandArguments(definition: unknown, args: unknown[], context: InvocationContext): unknown[] {
-  if (typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
+  if (typeof definition !== 'function' && typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
   const first = args[0];
   if (first !== null && typeof first === 'object') return [{ ...context.idsPayload, ...first }];
   if (Object.keys(context.idsPayload).length) return [{ ...context.idsPayload, ...(first === undefined ? {} : { value: first }) }];

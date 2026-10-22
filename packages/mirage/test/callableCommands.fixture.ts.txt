@@ -1,0 +1,26 @@
+import { createAggregate, createEntity, type AggregateStateView } from '@redemeine/aggregate';
+import { createMirage } from '@redemeine/mirage';
+
+type Row = { id: string; count: number };
+type Payload = { rowId?: string; count?: number };
+
+export function exerciseCallableCommands() {
+  const received: unknown[] = [];
+  const packed: unknown[] = [];
+  const row = createEntity<Row, 'row'>('row').commands(() => ({
+    go: Object.assign((_state: AggregateStateView<Row>, payload?: Payload) => {
+      if (!payload || typeof payload !== 'object') throw new TypeError('Expected object payload');
+      received.push(payload);
+      return [];
+    }, { pack: () => { throw new Error('Callable pack must be ignored'); } }),
+    packed: {
+      pack: (rowId: string, count: number) => ({ rowId, count }),
+      handler: (_state: AggregateStateView<Row>, payload: Payload) => { packed.push(payload); return []; }
+    }
+  })).build();
+  const host = createAggregate('callableRows', { rows: [{ id: 'one', count: 0 }] }).entityList('rows', row).build();
+  const mirage = createMirage(host, 'host');
+  mirage.rows('one').go();
+  mirage.rows('one').packed(3);
+  return { received, packed };
+}

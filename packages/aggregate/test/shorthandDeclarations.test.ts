@@ -22,9 +22,15 @@ const downstream: Record<string, string> = {
 };
 const cases = [['ts', 'aggregate'], ['mts', 'demeine-interop'], ['cts', 'demeine-interop'], ['mts', 'mirage'], ['cts', 'mirage']];
 
-test.each(cases)('%s %s shorthand declarations match single-payload runtime', (suffix, consumerPackage) => {
+const fixtures = ['shorthandCommands.fixture.ts.txt', '../../mirage/test/callableCommands.fixture.ts.txt'];
+const programs = [
+  ...cases.map(([suffix, consumerPackage]) => [suffix, consumerPackage, fixtures[0]]),
+  ['ts', 'aggregate', fixtures[1]], ['mts', 'mirage', fixtures[1]]
+];
+test.each(programs)(
+  '%s %s %s declarations match single-payload runtime', (suffix, consumerPackage, fixture) => {
   const entry = resolve(__dirname, `../../${consumerPackage}/test/shorthandConsumer.${suffix}`);
-  let source = readFileSync(join(__dirname, 'shorthandCommands.fixture.ts.txt'), 'utf8');
+  let source = readFileSync(join(__dirname, fixture), 'utf8');
   const options: ts.CompilerOptions = {
     strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false,
     declaration: true, emitDeclarationOnly: true, target: ts.ScriptTarget.ES2022,
@@ -35,9 +41,11 @@ test.each(cases)('%s %s shorthand declarations match single-payload runtime', (s
   };
   if (suffix === 'ts') {
     source = source.replaceAll("'@redemeine/aggregate'", "'../src'");
+    source = source.replaceAll("'@redemeine/mirage'", "'../../mirage/src'");
+    if (fixture === fixtures[1]) options.types = ['node'];
     options.baseUrl = resolve(__dirname, '../../..');
     options.paths = { '@redemeine/kernel': ['packages/kernel/src/index.ts'] };
-  } else source += downstream[consumerPackage];
+  } else if (fixture === fixtures[0]) source += downstream[consumerPackage];
   const host = ts.createCompilerHost(options);
   const read = host.readFile.bind(host);
   const exists = host.fileExists.bind(host);
