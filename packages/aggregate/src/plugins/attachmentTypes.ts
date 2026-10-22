@@ -33,13 +33,47 @@ export type MountedPlugins<P extends readonly unknown[]> = P extends readonly [i
   : ArrayMounts<P[number]>;
 type DescriptorExtension<D> = [D] extends [never] ? {}
   : D extends EnvelopeDescriptor<infer X, infer _Context> ? X : {};
-type ExtensionOf<H, K extends 'commandEnvelope' | 'eventEnvelope'> = H extends { kind: 'aggregate-event' }
-  ? K extends keyof H ? undefined extends H[K] ? Partial<DescriptorExtension<NonNullable<H[K]>>>
-    : DescriptorExtension<H[K]> : {}
-  : {};
-export type MountedEnvelopes<P extends readonly unknown[], K extends 'commandEnvelope' | 'eventEnvelope'> =
-  P extends readonly [infer H, ...infer T] ? ExtensionOf<H, K> & MountedEnvelopes<T, K>
-    : [P[number]] extends [never] ? {} : Partial<Intersection<ExtensionOf<P[number], K>>>;
+type EnvelopeKey = 'commandEnvelope' | 'eventEnvelope';
+type RequiredExtension<H, K extends EnvelopeKey> = [H] extends [{ kind: 'aggregate-event' }]
+  ? K extends keyof H ? undefined extends H[K] ? {} : DescriptorExtension<H[K]> : {} : {};
+// Box each registration so a descriptor's own union is never intersected with itself.
+type PossibleMember<H, K extends EnvelopeKey> = H extends { kind: 'aggregate-event' }
+  ? K extends keyof H ? [NonNullable<H[K]>] extends [never] ? never
+    : { extension: DescriptorExtension<NonNullable<H[K]>> } : never : never;
+type OptionalMember<H, K extends EnvelopeKey> = K extends keyof H
+  ? undefined extends H[K] ? PossibleMember<H, K> : never : never;
+type Contributions<G = {}, P = never> = { guaranteed: G; possible: P };
+type OpenKey<K extends PropertyKey> = {} extends Record<K, unknown> ? true : false;
+type RequiredPart<X> = { [K in keyof X as {} extends Pick<X, K> ? never : K]: X[K] };
+type Field<X, K extends PropertyKey> = X extends unknown ? K extends keyof X ? Required<Pick<X, K>>[K] : never : never;
+type OptionalPart<X, Other> = {
+  [K in keyof X as {} extends Pick<X, K> ? K : never]?: OpenKey<K> extends true ? unknown : Field<X, K> | Field<Other, K>
+};
+// A successful required writer excludes optional competing writes, not the optional writer's entire branch.
+type GuaranteedShape<A, B> = A extends unknown ? B extends unknown
+  ? RequiredPart<A> & RequiredPart<B> & OptionalPart<A, B> & OptionalPart<B, A> : never : never;
+type Combine<L extends Contributions<unknown, unknown>, R extends Contributions<unknown, unknown>> =
+  Contributions<GuaranteedShape<L['guaranteed'], R['guaranteed']>, L['possible'] | R['possible']>;
+type MemberContributions<H, K extends EnvelopeKey> = Contributions<RequiredExtension<H, K>, OptionalMember<H, K>>;
+// Flattened variadic arrays can erase required members between batches; retain their presence evidence separately.
+export type AppendRegistrations<L extends readonly unknown[], R extends readonly unknown[]> = [...L, ...R] & {
+  readonly __envelopeContributions: { [K in EnvelopeKey]: Combine<MountedContributions<L, K>, MountedContributions<R, K>> }
+    & { registrations: [...L, ...R] };
+};
+type MountedContributions<P extends readonly unknown[], K extends EnvelopeKey> =
+  P extends { readonly __envelopeContributions: infer C extends Record<EnvelopeKey, Contributions<unknown, unknown>> } ? C[K]
+    : P extends readonly [infer H, ...infer T] ? Combine<MemberContributions<H, K>, MountedContributions<T, K>>
+      : P extends readonly [...infer T, infer H] ? Combine<MountedContributions<T, K>, MemberContributions<H, K>>
+        : Contributions<{}, PossibleMember<P[number], K>>;
+type MemberExtensions<U> = U extends { extension: infer X } ? X : never;
+// Possible writers provide independent fields, never cross-field provenance or correlation.
+type PossibleFields<X> = { [K in BranchKeys<X>]?: OpenKey<K> extends true ? unknown : Field<X, K> };
+type WithoutKeys<X, K extends PropertyKey> = X extends unknown ? Omit<X, K> : never;
+type WithPossible<G, P> = GuaranteedShape<G, P>;
+type Render<C extends Contributions<unknown, unknown>, K extends EnvelopeKey> =
+  [C['possible']] extends [never] ? C['guaranteed'] : WithPossible<C['guaranteed'],
+     WithoutKeys<PossibleFields<MemberExtensions<C['possible']>>, K extends 'eventEnvelope' ? 'headers' : never>>;
+export type MountedEnvelopes<P extends readonly unknown[], K extends EnvelopeKey> = Render<MountedContributions<P, K>, K>;
 export type EnvelopeRouting = {
   aggregateId?: string;
   aggregateType?: string;
@@ -48,11 +82,25 @@ export type EnvelopeRouting = {
   address?: unknown;
   correlation?: unknown;
 };
-export type PreparedCommand<P, T extends string, X extends object = {}> = Command<P, T> & EnvelopeRouting & X;
-type PreviousEnvelope<A, K extends 'command' | 'event'> = A extends { readonly __envelopeTypes?: infer X }
-  ? K extends keyof NonNullable<X> ? NonNullable<X>[K] : {} : {};
-type CommandExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'command'> & MountedEnvelopes<P, 'commandEnvelope'>;
-type EventExtensions<A, P extends readonly unknown[]> = PreviousEnvelope<A, 'event'> & MountedEnvelopes<P, 'eventEnvelope'>;
+// Distribute the original command, projecting only canonical fields rather than retaining raw extras.
+export type PreparedCommand<C extends Command<unknown, string>, X extends object = {}> =
+  C extends unknown ? Command<C['payload'], C['type']> & EnvelopeRouting & X : never;
+type GuaranteedHeaders<X> = [X] extends [{ headers: unknown }] ? Pick<X, Extract<'headers', keyof X>> : {};
+export type PreparedEvent<X> = Omit<Event, keyof GuaranteedHeaders<X>> & EnvelopeRouting & X;
+type PreviousContributions<A, K extends EnvelopeKey> = A extends {
+  readonly __envelopeTypes?: { readonly contributions: infer C }
+} ? K extends keyof C ? C[K] extends Contributions<unknown, unknown> ? C[K] : Contributions : Contributions : Contributions;
+type AttachedContributions<A, P extends readonly unknown[], K extends EnvelopeKey> =
+  Combine<PreviousContributions<A, K>, MountedContributions<P, K>>;
+export type AttachedEnvelopeTypes<A, P extends readonly unknown[]> = {
+  command: Render<AttachedContributions<A, P, 'commandEnvelope'>, 'commandEnvelope'>;
+  event: Render<AttachedContributions<A, P, 'eventEnvelope'>, 'eventEnvelope'>;
+  // Keep presence evidence separate from the rendered optional shape across builder/attachment chains.
+  contributions: { [K in EnvelopeKey]: AttachedContributions<A, P, K> };
+};
+export type MountedEventExtensions<P extends readonly unknown[]> = MountedEnvelopes<P, 'eventEnvelope'>;
+type CommandExtensions<A, P extends readonly unknown[]> = AttachedEnvelopeTypes<A, P>['command'];
+type EventExtensions<A, P extends readonly unknown[]> = AttachedEnvelopeTypes<A, P>['event'];
 type BranchKeys<S> = S extends unknown ? keyof S : never;
 type InvalidSourceEvent<A, H> = H extends { source: infer Source extends AggregatePluginSource; events: infer Handlers }
   ? A extends AggregatePluginSource ? {
@@ -60,8 +108,11 @@ type InvalidSourceEvent<A, H> = H extends { source: infer Source extends Aggrega
       ? K extends keyof PluginPayloads<A> ? [PluginPayloads<A>[K]] extends [PluginPayloads<Source>[K]] ? never : K : K
       : K
   }[keyof Handlers] : never : never;
+type SourceEventRegistrations<P extends readonly unknown[]> =
+  P extends { readonly __envelopeContributions: { registrations: infer R extends readonly unknown[] } } ? R : P;
 export type ValidSourceEvents<A, P extends readonly unknown[]> = {
-  [K in keyof P]: [InvalidSourceEvent<A, P[K]>] extends [never] ? P[K] : never;
+  [K in keyof SourceEventRegistrations<P>]: [InvalidSourceEvent<A, SourceEventRegistrations<P>[K]>] extends [never]
+    ? SourceEventRegistrations<P>[K] : never;
 };
 // Arrays provide no presence or ordering proof; prerequisites must already hold on every host branch.
 type InvalidArrayMember<S, H> = H extends EventPlugin
@@ -89,9 +140,9 @@ export type DecoratedAggregate<A extends { initialState: unknown }, P extends re
     readonly __stateType?: AggregateStateModel<A> & MountedPlugins<P>;
     apply: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>;
     applyToDraft: (draft: Draft<AggregateStateModel<A> & MountedPlugins<P>>, event: Event) => void;
-    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: C) => PreparedCommand<C['payload'], C['type'], CommandExtensions<A, P>>;
-    process: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: Command<unknown, string>) => (Event & EnvelopeRouting & EventExtensions<A, P>)[];
-    readonly __envelopeTypes?: { command: CommandExtensions<A, P>; event: EventExtensions<A, P> };
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: C) => PreparedCommand<C, CommandExtensions<A, P>>;
+    process: (state: AggregateStateView<AggregateStateModel<A> & MountedPlugins<P>>, command: Command<unknown, string>) => PreparedEvent<EventExtensions<A, P>>[];
+    readonly __envelopeTypes?: AttachedEnvelopeTypes<A, P>;
     plugins: A extends { plugins?: (infer Legacy)[] }
       ? RedemeinePlugin<ExtractPluginExtensions<Legacy> & RegistrationExtensions<P[number]>>[] : never;
   } & AggregateDecoration<AggregateStateModel<A> & MountedPlugins<P>, A extends { __registryType?: infer Registry } ? Registry : {}>;

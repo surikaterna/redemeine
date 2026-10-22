@@ -98,6 +98,25 @@ application envelope schema or synthesized metadata on raw events.
   etc., and finishes with `version || computedVersion`: explicit zero does not
   override a nonzero count, while -1 does. Replay does not buffer new events.
 
+### Generated shortcut arguments
+
+`BridgeArguments<Creator>` is the exported argument-tuple mapping used by generated
+methods. Zero-argument creators accept either no arguments or an empty object.
+Exactly one required object argument becomes optional only if `{}` satisfies that
+object type; required fields remain required. Already-optional and multi-argument
+signatures are unchanged. Unknown, primitive and mixed object/primitive payloads
+are not widened. Host helpers can use this mapping with `BridgeConstructor` without
+recreating constructor overloads or casting generated methods.
+
+At runtime, **every empty argument list forwards one fresh `{}` to the creator**,
+matching the legacy shortcut default. Creator wrappers erase TypeScript arity, so
+this cannot be limited to the signatures widened above. In particular, an optional
+or defaulted pack called with no arguments receives `{}`, not `undefined`; pass
+explicit `undefined` to retain its authored default/undefined behavior. Supplied
+arguments (including explicit `undefined` and multiple arguments) are forwarded
+unchanged. This is an intentional bridge-only default, not native creator parity;
+call native creators directly when their empty-argument-list semantics are needed.
+
 For generated shortcuts only, a creator's missing/undefined payload (including a
 no-argument command or a pack function intentionally returning undefined) becomes
 a fresh `{}` in a shallow copy of its envelope. Original commands are not mutated;
@@ -134,6 +153,19 @@ definition's cache; changed dates/headers/routing are revalidated by that defini
 Legacy transport `status` and `refs` survive bridge preparation, while other
 unowned extras follow the aggregate's canonical projection policy. Transport
 mutations may cause re-preparation; initializers should preserve supplied values.
+
+At this active preparation boundary, legacy command classes and nested data classes
+are normalized to plain own data, including classes assigned by a sink before
+`_process`. Queued ingress validates and takes ownership of class data before legacy
+routing reads or writes, including frozen own-data commands. No host cloning wrapper
+is needed. Graph aliases/cycles, ordinary Dates, symbol
+keys and non-enumerable data are preserved; own accessors, functions and native
+containers such as Map/Set and prototype-tagged opaque objects are rejected rather
+than silently erased. Dates with any own properties are rejected rather than losing
+their decorations during preparation. Prototype
+methods/private fields are not envelope data. Already-plain prepared commands
+retain identity and the definition's cache semantics. Native Aggregate preparation
+still requires plain data; inactive bridge dispatch and deletion are unchanged.
 
 Event preparation runs in the aggregate with final aggregate addressing and command
 correlation already available. Conversion must preserve all prepared extension

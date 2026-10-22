@@ -9,7 +9,8 @@ import type {
   EnvelopeParser,
   EnvelopeRecipe,
   EventEnvelopeContext,
-  EventEnvelopeDescriptor
+  EventEnvelopeDescriptor,
+  EventEnvelopeExtension
 } from './envelopeTypes';
 
 export type AggregatePluginSource = {
@@ -90,24 +91,24 @@ export interface AggregatePluginBuilder<
     ? never
     : {
         <X extends object>(
-          initialize: EnvelopeInitializer<X, CommandEnvelopeContext<S, A>> & (X extends EnvelopeExtension<X> ? unknown : never),
+          initialize: EnvelopeInitializer<X, CommandEnvelopeContext<S, A>> & ([X] extends [EnvelopeExtension<X>] ? unknown : never),
           parser?: undefined
         ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
         <I extends object, X extends object>(
-          initialize: EnvelopeInitializer<I, CommandEnvelopeContext<S, A>> & (I extends EnvelopeExtension<I> ? unknown : never),
-          parser: EnvelopeParser<X> & (X extends EnvelopeExtension<X> ? unknown : never)
+          initialize: EnvelopeInitializer<I, CommandEnvelopeContext<S, A>> & ([I] extends [EnvelopeExtension<I>] ? unknown : never),
+          parser: EnvelopeParser<X> & ([X] extends [EnvelopeExtension<X>] ? unknown : never)
         ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
       };
   eventEnvelope: HasE extends true
     ? never
     : {
         <X extends object>(
-          initialize: EnvelopeInitializer<X, EventEnvelopeContext<S, A, C>> & (X extends EnvelopeExtension<X> ? unknown : never),
+          initialize: EnvelopeInitializer<X, EventEnvelopeContext<S, A, C>> & ([X] extends [EventEnvelopeExtension<X>] ? unknown : never),
           parser?: undefined
         ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true, Matched>;
         <I extends object, X extends object>(
-          initialize: EnvelopeInitializer<I, EventEnvelopeContext<S, A, C>> & (I extends EnvelopeExtension<I> ? unknown : never),
-          parser: EnvelopeParser<X> & (X extends EnvelopeExtension<X> ? unknown : never)
+          initialize: EnvelopeInitializer<I, EventEnvelopeContext<S, A, C>> & ([I] extends [EventEnvelopeExtension<I>] ? unknown : never),
+          parser: EnvelopeParser<X> & ([X] extends [EventEnvelopeExtension<X>] ? unknown : never)
         ): AggregatePluginBuilder<Id, S, A, C, X, HasC, true, Matched>;
       };
   prepareCommand: HasC extends true ? (recipe: EnvelopeRecipe<C, CommandEnvelopeContext<S, A>>) => AggregatePluginBuilder<Id, S, A, C, E, HasC, HasE, Matched> : never;

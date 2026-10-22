@@ -57,3 +57,16 @@ const matched: typeof descriptor = { ...descriptor, events: { added: () => undef
 // @ts-expect-error Inferred descriptors enforce the same constraint.
 const inferred: typeof plugin = { ...plugin, events: { added: () => undefined } };
 void [catchall, matched, inferred];
+
+const headerOnly = createAggregatePluginFor(source, 'headers').eventEnvelope((_, context) => {
+    // @ts-expect-error Context event headers are readonly.
+    context.event.headers!.trace = 'changed';
+    // @ts-expect-error Command headers remain readonly too.
+    context.command.headers!.trace = 'changed';
+    return { observed: true };
+  }).build();
+const headerHost = source.withPlugins(headerOnly);
+const sameState: typeof source.initialState = headerHost.initialState;
+// @ts-expect-error Header-only plugins do not mount state.
+headerHost.initialState.headers;
+void sameState;

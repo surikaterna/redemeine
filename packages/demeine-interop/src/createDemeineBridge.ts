@@ -12,7 +12,11 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   rejectLifecycle(builder);
   const dispatch = createDispatch(builder, options);
   class Bridge extends StandaloneAggregate<S> {
+    protected override _normalizeCommand(command: Command): Command {
+      return dispatch.normalize(command);
+    }
     protected override _prepareCommand(command: Command): Command {
+      command = this._normalizeCommand(command);
       if (!dispatch.activeEnvelopes || command.type === '$stream.delete.command') return command;
       return requireLegacyPayload(dispatch.prepare(this, command));
     }

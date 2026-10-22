@@ -1,5 +1,6 @@
 import type { Event } from '@redemeine/kernel';
 import { preserveValue, requireSync } from './guards';
+import { normalizeEnvelope } from './normalizeEnvelope';
 import { preservePreparedValue } from './preparedValue';
 import type { BridgeableAggregate, BridgeCommand, BridgeContext, BridgeEvent, BridgeOptions, CommandCreators } from './types';
 
@@ -40,7 +41,14 @@ export function createDispatch<S extends object, C extends CommandCreators>(
   const commandTypes = new Set(Object.values(builder.types.commands));
   const activeEnvelopes = !!builder.aggregatePlugins?.some(plugin => plugin.commandEnvelope || plugin.eventEnvelope);
   if (activeEnvelopes && !builder.prepareCommand) throw new TypeError('Envelope plugins require builder.prepareCommand');
+  function normalize<T extends BridgeCommand>(command: T): T {
+    if (!activeEnvelopes) return command;
+    const type = Object.getOwnPropertyDescriptor(command, 'type');
+    if (type && 'value' in type && type.value === '$stream.delete.command') return command;
+    return normalizeEnvelope(command);
+  }
   function prepare(aggregate: BridgeContext<S>, command: BridgeCommand): BridgeCommand {
+    command = normalize(command);
     if (!activeEnvelopes || !builder.prepareCommand || command.type === '$stream.delete.command') return command;
     command.aggregateId ??= aggregate.id;
     if (command.aggregateId !== aggregate.id) throw new Error('command aggregateId does not match aggregate');
@@ -53,6 +61,7 @@ export function createDispatch<S extends object, C extends CommandCreators>(
     return prepared;
   }
   function process(aggregate: BridgeContext<S>, command: BridgeCommand): BridgeContext<S> {
+    command = normalize(command);
     if (command.type === '$stream.delete.command') return aggregate.processDelete(requireLegacyPayload(command));
     if (!commandTypes.has(command.type)) throw new Error(`Unknown command: ${command.type}`);
     command = prepare(aggregate, command);
@@ -69,7 +78,7 @@ export function createDispatch<S extends object, C extends CommandCreators>(
     }
     aggregate._state = requireSync(builder.apply(aggregate._state, event), 'builder.apply');
   }
-  return { process, apply, prepare, activeEnvelopes };
+  return { process, apply, prepare, normalize, activeEnvelopes };
 }
 
 export function requireLegacyPayload<T extends { payload: unknown }>(message: T): T & { payload: object } {

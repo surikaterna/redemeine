@@ -150,3 +150,9 @@ for the common `AggregateStateView<S>`/`Draft<S>` contract.
 Initializers run once per new registration, must return fresh plugin-owned
 state, and are not rerun when decorating an already decorated aggregate.
 No-op, stateless-only and legacy-only registrations preserve the initial-state reference.
+
+### Typed event headers
+
+Declare `headers` in `.eventEnvelope()` to choose and validate event headers using the existing initializer/parser/recipe API. This works on stateless, stateful, and source-bound plugins. See the [typed header example](../../ENVELOPES.md#typed-event-headers).
+
+There is no implicit propagation or prepass. Callbacks run in registration order; later callbacks see installed headers. One plugin may write headers per event, even if the value is `undefined`; writers do not merge. The declared property must be required (`headers: H | undefined`, not `headers?: H` or a conditional writer union). Headers remain reserved in command extensions. Caller data is detached, not frozen or mutated; metadata and replay behavior are unchanged.

@@ -37,6 +37,7 @@ test.each([false, true])('zero-argument shortcut preserves its creator envelope 
   const aggregate = new Bridge(sink);
   await expect(aggregate.confirm()).resolves.toBe(aggregate);
   expect(creator).toHaveBeenCalledTimes(1);
+  expect(creator).toHaveBeenCalledWith({});
   expect(sink.sink).toHaveBeenCalledTimes(1);
   expect(process).toHaveBeenCalledTimes(1);
   const forwarded = process.mock.calls[0]![1];
@@ -50,6 +51,51 @@ test.each([false, true])('zero-argument shortcut preserves its creator envelope 
   } });
   expect(aggregate._state.count).toBe(1);
   expect(aggregate.getVersion()).toBe(1);
+});
+
+test('empty-compatible required objects default before the creator; required payloads remain intact', async () => {
+  const confirm = jest.fn((payload: { reason?: string }) => payload);
+  const register = jest.fn((payload: { id: string }) => payload);
+  const built = createAggregate('payment', {})
+    .events({})
+    .commands(() => ({
+      confirm: { pack: confirm, handler: () => [] },
+      register: { pack: register, handler: () => [] },
+    })).build();
+  const aggregate = new (createDemeineBridge(built))();
+  await aggregate.confirm();
+  await aggregate.confirm({ reason: 'ok' });
+  const payload = { id: 'payment/1' };
+  await aggregate.register(payload);
+  expect(confirm.mock.calls).toEqual([[{}], [{ reason: 'ok' }]]);
+  expect(register).toHaveBeenCalledWith(payload);
+});
+
+test('optional/defaulted packs distinguish no arguments from explicit undefined and preserve supplied values', async () => {
+  const fallback = { reason: 'default' };
+  const pack = jest.fn((payload: { reason?: string } = fallback) => payload);
+  const built = createAggregate('payment', {}).events({})
+    .commands(() => ({ optional: { pack, handler: () => [] } })).build();
+  const sink = forwardingSink();
+  const aggregate = new (createDemeineBridge(built))(sink);
+  await aggregate.optional();
+  await aggregate.optional(undefined);
+  const supplied = { reason: 'supplied' };
+  await aggregate.optional(supplied);
+  expect(pack.mock.calls).toEqual([[{}], [undefined], [supplied]]);
+  expect(jest.mocked(sink.sink).mock.calls.map(([command]) => command.payload)).toEqual([{}, fallback, supplied]);
+});
+
+test('multi-argument packs preserve argument count, explicit undefined and object identity', async () => {
+  const pack = jest.fn((id: string, options?: { reason: string }) => ({ id, options }));
+  const built = createAggregate('payment', {}).events({})
+    .commands(() => ({ multiple: { pack, handler: () => [] } })).build();
+  const aggregate = new (createDemeineBridge(built))();
+  const options = { reason: 'ok' };
+  await aggregate.multiple('payment/1', options);
+  await aggregate.multiple('payment/2', undefined);
+  expect(pack.mock.calls).toEqual([['payment/1', options], ['payment/2', undefined]]);
+  expect(pack.mock.calls[0]![1]).toBe(options);
 });
 
 test('ordinary no-arg and intentionally undefined packing keep queue/drain and return the aggregate', async () => {
@@ -71,6 +117,26 @@ test('ordinary no-arg and intentionally undefined packing keep queue/drain and r
   expect(payloads).toEqual([{}, {}]);
   expect(payloads[0]).not.toBe(payloads[1]);
   expect(aggregate._state.count).toBe(3);
+});
+
+test('zero-argument creators accept empty legacy objects and explicit undefined', async () => {
+  const built = definition().built;
+  const creator = jest.fn(built.commandCreators.confirm);
+  const aggregate = new (createDemeineBridge({ ...built, commandCreators: { ...built.commandCreators, confirm: creator } }))();
+  await aggregate.confirm({});
+  await aggregate.confirm(undefined);
+  expect(creator.mock.calls).toEqual([[{}], [undefined]]);
+});
+
+test('explicit undefined reaches an optional pack before undefined-result normalization', async () => {
+  const pack = jest.fn((payload?: { reason: string }) => payload);
+  const built = createAggregate('payment', {}).events({})
+    .commands(() => ({ optional: { pack, handler: () => [] } })).build();
+  const sink = forwardingSink();
+  const aggregate = new (createDemeineBridge(built))(sink);
+  await aggregate.optional(undefined);
+  expect(pack).toHaveBeenCalledWith(undefined);
+  expect(jest.mocked(sink.sink).mock.calls[0]![0].payload).toEqual({});
 });
 
 test('custom object packing retains shared payload identity', async () => {

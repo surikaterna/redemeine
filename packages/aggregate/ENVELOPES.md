@@ -60,9 +60,36 @@ retain source event payload types. Source state context remains readonly and typ
 Built descriptors track presence; optional or potentially undefined descriptors
 provide only optional extension fields, not guaranteed prepared values.
 
+Inference distinguishes required literal-tuple registrations from possible
+contributions (optional descriptors and ordinary arrays, which may be empty).
+Required finite-key descriptors retain whole output-union branches, including correlated
+body and event headers. Possible contributions cannot constrain overlapping required keys
+of guaranteed contributions, even across `.plugins(...).build().withPlugins(...)`
+or repeated attachment. Possible event-header writers leave canonical unknown
+headers unless a required writer establishes the header contract.
+Optional body keys are not collision guarantees: overlapping possible values
+widen those optional keys rather than being excluded, including optional anchor
+keys in heterogeneous arrays. For two guaranteed descriptors, a required key
+retains its required writer's type; competing optional writes would collide if
+actually emitted. Two optional writes instead retain an optional union of their
+values. A required own `undefined` is still a write, not an absent key.
+
+Possible-contribution inference is conservative, not an enumeration of every subset:
+all possible registrations contribute independently optional fields with unioned
+values. This admits empty arrays and multiple disjoint writers without intersecting
+mutually exclusive discriminants. No cross-field correlation is promised, even for
+one possible registration. Narrowing an optional discriminant proves neither the
+presence nor the value type of its other fields. Open-ended extension index slots
+(including template-pattern and broad string keys) may become `unknown` because
+their actual own keys cannot be enumerated statically; independently guaranteed
+literal keys retain their exact required types. This does not widen the whole
+envelope or its canonical fields. The inferred shape is not proof
+that a writer ran, nor that overlapping writers can run together successfully;
+runtime extension-collision checks are unchanged.
+
 Prepared results contain canonical `Command<P,T>` / `Event` fields plus declared
 extensions—not arbitrary incoming extras. Core payload/header/metadata data is
-preserved. Explicit routing fields are `aggregateId`, `aggregateType`,
+preserved unless an event-header writer explicitly replaces headers. Explicit routing fields are `aggregateId`, `aggregateType`,
 `correlationId`, `causationId`, `address`, `correlation`. Domain event IDs and
 `metadata.command` are assigned first. Event `correlationId` is the command ID;
 when command `aggregateId` is known, event `aggregateId` / `aggregateType` are
@@ -75,7 +102,7 @@ preserved without coercion or invented defaults during command preparation.
 
 Extensions must be synchronous plain objects with enumerable own data properties.
 Arrays, thenables, accessors, reserved core/routing keys, `then` and Object prototype
-keys are rejected. Multiple plugins may publish only disjoint top-level keys.
+keys are rejected, except for the event-only `headers` slot described below. Multiple plugins may publish only disjoint top-level keys.
 Snapshots/results detach data recursively (plain objects, arrays and Dates;
 unsupported class instances/functions/accessors throw). Frozen snapshots do **not**
 make Date internal slots immutable: Date setters can mutate the detached snapshot
@@ -120,6 +147,66 @@ is event replay, not a persistence/afterCommit guarantee.
 
 Projection integration, a new persistence adapter, and a public generic kernel
 runner are not provided. Helpers and caches remain private.
+
+## Typed event headers
+
+An event extension may own `headers`, using the same `E` extension type as its
+other fields. Command extensions still cannot own headers. Identity, type, payload,
+metadata, routing, and prototype-unsafe keys remain reserved in both phases.
+
+```ts
+type TraceHeaders = { traceId: string };
+function traceHeaders(value: unknown): TraceHeaders | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw new TypeError('Expected trace headers');
+  }
+  const trace = Object.getOwnPropertyDescriptor(value, 'traceId');
+  if (!trace || !('value' in trace) || !trace.enumerable || typeof trace.value !== 'string') {
+    throw new TypeError('Expected own traceId');
+  }
+  return { traceId: trace.value };
+}
+const transport = createAggregatePlugin('transport')
+  .commandEnvelope(input => ({ selected: traceHeaders(input.selected) }))
+  .eventEnvelope((_, { event, command }) => ({
+    headers: traceHeaders(Object.hasOwn(event, 'headers') ? event.headers : command.headers),
+    selected: command.selected
+  }))
+  .prepareEvent(draft => {
+    if (draft.headers) draft.headers.traceId = draft.headers.traceId.trim();
+  }).build();
+```
+
+The contextual command headers stay unknown until validated. The plugin's own
+validated command extra (`selected`) is typed in its event callback; this does
+not infer other plugins' extras as callback inputs. The parser, if supplied,
+validates initializer and recipe **output**, not the raw wire envelope.
+
+This example chooses event-own-property precedence, including explicit `undefined`.
+Its validator selects only `traceId` and rejects `{}`; a different validator may
+accept empty headers. There is no universal copy/fallback policy, implicit merge,
+principal duplication, or hidden prepass. The first output with own `headers` may
+replace raw event headers; a second writer throws, even if both return `undefined`.
+Callbacks run in registration order, and later ones see installed headers. Within
+the writer's recipe, `draft.headers` is its typed output, whereas `context.event`
+still describes the event before that writer's output is installed.
+
+Header values must be plain data records or `undefined`; null, arrays, functions,
+accessors and non-enumerable header properties are rejected. The output contract
+must declare **required** `headers: H | undefined` if it writes headers: optional
+`headers?: H` and conditional `{} | { headers: H }` contracts are rejected. A
+header-free extension remains valid. Untyped callbacks claim the slot only when
+their final output actually owns the property. All installed headers are detached
+from external data before installation, without freezing the external source.
+
+This replaces the unreleased boolean flag, not an alias for it. In particular an
+initializer always returning `{ headers: undefined }` creates an own property
+even when neither raw event nor command had one; the old flag left it absent.
+Without an event-header writer, no command-to-event copying occurs. Bridge
+`options.envelope` cannot erase or replace prepared headers/extensions, identity,
+or metadata. Existing `metadata.command` derivation and replay remain unchanged.
 
 ## Optional parsers
 

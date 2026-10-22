@@ -32,9 +32,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && pnpm run test:public-types",
     "typecheck": "tsc --noEmit",
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/saga-runtime/test",
+    "test:public-types": "pnpm exec jest --config ../../jest.config.js --runInBand --runTestsByPath test/publicDeclarations.test.ts",
     "lint": "tsc --noEmit"
   },
   "private": true,

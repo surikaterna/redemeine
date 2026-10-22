@@ -26,7 +26,7 @@ export interface BuiltAggregate<
     /** Processes a command against state, returning domain events */
     process: (state: AggregateStateView<S>, command: Command<unknown, string>) => Event[];
     /** Canonicalizes/enriches a command for this aggregate plan; raw creators remain unextended. */
-    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S>, command: C) => PreparedCommand<C['payload'], C['type']>;
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S>, command: C) => PreparedCommand<C>;
     /** Applies an event immutably via Immer — returns new state */
     apply: (state: AggregateStateView<S>, event: Event) => AggregateStateView<S>;
     /** Applies an event to a mutable draft — used by projections to avoid double-Immer */

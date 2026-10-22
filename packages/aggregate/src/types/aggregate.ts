@@ -21,7 +21,7 @@ import type {
 } from './entityMount';
 import type { RedemeineEventDefinition, MergeEventDefinitions, RedemeineCommandDefinition } from '../redemeineComponent';
 import type { bindContext } from '../bindContext';
-import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, PreparedCommand, EnvelopeRouting, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions, ValidSourceEvents } from '../plugins/attachmentTypes';
+import type { AggregateDecoration, PluginRegistration, RegistrationTuple, MountedPlugins, MountedEnvelopes, MountedEventExtensions, AttachedEnvelopeTypes, AppendRegistrations, PreparedCommand, PreparedEvent, ValidRegistrations, ValidRegistrationArray, RegistrationExtensions, ValidSourceEvents } from '../plugins/attachmentTypes';
 
 export type AggregateSelectorUtils = { bindContext: typeof bindContext };
 
@@ -100,7 +100,7 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
 export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = []> {
     extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry, ParentPS, ParentEP extends readonly unknown[]>(
         parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry, TMeta, TPlugins, ParentPS, ParentEP>
-    ) => AggregateBuilder<S, Name, M & ParentM, Omit<ParentE, keyof E> & E, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, [...ParentEP, ...EP]>;
+    ) => AggregateBuilder<S, Name, M & ParentM, Omit<ParentE, keyof E> & E, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, AppendRegistrations<ParentEP, EP>>;
 
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
@@ -143,10 +143,10 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     plugins: {
       <const P extends RegistrationTuple>(
         ...plugins: P & ValidRegistrations<S & PS & Registry, P>
-      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, [...EP, ...P]>;
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>>;
       <const P extends readonly PluginRegistration[]>(
         ...plugins: P & ValidRegistrationArray<S & PS & Registry, P>
-      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, [...EP, ...P]>;
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>>;
     };
 
     selectors: {
@@ -185,9 +185,9 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         aggregateType: Name;
         readonly initialState: AggregateStateView<S & PS>;
         readonly __stateType?: S & PS;
-        prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C['payload'], C['type'], MountedEnvelopes<EP, 'commandEnvelope'>>;
-        process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => (Event & EnvelopeRouting & MountedEnvelopes<EP, 'eventEnvelope'>)[];
-        readonly __envelopeTypes?: { command: MountedEnvelopes<EP, 'commandEnvelope'>; event: MountedEnvelopes<EP, 'eventEnvelope'> };
+        prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C, MountedEnvelopes<EP, 'commandEnvelope'>>;
+        process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => PreparedEvent<MountedEventExtensions<EP>>[];
+        readonly __envelopeTypes?: AttachedEnvelopeTypes<{}, EP>;
         apply: (state: AggregateStateView<S & PS>, event: Event) => AggregateStateView<S & PS>;
         applyToDraft: (draft: Draft<S & PS>, event: Event) => void;
         commandCreators: {

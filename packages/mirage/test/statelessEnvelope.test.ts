@@ -1,6 +1,6 @@
 import { createAggregate, createAggregatePlugin } from '@redemeine/aggregate';
 import type { Event } from '@redemeine/kernel';
-import { createMirage, extractState, extractUncommittedEvents } from '../src';
+import { createMirage, dispatch, extractState, extractUncommittedEvents } from '../src';
 import { createDepot, type EventStore } from '../src/Depot';
 
 test('Mirage and Depot use stateless envelopes without changing domain state or replaying clocks', async () => {
@@ -29,4 +29,36 @@ test('Mirage and Depot use stateless envelopes without changing domain state or 
   const replay = await depot.get('two');
   expect(extractState(replay)).toEqual({ count: 3 });
   expect(extractUncommittedEvents(replay)).toEqual([]);
+});
+
+test('header-only capability prepares before native lifecycle and persists unchanged through Depot replay', async () => {
+  const built = createAggregate('counter', { count: 0 })
+    .events({ added(state) { state.count++; } })
+    .commands(emit => ({ add: () => emit.added() })).build()
+    .withPlugins(createAggregatePlugin('headers').eventEnvelope((_, ctx) => ({ headers: ctx.command.headers })).build());
+  const headers = { principal: { user: 'one' } };
+  const hook = jest.fn(command => {
+    expect(command.headers).toEqual(headers);
+    expect(command.headers).not.toBe(headers);
+    expect(command.aggregateId).toBe('one');
+    headers.principal.user = 'caller-mutated';
+  });
+  built.hooks = { onBeforeCommand: hook };
+  const stream: Event[] = [];
+  const store: EventStore = {
+    async *readStream() { yield* structuredClone(stream); },
+    async saveEvents(_id, events) { stream.push(...structuredClone(events)); }
+  };
+  const depot = createDepot(built, store);
+  const live = await depot.get('one');
+  await dispatch(live, { ...built.commandCreators.add(), headers });
+  expect(hook).toHaveBeenCalledTimes(1);
+  expect(extractState(live)).toEqual({ count: 1 });
+  expect(extractUncommittedEvents(live)[0]!.headers).toEqual({ principal: { user: 'one' } });
+  await depot.save(live);
+  const saved = structuredClone(stream);
+  hook.mockImplementation(() => { throw new Error('replay prepared'); });
+  expect(extractState(await depot.get('one'))).toEqual({ count: 1 });
+  expect(stream).toEqual(saved);
+  expect(Object.isFrozen(headers.principal)).toBe(false);
 });
