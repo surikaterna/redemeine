@@ -1,5 +1,25 @@
 # @redemeine/aggregate
 
+## 1.0.0-pre.6
+
+### Minor Changes
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`63c3068`](https://github.com/surikaterna/redemeine/commit/63c3068c39ed94ab9e047dacd88c5d8631ebc4d8) Thanks [@spralle](https://github.com/spralle)! - Let eventEnvelope output own typed headers, using its existing initializer/parser/recipe API in Aggregate, bridge and Mirage. Replace the unreleased boolean propagation flag with an explicit plugin-owned selection/validation policy. One writer may replace raw event headers; a second writer throws without implicit merging. Required header properties (whose value may be undefined) preserve sound prepared types, and installed data is detached. Callbacks retain registration order; there is no header prepass or universal copy default. An output with own undefined headers now creates that property even when the input omitted it. Command headers remain reserved in command extensions; metadata and replay are unchanged.
+
+### Patch Changes
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`696b850`](https://github.com/surikaterna/redemeine/commit/696b850bcf181d6e0de6494e8c10f39479515117) Thanks [@spralle](https://github.com/spralle)! - Fix command preparation types to preserve discriminant/payload correlation without promising undeclared raw extras. Reject reserved keys anywhere in command-envelope initializer or parser output unions, and require envelope parsers to accept unknown input. These typing corrections reject unsupported inputs already unsafe at runtime; runtime preparation and parsing behavior are unchanged.
+
+  Align builder event-envelope types with post-build attachment: only guaranteed header writers replace canonical unknown headers. Optional descriptors and ordinary plugin arrays cannot promise validated headers, including through chained attachment, while guaranteed union writers retain exact correlated body and header branches. Runtime event processing is unchanged.
+
+  Preserve command and event descriptor union alternatives in ordinary arrays instead of intersecting them into never. Track guaranteed and possible contributions separately through builder and attachment chains, so absent descriptors and emptyable arrays cannot constrain a guaranteed writer's overlapping fields. Possible arrays use partial whole branches with optional companion fields to admit disjoint subsets without exponential subset inference; optional discriminants do not prove other field presence. Runtime collision handling and public preparation policy are unchanged.
+
+  Account for optional output keys in both possible and guaranteed composition: optional anchor keys include companion writer values, required writers dominate competing optional keys on successful preparation, and two optional writers retain optional union values. Preserve whole output-branch correlation and required own-undefined writes without changing runtime collision semantics.
+
+  Keep source-event validation declarations well-formed when bundled into downstream packages, without losing raw registration checks across builder batches.
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`696b850`](https://github.com/surikaterna/redemeine/commit/696b850bcf181d6e0de6494e8c10f39479515117) Thanks [@spralle](https://github.com/spralle)! - Route explicitly overridden root and mixin event types to their root projectors before targeted path traversal, while preserving exact mounted event priority and existing wire names.
+
 ## 1.0.0-pre.5
 
 ### Minor Changes
