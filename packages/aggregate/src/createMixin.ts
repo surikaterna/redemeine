@@ -2,7 +2,7 @@ import { type Event, type EventType, type CommandType, type SelectorsMap, type C
 import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, AnyFunction } from './redemeineComponent';
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
-import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
+import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './types/aggregateTyping';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -69,7 +69,7 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
     selectors: NewSelectors
   ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, Registry, TMeta>;
 
-  commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
+  commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>> & ValidCommandDefinitions<NewC>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors; commands: CommandContext<CommandIntents<CPayloads>> }) => NewC
   ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry, TMeta>;
 

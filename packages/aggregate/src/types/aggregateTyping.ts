@@ -65,29 +65,34 @@ type PublicArgsFromShorthand<T> = ReplaceFirstArg<never, T> extends (state: neve
   : never;
 
 export type MapCommandsToPayloads<C> = {
-  [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P>
-    ? { args: Args, payload: P }
-    : C[K] extends { handler: (state: any, ...args: any[]) => any }
-      ? PublicArgsFromShorthand<C[K]['handler']> extends infer Args
-        ? {
-            args: Args;
-            payload: Args extends [infer Single]
-              ? Single
-              : Args extends []
-                ? void
-                : Args;
-          }
-        : never
-    : C[K] extends (state: any, ...args: any[]) => any
-      ? PublicArgsFromShorthand<C[K]> extends infer Args
-        ? {
-            args: Args;
-            payload: Args extends [infer Single]
-              ? Single
-              : Args extends []
-                ? void
-                : Args;
-          }
-        : never
-      : never;
+  [K in keyof C]: C[K] extends (...args: never[]) => unknown
+    ? PublicArgsFromShorthand<C[K]> extends infer Args
+      ? {
+          args: Args;
+          payload: ShorthandPayload<Args>;
+        }
+      : never
+    : C[K] extends PackedCommand<any, infer Args, infer P>
+      ? { args: Args, payload: P }
+      : C[K] extends { handler: (state: any, ...args: any[]) => any }
+        ? PublicArgsFromShorthand<C[K]['handler']> extends infer Args
+          ? {
+              args: Args;
+              payload: ShorthandPayload<Args>;
+            }
+          : never
+        : never;
 };
+
+type ShorthandPayload<Args> = Args extends [] ? void : Args extends readonly unknown[] ? Args[0] : never;
+
+// Runtime classifies callables first and forwards one payload; only object-form pack consumes multiple arguments.
+type ValidCommandDefinition<T> = T extends (...args: never[]) => unknown
+  ? PublicArgsFromShorthand<T>['length'] extends 0 | 1 ? T : never
+  : T extends { pack: (...args: infer _Args) => unknown }
+    ? T
+    : T extends { handler: infer Handler }
+      ? PublicArgsFromShorthand<Handler>['length'] extends 0 | 1 ? T : never
+      : never;
+
+export type ValidCommandDefinitions<C> = { [K in keyof C]: ValidCommandDefinition<C[K]> };
