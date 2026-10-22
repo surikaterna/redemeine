@@ -1,5 +1,5 @@
 import type { Command, Event } from '@redemeine/kernel';
-import type { CommandSink, CommandHandler, CompatibleAggregate, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
+import type { CommandSinkInput, CommandHandlerInput, CompatibleAggregate, EventHandlerInput, ObjectCommandHandler } from './lifecycleTypes';
 
 export type BridgeCommand = Command<unknown, string> & { aggregateId?: string; aggregateType?: string };
 export type BridgeEvent = Event & { aggregateId: string; correlationId: string };
@@ -30,6 +30,6 @@ type BridgeInstance<S extends object, C extends CommandCreators> = CompatibleAgg
 };
 
 export type BridgeConstructor<S extends object, C extends CommandCreators> = {
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: CommandHandler<S> | null): BridgeInstance<S, C>;
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: ObjectCommandHandler | null): BridgeInstance<S, C>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: CommandHandlerInput<S> | null): BridgeInstance<S, C>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: ObjectCommandHandler | null): BridgeInstance<S, C>;
 };
