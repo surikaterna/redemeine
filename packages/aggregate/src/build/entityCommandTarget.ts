@@ -54,7 +54,7 @@ function identityFields(target: EntityCommandTarget, field: string): string[] {
 function identity(target: EntityCommandTarget, payload: Record<string, unknown>, used: Set<string>, leaf: boolean): Record<string, unknown> {
     const fields = target.kind === 'map' ? ['key'] : typeof target.pk === 'string' ? [target.pk] : target.pk ?? ['id'];
     if (!fields.length) return invalidTarget();
-    const composite = target.kind === 'list' && payload.__entityPk !== undefined ? record(payload.__entityPk) : undefined;
+    const composite = leaf && target.kind === 'list' && payload.__entityPk !== undefined ? record(payload.__entityPk) : undefined;
     const result: Record<string, unknown> = {};
     for (const field of fields) {
         const aliases = identityFields(target, field);

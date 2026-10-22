@@ -108,12 +108,46 @@ async function check(kind, alias, siblingId) {
   assert.deepEqual(host.initialState, before);
 }
 async function main() {
+  for (const pk of ['id', 'code', ['id', 'domain']]) await checkLeafBlob(pk);
   for (const alias of [false, true]) await checkFlattened(alias);
   for (const kind of ['direct', 'mixin', 'nested']) {
     for (const alias of [false, true]) {
       for (const siblingId of ['chosen', 'sibling']) await check(kind, alias, siblingId);
     }
   }
+}
+async function checkLeafBlob(pk) {
+  const fields = Array.isArray(pk) ? pk : [pk];
+  const child = createEntity('child').events({ changed(state, event) { state.qty = event.payload.qty; } })
+    .commands(emit => ({ set(state, payload) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
+  const children = [{ id: 'c', code: 'c', domain: 'leaf', qty: 2 }];
+  const parent = createEntity('parent').entityList('children', child, { pk }).build();
+  const host = createAggregate('store', { parents: [
+    { id: 'other', code: 'other', domain: 'ancestor', children: structuredClone(children) },
+    { id: 'p', code: 'p', domain: 'ancestor', children }
+  ] }).entityList('parents', parent, { pk }).build();
+  const ancestor = Object.fromEntries(fields.map(field => ['parents' + field[0].toUpperCase() + field.slice(1), field === 'domain' ? 'ancestor' : 'p']));
+  const identity = Object.fromEntries(fields.map(field => [field, field === 'domain' ? 'leaf' : 'c']));
+  const qualified = Object.fromEntries(fields.map(field => ['children' + field[0].toUpperCase() + field.slice(1), identity[field]]));
+  for (const canonical of [false, true]) {
+    const payload = { ...ancestor, ...(canonical ? qualified : {}), __entityPk: identity, qty: 2 };
+    const before = structuredClone(payload);
+    const event = host.process(host.initialState, host.commandCreators.parentsChildrenSet(payload))[0];
+    const expected = structuredClone(host.initialState);
+    expected.parents[1].children[0].qty = 3;
+    assert.deepEqual(host.apply(host.initialState, event), expected);
+    assert.deepEqual(produce(host.initialState, draft => host.applyToDraft(draft, event)), expected);
+    const Bridge = createDemeineBridge(host);
+    const bridge = new Bridge();
+    await bridge.parentsChildrenSet(payload);
+    assert.deepEqual(bridge._state, expected);
+    assert.deepEqual(payload, before);
+  }
+  const field = fields[0];
+  assert.throws(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet({
+    ...ancestor, ...qualified, __entityPk: { ...identity, [field]: 'wrong' }
+  })), /Invalid mounted command target/);
+  assert.throws(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet({ __entityPk: identity })), /Invalid mounted command target/);
 }
 async function checkFlattened(alias) {
   let writes = 0;

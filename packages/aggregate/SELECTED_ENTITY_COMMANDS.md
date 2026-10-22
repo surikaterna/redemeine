@@ -6,7 +6,10 @@ list or map receive only the selected entity, using the same readonly command vi
 
 Mount registration compiles the target chain from actual state paths, collection kinds
 and declared list primary keys. Lists default to `id`; custom single and composite PKs
-use their declared fields (or the existing `__entityPk` payload). Maps use an own entry
+use their declared fields (or the existing `__entityPk` payload, for the leaf target only).
+The compatibility blob does not identify ancestors; qualified ancestor fields remain required.
+Existing custom/composite selection blob injection and wire payload behavior are unchanged.
+Maps use an own entry
 key. Existing mount-qualified `Id`/`Key` aliases are supported. String-equivalent numeric
 identifiers retain compatibility. For composite PKs, unrelated `key` values are not IDs.
 
