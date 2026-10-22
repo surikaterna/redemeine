@@ -4,7 +4,7 @@ import type { ProxyContext } from './proxyContext';
 import { readProperty } from '../runtimeDefinition';
 import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
-function makeMapItemProxy(path: string[], prefix: string[], key: string, context: InvocationContext, ctx: ProxyContext): unknown {
+function makeMapItemProxy(path: string[], prefix: string[], key: string, mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
   const name = path.at(-1)!;
   const resolveState = () => {
     const value = readProperty(ctx.resolvePath(path), key);
@@ -12,7 +12,7 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, context
     return value;
   };
   const selection: InvocationContext = { idsPayload: { ...context.idsPayload, key, [`${singular(name)}Key`]: key, [`${name}Key`]: key },
-    packPrefix: [...context.packPrefix, key], resolveState };
+    packPrefix: [...context.packPrefix, key], resolveState, selectedMount: mount };
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {
@@ -27,10 +27,10 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, context
   });
 }
 
-export function makeMapProxy(path: string[], prefix: string[], _mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
+export function makeMapProxy(path: string[], prefix: string[], mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
   const iterate = function* () {
     const keys = Object.keys(ctx.resolvePath(path) ?? {});
-    for (const key of keys) yield makeMapItemProxy(path, prefix, key, context, ctx);
+    for (const key of keys) yield makeMapItemProxy(path, prefix, key, mount, context, ctx);
   };
   return new Proxy({}, {
     ...readonlyTraps,
@@ -39,7 +39,7 @@ export function makeMapProxy(path: string[], prefix: string[], _mount: MountMeta
       if (typeof property !== 'string') return readonlyObjectMember(property);
       const map = ctx.resolvePath(path);
       if (!map || typeof map !== 'object' || !Object.hasOwn(map, property)) return readonlyObjectMember(property);
-      return makeMapItemProxy(path, prefix, property, context, ctx);
+      return makeMapItemProxy(path, prefix, property, mount, context, ctx);
     },
     ownKeys: () => Object.keys(ctx.resolvePath(path) ?? {}),
     getOwnPropertyDescriptor: (_target, property) => {

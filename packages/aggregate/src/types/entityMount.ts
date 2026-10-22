@@ -1,5 +1,8 @@
 import type { EntityPackage } from '../createEntity';
 
+export type EntityCommandTarget = Pick<MountedStructureMetadata, 'kind' | 'statePath' | 'pk' | 'commandPrefix'>;
+export type EntityCommandTargets = Record<string, readonly EntityCommandTarget[]>;
+
 /** Canonical definition — all other usages must reference this. */
 export type MountedStructureKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
@@ -13,6 +16,8 @@ export type MountedStructureMetadata = {
     entity?: object | undefined;
     commandNames?: readonly string[] | undefined;
     getRoleCommandNames?: ((role: object) => readonly string[]) | undefined;
+    commandTargets?: EntityCommandTargets | undefined;
+    eventTargets?: EntityCommandTargets | undefined;
 };
 
 export type MountedEntityPackage = {

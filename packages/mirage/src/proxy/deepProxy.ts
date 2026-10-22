@@ -7,6 +7,7 @@ import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
 import { invoke, readProperty, type MirageBuilder } from '../runtimeDefinition';
 import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
+import { assertSelectedIdentity } from './selectedIdentity';
 
 export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
   const context: ProxyContext = {
@@ -27,7 +28,10 @@ export function createProxyContext(core: ProxyCore, mounts: Record<string, Mount
 function commandArguments(definition: unknown, args: unknown[], context: InvocationContext): unknown[] {
   if (typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
   const first = args[0];
-  if (first !== null && typeof first === 'object') return [{ ...context.idsPayload, ...first }];
+  if (first !== null && typeof first === 'object') {
+    assertSelectedIdentity(first, context);
+    return [{ ...context.idsPayload, ...first }];
+  }
   if (Object.keys(context.idsPayload).length) return [{ ...context.idsPayload, ...(first === undefined ? {} : { value: first }) }];
   return [first];
 }
@@ -41,6 +45,7 @@ function invokeByPath(path: string[], args: unknown[], context: InvocationContex
   if (!command || typeof command !== 'object' || typeof readProperty(command, 'type') !== 'string' || !('payload' in command)) {
     throw new TypeError('Command creator returned an invalid envelope');
   }
+  assertSelectedIdentity(command.payload, context, true);
   if (context.entityPk && command.payload && typeof command.payload === 'object') {
     command.payload = { ...command.payload, __entityPk: context.entityPk };
   }

@@ -39,7 +39,26 @@ await writeFile(resolve(output, 'tsconfig.json'), JSON.stringify({ compilerOptio
 for (const compiler of ['typescript', 'typescript7']) {
   const stdout = await run(compiler, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json', '--listFiles']);
   for (const file of stdout.trim().split('\n')) assert(file.startsWith(`${output}/`), `Ancestor type leaked: ${file}`);
+  await run(`${compiler}-emit`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json',
+    '--noEmit', 'false', '--declaration', '--emitDeclarationOnly', '--outDir', `emitted-${compiler}`]);
+  await writeFile(resolve(output, 'downstream.mts'), `
+import { selectedCommandHost } from './emitted-${compiler}/consumer.mjs';
+import { createMirage } from '@redemeine/mirage';
+const live = createMirage(selectedCommandHost, 'downstream');
+live.lines('one').set({ qty: 1 });
+live.lines('one').setQty(2);
+const noAny: 0 extends (1 & typeof live.lines) ? true : false = false;
+// @ts-expect-error Required business payload survives declaration emission.
+live.lines('one').set();
+// @ts-expect-error Incorrect business type remains invalid downstream.
+live.lines('one').set({ qty: 'bad' });
+void noAny;
+`);
+  await writeFile(resolve(output, 'downstream.json'), JSON.stringify({ extends: './tsconfig.json', files: ['downstream.mts'] }));
+  await run(`${compiler}-downstream`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'downstream.json']);
 }
 await writeFile(resolve(output, 'runtime.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/runtime.mjs')));
 await run('runtime', process.execPath, ['--unhandled-rejections=strict', 'runtime.mjs']);
+await writeFile(resolve(output, 'selected-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/selected-commands.mjs')));
+await run('selected-commands', process.execPath, ['--unhandled-rejections=strict', 'selected-commands.mjs']);
 console.log('PASS isolated packed Mirage declarations and runtime; local source versions are NOT publication artifacts');

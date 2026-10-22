@@ -66,11 +66,12 @@ type PublicArgsFromShorthand<T> = ReplaceFirstArg<never, T> extends (state: neve
 
 export type MapCommandsToPayloads<C> = {
   [K in keyof C]: C[K] extends PackedCommand<any, infer Args, infer P>
-    ? { args: Args, payload: P }
+    ? { args: Args, payload: P, form: 'packed' }
     : C[K] extends { handler: (state: any, ...args: any[]) => any }
       ? PublicArgsFromShorthand<C[K]['handler']> extends infer Args
         ? {
             args: Args;
+            form: 'shorthand';
             payload: Args extends [infer Single]
               ? Single
               : Args extends []
@@ -82,6 +83,7 @@ export type MapCommandsToPayloads<C> = {
       ? PublicArgsFromShorthand<C[K]> extends infer Args
         ? {
             args: Args;
+            form: 'shorthand';
             payload: Args extends [infer Single]
               ? Single
               : Args extends []

@@ -21,6 +21,7 @@ export type InvocationContext = {
     packPrefix: unknown[];
     entityPk?: Record<string, unknown> | undefined;
     resolveState?: (() => unknown) | undefined;
+    selectedMount?: MountMetadata | undefined;
 };
 
 export type { BuiltAggregate } from '@redemeine/aggregate';
@@ -55,9 +56,17 @@ type DropFirstN<Args extends unknown[], N extends number, Count extends unknown[
 
 type InjectedArgCount<PK> = PK extends readonly unknown[] ? PK['length'] : 1;
 
-type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number> = {
+type ScopedPayloadArgs<Args extends unknown[], Identity extends PropertyKey> = Args extends [infer P]
+    ? P extends object
+        ? {} extends Omit<P, Identity> ? [payload?: Omit<P, Identity>] : [payload: Omit<P, Identity>]
+        : Args
+    : Args;
+
+type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number, Identity extends PropertyKey> = {
     [K in keyof TCommands]: TCommands[K] extends { args: infer Args }
-        ? (...args: DropFirstN<Args extends unknown[] ? Args : [], InjectedCount>) => DispatchResult<TEntityState>
+        ? (...args: TCommands[K] extends { form: 'shorthand' }
+            ? ScopedPayloadArgs<Args extends unknown[] ? Args : [], Identity>
+            : DropFirstN<Args extends unknown[] ? Args : [], InjectedCount>) => DispatchResult<TEntityState>
         : [TCommands[K]] extends [void] | [undefined] | [never]
             ? () => DispatchResult<TEntityState>
             : (payload: TCommands[K]) => DispatchResult<TEntityState>;
@@ -69,28 +78,33 @@ type CompositePkArg<TEntityState, PK> = PK extends readonly (infer K)[]
         ? TEntityState[PK]
         : unknown;
 
-export type EntityScopedMirage<TEntityState, TEntityCommands, InjectedCount extends number = 1> = ScopedMirageCommandMap<TEntityState, TEntityCommands, InjectedCount> & ReadonlyDeep<TEntityState>;
+export type EntityScopedMirage<TEntityState, TEntityCommands, InjectedCount extends number = 1, Identity extends PropertyKey = 'id'> = ScopedMirageCommandMap<TEntityState, TEntityCommands, InjectedCount, Identity> & ReadonlyDeep<TEntityState>;
 
-type ListScopedMirage<TEntityState, TEntityCommands, PK> =
-    ReadonlyArray<EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>>> &
-    ((pk: CompositePkArg<TEntityState, PK>) => EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>>);
+type Singular<S extends string> = S extends `${infer Stem}s` ? Stem : S;
+type ListIdentity<PK, Name extends string> = PK extends readonly (infer K extends string)[] ? K
+    : Extract<PK, string> | 'id' | `${Name}Id` | `${Singular<Name>}Id`;
+type MapIdentity<Name extends string> = 'key' | `${Name}Key` | `${Singular<Name>}Key`;
+
+type ListScopedMirage<TEntityState, TEntityCommands, PK, Name extends string> =
+    ReadonlyArray<EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>, ListIdentity<PK, Name>>> &
+    ((pk: CompositePkArg<TEntityState, PK>) => EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>, ListIdentity<PK, Name>>);
 
 type MapKnownKeys<TEntry> = TEntry extends { knownKeys?: readonly (infer K)[] }
     ? Extract<K, string>
     : string;
 
-type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string> = Iterable<EntityScopedMirage<TEntityState, TEntityCommands, 1>> & (string extends Keys
-    ? Readonly<Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1> | undefined>>
-    : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1>>>);
+type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string, Name extends string> = Iterable<EntityScopedMirage<TEntityState, TEntityCommands, 1, MapIdentity<Name>>> & (string extends Keys
+    ? Readonly<Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1, MapIdentity<Name>> | undefined>>
+    : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1, MapIdentity<Name>>>>);
 
 type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
     [K in keyof Registry & keyof TState]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
-        ? ListScopedMirage<EntityStateOf<EP>, EntityCommandsOf<EP>, PK>
+        ? ListScopedMirage<EntityStateOf<EP>, EntityCommandsOf<EP>, PK, Extract<K, string>>
         : Registry[K] extends { kind: 'map'; entity: infer EP }
             ? MapScopedMirage<
                 EntityStateOf<EP>,
                 EntityCommandsOf<EP>,
-                MapKnownKeys<Registry[K]>
+                MapKnownKeys<Registry[K]>, Extract<K, string>
             >
             : Registry[K] extends { kind: 'valueObject' | 'valueObjectList' | 'valueObjectMap' }
                 ? ReadonlyDeep<TState[K]>
@@ -143,13 +157,18 @@ type BoundKey<Registry, Role, Mount> = {
 }[keyof Registry];
 type BoundArgCount<Registry, Role, Mount> = [BoundKey<Registry, Role, Mount>] extends [never] ? 1
     : InjectedArgCount<BoundKey<Registry, Role, Mount>>;
+type BoundIdentity<Registry, Role, Mount> = {
+    [K in keyof Registry]: Registry[K] extends { kind: 'list'; entity: infer Entity; pk: infer PK }
+      ? Mount extends string ? K extends Mount ? ListIdentity<PK, Extract<K, string>> : never
+        : Role extends Entity ? ListIdentity<PK, Extract<K, string>> : never : never
+}[keyof Registry];
 
 type ContextBoundSingleMirage<TData, TRole, Registry, Mount> = TData extends null | undefined ? TData
     : IsArrayLike<TData> extends true
-      ? ReadonlyArray<EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>>> & {
-          first(): EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>> | undefined;
+      ? ReadonlyArray<EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>, BoundIdentity<Registry, TRole, Mount>>> & {
+          first(): EntityScopedMirage<ArrayLikeElement<TData>, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>, BoundIdentity<Registry, TRole, Mount>> | undefined;
         }
-      : EntityScopedMirage<TData, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>>;
+      : EntityScopedMirage<TData, EntityCommandsOf<TRole>, BoundArgCount<Registry, TRole, Mount>, BoundIdentity<Registry, TRole, Mount>>;
 
 type RoleFromDiscriminator<
     TRoleMap extends Record<string, EntityShape>,
@@ -177,7 +196,7 @@ type PolyRoleMirageForDiscriminator<
         ? EntityScopedMirage<
             E extends object ? SetPathValue<E, TKey, TDisc> : E,
             EntityCommandsOf<TRole>,
-            BoundArgCount<Registry, TRole, Mount>
+            BoundArgCount<Registry, TRole, Mount>, BoundIdentity<Registry, TRole, Mount>
         >
         : never
     : never;

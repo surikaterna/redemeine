@@ -61,6 +61,19 @@ operations return `undefined` when no item matches. A retained proxy re-resolves
 its key against the latest state and throws if its entity has been removed.
 Scoped commands return readonly entity state, not root state.
 
+Command forms retain their authored business arguments. For a shorthand handler
+`set(state, payload: { id: string; qty: number })`, call
+`order.lines('line-1').set({ qty: 3 })`; object definitions with `{ handler, meta }`
+behave identically. For a packed command with `pack(id, qty)`, call
+`order.lines('line-1').setQuantity(3)`. Both handlers receive the selected readonly
+entity, and their events update that entity. Required business fields remain
+required; an object containing only optional business fields may be omitted.
+Selected primary keys (all composite fields in declared order, or a map key) are
+injected. Conflicting caller identity is rejected, not used to retarget a command.
+Flat Aggregate creators and bridge methods still require their full identity
+arguments. The same scoped contract applies to indexing, iteration and explicitly
+bound selectors; ordinary nested readonly data gains no new navigation API.
+
 For entity maps, select a key first: `order.entries.VAT.verify()`. There is no
 `order.entries.verify()` command without a selected entity. Missing keys return
 `undefined`; known-key declarations expose the configured keys in the type system.
