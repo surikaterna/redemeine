@@ -1,5 +1,27 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.4
+
+### Major Changes
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`63c3068`](https://github.com/surikaterna/redemeine/commit/63c3068c39ed94ab9e047dacd88c5d8631ebc4d8) Thanks [@spralle](https://github.com/spralle)! - Export BridgeArguments and use it for generated shortcuts: zero-argument creators
+  accept an empty legacy object, and a single required empty-compatible object can
+  be omitted without widening other signatures.
+
+  Empty shortcut argument lists now forward one fresh object to creators before
+  normalizing undefined result payloads. This legacy default is observable for
+  optional/defaulted packs too because runtime creators erase TypeScript arity;
+  explicit undefined and all supplied argument lists remain unchanged. The major
+  bump records that no-argument optional packs previously received undefined.
+
+### Patch Changes
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`63c3068`](https://github.com/surikaterna/redemeine/commit/63c3068c39ed94ab9e047dacd88c5d8631ebc4d8) Thanks [@spralle](https://github.com/spralle)! - Normalize legacy command and nested class own data before active envelope preparation, including post-sink re-preparation, without weakening data guards or changing inactive dispatch.
+
+  Normalize undecorated Date subclasses even in otherwise plain graphs, preserving instants, aliases and cycles without invoking inherited accessors. Ordinary Date-only prepared commands retain identity and preparation caching.
+
+- [#150](https://github.com/surikaterna/redemeine/pull/150) [`63c3068`](https://github.com/surikaterna/redemeine/commit/63c3068c39ed94ab9e047dacd88c5d8631ebc4d8) Thanks [@spralle](https://github.com/spralle)! - Let eventEnvelope output own typed headers, using its existing initializer/parser/recipe API in Aggregate, bridge and Mirage. Replace the unreleased boolean propagation flag with an explicit plugin-owned selection/validation policy. One writer may replace raw event headers; a second writer throws without implicit merging. Required header properties (whose value may be undefined) preserve sound prepared types, and installed data is detached. Callbacks retain registration order; there is no header prepass or universal copy default. An output with own undefined headers now creates that property even when the input omitted it. Command headers remain reserved in command extensions; metadata and replay are unchanged.
+
 ## 1.0.0-pre.3
 
 ### Minor Changes
