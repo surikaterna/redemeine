@@ -60,6 +60,33 @@ retain source event payload types. Source state context remains readonly and typ
 Built descriptors track presence; optional or potentially undefined descriptors
 provide only optional extension fields, not guaranteed prepared values.
 
+Inference distinguishes required literal-tuple registrations from possible
+contributions (optional descriptors and ordinary arrays, which may be empty).
+Required finite-key descriptors retain whole output-union branches, including correlated
+body and event headers. Possible contributions cannot constrain overlapping required keys
+of guaranteed contributions, even across `.plugins(...).build().withPlugins(...)`
+or repeated attachment. Possible event-header writers leave canonical unknown
+headers unless a required writer establishes the header contract.
+Optional body keys are not collision guarantees: overlapping possible values
+widen those optional keys rather than being excluded, including optional anchor
+keys in heterogeneous arrays. For two guaranteed descriptors, a required key
+retains its required writer's type; competing optional writes would collide if
+actually emitted. Two optional writes instead retain an optional union of their
+values. A required own `undefined` is still a write, not an absent key.
+
+Possible-contribution inference is conservative, not an enumeration of every subset:
+all possible registrations contribute independently optional fields with unioned
+values. This admits empty arrays and multiple disjoint writers without intersecting
+mutually exclusive discriminants. No cross-field correlation is promised, even for
+one possible registration. Narrowing an optional discriminant proves neither the
+presence nor the value type of its other fields. Open-ended extension index slots
+(including template-pattern and broad string keys) may become `unknown` because
+their actual own keys cannot be enumerated statically; independently guaranteed
+literal keys retain their exact required types. This does not widen the whole
+envelope or its canonical fields. The inferred shape is not proof
+that a writer ran, nor that overlapping writers can run together successfully;
+runtime extension-collision checks are unchanged.
+
 Prepared results contain canonical `Command<P,T>` / `Event` fields plus declared
 extensions—not arbitrary incoming extras. Core payload/header/metadata data is
 preserved unless an event-header writer explicitly replaces headers. Explicit routing fields are `aggregateId`, `aggregateType`,

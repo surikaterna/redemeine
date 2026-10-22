@@ -102,9 +102,9 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
         aggregateType: aggregateName,
         initialState: initialState as AggregateStateView<S>,
         process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType, contract),
-        apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler),
+        apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, resolved.explicitRootProjectorByEventType),
         applyToDraft: (draft: Draft<S>, event: Event): void => {
-            applyEventToDraft<S>(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler);
+            applyEventToDraft<S>(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, resolved.explicitRootProjectorByEventType);
         },
         commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
         eventCreators: emit,

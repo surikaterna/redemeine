@@ -91,12 +91,12 @@ export interface AggregatePluginBuilder<
     ? never
     : {
         <X extends object>(
-          initialize: EnvelopeInitializer<X, CommandEnvelopeContext<S, A>> & (X extends EnvelopeExtension<X> ? unknown : never),
+          initialize: EnvelopeInitializer<X, CommandEnvelopeContext<S, A>> & ([X] extends [EnvelopeExtension<X>] ? unknown : never),
           parser?: undefined
         ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
         <I extends object, X extends object>(
-          initialize: EnvelopeInitializer<I, CommandEnvelopeContext<S, A>> & (I extends EnvelopeExtension<I> ? unknown : never),
-          parser: EnvelopeParser<X> & (X extends EnvelopeExtension<X> ? unknown : never)
+          initialize: EnvelopeInitializer<I, CommandEnvelopeContext<S, A>> & ([I] extends [EnvelopeExtension<I>] ? unknown : never),
+          parser: EnvelopeParser<X> & ([X] extends [EnvelopeExtension<X>] ? unknown : never)
         ): AggregatePluginBuilder<Id, S, A, X, E, true, HasE, Matched>;
       };
   eventEnvelope: HasE extends true

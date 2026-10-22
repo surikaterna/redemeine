@@ -134,3 +134,37 @@ test('rejects Date subclass own data, but preserves undecorated instants and ali
   expect(normalized.invalid.getTime()).toBeNaN();
   expect(getter).not.toHaveBeenCalled();
 });
+
+test('normalizes a Date-subclass-only graph, preserving aliases and cycles without invoking inherited accessors', () => {
+  const getter = jest.fn();
+  class PlainDate extends Date {}
+  Object.defineProperty(PlainDate.prototype, 'position', { get: getter });
+  const date = new PlainDate(123);
+  const raw: { a: Date; b: Date; invalid: Date; self?: unknown } = { a: date, b: date, invalid: new PlainDate(NaN) };
+  raw.self = raw;
+  const normalized = normalizeEnvelope(raw);
+  expect(normalized).not.toBe(raw);
+  expect(normalized.self).toBe(normalized);
+  expect(normalized.a).toBe(normalized.b);
+  expect(normalized.a).not.toBe(date);
+  expect(Object.getPrototypeOf(normalized.a)).toBe(Date.prototype);
+  expect(Object.getPrototypeOf(normalized.invalid)).toBe(Date.prototype);
+  expect(normalized.a.getTime()).toBe(123);
+  expect(normalized.invalid.getTime()).toBeNaN();
+  expect('position' in normalized.a).toBe(false);
+  expect(getter).not.toHaveBeenCalled();
+  expect(raw.a).toBe(date);
+  expect(raw.self).toBe(raw);
+  expect(Object.getPrototypeOf(date)).toBe(PlainDate.prototype);
+});
+
+test('ordinary Date-only prepared commands retain identity and preparation cache', () => {
+  const { built, prepare } = definition();
+  const date = new Date(123);
+  const raw = { type: 'boundary.add.command', payload: { a: date, b: date, invalid: new Date(NaN) } };
+  expect(normalizeEnvelope(raw)).toBe(raw);
+  const prepared = built.prepareCommand(built.initialState, raw);
+  expect(normalizeEnvelope(prepared)).toBe(prepared);
+  expect(built.prepareCommand(built.initialState, normalizeEnvelope(prepared))).toBe(prepared);
+  expect(prepare).toHaveBeenCalledTimes(1);
+});

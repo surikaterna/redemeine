@@ -34,6 +34,7 @@ export function normalizeEnvelope<T extends object>(input: T): T {
     const time = dateTime(value);
     if (time !== undefined) {
       if (Reflect.ownKeys(value).length) throw new TypeError('Envelope normalization does not support Date own properties');
+      if (Object.getPrototypeOf(value) !== Date.prototype) changed = true;
       const date = new Date(time);
       seen.set(value, date);
       return date;
