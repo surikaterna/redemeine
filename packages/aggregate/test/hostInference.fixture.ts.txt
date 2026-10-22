@@ -29,6 +29,34 @@ named.commandCreators.originalGo(payload);
 // @ts-expect-error No invented index signature.
 named.commandCreators.missing();
 
+const optionalMounts: { item: typeof entity; optional?: typeof entity } = { item: entity };
+const presentOptionalMounts: typeof optionalMounts = { item: entity, optional: entity };
+const optionalOnlyMounts: { optional?: typeof entity } = {};
+const undefinedMounts: { optional?: typeof entity | undefined } = { optional: undefined };
+const root = createAggregate('host', {}).commands(() => ({ root: () => [] }));
+export const optionalNamed = root.entities(optionalMounts).build();
+export const presentOptionalNamed = root.entities(presentOptionalMounts).build();
+export const optionalOnly = root.entities(optionalOnlyMounts).build();
+export const explicitUndefined = root.entities(undefinedMounts).build();
+optionalNamed.commandCreators.root();
+optionalNamed.commandCreators.itemGo({ mode: 'fast', count: 1 });
+presentOptionalNamed.commandCreators.root();
+presentOptionalNamed.commandCreators.itemStop();
+optionalOnly.commandCreators.root();
+explicitUndefined.commandCreators.root();
+// @ts-expect-error A possibly absent mount must not promise creators.
+optionalNamed.commandCreators.optionalStop();
+// @ts-expect-error An optional annotation does not guarantee presence even when initialized.
+presentOptionalNamed.commandCreators.optionalStop();
+// @ts-expect-error Optional-only maps do not promise mounted creators.
+optionalOnly.commandCreators.optionalStop();
+// @ts-expect-error Explicitly allowed undefined does not guarantee a mounted entity.
+explicitUndefined.commandCreators.optionalStop();
+// @ts-expect-error Required named creators retain their payload contract.
+optionalNamed.commandCreators.itemGo({ mode: 'slow', count: 1 });
+// @ts-expect-error Required named creators still use the alias, not the original name.
+optionalNamed.commandCreators.originalStop();
+
 export const selectedEntity = createEntity<State, 'selected'>('selected').selectors({
   by: (state, id: string) => state.rows.find(row => row.id === id),
   optional: (state, prefix?: string) => prefix ? state.id + prefix : state.id,

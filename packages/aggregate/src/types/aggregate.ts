@@ -73,7 +73,7 @@ export type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName,
 
 export type MergeEntities<T extends any[]> = Merge<ExtractEntityCommands<T[number]> & {}>;
 export type CommandsFromNamedEntities<EN> = UnionToIntersection<{
-    [K in keyof EN]: EN[K] extends EntityPackage<infer State, infer Name, infer Events, infer EventOverrides, infer Commands, infer CommandOverrides>
+    [K in keyof EN]-?: EN[K] extends EntityPackage<infer State, infer Name, infer Events, infer EventOverrides, infer Commands, infer CommandOverrides>
         ? MapEntityCommands<Extract<K, string>, Commands>
         : {}
 }[keyof EN]>;

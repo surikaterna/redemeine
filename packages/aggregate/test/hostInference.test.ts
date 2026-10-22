@@ -25,6 +25,11 @@ test.each(['source', 'esm', 'cjs'] as const)('HOST-T6/T9 inference and declarati
   host.readFile = file => files.get(file) ?? readFile(file);
   host.writeFile = (file, text) => { files.set(file, text); };
   const program = ts.createProgram([filename], options, host);
+  if (!source) {
+    const declaration = mode === 'cjs' ? 'index.d.cts' : 'index.d.ts';
+    expect(program.getSourceFiles().some(file => file.fileName.endsWith(`/aggregate/dist/${declaration}`))).toBe(true);
+    expect(program.getSourceFiles().some(file => file.fileName.includes('/aggregate/src/'))).toBe(false);
+  }
   expect(diagnostics(program)).toBe('');
   expect(program.emit().emitSkipped).toBe(false);
   const declaration = filename.replace(/\.(mts|cts)$/, '.d.$1');
