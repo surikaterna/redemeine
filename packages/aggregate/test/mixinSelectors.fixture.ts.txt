@@ -1,0 +1,76 @@
+import { createAggregate, createMixin, type MixinPackage } from '@redemeine/aggregate';
+
+const state = { count: 2 };
+const numeric = createMixin<typeof state>().selectors({ value: s => s.count }).build();
+const textual = createMixin<typeof state>().selectors({ value: s => String(s.count), total: s => s.count + 1 }).build();
+export const host = createAggregate('selectors', state)
+  .selectors({ value: s => s.count }).mixins(numeric).mixins(textual)
+  .selectors({ value: s => s.count })
+  .commands((_emit, { selectors }) => ({ inspect: (s) => {
+    selectors.value(s).toUpperCase();
+    selectors.total(s).toFixed();
+    return [];
+  } })).build();
+host.selectors.total(state).toFixed();
+host.selectors.value(state).toUpperCase();
+// @ts-expect-error The last mixin replaces the root numeric return.
+host.selectors.value(state).toFixed();
+// @ts-expect-error Inferred mixins must not invent selector keys.
+host.selectors.phantom(state);
+
+export const root = createAggregate('root', state).selectors({ value: s => s.count })
+  .selectors(() => ({ value: (s: typeof state) => String(s.count) })).build();
+root.selectors.value(state).toUpperCase();
+// @ts-expect-error Successive root registrations replace, not intersect.
+root.selectors.value(state).toFixed();
+
+const tuple = [numeric, textual] as const;
+createAggregate('tuple', state).mixins(...tuple).build().selectors.value(state).toUpperCase();
+const parent = createAggregate('parent', state).selectors({ value: s => s.count }).mixins(textual);
+export const child = createAggregate('child', state).selectors({ value: (_s: typeof state) => false }).mixins(numeric).extends(parent).build();
+child.selectors.value(state).toFixed();
+const rootsOnly = createAggregate('rootsOnly', state).selectors({ value: (_s: typeof state) => 'child' })
+  .extends(createAggregate('parentRoot', state).selectors({ value: (_s: typeof state) => 1 })).build();
+rootsOnly.selectors.value(state).toUpperCase();
+const empty = createMixin<typeof state>().build();
+createAggregate('empty', state).selectors({ value: (_s: typeof state) => 1 }).mixins(empty).build().selectors.value(state).toFixed();
+const replaced = createMixin<typeof state>().selectors({ value: (_s: typeof state) => 1 }).selectors({ value: (_s: typeof state) => 'last' }).build();
+replaced.selectors.value(state).toUpperCase();
+// @ts-expect-error Mixin registrations replace prior returns too.
+replaced.selectors.value(state).toFixed();
+
+const variants: (typeof numeric | typeof textual)[] = [];
+export const possible = createAggregate('possible', state).selectors({ value: (_s: typeof state) => false }).mixins(...variants).build();
+const fallback: string | number | boolean = possible.selectors.value(state);
+void fallback;
+// @ts-expect-error An empty array leaves the boolean root in place.
+const assumedLast: string = possible.selectors.value(state);
+// @ts-expect-error A possible array member cannot guarantee total exists.
+possible.selectors.total(state);
+if (possible.selectors.total) possible.selectors.total(state).toFixed();
+const absent = createAggregate('absent', state).mixins(...variants).build();
+// @ts-expect-error Arrays can be empty.
+absent.selectors.value(state);
+const broad: MixinPackage<typeof state> = textual;
+const conservative = createAggregate('broad', state).mixins(broad).build();
+// @ts-expect-error Explicit broad packages do not guarantee a named selector.
+conservative.selectors.value(state);
+const structural = { __stateType: state, selectors: { structural: (s: typeof state) => s.count } };
+createAggregate('structural', state).mixins(structural).build().selectors.structural(state).toFixed();
+// @ts-expect-error Incompatible source state remains rejected.
+createAggregate('badState', { count: 'wrong' }).mixins(textual);
+// @ts-expect-error A raw builder is not a compiled mixin package.
+createAggregate('raw', state).mixins(createMixin<typeof state>());
+
+const optional: { __stateType: typeof state; selectors?: { optional: (s: typeof state) => number } } = { __stateType: state };
+const optionalHost = createAggregate('optional', state).mixins(optional).build();
+// @ts-expect-error Optional structural selector maps may be absent.
+optionalHost.selectors.optional(state);
+const union: typeof numeric | typeof textual = Math.random() ? numeric : textual;
+const unionHost = createAggregate('union', state).mixins(union).build();
+const unionValue: string | number = unionHost.selectors.value(state);
+void unionValue;
+// @ts-expect-error A union member cannot guarantee the other member's key.
+unionHost.selectors.total(state);
+// @ts-expect-error Conflicting union returns must not become an overload/intersection.
+unionHost.selectors.value(state).toFixed();

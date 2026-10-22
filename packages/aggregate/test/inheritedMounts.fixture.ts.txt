@@ -1,0 +1,31 @@
+import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
+import type { Event } from '@redemeine/kernel';
+
+const item = createEntity<{ id: string; count: number }, 'item'>('item').events({
+  changed(draft, event: Event<{ id: string; amount: number }>) { draft.count += event.payload.amount; }
+}).commands(emit => ({ change: {
+  pack: (payload: { id: string; amount: number }) => payload,
+  handler: (_state: unknown, payload: { id: string; amount: number }) => emit.changed(payload)
+} })).build();
+const mixin = createMixin<{}>().entityList('mixed', item).build();
+const parent = createAggregate('parent', {}).entityList('rows', item)
+  .entityMap('slots', item, { knownKeys: ['one'] as const }).mixins(mixin)
+  .entities({ alias: item }, item).valueObject('details').valueObjectList('history').valueObjectMap('labels');
+const child = createAggregate('child', {}).extends(parent);
+export const host = createAggregate('grandchild', {}).extends(child).build();
+host.commandCreators.rowsChange({ id: 'one', amount: 1 });
+host.commandCreators.slotsChange({ id: 'one', amount: 1 });
+host.commandCreators.mixedChange({ id: 'one', amount: 1 });
+host.commandCreators.itemChange({ id: 'one', amount: 1 });
+// @ts-expect-error inherited packed payload remains required
+host.commandCreators.rowsChange({ id: 'one' });
+// @ts-expect-error extends accepts a builder, not a built aggregate
+createAggregate('invalid', {}).extends(parent.build());
+const registrations = child._state.entityPackages;
+registrations.forEach(registration => { const name: string = registration.name; void name; });
+type Registry = NonNullable<typeof host.__registryType>;
+const listKind: Registry['rows']['kind'] = 'list';
+const aliasKind: Registry['alias']['kind'] = 'list';
+const mapKey: NonNullable<Registry['slots']['knownKeys']>[number] = 'one';
+const valueKind: Registry['details']['kind'] = 'valueObject';
+void [listKind, aliasKind, mapKey, valueKind];

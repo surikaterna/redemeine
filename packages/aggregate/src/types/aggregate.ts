@@ -1,6 +1,7 @@
 import type { Event, Command, EventType, CommandType, NamingStrategy, AggregateHooks, PluginContext, PluginExtensions, CommandContext, CommandIntents, RedemeinePlugin, Contract } from '@redemeine/kernel';
 import type { Draft } from 'immer';
 import type { AggregateStateView } from './aggregateState';
+import type { EffectiveSelectors, ReplaceSelectors } from './aggregateSelectors';
 import type { EntityPackage } from '../createEntity';
 import type { GenericCommandFactory, AnyFunction } from '../redemeineComponent';
 import type { Merge } from './Merge';
@@ -97,89 +98,89 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
  * SAFETY: `any` in EntityPackage/AggregateMixinLike constraint positions throughout this interface
  * is required for TypeScript to perform `infer` extraction on generic type parameters.
  */
-export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = []> {
-    extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry, ParentPS, ParentEP extends readonly unknown[]>(
-        parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry, TMeta, TPlugins, ParentPS, ParentEP>
-    ) => AggregateBuilder<S, Name, M & ParentM, Omit<ParentE, keyof E> & E, EOverrides & ParentEOverrides, Sel & ParentSel, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, AppendRegistrations<ParentEP, EP>>;
+export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = [], SM extends readonly unknown[] = []> {
+    extends: <ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry extends AggregateEntityRegistry, ParentPS, ParentEP extends readonly unknown[], ParentSM extends readonly unknown[]>(
+        parentBuilder: AggregateBuilder<S, any, ParentM, ParentE, ParentEOverrides, ParentSel, ParentRegistry, TMeta, TPlugins, ParentPS, ParentEP, ParentSM>
+    ) => AggregateBuilder<S, Name, M & ParentM, Omit<ParentE, keyof E> & E, EOverrides & ParentEOverrides, ReplaceSelectors<ParentSel, Sel>, Registry & ParentRegistry, TMeta, TPlugins, PS & ParentPS, AppendRegistrations<ParentEP, EP>, [...ParentSM, ...SM]>;
 
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
         ...entityPackages: T
-    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta, TPlugins, PS, EP, SM>;
 
     entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
         name: EN,
         entityComponent: T,
         options?: EntityListOptions<PK>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }, TMeta, TPlugins, PS, EP, SM>;
 
     entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
         name: EN,
         entityComponent: T,
         options?: EntityMapOptions<Keys>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }, TMeta, TPlugins, PS, EP, SM>;
 
     valueObject: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectEntry }, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectEntry }, TMeta, TPlugins, PS, EP, SM>;
 
     valueObjectList: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectListEntry }, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectListEntry }, TMeta, TPlugins, PS, EP, SM>;
 
     valueObjectMap: <VOName extends string>(
         name: VOName,
         schema?: unknown
-    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectMapEntry }, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry & { [K in VOName]: EntityRegistryValueObjectMapEntry }, TMeta, TPlugins, PS, EP, SM>;
 
     mixins: <T extends AggregateMixinLike<any, any, any>[]>(
         ...mixins: CompatibleMixins<S, T>
-    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M & MergeMixins<T>, E, EOverrides, Sel, Registry & MergeMixinRegistries<T>, TMeta, TPlugins, PS, EP, [...SM, ...T]>;
 
     plugins: {
       <const P extends RegistrationTuple>(
         ...plugins: P & ValidRegistrations<S & PS & Registry, P>
-      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>>;
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>, SM>;
       <const P extends readonly PluginRegistration[]>(
         ...plugins: P & ValidRegistrationArray<S & PS & Registry, P>
-      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>>;
+      ): AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins & RegistrationExtensions<P[number]>, PS & MountedPlugins<P>, AppendRegistrations<EP, P>, SM>;
     };
 
     selectors: {
         <NewSel extends AggregateSelectorsMap<S>>(
             selectors: NewSel
-        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry, TMeta, TPlugins, PS, EP>;
+        ): AggregateBuilder<S, Name, M, E, EOverrides, ReplaceSelectors<Sel, NewSel>, Registry, TMeta, TPlugins, PS, EP, SM>;
         <NewSel extends AggregateSelectorsMap<S>>(
             selectorFactory: (utils: AggregateSelectorUtils) => NewSel
-        ): AggregateBuilder<S, Name, M, E, EOverrides, Sel & NewSel, Registry, TMeta, TPlugins, PS, EP>;
+        ): AggregateBuilder<S, Name, M, E, EOverrides, ReplaceSelectors<Sel, NewSel>, Registry, TMeta, TPlugins, PS, EP, SM>;
     };
 
     events: <NewE extends Record<string, RedemeineEventDefinition<S, TMeta>>>(
         events: NewE
-    ) => AggregateBuilder<S, Name, M, MergeEventDefinitions<E, NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, MergeEventDefinitions<E, NewE>, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
     overrideEventNames: <NewEOverrides extends Partial<Record<string, EventType>>>(
         overrides: NewEOverrides
-    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M, E, EOverrides & NewEOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
-    naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
     commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>>>(
-        factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel; commands: CommandContext<CommandIntents<M>>; plugins?: PluginContext<TPlugins> }) => C
-    ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+        factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: EffectiveSelectors<Sel, SM>; commands: CommandContext<CommandIntents<M>>; plugins?: PluginContext<TPlugins> }) => C
+    ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
     overrideCommandNames: (overrides: Partial<Record<AggregateCommandKeys<M>, CommandType>>) =>
-        AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+        AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
-    hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    hooks: (hooks: AggregateHooks<S>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
-    onUnmatchedEvent: (handler: (eventType: string, aggregateName: string) => void) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    onUnmatchedEvent: (handler: (eventType: string, aggregateName: string) => void) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
-    contract: (contract: Contract) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
+    contract: (contract: Contract) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
     build: (...validation: EP extends ValidSourceEvents<{ aggregateType: Name; initialState: S & PS; pure: { eventProjectors: AggregateEventProjectorsMap<E> } }, EP> ? [] : [incompatibleSourceEvents: never]) => {
         aggregateType: Name;
@@ -202,7 +203,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
             commandProcessors: Record<string, AnyFunction>;
             eventProjectors: AggregateEventProjectorsMap<E>;
         };
-        selectors: Sel;
+        selectors: EffectiveSelectors<Sel, SM>;
         hooks: AggregateHooks<S>;
         mounts: Record<string, MountedStructureMetadata>;
         metadata: {
@@ -224,6 +225,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         commandOverrides: Record<string, string>;
         commandsFactory: GenericCommandFactory;
         mixins: AggregateMixinLike<S>[];
+        entityPackages: MountedEntityPackage[];
         selectors: Record<string, AnyFunction>;
         hooks: AggregateHooks<S>;
         plugins: RedemeinePlugin<TPlugins>[];
