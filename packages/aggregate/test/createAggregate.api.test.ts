@@ -267,7 +267,7 @@ describe('createAggregate API coverage', () => {
       })
       .commands((emit) => ({
         changeValue: {
-          handler: (part, payload: { id: string; value: number }) => emit.valueChanged(payload),
+          handler: (part, payload: { linesId: string; id: string; value: number }) => emit.valueChanged(payload),
           meta: { source: 'part-command', level: 2 }
         }
       }))
@@ -288,7 +288,7 @@ describe('createAggregate API coverage', () => {
       .commands(() => ({}))
       .build();
 
-    const command = aggregate.commandCreators.linesPartsChangeValue({ id: 'p1', value: 99 });
+    const command = aggregate.commandCreators.linesPartsChangeValue({ linesId: 'l1', id: 'p1', value: 99 });
     const emitted = aggregate.process(aggregate.initialState, command as any);
 
     expect(command.type).toBe('order.lines_parts_change_value.command');

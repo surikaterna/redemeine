@@ -5,20 +5,20 @@ import { findEntityInCollection } from './entityCache';
 import { readProperty } from '../runtimeDefinition';
 import { readonlyArrayMember, readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
-function identityValue(value: unknown, mount: string): string | number {
-  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) return value;
+function identityValue(value: unknown, mount: string): string | number | bigint {
+  if (typeof value === 'string' || typeof value === 'bigint' || (typeof value === 'number' && Number.isFinite(value))) return value;
   throw new TypeError(`Missing or invalid primary key for ${mount}`);
 }
 
 export function selectFromList(name: string, mount: MountMetadata, raw: unknown): InvocationContext {
   if (Array.isArray(mount.pk)) {
     const identity = Object.fromEntries(mount.pk.map(key => [key, identityValue(readProperty(raw, key), name)]));
-    return { idsPayload: identity, packPrefix: mount.pk.map(key => identity[key]), entityPk: identity };
+    return { idsPayload: identity, packPrefix: mount.pk.map(key => identity[key]), entityPk: identity, selectedMount: mount };
   }
   const key = typeof mount.pk === 'string' ? mount.pk : 'id';
   const value = identityValue(raw, name);
   return { idsPayload: { id: value, [key]: value, [`${singular(name)}Id`]: value, [`${name}Id`]: value },
-    packPrefix: [value], ...(key === 'id' ? {} : { entityPk: { [key]: value } }) };
+    packPrefix: [value], selectedMount: mount, ...(key === 'id' ? {} : { entityPk: { [key]: value } }) };
 }
 
 export function selectFromListEntity(name: string, mount: MountMetadata, entity: unknown): InvocationContext {

@@ -2,6 +2,8 @@ import type { EntityPackage } from './createEntity';
 import { resolveCommandFactoryContext, type GenericCommandFactory, type GenericCommandFactoryContext, type GenericCommandMap } from './redemeineComponent';
 import type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions } from './types/entityMount';
 import type { MapEntityCommands } from './types/aggregate';
+import { entitySelectorContext } from './build/entityCommandContext';
+import { commandTarget, definitionTargets, mergeDefinitions } from './build/entityCommandTarget';
 
 export type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions, MapEntityCommands };
 
@@ -52,19 +54,22 @@ export function composeMountedComponentBehavior(
 } {
   const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
-  const mergedEvents: Record<string, Function> = { ...snapshot.events };
+  const mergedEvents = mergeDefinitions({}, snapshot.events);
   const mergedEventMetadata: Record<string, Record<string, unknown> | undefined> = { ...snapshot.eventMetadata };
   const mergedEventOverrides: Record<string, string> = { ...snapshot.eventOverrides };
   const mergedCommandOverrides: Record<string, string> = { ...snapshot.commandOverrides };
   const mounts: Record<string, MountedStructureMetadata> = {};
 
   mountedEntities.forEach(({ name: mountName, kind, component: nested, mountOverrides, pk, knownKeys }) => {
+    const previous = mounts[mountName];
     mounts[mountName] = {
       kind,
       commandPrefix: mountName,
       statePath: [mountName],
       pk,
-      knownKeys
+      knownKeys,
+      commandTargets: { ...previous?.commandTargets },
+      eventTargets: { ...previous?.eventTargets }
     };
 
     if (!nested || (kind !== 'list' && kind !== 'map')) {
@@ -72,6 +77,8 @@ export function composeMountedComponentBehavior(
     }
 
     const nestedEvents = nested.projectors || nested.events || {};
+    const nestedEventTargets = definitionTargets(nestedEvents);
+    const target = commandTarget({ kind, commandPrefix: mountName, statePath: [mountName], pk });
     const nestedEventMetadata = nested.eventMetadata || {};
     const nestedEventNameOverrides = nested.eventOverrides || {};
     const nestedCommandNameOverrides = nested.commandOverrides || {};
@@ -87,6 +94,8 @@ export function composeMountedComponentBehavior(
     Object.keys(nestedEvents).forEach((eventKey) => {
       const mappedEventKey = `${mountName}${capitalize(eventKey)}`;
       mergedEvents[mappedEventKey] = nestedEvents[eventKey];
+      mounts[mountName]!.eventTargets![mappedEventKey] = [target, ...(nestedEventTargets[eventKey] ?? [])];
+      definitionTargets(mergedEvents)[mappedEventKey] = mounts[mountName]!.eventTargets![mappedEventKey]!;
       mergedEventMetadata[mappedEventKey] = (nestedEventMetadata as Record<string, Record<string, unknown> | undefined>)[eventKey];
       if (mountEventNameOverrides[eventKey]) {
         mergedEventOverrides[mappedEventKey] = mountEventNameOverrides[eventKey];
@@ -108,11 +117,9 @@ export function composeMountedComponentBehavior(
 
   const commandFactory: GenericCommandFactory = (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
-    const mergedCommands: GenericCommandMap = {
-      ...baseCommandFactory(emit, resolvedContext)
-    };
+    const mergedCommands: GenericCommandMap = mergeDefinitions({}, baseCommandFactory(emit, resolvedContext));
 
-    mountedEntities.forEach(({ name: mountName, kind, component: nested }) => {
+    mountedEntities.forEach(({ name: mountName, kind, component: nested, pk }) => {
       if (!nested || (kind !== 'list' && kind !== 'map')) {
         return;
       }
@@ -126,9 +133,17 @@ export function composeMountedComponentBehavior(
         }
       });
 
-      const nestedCommands = nested.commandFactory(nestedEmit, resolvedContext);
+      const nestedCommands = nested.commandFactory(nestedEmit, {
+        ...resolvedContext,
+        selectors: entitySelectorContext(nested.selectors || {}, resolvedContext.selectors, mountName)
+      });
+      const nestedTargets = definitionTargets(nestedCommands);
+      const target = commandTarget({ kind, commandPrefix: mountName, statePath: [mountName], pk });
       Object.keys(nestedCommands).forEach((cmdKey) => {
-        mergedCommands[`${mountName}${capitalize(cmdKey)}`] = nestedCommands[cmdKey]!;
+        const mapped = `${mountName}${capitalize(cmdKey)}`;
+        mergedCommands[mapped] = nestedCommands[cmdKey]!;
+        mounts[mountName]!.commandTargets![mapped] = [target, ...(nestedTargets[cmdKey] ?? [])];
+        definitionTargets(mergedCommands)[mapped] = mounts[mountName]!.commandTargets![mapped]!;
       });
     });
 

@@ -25,7 +25,9 @@ const cases = [['ts', 'aggregate'], ['mts', 'demeine-interop'], ['cts', 'demeine
 const fixtures = ['shorthandCommands.fixture.ts.txt', '../../mirage/test/callableCommands.fixture.ts.txt'];
 const programs = [
   ...cases.map(([suffix, consumerPackage]) => [suffix, consumerPackage, fixtures[0]]),
-  ['ts', 'aggregate', fixtures[1]], ['mts', 'mirage', fixtures[1]]
+  ['ts', 'aggregate', fixtures[1]], ['mts', 'mirage', fixtures[1]],
+  ['ts', 'aggregate', '../../mirage/test/scopedCommands.fixture.ts.txt'],
+  ['mts', 'mirage', '../../mirage/test/scopedCommands.fixture.ts.txt']
 ];
 test.each(programs)(
   '%s %s %s declarations match single-payload runtime', (suffix, consumerPackage, fixture) => {
@@ -42,9 +44,9 @@ test.each(programs)(
   if (suffix === 'ts') {
     source = source.replaceAll("'@redemeine/aggregate'", "'../src'");
     source = source.replaceAll("'@redemeine/mirage'", "'../../mirage/src'");
-    if (fixture === fixtures[1]) options.types = ['node'];
+    if (fixture !== fixtures[0]) options.types = ['node'];
     options.baseUrl = resolve(__dirname, '../../..');
-    options.paths = { '@redemeine/kernel': ['packages/kernel/src/index.ts'] };
+    options.paths = { '@redemeine/kernel': ['packages/kernel/src/index.ts'], '@redemeine/aggregate': ['packages/aggregate/src/index.ts'] };
   } else if (fixture === fixtures[0]) source += downstream[consumerPackage];
   const host = ts.createCompilerHost(options);
   const read = host.readFile.bind(host);
@@ -64,6 +66,6 @@ test.each(programs)(
     declarationHost.readFile = file => emitted.get(file) ?? read(file);
     declarationHost.fileExists = file => emitted.has(file) || exists(file);
     const consumer = ts.createProgram([...emitted.keys()], { ...options, noEmit: true }, declarationHost);
-    expect(ts.getPreEmitDiagnostics(consumer).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([]);
+    expect(ts.getPreEmitDiagnostics(consumer).map(d => `${ts.flattenDiagnosticMessageText(d.messageText, '\n')}: ${d.file?.text.slice(Math.max(0, (d.start ?? 0) - 150), (d.start ?? 0) + 150)}`)).toEqual([]);
   }
 });

@@ -9,6 +9,9 @@ import type { AllKeys } from './AllKeys';
 import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './aggregateTyping';
 import type {
     AggregateEntityRegistry,
+    MountRegistry,
+    ReplaceCommandMap,
+    ResolvedCommandTargets,
     MountedStructureMetadata,
     MountedEntityPackage,
     EntityMountOverrides,
@@ -118,14 +121,14 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         entityComponent: T,
         options?: EntityListOptions<PK>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }, TMeta, TPlugins, PS, EP, SM>;
+    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, EntityRegistryListEntry<T, PK>>, TMeta, TPlugins, PS, EP, SM>;
 
     entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
         name: EN,
         entityComponent: T,
         options?: EntityMapOptions<Keys>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }, TMeta, TPlugins, PS, EP, SM>;
+    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'map'; pk: 'key'; mountName: EN }, EntityRegistryMapEntry<T, Keys>>, TMeta, TPlugins, PS, EP, SM>;
 
     valueObject: <VOName extends string>(
         name: VOName,
@@ -206,6 +209,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         eventCreators: EventEmitterFactory<Name, E, EOverrides>;
         pure: {
             commandProcessors: Record<string, AnyFunction>;
+            readonly commandTargets: ResolvedCommandTargets;
             eventProjectors: AggregateEventProjectorsMap<E>;
         };
         selectors: EffectiveSelectors<Sel, SM>;

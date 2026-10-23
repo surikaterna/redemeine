@@ -69,15 +69,17 @@ export type MapCommandsToPayloads<C> = {
     ? PublicArgsFromShorthand<C[K]> extends infer Args
       ? {
           args: Args;
+          form: 'shorthand';
           payload: ShorthandPayload<Args>;
         }
       : never
     : C[K] extends PackedCommand<any, infer Args, infer P>
-      ? { args: Args, payload: P }
+      ? { args: Args, payload: P, form: 'packed' }
       : C[K] extends { handler: (state: any, ...args: any[]) => any }
         ? PublicArgsFromShorthand<C[K]['handler']> extends infer Args
           ? {
               args: Args;
+              form: 'shorthand';
               payload: ShorthandPayload<Args>;
             }
           : never

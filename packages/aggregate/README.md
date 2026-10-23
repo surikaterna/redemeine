@@ -74,3 +74,10 @@ getters are trusted code, not sandboxed: closures can still mutate external data
 Methods operating on ordinary own data see the detached, frozen context rather
 than live state. Date setters can mutate that detached Date, never the original.
 Command/event envelope snapshots retain their stricter plain-data-only policy.
+
+## Resolved command provenance
+
+`built.pure.commandTargets` is a detached, deeply readonly snapshot keyed by full local command name (the same keys as `pure.commandProcessors`). Each entry describes the final winning registration after composition and mounting; root commands have an own `[]` entry. Unlike historical per-mount metadata, this snapshot follows command overrides. Consumers such as Mirage can keep selection/view identity separate from each command's primary-key contract without parsing wire names. Snapshot arrays are copied; caller-owned primary-key arrays are not frozen.
+Scoped Mirage shorthand accepts a single object payload (including optional objects), or no payload/`undefined`. Scalars, arrays, functions, `null`, and unions containing these unsupported payloads are not callable in a selected scope and throw before command hooks if invoked from JavaScript. Root shorthand remains unchanged. Use an explicit `{ pack, handler }` command for scalar business arguments; its final packed payload must still contain the selected identity object.
+
+Repeated explicit list/map registrations keep the latest selection descriptor while surviving commands retain their own type-only registration identity and packed prefix length. Selected calls omit only fields actually injected by that command's registration: canonical PKs, and the existing default-id/singular-id/plural-id aliases for single-key lists (or key aliases for maps). Accepted input aliases that are not injected remain caller requirements. Legacy/partially specified generic command descriptors without registration information retain the existing descriptor-based fallback; they do not establish command-specific provenance.

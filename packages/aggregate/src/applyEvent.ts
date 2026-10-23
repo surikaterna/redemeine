@@ -4,6 +4,8 @@ import type { AnyFunction } from './redemeineComponent';
 import type { UnmatchedEventHandler } from './createAggregate';
 import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
 import { assertSynchronous } from './plugins/descriptor';
+import type { EntityCommandTargets } from './types/entityMount';
+import { selectedCommandState } from './build/entityCommandTarget';
 
 /**
  * Resolves an event path segment to the matching entity container in the draft.
@@ -47,17 +49,12 @@ function resolveEntityIdentifier(
     const singularPart = singular(part);
     const singularCamelPart = singular(camelPart);
 
-    const id = payload[part + 'Id'] ||
-        payload[singularPart + 'Id'] ||
-        payload[camelPart + 'Id'] ||
-        payload[singularCamelPart + 'Id'] ||
-        payload.id;
-
-    const mapKey = payload[part + 'Key'] ||
-        payload[singularPart + 'Key'] ||
-        payload[camelPart + 'Key'] ||
-        payload[singularCamelPart + 'Key'] ||
-        payload.key;
+    const firstPresent = (keys: string[]) => {
+        const key = keys.find(key => Object.hasOwn(payload, key));
+        return key === undefined ? undefined : payload[key];
+    };
+    const id = firstPresent([part + 'Id', singularPart + 'Id', camelPart + 'Id', singularCamelPart + 'Id', 'id']);
+    const mapKey = firstPresent([part + 'Key', singularPart + 'Key', camelPart + 'Key', singularCamelPart + 'Key', 'key']);
 
     const compositePk = payload.__entityPk && typeof payload.__entityPk === 'object'
         ? payload.__entityPk as Record<string, unknown>
@@ -104,12 +101,18 @@ export function applyEventToDraft<S>(
     scopedProjectorByEventType: Record<string, AnyFunction> = {},
     scopedEventProjectors: Record<string, AnyFunction> = {},
     unmatchedEventHandler?: UnmatchedEventHandler,
-    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>
+    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>,
+    eventTargetsByType: EntityCommandTargets = {}
 ): void {
     const directScopedProjector = scopedProjectorByEventType[event.type];
     const explicitRootProjector = explicitRootProjectorByEventType?.get(event.type);
     if (!directScopedProjector && explicitRootProjector) {
         assertSynchronous(explicitRootProjector(draft, event));
+        return;
+    }
+    const chain = eventTargetsByType[event.type];
+    if (directScopedProjector && chain) {
+        assertSynchronous(directScopedProjector(selectedCommandState(draft, event.payload, chain), event));
         return;
     }
     const parsedPath = parseTargetedEventPath(event.type, aggregateName);
@@ -174,9 +177,10 @@ export function applyEvent<S>(
     scopedProjectorByEventType: Record<string, AnyFunction> = {},
     scopedEventProjectors: Record<string, AnyFunction> = {},
     unmatchedEventHandler?: UnmatchedEventHandler,
-    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>
+    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>,
+    eventTargetsByType: EntityCommandTargets = {}
 ): S {
     return produce(state, (draft: Draft<S>) => {
-        applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, explicitRootProjectorByEventType);
+        applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, explicitRootProjectorByEventType, eventTargetsByType);
     }) as S;
 }
