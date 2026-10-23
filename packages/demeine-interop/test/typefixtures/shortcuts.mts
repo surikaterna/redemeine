@@ -16,7 +16,7 @@ const definition = createAggregate('payment', { count: 0 })
   .build();
 
 // A host helper keeps the actual overloaded public constructor, not a recreated cast.
-function hostBridge<S extends object, C extends Record<string, (...args: never[]) => BridgeCommand>>(
+function hostBridge<S extends object, C extends Record<string, (...args: never) => BridgeCommand>>(
   built: BridgeableAggregate<S, C>,
 ): BridgeConstructor<S, C> {
   return createDemeineBridge(built);
@@ -60,3 +60,33 @@ export type Contracts = [
   Assert<Equal<BridgeArguments<(x: string, y?: number) => void>, [x: string, y?: number]>>,
   Assert<Equal<BridgeArguments<(...xs: string[]) => void>, string[]>>,
 ];
+
+type Correlated = [tag: 'a', payload: { a: number }] | [tag: 'b', payload: { b: string }];
+declare const correlated: BridgeableAggregate<{}, {
+  go: (...args: Correlated) => BridgeCommand;
+  literal: (payload: { kind: 'fixed'; value: 1 }) => BridgeCommand;
+}>;
+export const TupleBridge = hostBridge(correlated);
+const caller = new TupleBridge();
+caller.go('a', { a: 1 });
+caller.go('b', { b: 'ok' });
+caller.literal({ kind: 'fixed', value: 1 });
+// @ts-expect-error branches remain correlated
+caller.go('a', { b: 'wrong branch' });
+// @ts-expect-error branches remain correlated in both directions
+caller.go('b', { a: 1 });
+// @ts-expect-error unknown tag
+caller.go('c', { a: 1 });
+// @ts-expect-error absent arguments
+caller.go();
+// @ts-expect-error missing payload
+caller.go('a');
+// @ts-expect-error excess arguments
+caller.go('a', { a: 1 }, 2);
+// @ts-expect-error literal payloads are not widened
+caller.literal({ kind: 'fixed', value: 2 });
+// @ts-expect-error creators must be callable
+type NonFunction = BridgeableAggregate<{}, { go: string }>;
+// @ts-expect-error creators must return commands
+type NonCommand = BridgeableAggregate<{}, { go: (...args: Correlated) => { payload: {} } }>;
+export type CorrelatedContract = Assert<Equal<BridgeArguments<(...args: Correlated) => BridgeCommand>, Correlated>>;

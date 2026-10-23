@@ -4,7 +4,7 @@ import type { CommandSinkInput, CommandHandlerInput, CompatibleAggregate, EventH
 export type BridgeCommand = Command<unknown, string> & { aggregateId?: string; aggregateType?: string };
 export type BridgeEvent = Event & { aggregateId: string; correlationId: string };
 
-export type CommandCreators = Record<string, (...args: never[]) => BridgeCommand>;
+export type CommandCreators = Record<string, (...args: never) => BridgeCommand>;
 
 export interface BridgeableAggregate<S extends object, C extends CommandCreators> {
   initialState: S;
@@ -26,7 +26,7 @@ export interface BridgeOptions<S extends object> {
 }
 
 /** Legacy shortcut arguments; only a single required, empty-compatible object may be omitted. */
-export type BridgeArguments<C extends (...args: never[]) => unknown> =
+export type BridgeArguments<C extends (...args: never) => unknown> =
   Parameters<C> extends [] ? [payload?: Record<string, never>]
     : Parameters<C> extends [infer Payload]
       ? [Payload] extends [object]

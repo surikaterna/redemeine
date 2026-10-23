@@ -4,8 +4,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": false,
     "noEmit": true,
     "types": []
   },
-  "files": ["shortcuts.mts"]
+  "files": ["shortcuts.mts", "shortcuts.cts"]
 }
