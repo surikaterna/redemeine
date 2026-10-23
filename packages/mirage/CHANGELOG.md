@@ -1,5 +1,17 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.7
+
+### Patch Changes
+
+- [#154](https://github.com/surikaterna/redemeine/pull/154) [`91f0c2c`](https://github.com/surikaterna/redemeine/commit/91f0c2c8619eeeaa964c7bc8b7985bc867e95591) Thanks [@spralle](https://github.com/spralle)! - Treat callable command definitions as shorthand even when they carry a `pack`
+  property. Scoped Mirage calls now supply the single object payload with selected
+  identifiers, matching Aggregate's callable-first classification. Non-callable
+  `{ pack, handler }` definitions retain their packed argument prefixes.
+- Updated dependencies [[`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892), [`adca961`](https://github.com/surikaterna/redemeine/commit/adca96123e1a2fb9ff4740286c1bbdc9db5d9996), [`eb0d2e4`](https://github.com/surikaterna/redemeine/commit/eb0d2e419bbeadd3018b5a6f8e2375a68f4cddef)]:
+  - @redemeine/aggregate@1.0.0-pre.7
+  - @redemeine/kernel@0.2.0-pre.3
+
 ## 1.0.0-pre.6
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/demeine-interop",
-  "version": "1.0.0-pre.4",
+  "version": "1.0.0-pre.5",
   "description": "Standalone legacy-compatible aggregate lifecycle for Redemeine builders",
   "license": "MIT",
   "repository": {

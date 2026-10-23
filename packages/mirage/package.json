@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/mirage",
-  "version": "1.0.0-pre.6",
+  "version": "1.0.0-pre.7",
   "description": "Type-safe live aggregate proxies with readonly state, scoped commands and event-store persistence",
   "license": "MIT",
   "repository": {

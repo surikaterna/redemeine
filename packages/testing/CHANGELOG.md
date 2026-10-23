@@ -1,5 +1,14 @@
 # @redemeine/testing
 
+## 0.2.0-pre.7
+
+### Patch Changes
+
+- Updated dependencies [[`91f0c2c`](https://github.com/surikaterna/redemeine/commit/91f0c2c8619eeeaa964c7bc8b7985bc867e95591)]:
+  - @redemeine/mirage@1.0.0-pre.7
+  - @redemeine/projection@0.2.0-pre.3
+  - @redemeine/saga@0.1.1-pre.7
+
 ## 0.2.0-pre.6
 
 ### Patch Changes
