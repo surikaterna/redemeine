@@ -12,7 +12,7 @@ import { applyEvent, applyEventToDraft } from './applyEvent';
 import type { Draft } from 'immer';
 import { resolveEvents, finalizeProjectorMap } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
-import { definitionTargets, mergeDefinitions } from './build/entityCommandTarget';
+import { definitionTargets, mergeDefinitions, resolvedCommandTargets } from './build/entityCommandTarget';
 import type { AggregateStateView } from './types/aggregateState';
 import { decorateAggregate, inheritAggregateIdentity } from './plugins/attachment';
 import type { PluginRegistration } from './plugins/attachmentTypes';
@@ -104,6 +104,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
         commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
         eventCreators: emit,
         pure: {
+            commandTargets: resolvedCommandTargets(allCommandsMap),
             commandProcessors: allCommandsMap as unknown as Record<string, Function>,
             eventProjectors: allEvents
         },

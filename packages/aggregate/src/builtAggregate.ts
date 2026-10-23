@@ -4,6 +4,7 @@ import type { AnyFunction } from './redemeineComponent';
 import type { AggregateDecoration, PreparedCommand } from './plugins/attachmentTypes';
 import type { Draft } from 'immer';
 import type { AggregateStateView } from './types/aggregateState';
+import type { ResolvedCommandTargets } from './types/entityMount';
 
 /**
  * The compiled output of createAggregate(...).build().
@@ -45,6 +46,7 @@ export interface BuiltAggregate<
     /** Raw domain functions for isolated unit testing — do NOT use to bypass Mirage dispatch */
     pure: {
         commandProcessors: Record<string, AnyFunction>;
+        readonly commandTargets: ResolvedCommandTargets;
         eventProjectors: Record<string, AnyFunction>;
     };
     /** Query selectors derived from state */

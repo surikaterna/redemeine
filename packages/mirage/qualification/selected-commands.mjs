@@ -42,6 +42,9 @@ function rejectsBeforeDispatch(live, selected, fields, identity, calls) {
   }
   assert.throws(() => selected.missing(), /identity/i);
   assert.throws(() => selected.primitive());
+  for (const payload of [2, 'bad', false, null, [], () => {}]) {
+    assert.throws(() => selected.set(payload), TypeError);
+  }
   assert.deepEqual(calls, previous);
   assert.deepEqual(extractState(live), state);
   assert.deepEqual(live[MirageCoreSymbol].getPendingResults(), pending);
@@ -66,7 +69,40 @@ function scalarParity(api, pk) {
   for (const value of [false, undefined, {}, 'other']) assert.throws(() => selected.set({ [fields[0]]: value, qty: 2 }), /identity/i);
 }
 
+function earlierRoleParity(api) {
+  const received = [];
+  const old = api.createEntity('old').commands(() => ({
+    optional(_state, payload) { received.push(payload); return []; },
+    correlated(_state, payload) {
+      received.push(payload.kind === 'a' ? payload.a.toUpperCase() : payload.b.toFixed(1));
+      return [];
+    }
+  })).build();
+  const latest = api.createEntity('latest').commands(() => ({ current: () => [] })).build();
+  const host = api.createAggregate('store', { rows: [{ id: 0, code: '' }] }).entityList('rows', old)
+    .entityList('rows', latest, { pk: 'code' })
+    .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
+  const live = createMirage(host, 'store');
+  live.chosen().optional({ body: 'bound' });
+  live.chosen().correlated({ kind: 'a', a: 'ok' });
+  live.chosen().correlated({ kind: 'b', b: 2 });
+  assert.deepEqual(received, [{ id: 0, rowId: 0, rowsId: 0, body: 'bound' }, 'OK', '2.0']);
+  assert.equal(live.chosen().current, undefined);
+  const targets = { ...host.pure.commandTargets };
+  host.pure.commandTargets = targets;
+  const original = targets.rowsOptional;
+  for (const invalid of [undefined, [], [{ kind: 'map', statePath: ['rows'], commandPrefix: 'rows' }],
+    [{ kind: 'list', statePath: ['other'], commandPrefix: 'rows' }],
+    [{ kind: 'list', statePath: ['other', 'rows'], commandPrefix: 'rows' }]]) {
+    targets.rowsOptional = invalid;
+    assert.throws(() => live.chosen(), /registration/i);
+  }
+  targets.rowsOptional = original;
+  assert.equal(live.chosen().current, undefined);
+}
+
 for (const api of [{ createAggregate, createEntity }, createRequire(import.meta.url)('@redemeine/aggregate')]) {
+  earlierRoleParity(api);
   for (const pk of ['id', 'code', ['domain', 'authority']]) {
     const fields = Array.isArray(pk) ? pk : [pk];
     const identity = Object.fromEntries(fields.map(key => [key, `${key}-a`]));

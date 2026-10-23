@@ -2,7 +2,8 @@ import { type Event, type EventType, type CommandType, type SelectorsMap, type C
 import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, AnyFunction } from './redemeineComponent';
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
-import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
+import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './types/aggregateTyping';
+import type { MountRegistry, ReplaceCommandMap } from './types/entityMount';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -12,6 +13,7 @@ import type {
   MountedEntityPackage,
 } from './componentMounts';
 import { composeMountedComponentBehavior, createMountMethods } from './componentMounts';
+import type { ReplaceSelectors } from './types/aggregateSelectors';
 
 type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
   kind: 'list';
@@ -67,9 +69,9 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
 
   selectors: <NewSelectors extends SelectorsMap<S>>(
     selectors: NewSelectors
-  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, Selectors & NewSelectors, Registry, TMeta>;
+  ) => MixinBuilder<S, E, EOverrides, CPayloads, COverrides, ReplaceSelectors<Selectors, NewSelectors>, Registry, TMeta>;
 
-  commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
+  commands: <NewC extends Record<string, RedemeineCommandDefinition<S, TMeta>> & ValidCommandDefinitions<NewC>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors; commands: CommandContext<CommandIntents<CPayloads>> }) => NewC
   ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry, TMeta>;
 
@@ -78,14 +80,14 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
     entityComponent: T,
     options?: EntityListOptions<PK>,
     mountOverrides?: EntityMountOverrides
-  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryListEntry<T, PK> }, TMeta>;
+  ) => MixinBuilder<S, E, EOverrides, ReplaceCommandMap<CPayloads, MapEntityCommands<EN, T['commands']>>, COverrides, Selectors, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, MixinEntityRegistryListEntry<T, PK>>, TMeta>;
 
   entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
     name: EN,
     entityComponent: T,
     options?: EntityMapOptions<Keys>,
     mountOverrides?: EntityMountOverrides
-  ) => MixinBuilder<S, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, Registry & { [K in EN]: MixinEntityRegistryMapEntry<T, Keys> }, TMeta>;
+  ) => MixinBuilder<S, E, EOverrides, ReplaceCommandMap<CPayloads, MapEntityCommands<EN, T['commands']>>, COverrides, Selectors, MountRegistry<Registry, EN, T, { kind: 'map'; pk: 'key'; mountName: EN }, MixinEntityRegistryMapEntry<T, Keys>>, TMeta>;
 
   valueObjectList: <VOName extends string>(
     name: VOName,
@@ -104,7 +106,7 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
   build: () => MixinPackage<S, E, EOverrides, CPayloads, COverrides, Selectors, Registry, TMeta>;
 }
 
-export function createMixin<S, TMeta extends Record<string, unknown> = Record<string, unknown>>(): MixinBuilder<S, {}, {}, {}, {}, SelectorsMap<S>, {}, TMeta> {
+export function createMixin<S, TMeta extends Record<string, unknown> = Record<string, unknown>>(): MixinBuilder<S, {}, {}, {}, {}, {}, {}, TMeta> {
   const component = createComponentBehaviorState<S>();
   const mountedEntities: MountedEntityPackage[] = [];
 
@@ -144,5 +146,5 @@ export function createMixin<S, TMeta extends Record<string, unknown> = Record<st
       };
     }
   });
-  return builder as unknown as MixinBuilder<S, {}, {}, {}, {}, SelectorsMap<S>, {}, TMeta>;
+  return builder as unknown as MixinBuilder<S, {}, {}, {}, {}, {}, {}, TMeta>;
 }

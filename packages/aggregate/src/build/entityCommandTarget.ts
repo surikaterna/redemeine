@@ -1,4 +1,4 @@
-import type { EntityCommandTarget, EntityCommandTargets, MountedStructureMetadata } from '../types/entityMount';
+import type { EntityCommandTarget, EntityCommandTargets, MountedStructureMetadata, ResolvedCommandTargets } from '../types/entityMount';
 import { singular, toCamelCase, toSnakeCase } from '../naming';
 
 // Provenance belongs to a definition-map registration, never a reusable handler or grouped mount.
@@ -11,6 +11,18 @@ export function definitionTargets(definitions: object): EntityCommandTargets {
         targetsByDefinitions.set(definitions, targets);
     }
     return targets;
+}
+
+// Expose final local-name provenance without sharing dispatch-owned or caller-owned arrays.
+export function resolvedCommandTargets(definitions: Record<string, unknown>): ResolvedCommandTargets {
+    const targets = definitionTargets(definitions);
+    return Object.freeze(Object.fromEntries(Object.keys(definitions).map(key => [key,
+        Object.freeze((targets[key] ?? []).map(target => Object.freeze({
+            ...target,
+            statePath: Object.freeze([...target.statePath]),
+            pk: Array.isArray(target.pk) ? Object.freeze([...target.pk]) : target.pk
+        })))
+    ])));
 }
 
 // Copy the winning definition and its registration together; an ordinary root replaces any old target.
@@ -59,7 +71,7 @@ function identity(target: EntityCommandTarget, payload: Record<string, unknown>,
     for (const field of fields) {
         const aliases = identityFields(target, field);
         if (target.kind === 'list' && fields.length === 1 && field !== 'id') aliases.push(...identityFields(target, 'id'));
-        const keys = [...new Set(aliases)].filter(key => Object.hasOwn(payload, key) && (leaf || (key !== 'id' && key !== 'key')));
+        const keys = [...new Set(aliases)].filter(key => Object.hasOwn(payload, key) && (leaf || (key !== field && key !== 'id' && key !== 'key')));
         const values = keys.map(key => payload[key]);
         if (composite && Object.hasOwn(composite, field)) {
             keys.push(`__entityPk.${field}`);

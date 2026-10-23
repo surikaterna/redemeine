@@ -12,7 +12,7 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, mount: 
     return value;
   };
   const selection: InvocationContext = { idsPayload: { ...context.idsPayload, key, [`${singular(name)}Key`]: key, [`${name}Key`]: key },
-    packPrefix: [...context.packPrefix, key], resolveState, selectedMount: mount };
+    packPrefix: [...context.packPrefix, key], resolveState, selectedMount: mount, selectedMapKey: key };
   return new Proxy({}, {
     ...readonlyTraps,
     get(_target, property) {

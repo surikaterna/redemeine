@@ -1,0 +1,91 @@
+import { createAggregate, createEntity } from '@redemeine/aggregate';
+import { createMirage } from '@redemeine/mirage';
+
+type Row = { id: number; code: string; quantity: number };
+const old = createEntity<Row, 'old'>('old').commands(() => ({
+  optional: (_state, payload?: { id: number; body: string }) => [],
+  optionalObject: { handler: (_state: Row, payload?: { id: number; body: string }) => [] },
+  zero: () => [],
+  scalar: (_state, payload: number) => [],
+  optionalScalar: (_state, payload?: number) => [],
+  array: (_state, payload: string[]) => [],
+  mixed: (_state, payload: { id: number } | number) => [],
+  nullable: (_state, payload: { id: number } | null) => [],
+  callable: (_state, payload: () => void) => [],
+  undefinedSlot: (_state, payload: { id: number; body: string } | undefined) => [],
+  alias: (_state, payload: { id: number; row_id: number }) => [],
+  correlated: (_state, payload: { id: number; kind: 'a'; a: string } | { id: number; kind: 'b'; b: number }) => [],
+  replace: (_state, payload: { id: number; old: string }) => [],
+  packed: { pack: (id: number, quantity: number) => ({ id, quantity }), handler: () => [] }
+})).build();
+const latest = createEntity<Row, 'latest'>('latest').commands(() => ({
+  current: (_state, payload: { code: string; body: string }) => [],
+  replace: (_state, payload: { code: string; latest: number }) => []
+})).build();
+export const scopedHost = createAggregate('store', { rows: [{ id: 0, code: '', quantity: 1 }] })
+  .entityList('rows', old).entityList('rows', latest, { pk: 'code' })
+  .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
+const host = scopedHost;
+const live = createMirage(host, 'store');
+const selected = live.rows('');
+selected.optional(); selected.optional(undefined); selected.optional({ body: 'ok' });
+selected.optionalObject({ body: 'ok' }); selected.zero(); selected.packed(2);
+selected.current({ body: 'ok' }); selected.replace({ latest: 2 });
+selected.alias({ row_id: 3 });
+selected.undefinedSlot(undefined); selected.undefinedSlot({ body: 'ok' });
+live.rows[0]!.optional({ body: 'index' });
+for (const row of live.rows) row.optional({ body: 'iteration' });
+live.chosen()!.optional({ body: 'bound' });
+selected.correlated({ kind: 'a', a: 'ok' });
+selected.correlated({ kind: 'b', b: 2 });
+live.chosen()!.correlated({ kind: 'a', a: 'bound' });
+const noAnyCorrelated: 0 extends (1 & Parameters<typeof selected.correlated>[0]) ? true : false = false;
+const noAnyA: 0 extends (1 & Extract<Parameters<typeof selected.correlated>[0], { kind: 'a' }>['a']) ? true : false = false;
+const noAnyB: 0 extends (1 & Extract<Parameters<typeof selected.correlated>[0], { kind: 'b' }>['b']) ? true : false = false;
+void [noAnyCorrelated, noAnyA, noAnyB];
+// @ts-expect-error discriminated branch a requires its business field
+selected.correlated({ kind: 'a' });
+// @ts-expect-error discriminated branch b requires its business field
+selected.correlated({ kind: 'b' });
+// @ts-expect-error business fields must match the discriminant
+selected.correlated({ kind: 'a', b: 2 });
+// @ts-expect-error business fields must match the discriminant
+selected.correlated({ kind: 'b', a: 'wrong' });
+// @ts-expect-error branch field type remains checked
+selected.correlated({ kind: 'a', a: 2 });
+// @ts-expect-error earlier role does not expose latest-only commands
+live.chosen()!.current({ body: 'no' });
+// @ts-expect-error selection uses latest code, not old numeric id
+live.rows(0);
+// @ts-expect-error injected identity is not a business field
+selected.optional({ id: 0, body: 'ok' });
+// @ts-expect-error business type remains checked
+selected.optional({ body: 1 });
+// @ts-expect-error noninjected alias remains required
+selected.alias({});
+// @ts-expect-error latest command replaces, not intersects
+selected.replace({ old: 'old' });
+// @ts-expect-error scoped scalar shorthand is unsupported
+selected.scalar(2);
+// @ts-expect-error optional primitive is not silently erased
+selected.optionalScalar();
+// @ts-expect-error arrays are unsupported shorthand
+selected.array([]);
+// @ts-expect-error mixed payload unions are unsupported
+selected.mixed({});
+// @ts-expect-error null union shorthand is unsupported
+selected.nullable({});
+// @ts-expect-error function shorthand is unsupported
+selected.callable(() => {});
+// @ts-expect-error required union slot retains arity
+selected.undefinedSlot();
+live.rowsOptional({ id: 0, body: 'root keeps identity' });
+
+const composite = createEntity<Row, 'composite'>('composite').commands(() => ({
+  packedComposite: { pack: (id: number, code: string, quantity: number) => ({ id, code, quantity }), handler: () => [] }
+})).build();
+const compositeHost = createAggregate('composite', { rows: [{ id: 0, code: '', quantity: 1 }] })
+  .entityList('rows', composite, { pk: ['id', 'code'] }).entityList('rows', latest, { pk: 'code' }).build();
+createMirage(compositeHost, 'one').rows('').packedComposite(3);
+// @ts-expect-error both old identity positions are injected, not caller arguments
+createMirage(compositeHost, 'one').rows('').packedComposite(0, '', 3);

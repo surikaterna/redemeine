@@ -9,10 +9,19 @@ type Forms = MapCommandsToPayloads<{
   short: (state: unknown, payload: { id: string; qty: number }) => [];
   object: { handler: (state: unknown, payload: { id: string; qty: number }) => []; meta: { label: string } };
   packed: { pack: (id: string, qty: number) => { id: string; qty: number }; handler: () => [] };
+  callable: ((state: unknown, payload?: { id: string; qty: number }) => []) & {
+    pack: (qty: number) => number; handler: () => [];
+  };
 }>;
 const short: Forms['short']['form'] = 'shorthand';
 const object: Forms['object']['form'] = short;
 const packed: Forms['packed']['form'] = 'packed';
+const callable: Forms['callable']['form'] = 'shorthand';
+const args: Forms['callable']['args'] = [{ id: 'a', qty: 1 }];
+const absent: Forms['callable']['payload'] = undefined;
+// @ts-expect-error Attached pack does not replace the callable payload or form.
+const packedCallable: Forms['callable']['form'] = 'packed';
+void [callable, args, absent, packedCallable];
 const row = createEntity<{ id: string; qty: number }, 'row'>('row').events({})
   .commands(() => ({ set: (_state, _payload: { id: string; qty: number }) => [],
     setQuantity: { pack: (id: string, qty: number) => ({ id, qty }), handler: () => [] } })).build();

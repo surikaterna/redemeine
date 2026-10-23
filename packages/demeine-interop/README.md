@@ -108,6 +108,21 @@ signatures are unchanged. Unknown, primitive and mixed object/primitive payloads
 are not widened. Host helpers can use this mapping with `BridgeConstructor` without
 recreating constructor overloads or casting generated methods.
 
+A creator declared with a correlated rest tuple retains that correlation in its
+shortcut:
+
+```ts
+// Creator signature: (...args: ['a', { a: number }] | ['b', { b: string }]) => Command
+await aggregate.go('a', { a: 1 });
+await aggregate.go('b', { b: 'ok' });
+// aggregate.go('a', { b: 'wrong branch' }); // Type error
+```
+
+This mapping uses TypeScript's `Parameters` utility; it does **not** preserve
+arbitrary overload sets or higher-order generic relationships. Those contracts
+remain outside this fix (HOST-T8 is unresolved); naming a wrapper does not solve
+that limitation.
+
 At runtime, **every empty argument list forwards one fresh `{}` to the creator**,
 matching the legacy shortcut default. Creator wrappers erase TypeScript arity, so
 this cannot be limited to the signatures widened above. In particular, an optional

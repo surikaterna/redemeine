@@ -5,8 +5,8 @@ import { findEntityInCollection } from './entityCache';
 import { readProperty } from '../runtimeDefinition';
 import { readonlyArrayMember, readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 
-function identityValue(value: unknown, mount: string): string | number {
-  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) return value;
+function identityValue(value: unknown, mount: string): string | number | bigint {
+  if (typeof value === 'string' || typeof value === 'bigint' || (typeof value === 'number' && Number.isFinite(value))) return value;
   throw new TypeError(`Missing or invalid primary key for ${mount}`);
 }
 

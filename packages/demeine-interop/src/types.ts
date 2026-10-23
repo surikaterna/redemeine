@@ -1,10 +1,10 @@
 import type { Command, Event } from '@redemeine/kernel';
-import type { CommandSink, CommandHandler, CompatibleAggregate, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
+import type { CommandSinkInput, CommandHandlerInput, CompatibleAggregate, EventHandlerInput, ObjectCommandHandler } from './lifecycleTypes';
 
 export type BridgeCommand = Command<unknown, string> & { aggregateId?: string; aggregateType?: string };
 export type BridgeEvent = Event & { aggregateId: string; correlationId: string };
 
-export type CommandCreators = Record<string, (...args: never[]) => BridgeCommand>;
+export type CommandCreators = Record<string, (...args: never) => BridgeCommand>;
 
 export interface BridgeableAggregate<S extends object, C extends CommandCreators> {
   initialState: S;
@@ -26,7 +26,7 @@ export interface BridgeOptions<S extends object> {
 }
 
 /** Legacy shortcut arguments; only a single required, empty-compatible object may be omitted. */
-export type BridgeArguments<C extends (...args: never[]) => unknown> =
+export type BridgeArguments<C extends (...args: never) => unknown> =
   Parameters<C> extends [] ? [payload?: Record<string, never>]
     : Parameters<C> extends [infer Payload]
       ? [Payload] extends [object]
@@ -39,6 +39,6 @@ type BridgeInstance<S extends object, C extends CommandCreators> = CompatibleAgg
 };
 
 export type BridgeConstructor<S extends object, C extends CommandCreators> = {
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: CommandHandler<S> | null): BridgeInstance<S, C>;
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: ObjectCommandHandler | null): BridgeInstance<S, C>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: CommandHandlerInput<S> | null): BridgeInstance<S, C>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: ObjectCommandHandler | null): BridgeInstance<S, C>;
 };

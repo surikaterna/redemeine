@@ -1,5 +1,39 @@
 # Aggregate
 
+## Command shorthand: zero or one payload
+
+Command shorthand handlers receive readonly state and **zero or one payload
+argument**. This applies to `createAggregate`, `createMixin`, and `createEntity`,
+including `{ handler, meta }` definitions. A handler without parameters or with
+state only creates a command with the existing `void` payload type (`undefined`
+at runtime). A required payload stays required; `payload?: P` allows omission or
+explicit `undefined`, and the command payload is `P | undefined`, not `[P?]`.
+A required `payload: P | undefined` still requires an argument. Domain Aggregate
+payloads may be primitives; legacy bridge object restrictions are separate.
+
+Multiple required/optional payload parameters and unbounded/generic rest
+parameters are rejected: runtime forwards only the first caller argument as the
+payload. Fixed zero/one-element tuple rest parameters are supported. Preserve
+concrete signatures when storing definitions (prefer inference or `satisfies`);
+broad shorthand annotations that erase arity cannot prove this contract.
+
+For a multi-argument public API, migrate to the existing explicit packing form:
+
+```ts
+const order = createAggregate('order', { count: 0 }).commands(() => ({
+  add: {
+    pack: (name: string, amount: number) => ({ name, amount }),
+    handler: (_state, payload: { name: string; amount: number }) => ({
+      type: 'order.added.event', payload
+    })
+  }
+})).build();
+order.commandCreators.add('item', 2); // payload: { name: 'item', amount: 2 }
+```
+
+There is no automatic runtime argument packing or reinterpretation. Valid
+shorthand and explicit packing retain their existing runtime behavior.
+
 ## State ownership and readonly views
 
 Passing a model to `createAggregate(name, initialState)` relinquishes mutation
@@ -40,3 +74,10 @@ getters are trusted code, not sandboxed: closures can still mutate external data
 Methods operating on ordinary own data see the detached, frozen context rather
 than live state. Date setters can mutate that detached Date, never the original.
 Command/event envelope snapshots retain their stricter plain-data-only policy.
+
+## Resolved command provenance
+
+`built.pure.commandTargets` is a detached, deeply readonly snapshot keyed by full local command name (the same keys as `pure.commandProcessors`). Each entry describes the final winning registration after composition and mounting; root commands have an own `[]` entry. Unlike historical per-mount metadata, this snapshot follows command overrides. Consumers such as Mirage can keep selection/view identity separate from each command's primary-key contract without parsing wire names. Snapshot arrays are copied; caller-owned primary-key arrays are not frozen.
+Scoped Mirage shorthand accepts a single object payload (including optional objects), or no payload/`undefined`. Scalars, arrays, functions, `null`, and unions containing these unsupported payloads are not callable in a selected scope and throw before command hooks if invoked from JavaScript. Root shorthand remains unchanged. Use an explicit `{ pack, handler }` command for scalar business arguments; its final packed payload must still contain the selected identity object.
+
+Repeated explicit list/map registrations keep the latest selection descriptor while surviving commands retain their own type-only registration identity and packed prefix length. Selected calls omit only fields actually injected by that command's registration: canonical PKs, and the existing default-id/singular-id/plural-id aliases for single-key lists (or key aliases for maps). Accepted input aliases that are not injected remain caller requirements. Legacy/partially specified generic command descriptors without registration information retain the existing descriptor-based fallback; they do not establish command-specific provenance.
