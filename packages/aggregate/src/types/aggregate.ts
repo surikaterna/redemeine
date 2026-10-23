@@ -5,7 +5,7 @@ import type { EntityPackage } from '../createEntity';
 import type { GenericCommandFactory, AnyFunction } from '../redemeineComponent';
 import type { Merge } from './Merge';
 import type { AllKeys } from './AllKeys';
-import type { EventEmitterFactory, MapCommandsToPayloads } from './aggregateTyping';
+import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './aggregateTyping';
 import type {
     AggregateEntityRegistry,
     MountedStructureMetadata,
@@ -173,7 +173,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     naming: (strategy: Partial<NamingStrategy>) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
 
-    commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>>>(
+    commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta, TPlugins>> & ValidCommandDefinitions<C>>(
         factory: (emit: EventEmitterFactory<Name, E, EOverrides>, context: { selectors: Sel; commands: CommandContext<CommandIntents<M>>; plugins?: PluginContext<TPlugins> }) => C
     ) => AggregateBuilder<S, Name, M & MapCommandsToPayloads<C>, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP>;
 

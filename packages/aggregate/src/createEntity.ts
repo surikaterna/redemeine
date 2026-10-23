@@ -1,7 +1,7 @@
 import { type Event, type EventType, type CommandType, type SelectorsMap, type CommandContext, type CommandIntents } from '@redemeine/kernel';
 import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefinition, NormalizeEventDefinitions, GenericCommandFactory, GenericCommandMap, AnyFunction } from './redemeineComponent';
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
-import type { EventEmitterFactory, MapCommandsToPayloads } from './types/aggregateTyping';
+import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './types/aggregateTyping';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -70,7 +70,7 @@ export interface EntityBuilder<S, Name extends string, E extends Record<string, 
    *   }
    * }))
    */
-  commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta>>>(
+  commands: <C extends Record<string, RedemeineCommandDefinition<S, TMeta>> & ValidCommandDefinitions<C>>(
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors; commands: CommandContext<CommandIntents<CPayloads>> }) => C
   ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapCommandsToPayloads<C>, COverrides, Selectors, TMeta>;
 
