@@ -31,6 +31,9 @@ export function mountEntities<S, TMeta>(
     eventTargetsByType: EntityCommandTargets = {}
 ): Record<string, MountedStructureMetadata> {
     const mounts: Record<string, MountedStructureMetadata> = {};
+    const eventDefinitionTargets = definitionTargets(allEvents);
+    // Preserve resolved root ownership, but retain last-mounted fallback for entity-only keys.
+    const rootEventKeys = new Set(Object.keys(allEvents).filter(key => !eventDefinitionTargets[key]?.length));
 
     const composeMountedType = (path: string, relativeName: string, suffix: 'event' | 'command') => {
         const expectedSuffix = `.${suffix}`;
@@ -60,9 +63,11 @@ export function mountEntities<S, TMeta>(
         };
 
         Object.keys(entityEvents).forEach((eventKey) => {
-            allEvents[eventKey] = entityEvents[eventKey];
             const chain = [target, ...(nestedEventTargets[eventKey] ?? [])];
-            definitionTargets(allEvents)[eventKey] = chain;
+            if (!rootEventKeys.has(eventKey)) {
+                allEvents[eventKey] = entityEvents[eventKey];
+                eventDefinitionTargets[eventKey] = chain;
+            }
             scopedEventProjectors[`${entityPath}:${eventKey}`] = entityEvents[eventKey];
             allEventMetadata[`${entityPath}:${eventKey}`] = entityEventMetadata[eventKey];
             const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
