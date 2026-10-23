@@ -1,5 +1,16 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.5
+
+### Patch Changes
+
+- [#155](https://github.com/surikaterna/redemeine/pull/155) [`9d0a140`](https://github.com/surikaterna/redemeine/commit/9d0a140a67d14e8df0ed013bc62f6e9f41183d79) Thanks [@spralle](https://github.com/spralle)! - Admit command creators with correlated rest-tuple parameters without widening generated shortcut arguments. Preserve existing legacy argument defaults and runtime forwarding. This fixes creator admission only, not arbitrary overload or higher-order generic signature preservation.
+
+- [#151](https://github.com/surikaterna/redemeine/pull/151) [`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892) Thanks [@spralle](https://github.com/spralle)! - Check bridge and authored-subclass constructor service inputs contravariantly. Reject command handlers, event handlers, and sinks that require state the aggregate does not provide, while preserving exact-state services, supported broader services, and the legacy object-state command-handler overload. Runtime behavior is unchanged; previously accepted unsupported handlers may now produce type errors.
+
+- Updated dependencies [[`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892)]:
+  - @redemeine/kernel@0.2.0-pre.3
+
 ## 1.0.0-pre.4
 
 ### Major Changes

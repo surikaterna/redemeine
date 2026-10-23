@@ -1,5 +1,12 @@
 # @redemeine/cli
 
+## 1.0.0-pre.5
+
+### Patch Changes
+
+- Updated dependencies [[`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892)]:
+  - @redemeine/kernel@0.2.0-pre.3
+
 ## 1.0.0-pre.4
 
 ### Minor Changes

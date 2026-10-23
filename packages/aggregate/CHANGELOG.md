@@ -1,5 +1,36 @@
 # @redemeine/aggregate
 
+## 1.0.0-pre.7
+
+### Patch Changes
+
+- [#151](https://github.com/surikaterna/redemeine/pull/151) [`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892) Thanks [@spralle](https://github.com/spralle)! - Infer named entity command creators using their mount aliases, and accept concrete required, optional, and rest selector arguments in entity and mixin builders without widening their inferred signatures. Runtime behavior is unchanged.
+
+  Preserve root and required named command creators when a named entity map includes optional mounts, without promising creators for possibly absent mounts.
+
+- [#153](https://github.com/surikaterna/redemeine/pull/153) [`adca961`](https://github.com/surikaterna/redemeine/commit/adca96123e1a2fb9ff4740286c1bbdc9db5d9996) Thanks [@spralle](https://github.com/spralle)! - Preserve all registered entity and value object mounts when extending an aggregate builder, with registration-array snapshots that isolate later parent and child additions.
+
+  Type aggregate and mixin selectors according to existing replacement order: root registrations first, then stored mixins with the last writer winning. Built selectors and command factories registered after composition now include mixin selectors. Widened arrays conservatively retain root fallbacks and optional keys rather than assuming a final member; order precision is not retained after an unknown-length spread. Callbacks registered before later builder mutation are not retyped.
+
+- [#154](https://github.com/surikaterna/redemeine/pull/154) [`eb0d2e4`](https://github.com/surikaterna/redemeine/commit/eb0d2e419bbeadd3018b5a6f8e2375a68f4cddef) Thanks [@spralle](https://github.com/spralle)! - Align shorthand command declarations with the existing single-payload runtime
+  contract across Aggregate, Mixin, and Entity builders. Reject multiple payload
+  slots (including an optional second slot) and unbounded rest parameters; use the
+  existing `{ pack, handler }` form for multi-argument public APIs. Correct optional
+  single-payload command values to `P | undefined` while preserving caller arity,
+  required payloads, and no-payload `void` semantics.
+
+  This is a patch type-safety correction, following the existing unsupported-input
+  typing-fix convention: previously accepted multi-argument shorthand programs
+  already dropped arguments at runtime. No valid runtime behavior or packing
+  policy changes. Broad shorthand annotations that erase safe arity must retain
+  concrete signatures instead. No manifest versions are changed by this Changeset.
+
+  Update the domain example's multi-argument identifier command to the supported
+  `{ pack, handler }` form and exercise its emitted event and projected identifier.
+
+- Updated dependencies [[`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892)]:
+  - @redemeine/kernel@0.2.0-pre.3
+
 ## 1.0.0-pre.6
 
 ### Minor Changes

@@ -1,5 +1,13 @@
 # @redemeine/kernel
 
+## 0.2.0-pre.3
+
+### Patch Changes
+
+- [#151](https://github.com/surikaterna/redemeine/pull/151) [`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892) Thanks [@spralle](https://github.com/spralle)! - Infer named entity command creators using their mount aliases, and accept concrete required, optional, and rest selector arguments in entity and mixin builders without widening their inferred signatures. Runtime behavior is unchanged.
+
+  Preserve root and required named command creators when a named entity map includes optional mounts, without promising creators for possibly absent mounts.
+
 ## 0.2.0-pre.2
 
 ### Minor Changes
