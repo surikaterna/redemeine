@@ -1,4 +1,4 @@
-import { createAggregate, createMixin, type MixinPackage } from '@redemeine/aggregate';
+import { createAggregate, createEntity, createMixin, type MixinPackage } from '@redemeine/aggregate';
 
 const state = { count: 2 };
 const numeric = createMixin<typeof state>().selectors({ value: s => s.count }).build();
@@ -74,3 +74,31 @@ void unionValue;
 unionHost.selectors.total(state);
 // @ts-expect-error Conflicting union returns must not become an overload/intersection.
 unionHost.selectors.value(state).toFixed();
+
+const entity = createEntity<typeof state, 'original'>('original').commands(() => ({
+  optional: (_state, payload?: string) => ({ type: 'optional', payload })
+})).build();
+const mounts: { item: typeof entity; optional?: typeof entity } = { item: entity };
+const inherited = createAggregate('inherited', state).mixins(textual)
+  .commands(() => ({ root: () => [] }));
+const integratedBuilder = createAggregate('integrated', state).extends(inherited).entities(mounts)
+  .selectors({ value: s => s.count });
+export const integrated = integratedBuilder.commands((_emit, { selectors, commands }) => ({
+  inspect: (s, payload?: string) => {
+    selectors.value(s).toUpperCase();
+    selectors.total(s).toFixed();
+    const intent: string | undefined = commands.itemOptional(payload).payload;
+    return { type: 'inspect', payload: intent };
+  }
+})).build();
+integrated.selectors.value(state).toUpperCase();
+integrated.commandCreators.root();
+integrated.commandCreators.inspect();
+const optionalPayload: string | undefined = integrated.commandCreators.itemOptional().payload;
+void optionalPayload;
+// @ts-expect-error Optional named mounts cannot promise inherited creators.
+integrated.commandCreators.optionalOptional();
+// @ts-expect-error Selector inheritance must not weaken shorthand arity validation.
+integratedBuilder.commands(() => ({ invalid: (_s, first: string, second: number) => [] }));
+// @ts-expect-error Optional payload inference must retain its concrete type.
+integrated.commandCreators.inspect(123);

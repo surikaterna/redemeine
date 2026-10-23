@@ -1,5 +1,39 @@
 # Aggregate
 
+## Command shorthand: zero or one payload
+
+Command shorthand handlers receive readonly state and **zero or one payload
+argument**. This applies to `createAggregate`, `createMixin`, and `createEntity`,
+including `{ handler, meta }` definitions. A handler without parameters or with
+state only creates a command with the existing `void` payload type (`undefined`
+at runtime). A required payload stays required; `payload?: P` allows omission or
+explicit `undefined`, and the command payload is `P | undefined`, not `[P?]`.
+A required `payload: P | undefined` still requires an argument. Domain Aggregate
+payloads may be primitives; legacy bridge object restrictions are separate.
+
+Multiple required/optional payload parameters and unbounded/generic rest
+parameters are rejected: runtime forwards only the first caller argument as the
+payload. Fixed zero/one-element tuple rest parameters are supported. Preserve
+concrete signatures when storing definitions (prefer inference or `satisfies`);
+broad shorthand annotations that erase arity cannot prove this contract.
+
+For a multi-argument public API, migrate to the existing explicit packing form:
+
+```ts
+const order = createAggregate('order', { count: 0 }).commands(() => ({
+  add: {
+    pack: (name: string, amount: number) => ({ name, amount }),
+    handler: (_state, payload: { name: string; amount: number }) => ({
+      type: 'order.added.event', payload
+    })
+  }
+})).build();
+order.commandCreators.add('item', 2); // payload: { name: 'item', amount: 2 }
+```
+
+There is no automatic runtime argument packing or reinterpretation. Valid
+shorthand and explicit packing retain their existing runtime behavior.
+
 ## State ownership and readonly views
 
 Passing a model to `createAggregate(name, initialState)` relinquishes mutation

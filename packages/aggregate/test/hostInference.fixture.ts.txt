@@ -1,0 +1,102 @@
+import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
+
+type State = { id: string; rows: { id: string; label: string }[] };
+const initial: State = { id: 'one', rows: [] };
+export const entity = createEntity<State, 'original'>('original').commands(() => ({
+  go: (_state, payload: { mode: 'fast'; count: number }) => [],
+  stop: () => [],
+  maybe: { pack: (label?: 'ok') => ({ label }), handler: () => [] },
+})).build();
+export const named = createAggregate('host', {}).entities({ item: entity }).build();
+export const direct = createAggregate('host', {}).entities(undefined, entity).build();
+export const listed = createAggregate('host', {}).entityList('item', entity).build();
+export const mixed = createAggregate('host', {}).entities({ alias: entity }, entity).build();
+const payload: { mode: 'fast'; count: number } = named.commandCreators.itemGo({ mode: 'fast', count: 1 }).payload;
+const same: typeof listed.commandCreators.itemGo = named.commandCreators.itemGo;
+const variadic: typeof direct.commandCreators.originalGo = mixed.commandCreators.originalGo;
+mixed.commandCreators.aliasGo(payload);
+named.commandCreators.itemStop();
+named.commandCreators.itemMaybe();
+named.commandCreators.itemMaybe('ok');
+// @ts-expect-error Required payload cannot be omitted.
+named.commandCreators.itemGo();
+// @ts-expect-error Literal payload types are preserved.
+named.commandCreators.itemGo({ mode: 'slow', count: 1 });
+// @ts-expect-error Optional arguments retain their type.
+named.commandCreators.itemMaybe(123);
+// @ts-expect-error Mount alias replaces the entity's original name.
+named.commandCreators.originalGo(payload);
+// @ts-expect-error No invented index signature.
+named.commandCreators.missing();
+
+const optionalMounts: { item: typeof entity; optional?: typeof entity } = { item: entity };
+const presentOptionalMounts: typeof optionalMounts = { item: entity, optional: entity };
+const optionalOnlyMounts: { optional?: typeof entity } = {};
+const undefinedMounts: { optional?: typeof entity | undefined } = { optional: undefined };
+const root = createAggregate('host', {}).commands(() => ({ root: () => [] }));
+export const optionalNamed = root.entities(optionalMounts).build();
+export const presentOptionalNamed = root.entities(presentOptionalMounts).build();
+export const optionalOnly = root.entities(optionalOnlyMounts).build();
+export const explicitUndefined = root.entities(undefinedMounts).build();
+optionalNamed.commandCreators.root();
+optionalNamed.commandCreators.itemGo({ mode: 'fast', count: 1 });
+presentOptionalNamed.commandCreators.root();
+presentOptionalNamed.commandCreators.itemStop();
+optionalOnly.commandCreators.root();
+explicitUndefined.commandCreators.root();
+// @ts-expect-error A possibly absent mount must not promise creators.
+optionalNamed.commandCreators.optionalStop();
+// @ts-expect-error An optional annotation does not guarantee presence even when initialized.
+presentOptionalNamed.commandCreators.optionalStop();
+// @ts-expect-error Optional-only maps do not promise mounted creators.
+optionalOnly.commandCreators.optionalStop();
+// @ts-expect-error Explicitly allowed undefined does not guarantee a mounted entity.
+explicitUndefined.commandCreators.optionalStop();
+// @ts-expect-error Required named creators retain their payload contract.
+optionalNamed.commandCreators.itemGo({ mode: 'slow', count: 1 });
+// @ts-expect-error Required named creators still use the alias, not the original name.
+optionalNamed.commandCreators.originalStop();
+
+export const selectedEntity = createEntity<State, 'selected'>('selected').selectors({
+  by: (state, id: string) => state.rows.find(row => row.id === id),
+  optional: (state, prefix?: string) => prefix ? state.id + prefix : state.id,
+  rest: (state, ...ids: string[]) => state.rows.filter(row => ids.includes(row.id)),
+  literal: () => 'ready' as const,
+  readonly: state => {
+    // @ts-expect-error Contextual state remains deeply readonly.
+    state.rows.push({ id: 'x', label: 'x' });
+    return state.rows;
+  },
+}).commands((_emit, ctx) => ({
+  check: state => {
+    const row: { readonly id: string; readonly label: string } | undefined = ctx.selectors.by(state, 'one');
+    // @ts-expect-error Required selector argument remains required in command context.
+    ctx.selectors.by(state);
+    return [];
+  },
+})).build();
+export const mixin = createMixin<State>().selectors({
+  by: (state, id: string) => state.rows.find(row => row.id === id),
+  optional: (state, id?: string) => id ?? state.id,
+  rest: (state, ...ids: string[]) => ids.includes(state.id),
+}).build();
+const row: { readonly id: string; readonly label: string } | undefined = selectedEntity.selectors.by(initial, 'one');
+const literal: 'ready' = selectedEntity.selectors.literal();
+const text: string = mixin.selectors.optional(initial);
+const flag: boolean = mixin.selectors.rest(initial, 'a', 'b');
+selectedEntity.selectors.optional(initial, 'prefix');
+selectedEntity.selectors.rest(initial, 'a', 'b');
+// @ts-expect-error Required entity selector argument cannot be omitted.
+selectedEntity.selectors.by(initial);
+// @ts-expect-error Required mixin selector argument cannot be omitted.
+mixin.selectors.by(initial);
+// @ts-expect-error Selector arguments do not widen to unknown or any.
+mixin.selectors.by(initial, 42);
+// @ts-expect-error Optional selector arguments retain their type.
+selectedEntity.selectors.optional(initial, 42);
+// @ts-expect-error Rest selector arguments retain their type.
+mixin.selectors.rest(initial, 42);
+// @ts-expect-error Selector return views remain readonly.
+selectedEntity.selectors.readonly(initial).push({ id: 'x', label: 'x' });
+// @ts-expect-error Concrete return types do not widen to any.
+const wrong: number = selectedEntity.selectors.literal();

@@ -1,4 +1,4 @@
-import { createAggregate, createMixin, createEntity } from '@redemeine/aggregate';
+import { createAggregate, createMixin, createEntity, type AggregateStateView } from '@redemeine/aggregate';
 import { Event, ReadonlyDeep } from '@redemeine/kernel';
 import { createMirage, extractUncommittedEvents } from '@redemeine/mirage';
 
@@ -36,7 +36,10 @@ describe('Domain Exmaple', () => {
         }
       })
       .commands((emit) => ({
-        registerIdentifier: (state, domain: string, authority: string, identifier: string) => emit.identifierRegisterd({ domain, authority, identifier })
+        registerIdentifier: {
+          pack: (domain: string, authority: string, identifier: string) => ({ domain, authority, identifier }),
+          handler: (_state: AggregateStateView<IdentifiersMixinState>, payload: Identifier) => emit.identifierRegisterd(payload)
+        }
       }))
       .build();
 
@@ -124,5 +127,10 @@ describe('Domain Exmaple', () => {
       }
     });
     expect(orderWithIdentifier.getIdentifier('tax')?.identifier).toBe('A-1');
+    orderWithIdentifier.registerIdentifier('vat', 'eu', 'B-2');
+    expect(orderWithIdentifier.getIdentifier('vat')).toEqual({ domain: 'vat', authority: 'eu', identifier: 'B-2' });
+    expect(extractUncommittedEvents(orderWithIdentifier)).toEqual([
+      expect.objectContaining({ payload: { domain: 'vat', authority: 'eu', identifier: 'B-2' } })
+    ]);
   });
 });

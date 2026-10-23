@@ -1,0 +1,175 @@
+import { createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
+import type { AggregateStateView, ShorthandCommandWithMeta } from '@redemeine/aggregate';
+
+type State = { count: number };
+type Payload = { name: string };
+const root = createAggregate('shorthand', { count: 0 }).commands(() => ({
+  zero: () => [],
+  stateOnly(state) { state.count.toFixed(); return []; },
+  required(state, payload: Payload) {
+    // @ts-expect-error Command state remains readonly.
+    state.count++;
+    return { type: 'required', payload };
+  },
+  optional: (_state, payload?: Payload) => ({ type: 'optional', payload }),
+  primitive: (_state, payload?: string) => ({ type: 'primitive', payload }),
+  number: (_state, payload: number) => ({ type: 'number', payload }),
+  requiredUndefined: (_state, payload: Payload | undefined) => ({ type: 'union', payload }),
+  literal: (_state, payload: 'yes') => ({ type: 'literal', payload }),
+  fixed: (_state, ...payload: [Payload]) => ({ type: 'fixed', payload: payload[0] }),
+  fixedOptional: (_state, ...payload: [Payload?]) => ({ type: 'fixedOptional', payload: payload[0] }),
+  fixedZero: (_state, ..._payload: []) => [],
+  meta: { handler: (_state: AggregateStateView<State>, payload?: Payload) => ({ type: 'meta', payload }), meta: { description: 'optional' } },
+  packed: {
+    pack: (name: string, amount: number) => ({ name, amount }),
+    handler: (_state: AggregateStateView<State>, payload: { name: string; amount: number }) => ({ type: 'packed', payload })
+  }
+}));
+export const host = root.commands((_emit, ctx) => ({
+  forward: () => {
+    const intent = ctx.commands.optional({ name: 'ok' });
+    const payload: Payload | undefined = intent.payload;
+    const absent = ctx.commands.optional(undefined);
+    const noPayload = ctx.commands.zero(undefined);
+    const nothing: void = noPayload.payload;
+    return { type: 'forward', payload: [payload, absent.payload, nothing] };
+  }
+})).build();
+host.commandCreators.zero();
+host.commandCreators.stateOnly();
+const noPayload: void = host.commandCreators.zero().payload;
+const required: Payload = host.commandCreators.required({ name: 'ok' }).payload;
+const optional: Payload | undefined = host.commandCreators.optional().payload;
+const optionalMeta: Payload | undefined = host.commandCreators.meta(undefined).payload;
+const primitive: string | undefined = host.commandCreators.primitive('ok').payload;
+host.commandCreators.optional({ name: 'ok' });
+host.commandCreators.optional(undefined);
+host.commandCreators.primitive();
+host.commandCreators.primitive(undefined);
+const numeric: number = host.commandCreators.number(2).payload;
+host.commandCreators.requiredUndefined(undefined);
+host.commandCreators.literal('yes');
+host.commandCreators.fixed({ name: 'ok' });
+const fixedOptional: Payload | undefined = host.commandCreators.fixedOptional().payload;
+host.commandCreators.fixedOptional(undefined);
+const fixedZero: void = host.commandCreators.fixedZero().payload;
+const packed: { name: string; amount: number } = host.commandCreators.packed('ok', 2).payload;
+// @ts-expect-error Required payload remains required.
+host.commandCreators.required();
+// @ts-expect-error A required union with undefined still requires an argument.
+host.commandCreators.requiredUndefined();
+// @ts-expect-error Literal payload correlation remains precise.
+host.commandCreators.literal('no');
+// @ts-expect-error An optional payload is a value, not an optional tuple.
+const tuple: [Payload?] = host.commandCreators.optional().payload;
+
+const two = { go: (_state: AggregateStateView<State>, name: string, amount: number) => ({ type: 'bad', payload: amount.toFixed() }) };
+const optionalSecond = { go(_state: AggregateStateView<State>, name: string, amount?: number) { return { type: 'bad', payload: amount }; } };
+const rest = { go: (_state: AggregateStateView<State>, ...names: string[]) => ({ type: 'bad', payload: names }) };
+const metaTwo = { go: { handler: two.go } };
+const satisfiesTwo = metaTwo satisfies Record<string, ShorthandCommandWithMeta<State>>;
+const widened: Record<string, ShorthandCommandWithMeta<State>> = metaTwo;
+const genericRest = { go: <Args extends string[]>(_state: AggregateStateView<State>, ...names: Args) => ({ type: 'bad', payload: names }) };
+// @ts-expect-error Two payload slots require explicit pack.
+root.commands(() => two);
+// @ts-expect-error An optional second slot can still accept two payload arguments.
+root.commands(() => optionalSecond);
+// @ts-expect-error An unbounded rest cannot prove a single payload slot.
+root.commands(() => rest);
+// @ts-expect-error Generic rest arguments do not prove a bounded payload slot.
+root.commands(() => genericRest);
+// @ts-expect-error Metadata does not bypass shorthand validation.
+root.commands(() => metaTwo);
+// @ts-expect-error Satisfies preserves the invalid signature.
+root.commands(() => satisfiesTwo);
+// @ts-expect-error Widening to a public declaration type cannot prove safe arity.
+root.commands(() => widened);
+// @ts-expect-error Contextual inference cannot silently fall back to an empty command map.
+root.commands(() => ({ bad: (_state, name: string, amount: number) => [] }));
+// @ts-expect-error Mixin declarations enforce the same contract.
+createMixin<State>().commands(() => two);
+// @ts-expect-error Mixin metadata declarations also reject a second payload slot.
+createMixin<State>().commands(() => metaTwo);
+// @ts-expect-error Optional second payload slots are invalid in mixins.
+createMixin<State>().commands(() => optionalSecond);
+// @ts-expect-error Unbounded shorthand rest is invalid in mixins.
+createMixin<State>().commands(() => rest);
+// @ts-expect-error Entity declarations enforce the same contract.
+createEntity<State, 'item'>('item').commands(() => optionalSecond);
+// @ts-expect-error Two required payloads are invalid in entities.
+createEntity<State, 'item'>('item').commands(() => two);
+// @ts-expect-error Entity metadata declarations cannot bypass validation.
+createEntity<State, 'item'>('item').commands(() => metaTwo);
+// @ts-expect-error Unbounded shorthand rest is invalid in entities.
+createEntity<State, 'item'>('item').commands(() => rest);
+
+function single(_state: AggregateStateView<State>, payload: Payload | undefined) {
+  return { type: 'function', payload };
+}
+const functions = createAggregate('functions', { count: 0 }).commands(() => ({ single })).build();
+functions.commandCreators.single(undefined);
+// @ts-expect-error Function declarations retain required undefined-union argument semantics.
+functions.commandCreators.single();
+
+export const mixin = createMixin<State>().commands(() => ({
+  optional: (_state, payload?: Payload) => ({ type: 'mixin', payload }),
+  packed: { pack: (name: string, amount: number) => ({ name, amount }), handler: (_state: AggregateStateView<State>, payload: { name: string; amount: number }) => ({ type: 'packed', payload }) }
+})).build();
+export const entity = createEntity<State, 'item'>('item').commands(() => ({
+  optional: (_state, payload?: Payload) => ({ type: 'entity', payload })
+})).build();
+const mixed = createAggregate('mixed', { count: 0 }).mixins(mixin).build();
+const mixedPayload: Payload | undefined = mixed.commandCreators.optional().payload;
+mixed.commandCreators.packed('ok', 2);
+const entityPayload: Payload | undefined = entity.commands.optional.payload;
+
+const attachedPack = { go: Object.assign(two.go, { pack: (name: string, amount: number) => ({ name, amount }) }) };
+const attachedHandler = { go: Object.assign(two.go, { handler: single }) };
+// @ts-expect-error A callable's pack property is ignored at runtime.
+root.commands(() => attachedPack);
+// @ts-expect-error A callable's handler property is ignored at runtime.
+root.commands(() => attachedHandler);
+// @ts-expect-error Mixin callables cannot use pack to bypass shorthand arity.
+createMixin<State>().commands(() => attachedPack);
+// @ts-expect-error Mixin callables cannot use handler to bypass shorthand arity.
+createMixin<State>().commands(() => attachedHandler);
+// @ts-expect-error Entity callables cannot use pack to bypass shorthand arity.
+createEntity<State, 'item'>('item').commands(() => attachedPack);
+// @ts-expect-error Entity callables cannot use handler to bypass shorthand arity.
+createEntity<State, 'item'>('item').commands(() => attachedHandler);
+
+const callableDefinitions = {
+  zero: Object.assign(() => [], { pack: (name: string, amount: number) => ({ name, amount }), handler: single }),
+  one: Object.assign(single, { pack: (amount: number) => amount, handler: () => [] }),
+  handlerOnly: Object.assign((_state: AggregateStateView<State>, payload: number) => ({ type: 'number', payload }), { handler: single }),
+  packed: { pack: (name: string, amount: number) => ({ name, amount }), handler: (_state: AggregateStateView<State>, payload: { name: string; amount: number }) => ({ type: 'packed', payload }) }
+};
+const callableAggregate = root.commands(() => callableDefinitions).build();
+const callableMixin = createMixin<State>().commands(() => callableDefinitions).build();
+const callableMixed = createAggregate('callableMixed', { count: 0 }).mixins(callableMixin).build();
+const callableEntity = createEntity<State, 'callableItem'>('callableItem').commands(() => callableDefinitions).build();
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+function expectType<T extends true>() {}
+expectType<Equal<Parameters<typeof callableAggregate.commandCreators.zero>, []>>();
+expectType<Equal<Parameters<typeof callableAggregate.commandCreators.one>, [payload: Payload | undefined]>>();
+expectType<Equal<Parameters<typeof callableAggregate.commandCreators.handlerOnly>, [payload: number]>>();
+expectType<Equal<Parameters<typeof callableMixed.commandCreators.zero>, []>>();
+expectType<Equal<Parameters<typeof callableMixed.commandCreators.one>, [payload: Payload | undefined]>>();
+expectType<Equal<Parameters<typeof callableMixed.commandCreators.handlerOnly>, [payload: number]>>();
+expectType<Equal<typeof callableEntity.commands.zero.payload, void>>();
+expectType<Equal<typeof callableEntity.commands.one.payload, Payload | undefined>>();
+expectType<Equal<typeof callableEntity.commands.handlerOnly.payload, number>>();
+expectType<Equal<typeof callableEntity.commands.packed.payload, { name: string; amount: number }>>();
+const callableZero: void = callableAggregate.commandCreators.zero().payload;
+const callableOne: Payload | undefined = callableAggregate.commandCreators.one(undefined).payload;
+const callableNumber: number = callableAggregate.commandCreators.handlerOnly(2).payload;
+const mixedZero: void = callableMixed.commandCreators.zero().payload;
+const mixedOne: Payload | undefined = callableMixed.commandCreators.one(undefined).payload;
+const mixedNumber: number = callableMixed.commandCreators.handlerOnly(2).payload;
+callableAggregate.commandCreators.packed('ok', 2);
+callableMixed.commandCreators.packed('ok', 2);
+// @ts-expect-error Attached handler must not make the actual payload optional.
+callableAggregate.commandCreators.handlerOnly();
+// @ts-expect-error Attached pack must not make the actual payload optional.
+callableAggregate.commandCreators.one();

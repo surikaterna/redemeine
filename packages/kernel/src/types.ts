@@ -122,7 +122,7 @@ export type MergePluginExtensions<TPlugins extends readonly RedemeinePlugin<Plug
  * Represents a dictionary mapping string keys to selector functions.
  * Selectors are pure functions injecting localized state queries directly into command contexts.
  */
-export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: unknown[]) => unknown>;
+export type SelectorsMap<S> = Record<string, (state: ReadonlyDeep<S>, ...args: never[]) => unknown>;
 
 export type CommandContext<TIntents extends Record<string, unknown>> = {
   [K in keyof TIntents]: (payload: TIntents[K]) => { command: K; payload: TIntents[K] };
@@ -268,4 +268,3 @@ export const EntityArray = {
     }
   }
 };
-
