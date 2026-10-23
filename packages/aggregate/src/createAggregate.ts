@@ -79,12 +79,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
             _hooks = { ...parentState.hooks, ..._hooks };
             _plugins = [...parentState.plugins, ..._plugins];
             _mixins = [...parentState.mixins, ..._mixins];
-            // SAFETY: `any[]` — mixins array has heterogeneous state types
-            const inheritedMounted = (parentState.mixins as any[])
-                .flatMap((m) => Array.isArray(m?.mountedEntities) ? m.mountedEntities : []);
-            if (inheritedMounted.length > 0) {
-                _entityPackages.push(...inheritedMounted as MountedEntityPackage[]);
-            }
+            _entityPackages.push(...parentState.entityPackages);
             return builder;
         },
 
@@ -186,6 +181,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
                 commandOverrides: snapshot.commandOverrides,
                 commandsFactory: component.getCommandsFactory(),
                 mixins: _mixins,
+                entityPackages: [..._entityPackages],
                 selectors: snapshot.selectors,
                 hooks: _hooks,
                 aggregatePlugins: _aggregatePlugins,
