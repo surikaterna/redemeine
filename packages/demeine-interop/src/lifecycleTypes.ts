@@ -37,6 +37,19 @@ export interface EventHandler<S extends object = object> {
   handle(aggregate: CompatibleAggregate<S>, event: Event): void;
 }
 
+// Constructor inputs must be contravariant, unlike legacy service methods.
+export type CommandHandlerInput<S extends object> = {
+  handle: (aggregate: CompatibleAggregate<S>, command: Command) => CompatibleAggregate<S>;
+};
+
+export type EventHandlerInput<S extends object> = {
+  handle: (aggregate: CompatibleAggregate<S>, event: Event) => void;
+};
+
+export type CommandSinkInput<S extends object> = {
+  sink: (command: Command, aggregate: CompatibleAggregate<S>) => Promise<CompatibleAggregate<S>>;
+};
+
 export interface CompatibleAggregate<S extends object = object> {
   id: string;
   type?: string;
@@ -63,7 +76,7 @@ export interface CompatibleAggregate<S extends object = object> {
 
 /** Annotate an authored subclass's base without introducing generated shortcuts. */
 export type CompatibleAggregateConstructor<S extends object = object> = {
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: CommandHandler<S> | null): CompatibleAggregate<S>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: CommandHandlerInput<S> | null): CompatibleAggregate<S>;
   // Legacy handlers return object-state aggregates; retain that honest alternative.
-  new (commandSink?: CommandSink<S> | null, eventHandler?: EventHandler<S> | null, commandHandler?: ObjectCommandHandler | null): CompatibleAggregate<S>;
+  new (commandSink?: CommandSinkInput<S> | null, eventHandler?: EventHandlerInput<S> | null, commandHandler?: ObjectCommandHandler | null): CompatibleAggregate<S>;
 };

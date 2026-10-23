@@ -72,6 +72,11 @@ export type ExtractEntityCommands<T> = T extends EntityPackage<any, infer EName,
     : {};
 
 export type MergeEntities<T extends any[]> = Merge<ExtractEntityCommands<T[number]> & {}>;
+export type CommandsFromNamedEntities<EN> = UnionToIntersection<{
+    [K in keyof EN]-?: EN[K] extends EntityPackage<infer State, infer Name, infer Events, infer EventOverrides, infer Commands, infer CommandOverrides>
+        ? MapEntityCommands<Extract<K, string>, Commands>
+        : {}
+}[keyof EN]>;
 export type AggregateCommandKeys<T> = AllKeys<T & {}>;
 // SAFETY: `any` required for conditional type inference on event projector shapes
 export type AggregateEventProjectorsMap<TEvents> = TEvents extends Record<string, (...args: any[]) => any>
@@ -105,7 +110,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
     entities: <EN extends Record<string, any> = {}, T extends EntityPackage<any, any, any, any, any, any>[] = []>(
         entities?: EN,
         ...entityPackages: T
-    ) => AggregateBuilder<S, Name, M & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta, TPlugins, PS, EP>;
+    ) => AggregateBuilder<S, Name, M & CommandsFromNamedEntities<EN> & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta, TPlugins, PS, EP>;
 
     entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
         name: EN,

@@ -1,0 +1,57 @@
+import { createAggregate } from '@redemeine/aggregate';
+import { createDemeineBridge, type Command, type CommandHandler, type CommandSink, type CompatibleAggregate, type CompatibleAggregateConstructor, type Event, type EventHandler } from '@redemeine/demeine-interop';
+
+type State = { n: number };
+type Narrow = State & { extra: string };
+const definition = createAggregate('counter', { n: 0 })
+  .commands(() => ({ tick: { pack: () => ({}), handler: () => [] } }))
+  .build();
+const Bridge = createDemeineBridge(definition);
+const Base: CompatibleAggregateConstructor<State> = Bridge;
+declare const narrowCommand: CommandHandler<Narrow>;
+declare const narrowEvent: EventHandler<Narrow>;
+declare const narrowSink: CommandSink<Narrow>;
+
+// @ts-expect-error A handler requiring extra state cannot process this bridge.
+new Bridge(null, null, narrowCommand);
+// @ts-expect-error The authored-subclass constructor has the same input boundary.
+new Base(null, null, narrowCommand);
+// @ts-expect-error Event overrides cannot require extra state either.
+new Bridge(null, narrowEvent);
+// @ts-expect-error Sink overrides cannot require extra state either.
+new Bridge(narrowSink);
+// @ts-expect-error Authored-subclass event inputs have the same restriction.
+new Base(null, narrowEvent);
+// @ts-expect-error Authored-subclass sink inputs have the same restriction.
+new Base(narrowSink);
+
+const method = {
+  handle(aggregate: CompatibleAggregate<Narrow>, _command: Command) {
+    aggregate._state.extra.toUpperCase();
+    return aggregate;
+  },
+};
+const ordinary = {
+  handle: (aggregate: CompatibleAggregate<Narrow>, _command: Command) => aggregate,
+};
+// @ts-expect-error Method syntax must not bypass constructor input checking.
+new Bridge(null, null, method);
+// @ts-expect-error Function-valued properties must not bypass input checking.
+new Bridge(null, null, ordinary);
+function handle(aggregate: CompatibleAggregate<Narrow>, _command: Command) {
+  return aggregate;
+}
+// @ts-expect-error Ordinary functions cannot require narrower aggregate state.
+new Bridge(null, null, { handle });
+
+const exact: CommandHandler<State> = { handle: aggregate => aggregate };
+const broad: CommandHandler<object> = { handle: aggregate => aggregate };
+const exactEvent: EventHandler<State> = { handle: aggregate => { aggregate._state.n; } };
+const broadEvent: EventHandler<object> = { handle: () => {} };
+const exactSink: CommandSink<State> = { sink: async (_command, aggregate) => aggregate };
+const broadSink = { sink: async (_command: Command, _aggregate: CompatibleAggregate<object>): Promise<CompatibleAggregate<State>> => new Bridge() };
+new Bridge(exactSink, exactEvent, exact);
+new Bridge(broadSink, broadEvent, broad);
+new Base(exactSink, exactEvent, exact);
+new Base(broadSink, broadEvent, broad);
+new Bridge(null, { handle(aggregate: CompatibleAggregate<State>, _event: Event) { aggregate._state.n; } });
