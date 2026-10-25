@@ -19,13 +19,13 @@ It never runs versioning on the implementation tree or edits its pre.json.
 
 ```sh
 NPM_EXECUTABLE="$(mise where npm:npm@11.21.0)/node_modules/.bin/npm"
-mise exec node@24.20.0 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/prepare.mjs
-mise exec node@24.20.0 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/artifacts.mjs
-mise exec node@24.20.0 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/packed-consumer.mjs
+mise exec node@24.22.1 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/prepare.mjs
+mise exec node@24.22.1 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/artifacts.mjs
+mise exec node@24.22.1 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/packed-consumer.mjs
 ```
 
 The bootstrap prepends the explicitly selected npm executable directory and the
-current Node directory to PATH. Before each command it verifies Node24.20.0,
+current Node directory to PATH. Before each command it verifies Node24.22.1,
 pnpm11.9.0, direct npm11.21.0, and npm spawned by both nested Node and pnpm-exec.
 It logs the executable realpath and versions, failing closed on any mismatch.
 Mise tool arguments alone can select Node's bundled npm11.19.0; do not rely on their
@@ -45,8 +45,8 @@ Evidence under `.cache/demeine-interop/`:
   is explicitly uncommitted, so this is not a publish-authorized commit artifact.
 - `inventory.json`: absolute tarball paths, SHA256/SHA512, base SHA and uncommitted flag.
 - `consumer/`: isolated npm-installed tarballs, strict TypeScript 5.9.3 NodeNext
-  `.mts` and `.cts` consumers, compiled ESM and CJS executions on Node24.20.0 and
-  Node26.10.0 with `--no-experimental-require-module`. No source-loader/CJS-to-ESM
+  `.mts` and `.cts` consumers, compiled ESM and CJS executions on Node24.22.1 and
+  Node26.12.1 with `--no-experimental-require-module`. No source-loader/CJS-to-ESM
   fallback can conceal an incorrect require export.
 - `cli-tool/node_modules/@redemeine/cli`: dependency-resolved developer package
   root for `REDEMEINE_CLI_DIR`. Launch its manifest bin (`dist/bin.js`) with Node;
@@ -64,8 +64,8 @@ Never fabricate registry lock entries for unpublished candidates.
 Existing CLI qualification is separate:
 
 ```sh
-mise exec node@24.20.0 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" pnpm --filter @redemeine/projection build
-mise exec node@24.20.0 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/cli-packed.mjs
+mise exec node@24.22.1 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" pnpm --filter @redemeine/projection build
+mise exec node@24.22.1 -- node packages/demeine-interop/qualification/with-release-tools.mjs "$NPM_EXECUTABLE" node packages/demeine-interop/qualification/cli-packed.mjs
 ```
 
 The helper first uses real `pnpm pack` to materialize source-version manifests into

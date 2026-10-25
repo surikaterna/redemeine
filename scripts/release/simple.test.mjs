@@ -308,7 +308,7 @@ test('both hosts enforce npm11.21/Node24.20; Changesets version job remains norm
       'npm --version',
       'test "$(npm --version)" = 11.21.0'
     ]);
-    assert.equal(steps.find((s) => s.uses?.startsWith('actions/setup-node@')).with['node-version'], '24.20.0');
+    assert.equal(steps.find((s) => s.uses?.startsWith('actions/setup-node@')).with['node-version'], '24.22.1');
   }
   assert.deepEqual(w.jobs.version.steps.find((s) => s.uses?.startsWith('changesets/action@')).with, {
     version: 'pnpm run version:packages',

@@ -1,5 +1,14 @@
 # Redemeine
 
+## Runtime security (CVE-2026-111497)
+
+CI and release tooling pin Node24.22.1; packed-consumer qualification uses Node24.22.1 and26.12.1. Consumers must select a patched supported runtime; updating this library alone does not patch the host Node executable.
+
+See the [Node October 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Rebuild and redeploy affected images and artifacts; existing deployments and previously compiled executables are not updated by this source change.
+
+Shared patched-runtime smoke safely round-tripped HTTP `Content-Encoding: br` through native fetch on Node22.23.4,24.22.1,26.12.1 and Bun1.4.4. This is runtime evidence, not an application-suite or exploit test.
+
+
 > Type-safe CQRS/ES aggregates library for TypeScript
 
 [![Build](https://github.com/surikaterna/redemeine/actions/workflows/testing-benchmark.yml/badge.svg)](https://github.com/surikaterna/redemeine/actions)

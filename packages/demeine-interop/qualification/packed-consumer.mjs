@@ -31,7 +31,7 @@ const esm = (await readFile(source, 'utf8')).replace(
 );
 await writeFile(resolve(consumer, 'consumer.mts'), esm);
 run('node', ['node_modules/typescript/bin/tsc', '--strict', '--skipLibCheck', 'false', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--esModuleInterop', 'true', '--outDir', 'compiled', 'consumer.mts', 'consumer.cts']);
-for (const version of ['24.20.0', '26.10.0']) {
+for (const version of ['24.22.1', '26.12.1']) {
   for (const format of ['mjs', 'cjs']) run('mise', ['exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module', `compiled/consumer.${format}`]);
 }
 const rejectionFixture = (await readFile(resolve(root, 'packages/demeine-interop/test/syncRejection.fixture.mjs'), 'utf8'))

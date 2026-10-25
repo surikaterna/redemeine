@@ -7,7 +7,7 @@ import { relative, resolve, sep } from 'node:path';
 import semver from 'semver';
 
 export const registry = 'https://registry.npmjs.org/';
-export const pins = { node: '24.20.0', pnpm: '11.9.0', npm: '11.21.0' };
+export const pins = { node: '24.22.1', pnpm: '11.9.0', npm: '11.21.0' };
 export const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 export const sri = (bytes) => `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
 export const json = async (path) => JSON.parse(await readFile(path, 'utf8'));

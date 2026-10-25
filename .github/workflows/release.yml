@@ -46,7 +46,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.20.0'
+          node-version: '24.22.1'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3; Changesets CLI 2.x
@@ -73,7 +73,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.20.0'
+          node-version: '24.22.1'
           cache: pnpm
       - name: Pin release host npm for OIDC publication
         run: |
@@ -124,7 +124,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.20.0'
+          node-version: '24.22.1'
           cache: pnpm
       - name: Pin release host npm for OIDC publication
         run: |

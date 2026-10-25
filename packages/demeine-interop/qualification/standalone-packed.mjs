@@ -122,7 +122,7 @@ for (const compiler of ['typescript', 'typescript7']) {
   } else assert.equal(baseline.status, 0);
 }
 await writeFile(resolve(output, 'legacy-types-status.json'), JSON.stringify({ exceptionRequested: allowLegacyException, legacyBlocks }, null, 2));
-for (const version of ['24.20.0', '26.10.0']) {
+for (const version of ['24.22.1', '26.12.1']) {
   for (const format of ['mjs', 'cjs']) {
     for (const fixture of ['consumer', 'state-services']) await run(`runtime-${fixture}-${version}-${format}`, 'mise', [
       'exec', `node@${version}`, '--', 'node', '--unhandled-rejections=strict', '--no-experimental-require-module', `compiled/${fixture}.${format}`,
@@ -144,7 +144,7 @@ await writeFile(resolve(consumer, 'jest.config.cjs'), `module.exports = {
   } }] }
 };\n`);
 await run('packed-tests', 'node', ['--unhandled-rejections=strict', '--no-experimental-require-module', 'node_modules/jest/bin/jest.js', '--config', 'jest.config.cjs', '--runInBand']);
-for (const version of ['24.20.0', '26.10.0']) {
+for (const version of ['24.22.1', '26.12.1']) {
   for (const kind of ['native', 'realm', 'thenable', 'getter', 'throwing-then']) {
     const timings = ['getter', 'throwing-then'].includes(kind) ? ['immediate'] : ['immediate', 'delayed'];
     for (const timing of timings) await run(`queued-${version}-${kind}-${timing}`, 'mise', [
