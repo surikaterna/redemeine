@@ -5,7 +5,7 @@ import type { ProxyContext } from './proxyContext';
 import { selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
 import { invoke, readProperty } from '../runtimeDefinition';
 import { readonlyArrayMember, readonlyTraps } from './readonlyView';
-import { selectedCommandMount } from './selectedCommandContext';
+import { isSelectedDescendant, selectedCommandMount } from './selectedCommandContext';
 
 function resolveMount(role: unknown, explicit: unknown, ctx: ProxyContext): [string, MountMetadata] {
   const mounts = Object.entries(ctx.mounts);
@@ -36,6 +36,7 @@ function restrictRole(value: unknown, role: unknown, mount: MountMetadata, ctx: 
   for (const name of allowed) {
     const command = ctx.toCommandName([mount.commandPrefix, name]);
     if (!Object.hasOwn(ctx.builder.commandCreators, command)) throw new Error('Selector role has commands absent from its explicit mount');
+    if (isSelectedDescendant(command, ctx.builder, mount)) { allowed.delete(name); continue; }
     selectedCommandMount(command, ctx.builder, mount);
   }
   return new Proxy(value, { ...readonlyTraps, get(target, property) {

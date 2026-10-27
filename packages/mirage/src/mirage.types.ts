@@ -50,7 +50,7 @@ type EntityCommandsOf<T> = T extends { commands: infer C } ? C : never;
 type EntityShape = { readonly __stateType?: unknown; commands: object };
 
 type ScopedMirageCommandMap<TEntityState, TCommands, InjectedCount extends number, Identity extends PropertyKey> = {
-    [K in keyof TCommands]: TCommands[K] extends { args: infer Args }
+    [K in keyof TCommands as TCommands[K] extends { readonly __nestedCommand: true } ? never : K]: TCommands[K] extends { args: infer Args }
         ? (...args: ScopedCommandArgs<TCommands[K], Args extends unknown[] ? Args : [], InjectedCount, Identity>) => DispatchResult<TEntityState>
         : [TCommands[K]] extends [void] | [undefined] | [never]
             ? () => DispatchResult<TEntityState>

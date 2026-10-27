@@ -22,14 +22,14 @@ function fixture(composite: boolean) {
   return { live, handler, before };
 }
 
-test.each([false, true])('qualified aliases checked before dispatch (composite=%s)', composite => {
+test.each([false, true])('canonical identities checked before dispatch (composite=%s)', composite => {
   const { live, handler, before } = fixture(composite);
   const state = extractState(live);
   const pending = live[MirageCoreSymbol].getPendingResults();
   const direct = live.items(composite ? { domain: 'a', authority: '' } : 'a');
   for (const selected of [direct, live.items[0]!, [...live.items][0]!, live.selected()[0]!]) {
     for (const value of ['b', undefined, false]) {
-      expect(() => selected.packed({ qty: 2, [composite ? 'itemsDomain' : 'itemsCode']: value })).toThrow(/identity/i);
+      expect(() => selected.packed({ qty: 2, [composite ? 'domain' : 'code']: value })).toThrow(/identity/i);
     }
   }
   expect(before).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ test.each([false, true])('qualified aliases checked before dispatch (composite=%
   expect(live[MirageCoreSymbol].getPendingResults()).toEqual(pending);
 });
 
-test('aliases follow mount naming metadata rather than a fixed spelling', () => {
+test('former aliases are ordinary business fields regardless of mount spelling', () => {
   const before = jest.fn();
   const item = createEntity<{ code: number; qty: number }, 'item'>('item').events({})
     .commands(() => ({ packed: {
@@ -49,16 +49,16 @@ test('aliases follow mount naming metadata rather than a fixed spelling', () => 
     .entityList('order_items', item, { pk: 'code' }).build();
   host.hooks = { onBeforeCommand: before };
   const selected = createMirage(host, 'store').order_items(0);
-  expect(() => selected.packed({ order_itemsCode: 0n, orderItemCode: false, qty: 2 })).toThrow(/identity/i);
-  expect(before).not.toHaveBeenCalled();
-  selected.packed({ order_itemsCode: 0n, orderItemCode: '0', qty: 2 });
+  selected.packed({ order_itemsCode: 0n, orderItemCode: false, qty: 2 });
   expect(before).toHaveBeenCalledTimes(1);
+  selected.packed({ order_itemsCode: 0n, orderItemCode: '0', qty: 2 });
+  expect(before).toHaveBeenCalledTimes(2);
 });
 
-test.each([false, true])('complete matching alias-only pack accepted (composite=%s)', composite => {
+test.each([false, true])('retired alias-only pack rejected before hooks (composite=%s)', composite => {
   const { live, before, handler } = fixture(composite);
-  live.items[0]!.alias(2);
-  expect(live.items[0]!.qty).toBe(3);
-  expect(before).toHaveBeenCalledTimes(1);
-  expect(handler).toHaveBeenCalledTimes(1);
+  expect(() => live.items[0]!.alias(2)).toThrow(/identity/i);
+  expect(live.items[0]!.qty).toBe(1);
+  expect(before).not.toHaveBeenCalled();
+  expect(handler).not.toHaveBeenCalled();
 });

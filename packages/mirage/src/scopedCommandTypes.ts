@@ -1,7 +1,6 @@
-type Singular<S extends string> = S extends `${infer Stem}s` ? Stem : S;
-export type ListIdentity<PK, Name extends string> = PK extends readonly (infer K extends string)[] ? K
-    : Extract<PK, string> | 'id' | `${Name}Id` | `${Singular<Name>}Id`;
-export type MapIdentity<Name extends string> = 'key' | `${Name}Key` | `${Singular<Name>}Key`;
+export type ListIdentity<PK, _Name extends string> = PK extends readonly (infer K extends string)[] ? K
+    : PK extends string ? PK : 'id';
+export type MapIdentity<_Name extends string> = 'key';
 export type InjectedArgCount<PK> = PK extends readonly unknown[] ? PK['length'] : 1;
 
 type DropFirstN<Args extends unknown[], N extends number, Count extends unknown[] = []> =

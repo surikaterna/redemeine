@@ -1,11 +1,22 @@
-import { singular } from '@redemeine/aggregate';
+import { commandMetadata } from '@redemeine/aggregate';
 import type { InvocationContext, MountMetadata } from '../mirage.types';
 import { readProperty } from '../runtimeDefinition';
 import { selectFromListEntity } from './collectionProxy';
 
+// A selected parent cannot supply descendant identities. Classify the local
+// registration even when shadowed; direct-command winner validation stays strict.
+export function isSelectedDescendant(name: string, builder: object, selected: MountMetadata): boolean {
+  const targets = commandMetadata(builder, name)?.targets;
+  const ancestor = targets?.[0];
+  return !!targets && targets.length > 1 && ancestor?.kind === selected.kind
+    && ancestor.statePath.length === selected.statePath.length
+    && ancestor.statePath.every((part, index) => part === selected.statePath[index]);
+}
+
 export function selectedCommandMount(name: string, builder: object, selected: MountMetadata): MountMetadata {
-  const targets = readProperty(readProperty(builder, 'pure'), 'commandTargets');
-  const chain = targets && Object.hasOwn(targets, name) ? readProperty(targets, name) : undefined;
+  const registration = commandMetadata(builder, name);
+  if (!registration?.isWireWinner) throw new Error('Missing or shadowed selected command registration');
+  const chain = registration.targets;
   if (!Array.isArray(chain) || chain.length !== 1) throw new Error('Missing or incompatible selected command registration');
   const target: unknown = chain[0];
   const kind = readProperty(target, 'kind');
@@ -32,7 +43,6 @@ export function selectedCommandContext(name: string, selection: InvocationContex
   }
   const key = selection.selectedMapKey;
   if (key === undefined) throw new Error('Missing selected map key');
-  const local = mount.statePath.at(-1)!;
-  return { idsPayload: { key, [`${singular(local)}Key`]: key, [`${local}Key`]: key },
+  return { idsPayload: { key },
     packPrefix: [key], selectedMount: mount, selectedMapKey: key, resolveState: selection.resolveState };
 }

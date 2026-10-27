@@ -13,7 +13,7 @@ export type MountRegistry<Registry, Name extends string, T extends { commands: o
         entity: ReplaceCommands<T, Omit<CommandsOfEntry<K extends keyof Registry ? Registry[K] : never>, keyof T['commands']> & RegisteredCommands<T['commands'], R>>;
     } };
 
-export type EntityCommandTarget = Pick<MountedStructureMetadata, 'kind' | 'statePath' | 'pk' | 'commandPrefix'>;
+export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[] };
 export type EntityCommandTargets = Record<string, readonly EntityCommandTarget[]>;
 export type ResolvedCommandTargets = Readonly<Record<string, readonly (Readonly<Omit<EntityCommandTarget, 'statePath'>> & {
     readonly statePath: readonly string[];
@@ -48,10 +48,6 @@ export type MountedEntityPackage = {
 export type EntityMountOverrides = {
     eventNameOverrides?: Record<string, string>;
     commandNameOverrides?: Record<string, string>;
-    /** @deprecated Use eventNameOverrides */
-    eventOverrides?: Record<string, string>;
-    /** @deprecated Use commandNameOverrides */
-    commandOverrides?: Record<string, string>;
 };
 
 export type EntityListOptions<PK extends string | readonly string[] = string | readonly string[]> = {

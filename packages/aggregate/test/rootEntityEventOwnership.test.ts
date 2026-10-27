@@ -73,14 +73,17 @@ test('root and two scoped definitions with one JS key retain independent handler
     { ...initial(), others: [{ id: 'a', count: 108 }] });
 });
 
-test('without a root owner the last mounted fallback keeps its matching target', () => {
+test('entity-only reflection keys do not declare synthetic root wires', () => {
   const last = (state: Row, event: Event<Row>) => { state.count = event.payload.count + 100; };
+  const unmatched = jest.fn();
   const host = createAggregate('payment_attempt', initial()).entityList('identifiers', entity())
-    .entityList('others', entity(last)).build();
+    .entityList('others', entity(last)).onUnmatchedEvent(unmatched).build();
   expect(host.pure.eventProjectors.registered).toBe(last);
   expect(definitionTargets(host.pure.eventProjectors).registered?.[0]?.statePath).toEqual(['others']);
   expectReplay(host, { type: 'payment_attempt.others.registered.event', payload: { id: 'a', count: 8 } },
     { ...initial(), others: [{ id: 'a', count: 108 }] });
+  expectReplay(host, { type: 'payment_attempt.registered.event', payload: { id: 'a', count: 8 } }, initial());
+  expect(unmatched).toHaveBeenCalledTimes(2);
 });
 
 test('flattened mixin entity provenance is not protected as root ownership', () => {
@@ -93,6 +96,8 @@ test('flattened mixin entity provenance is not protected as root ownership', () 
     expect(definitionTargets(host.pure.eventProjectors).identifiersRegistered?.[0]?.statePath).toEqual(['others']);
     expectReplay(host, { type: 'payment_attempt.others.identifiers_registered.event', payload: { id: 'a', count: 8 } },
       { ...initial(), others: [{ id: 'a', count: 108 }] });
+    expectReplay(host, { type: 'payment_attempt.identifiers_registered.event', payload: { id: 'a', count: 8 } },
+      { ...initial(), identifiers: [{ id: 'a', count: 8 }] });
   }
 });
 

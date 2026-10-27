@@ -21,7 +21,7 @@ async function run(label, command, args, cwd = output) {
 
 console.log('Non-publishing packed DX evidence:', output);
 const dependencies = { zod: '4.3.6' };
-for (const name of ['kernel', 'aggregate', 'mirage']) {
+for (const name of ['kernel', 'aggregate', 'mirage', 'demeine-interop']) {
   const directory = resolve(root, 'packages', name);
   const manifest = JSON.parse(await readFile(resolve(directory, 'package.json')));
   const filename = `redemeine-${name}-${manifest.version}.tgz`;
@@ -43,10 +43,17 @@ for (const compiler of ['typescript', 'typescript7']) {
   await run(`${compiler}-emit`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json',
     '--noEmit', 'false', '--declaration', '--emitDeclarationOnly', '--outDir', `emitted-${compiler}`]);
   await writeFile(resolve(output, 'downstream.mts'), `
-import { selectedCommandHost } from './emitted-${compiler}/consumer.mjs';
+import { selectedCommandHost, nestedExposureHost } from './emitted-${compiler}/consumer.mjs';
 import { createMirage } from '@redemeine/mirage';
 import { scopedHost } from './emitted-${compiler}/scoped.mjs';
 const scoped = createMirage(scopedHost, 'scoped').rows('');
+const parentLive = createMirage(nestedExposureHost, 'nested');
+parentLive.parents('p').touch({ note: 'ok' });
+parentLive.parent()!.touch({ note: 'ok' });
+// @ts-expect-error emitted parent scopes omit descendant methods
+parentLive.parents('p').childrenRead({});
+// @ts-expect-error emitted bound roles omit descendant methods
+parentLive.parent()!.childrenRead({});
 scoped.optional({ body: 'ok' }); scoped.current({ body: 'ok' }); scoped.replace({ latest: 2 });
 scoped.correlated({ kind: 'a', a: 'ok' }); scoped.correlated({ kind: 'b', b: 2 });
 createMirage(scopedHost, 'bound').chosen()!.correlated({ kind: 'a', a: 'bound' });
@@ -83,4 +90,21 @@ await writeFile(resolve(output, 'runtime.mjs'), await readFile(resolve(root, 'pa
 await run('runtime', process.execPath, ['--unhandled-rejections=strict', 'runtime.mjs']);
 await writeFile(resolve(output, 'selected-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/selected-commands.mjs')));
 await run('selected-commands', process.execPath, ['--unhandled-rejections=strict', 'selected-commands.mjs']);
+await writeFile(resolve(output, 'cache-identity.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/cache-identity.mjs')));
+await run('cache-identity', process.execPath, ['--unhandled-rejections=strict', 'cache-identity.mjs']);
+await writeFile(resolve(output, 'selected-descendants.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/selected-descendants.mjs')));
+await run('selected-descendants', process.execPath, ['--unhandled-rejections=strict', 'selected-descendants.mjs']);
+await writeFile(resolve(output, 'exact-events.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/exact-events.mjs')));
+await run('exact-events', process.execPath, ['--unhandled-rejections=strict', 'exact-events.mjs']);
+await writeFile(resolve(output, 'canonical-identity.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/canonical-identity.mjs')));
+await run('canonical-identity', process.execPath, ['--unhandled-rejections=strict', 'canonical-identity.mjs']);
+for (const extension of ['mts', 'cts']) {
+  await writeFile(resolve(output, `bridge.${extension}`), await readFile(resolve(root,
+    'packages/demeine-interop/qualification/explicit-type.cts')));
+}
+await run('interop-types', process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--skipLibCheck', 'false',
+  '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--outDir', 'bridge', 'bridge.mts', 'bridge.cts']);
+for (const extension of ['mjs', 'cjs']) {
+  await run(`interop-${extension}`, process.execPath, ['--unhandled-rejections=strict', `bridge/bridge.${extension}`]);
+}
 console.log('PASS isolated packed Mirage declarations and runtime; local source versions are NOT publication artifacts');

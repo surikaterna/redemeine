@@ -5,7 +5,10 @@ type Index = { version: number; positions: Map<string, number> };
 const indexes = new WeakMap<object, Map<string, Index>>();
 
 function keyFor(entity: unknown, fields: string[]): string {
-  return JSON.stringify(fields.map(key => [key, readProperty(entity, key)]));
+  return JSON.stringify(fields.map(key => {
+    const value = readProperty(entity, key);
+    return [key, typeof value === 'number' || typeof value === 'bigint' ? String(value) : value];
+  }));
 }
 
 export function findEntityInCollection(collection: unknown[], selection: InvocationContext, version: number): unknown {

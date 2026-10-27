@@ -52,7 +52,7 @@ describe('Domain Exmaple', () => {
       })
       .commands((emit) => ({
         changeQty: {
-          pack: (orderLineId: string, qty: number) => ({ orderLineId, qty }),
+          pack: (id: string, qty: number) => ({ id, qty }),
           handler: (state, payload) => emit.qtyChanged(payload)
         },
         deregister: (state, reason: string) => emit.deregistered({ id: state.id, reason })

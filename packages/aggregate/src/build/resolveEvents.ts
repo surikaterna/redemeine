@@ -1,24 +1,17 @@
 import type { NamingStrategy } from '@redemeine/kernel';
 import type { AggregateMixinLike } from '../types/aggregate';
-import type { EntityCommandTargets } from '../types/entityMount';
-import { definitionTargets, mergeDefinitions } from './entityCommandTarget';
+import type { CompiledEventRegistration } from '../applyEvent';
+import { definitionTargets, snapshotTargetChain } from './entityCommandTarget';
+import { eventDefinitionKeys, mergeEventDefinitions } from './eventDefinitions';
 
 export type ResolvedEvents<TMeta> = {
     allEvents: Record<string, Function>;
     allEventMetadata: Record<string, TMeta | undefined>;
     allEventOverrides: Record<string, string>;
-    /** O(1) lookup by resolved event type string */
-    projectorByEventType: Map<string, Function>;
-    explicitRootProjectorByEventType: Map<string, Function>;
-    scopedProjectorByEventType: Record<string, Function>;
-    scopedEventProjectors: Record<string, Function>;
-    eventTypesByKey: Record<string, string>;
-    eventTargetsByType: EntityCommandTargets;
+    dispatch: Map<string, CompiledEventRegistration>;
 };
 
-/**
- * Merges mixin events/projectors/overrides and builds lookup structures.
- */
+/** Capture declared ownership before mounting adds entity-only reflection keys. */
 export function resolveEvents<S, TMeta>(
     snapshot: {
         events: Record<string, Function>;
@@ -30,92 +23,44 @@ export function resolveEvents<S, TMeta>(
     namingStrategy: NamingStrategy
 ): ResolvedEvents<TMeta> {
     const allEvents = mixins.reduce<Record<string, Function>>(
-        (acc, m) => mergeDefinitions(acc, m.projectors || m.events || {}),
-        mergeDefinitions({}, snapshot.events)
+        (acc, m) => mergeEventDefinitions(acc, m.projectors || m.events || {}),
+        mergeEventDefinitions({}, snapshot.events)
     );
-
     const allEventMetadata: Record<string, TMeta | undefined> = {
         ...(snapshot.eventMetadata as Record<string, TMeta | undefined>)
     };
     mixins.forEach((m) => {
         Object.assign(allEventMetadata, (m.eventMetadata || {}) as Record<string, TMeta | undefined>);
     });
-
-    const allEventOverrides = mixins.reduce(
+    const allEventOverrides = mixins.reduce<Record<string, string>>(
         (acc, m) => ({ ...acc, ...(m.eventOverrides || {}) }),
-        snapshot.eventOverrides
+        { ...snapshot.eventOverrides }
     );
-
     return {
         allEvents,
         allEventMetadata,
         allEventOverrides,
-        ...resolveRegisteredProjectors(allEvents, allEventOverrides, aggregateName, namingStrategy)
+        dispatch: compileDeclaredEvents(allEvents, allEventOverrides, aggregateName, namingStrategy)
     };
 }
 
-function resolveRegisteredProjectors(
-    allEvents: Record<string, Function>,
-    allEventOverrides: Record<string, string>,
-    aggregateName: string,
-    namingStrategy: NamingStrategy
-) {
-    const projectorByEventType = new Map<string, Function>();
-    const scopedProjectorByEventType: Record<string, Function> = {};
-    const scopedEventProjectors: Record<string, Function> = {};
-    const eventTargetsByType: EntityCommandTargets = {};
-    const targets = definitionTargets(allEvents);
-
-    // Flattened packages retain scoped ownership even without mount registrations to replay.
-    const eventTypesByKey: Record<string, string> = {};
-    Object.keys(allEvents).forEach((key) => {
-        eventTypesByKey[key] = allEventOverrides[key] || namingStrategy.event(aggregateName, key);
-        if (targets[key]?.length) {
-            const type = eventTypesByKey[key]!;
-            projectorByEventType.set(type, allEvents[key]!);
-            scopedProjectorByEventType[type] = allEvents[key]!;
-            eventTargetsByType[type] = targets[key]!;
-        }
-    });
-
-    return {
-        projectorByEventType,
-        explicitRootProjectorByEventType: captureExplicitRootProjectors(allEvents, allEventOverrides),
-        scopedProjectorByEventType,
-        scopedEventProjectors,
-        eventTypesByKey,
-        eventTargetsByType
-    };
-}
-
-// Capture root ownership before entity mounting merges and replaces event keys.
-function captureExplicitRootProjectors(
+function compileDeclaredEvents(
     events: Record<string, Function>,
-    overrides: Record<string, string>
-): Map<string, Function> {
-    const projectors = new Map<string, Function>();
-    Object.keys(events).forEach((key) => {
-        const override = overrides[key];
-        if (override && !definitionTargets(events)[key]?.length) projectors.set(override, events[key]!);
-    });
-    return projectors;
-}
-
-/**
- * Finalizes projector map after entity mounting has populated scoped projectors.
- * Must be called after mountEntities.
- */
-export function finalizeProjectorMap(
-    allEvents: Record<string, Function>,
-    allEventOverrides: Record<string, string>,
-    projectorByEventType: Map<string, Function>,
+    overrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy
-): void {
-    Object.keys(allEvents).forEach((eventKey) => {
-        const resolvedEventType = allEventOverrides[eventKey] || namingStrategy.event(aggregateName, eventKey);
-        if (!projectorByEventType.has(resolvedEventType)) {
-            projectorByEventType.set(resolvedEventType, allEvents[eventKey]!);
+): Map<string, CompiledEventRegistration> {
+    const dispatch = new Map<string, CompiledEventRegistration>();
+    const targets = definitionTargets(events);
+    // Flattened components retain scoped ownership even without mounts to replay.
+    // Scoped declarations win exact root collisions, regardless of root key order.
+    for (const scoped of [false, true]) {
+        for (const key of eventDefinitionKeys(events)) {
+            const chain = targets[key] ?? [];
+            if (Boolean(chain.length) !== scoped) continue;
+            const type = overrides[key] || namingStrategy.event(aggregateName, key);
+            dispatch.set(type, { projector: events[key]!, targets: snapshotTargetChain(chain) });
         }
-    });
+    }
+    return dispatch;
 }

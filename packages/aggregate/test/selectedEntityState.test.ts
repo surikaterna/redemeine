@@ -78,10 +78,10 @@ test('list declared single/composite PK and map own keys use selected state', ()
     .entityList('composite', entity, { pk: ['domain', 'authority'] as const })
     .entityMap('byKey', entity).build();
   for (const [key, payload, qty] of [
-    ['codesSet', { code: 'a' }, 3], ['codesSet', { codesId: 'a' }, 3],
+    ['codesSet', { code: 'a', codesId: 'ordinary' }, 3],
     ['compositeSet', { domain: 'a', authority: 'owner', key: 'ordinary-value' }, 4],
-    ['compositeSet', { __entityPk: { domain: 'a', authority: 'owner' } }, 4],
-    ['byKeySet', { byKeyKey: 'a' }, 5]
+    ['compositeSet', { domain: 'a', authority: 'owner', __entityPk: 'ordinary' }, 4],
+    ['byKeySet', { key: 'a' }, 5]
   ] as const) {
     const events = host.process(host.initialState, { type: host.types.commands[key], payload });
     expect(events[0]!.payload).toEqual({ ...payload, qty });
@@ -98,9 +98,9 @@ test('numeric/string identity equivalence is retained explicitly', () => {
 test('compiled targets do not depend on entity names or overridden wire names', () => {
   const host = createAggregate('store', { stock: [row('a', 8)] })
     .entityList('stock', reader(), { pk: 'code' }, { commandNameOverrides: { set: 'legacy.unrelated.command' } }).build();
-  const events = host.process(host.initialState, host.commandCreators.stockSet({ stockId: 'a' }));
+  const events = host.process(host.initialState, host.commandCreators.stockSet({ code: 'a' }));
   expect(host.commandCreators.stockSet({ code: 'a' }).type).toBe('legacy.unrelated.command');
-  expect(events[0]!.payload).toEqual({ stockId: 'a', qty: 8 });
+  expect(events[0]!.payload).toEqual({ code: 'a', qty: 8 });
 });
 
 test('target metadata follows last-wins command registration, including later root commands', () => {
@@ -132,7 +132,7 @@ test('a selected parent can register into an empty child collection', () => {
 });
 
 test.each([
-  {}, { id: 'missing' }, { id: 'a', rowsId: 'b' }, { id: null }, { id: undefined }
+  {}, { id: 'missing' }, { rowsId: 'a' }, { id: null }, { id: undefined }
 ])('invalid target %j fails before domain work or writes', payload => {
   const called = jest.fn();
   const state = { rows: [row('a', 2)] };
@@ -168,10 +168,10 @@ test('nested list/map chains and mixin mounts resolve ancestors before children 
     .mixins(mixin).entityMap('byParent', parent).build();
   const cases = [
     ['parentsChildrenSet', { parentsId: 'p2', id: 'same' }, 2],
-    ['parentsChildrenSet', { parentsId: 'p2', childrenId: 'same' }, 2],
-    ['parentsByKeySet', { parentsId: 'p2', byKeyKey: 'same' }, 22],
-    ['byParentChildrenSet', { byParentKey: 'p2', childrenId: 'same' }, 2],
-    ['byParentByKeySet', { byParentKey: 'p2', byKeyKey: 'same' }, 22]
+    ['parentsChildrenSet', { parentsId: 'p2', id: 'same', childrenId: 'ordinary' }, 2],
+    ['parentsByKeySet', { parentsId: 'p2', key: 'same' }, 22],
+    ['byParentChildrenSet', { byParentKey: 'p2', id: 'same' }, 2],
+    ['byParentByKeySet', { byParentKey: 'p2', key: 'same' }, 22]
   ] as const;
   for (const [name, payload, qty] of cases) {
     const events = host.process(host.initialState, { type: host.types.commands[name], payload });
@@ -192,7 +192,7 @@ test.each(['list', 'map'] as const)('nested %s parents replay every child mount 
   const host = createAggregate('store', state).entityList('parents', parent).entityMap('byParent', parent).build();
   for (const leaf of ['Children', 'ByKey'] as const) {
     const prefix = kind === 'list' ? 'parents' : 'byParent';
-    const payload = { [kind === 'list' ? 'parentsId' : 'byParentKey']: 'p2', [leaf === 'Children' ? 'id' : 'byKeyKey']: 'same' };
+    const payload = { [kind === 'list' ? 'parentsId' : 'byParentKey']: 'p2', [leaf === 'Children' ? 'id' : 'key']: 'same' };
     const event = host.process(state, { type: host.types.commands[`${prefix}${leaf}Set`], payload })[0]!;
     const expected = structuredClone(state);
     const selected = kind === 'list' ? expected.parents[1]! : expected.byParent.p2;
@@ -209,7 +209,7 @@ test.each([0, ''])('falsy identity %j survives qualified and unqualified list/ma
     .commands(emit => ({ set(state, payload: Record<string, unknown>) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
   const state = { qty: 99, rows: [{ id, qty: 2 }], byKey: { [id]: { id, qty: 2 } } };
   const host = createAggregate('store', state).entityList('rows', entity).entityMap('byKey', entity).build();
-  for (const [name, field] of [['rowsSet', 'rowsId'], ['rowsSet', 'id'], ['byKeySet', 'byKeyKey'], ['byKeySet', 'key']] as const) {
+  for (const [name, field] of [['rowsSet', 'id'], ['byKeySet', 'key']] as const) {
     const event = host.process(state, { type: host.types.commands[name], payload: { [field]: id } })[0]!;
     const expected = structuredClone(state);
     if (name === 'rowsSet') expected.rows[0]!.qty = 3;
@@ -237,18 +237,19 @@ test.each(['direct', 'mixin', 'nested'] as const)('repeated %s mounts retain sur
   expect(host.process(state, { type: host.types.commands[name], payload: { ...ancestor, id: 'a' } })[0]!.payload).toEqual({ ...ancestor, id: 'a', qty: 2 });
 });
 
-test.each([0, ''])('undeclared legacy targeted aliases retain falsy identity %j', id => {
+test.each([0, ''])('undeclared targeted wires are unmatched even with valid identity %j', id => {
   const state = { qty: 99, rows: [{ id, qty: 2 }], byKey: { [id]: { id, qty: 2 } } };
+  const unmatched = jest.fn();
   const host = createAggregate('store', state)
-    .events({ changed(state, event: Event<{ qty: number }>) { Reflect.set(state, 'qty', event.payload.qty); } }).build();
+    .events({ changed(state, event: Event<{ qty: number }>) { Reflect.set(state, 'qty', event.payload.qty); } })
+    .onUnmatchedEvent(unmatched).build();
   for (const [path, field] of [['rows', 'rowsId'], ['rows', 'id'], ['by_key', 'byKeyKey'], ['by_key', 'key']] as const) {
     const event = { type: `store.${path}.changed.event`, payload: { [field]: id, qty: 3 } };
-    const expected = structuredClone(state);
-    if (path === 'rows') expected.rows[0]!.qty = 3;
-    else expected.byKey[id]!.qty = 3;
-    expect(host.apply(state, event)).toEqual(expected);
-    expect(produce(state, draft => host.applyToDraft(draft, event))).toEqual(expected);
+    expect(host.apply(state, event)).toEqual(state);
+    expect(produce(state, draft => host.applyToDraft(draft, event))).toEqual(state);
+    expect(unmatched).toHaveBeenLastCalledWith(event.type, 'store');
   }
+  expect(unmatched).toHaveBeenCalledTimes(8);
 });
 
 test('later colliding mounted commands replace targets as well as handlers', () => {

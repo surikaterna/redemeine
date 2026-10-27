@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { createAggregate, createEntity } from '@redemeine/aggregate';
+import { commandMetadata, createAggregate, createAggregatePlugin, createEntity } from '@redemeine/aggregate';
 import { createMirage, extractState, MirageCoreSymbol } from '@redemeine/mirage';
 
 function entity(createEntity, fields, calls = [], prefix = 'items') {
@@ -33,11 +33,6 @@ function rejectsBeforeDispatch(live, selected, fields, identity, calls) {
     for (const value of ['other', undefined, false, {}]) {
       assert.throws(() => selected.packed({ [field]: value, qty: 2 }), /identity/i);
       assert.throws(() => selected.set({ [field]: value, qty: 2 }), /identity/i);
-    }
-  }
-  if (!Object.hasOwn(identity, 'key')) {
-    for (const field of Object.keys(identity)) {
-      assert.throws(() => selected.packed({ __entityPk: { [field]: 'other' }, qty: 2 }), /identity/i);
     }
   }
   assert.throws(() => selected.missing(), /identity/i);
@@ -86,22 +81,81 @@ function earlierRoleParity(api) {
   live.chosen().optional({ body: 'bound' });
   live.chosen().correlated({ kind: 'a', a: 'ok' });
   live.chosen().correlated({ kind: 'b', b: 2 });
-  assert.deepEqual(received, [{ id: 0, rowId: 0, rowsId: 0, body: 'bound' }, 'OK', '2.0']);
+  assert.deepEqual(received, [{ id: 0, body: 'bound' }, 'OK', '2.0']);
   assert.equal(live.chosen().current, undefined);
-  const targets = { ...host.pure.commandTargets };
-  host.pure.commandTargets = targets;
-  const original = targets.rowsOptional;
+  const original = commandMetadata(host, 'rowsOptional');
+  host.pure.commandTargets = { ...host.pure.commandTargets };
   for (const invalid of [undefined, [], [{ kind: 'map', statePath: ['rows'], commandPrefix: 'rows' }],
     [{ kind: 'list', statePath: ['other'], commandPrefix: 'rows' }],
     [{ kind: 'list', statePath: ['other', 'rows'], commandPrefix: 'rows' }]]) {
-    targets.rowsOptional = invalid;
-    assert.throws(() => live.chosen(), /registration/i);
+    host.pure.commandTargets.rowsOptional = invalid;
+    assert.deepEqual(commandMetadata(host, 'rowsOptional'), original);
+    live.chosen().optional({ body: 'detached' });
   }
-  targets.rowsOptional = original;
   assert.equal(live.chosen().current, undefined);
 }
 
-for (const api of [{ createAggregate, createEntity }, createRequire(import.meta.url)('@redemeine/aggregate')]) {
+function wireWinnerParity(api) {
+  for (const reverse of [false, true]) {
+    const calls = [];
+    const item = entity(api.createEntity, ['id'], calls);
+    const builder = api.createAggregate('store', { left: [{ id: 'a', qty: 1 }], right: [{ id: 'a', qty: 2 }] });
+    const loser = reverse ? 'right' : 'left';
+    const winner = reverse ? 'left' : 'right';
+    for (const name of reverse ? ['right', 'left'] : ['left', 'right']) {
+      builder.entityList(name, item, undefined, { commandNameOverrides: { packed: 'shared.set.command' } });
+    }
+    builder.selectors(({ bindContext }) => ({ chosen: state => bindContext(state[loser][0], item, { mount: loser }) }));
+    const original = builder.build();
+    const plugin = api.createAggregatePlugin('stamp').commandEnvelope(() => ({ dateTime: new Date(0) })).build();
+    const decorated = original.withPlugins(plugin);
+    for (const host of [original, decorated]) {
+      const registration = commandMetadata(host, `${loser}Packed`);
+      assert.equal(registration.winnerLocalName, `${winner}Packed`);
+      assert.equal(registration.isWireWinner, false);
+      assert.equal(commandMetadata(host, `${winner}Packed`).isWireWinner, true);
+      assert.equal(commandMetadata(host, '__proto__'), undefined);
+      const command = host.commandCreators[`${loser}Packed`]('a', { qty: 3 });
+      assert.equal(command.type, registration.wireType);
+      assert.equal(host.process(host.initialState, command)[0].metadata.command.type, command.type);
+      calls.length = 0;
+      host.hooks = { onBeforeCommand() { calls.push('hook'); } };
+      const live = createMirage(host, 'store');
+      for (const selected of [live[loser]('a'), live[loser][0], [...live[loser]][0]]) {
+        assert.throws(() => selected.packed({ qty: 3 }), /shadowed/i);
+      }
+      assert.throws(() => live.chosen().packed({ qty: 3 }), /shadowed/i);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(extractState(live), host.initialState);
+      assert.deepEqual(live[MirageCoreSymbol].getPendingResults().events, []);
+      live[winner]('a').packed({ qty: 3 });
+      assert.equal(live[winner]('a').qty, (reverse ? 1 : 2) + 3);
+    }
+  }
+}
+
+function canonicalNestedParity(api) {
+  for (const prefix of ['order_items', 'orderItems']) {
+    const item = entity(api.createEntity, ['code']);
+    const parent = api.createEntity('parent').entityList('children', item, { pk: 'code' }).build();
+    const host = api.createAggregate('store', { [prefix]: [{ code: 'p', children: [{ code: 0n, qty: 1 }] }] })
+      .entityList(prefix, parent, { pk: 'code' }).build();
+    const creator = host.commandCreators[`${prefix}ChildrenSet`];
+    const payload = { [`${prefix}Code`]: 'p', code: 0n, childrenCode: 'business', __entityPk: { code: 'wrong' }, qty: 2 };
+    const event = host.process(host.initialState, creator(payload))[0];
+    assert.deepEqual(event.payload, { ...payload, qty: 3 });
+    assert.equal(host.apply(host.initialState, event)[prefix][0].children[0].qty, 3);
+    for (const alias of ['orderItemCode', 'order_itemCode', 'order_itemsCode', 'orderItemsCode'].filter(key => key !== `${prefix}Code`)) {
+      const retired = { [alias]: 'p', code: 0n, qty: 2 };
+      assert.throws(() => host.process(host.initialState, creator(retired)), /Invalid mounted command target/);
+      assert.throws(() => host.apply(host.initialState, { ...event, payload: retired }), /Invalid mounted command target/);
+    }
+  }
+}
+
+for (const api of [{ createAggregate, createAggregatePlugin, createEntity }, createRequire(import.meta.url)('@redemeine/aggregate')]) {
+  canonicalNestedParity(api);
+  wireWinnerParity(api);
   earlierRoleParity(api);
   for (const pk of ['id', 'code', ['domain', 'authority']]) {
     const fields = Array.isArray(pk) ? pk : [pk];
@@ -116,8 +170,10 @@ for (const api of [{ createAggregate, createEntity }, createRequire(import.meta.
     const live = createMirage(host, 'store');
     const key = Array.isArray(pk) ? identity : identity[pk];
     const aliasCommand = host.commandCreators.itemsAliasOnly(...Object.values(identity), 2);
-    const aliasResult = host.process(host.initialState, aliasCommand);
-    assert.equal(host.apply(host.initialState, aliasResult[0]).items[0].qty, 3);
+    assert.throws(() => host.process(host.initialState, aliasCommand), /Invalid mounted command target/);
+    const wire = host.process(host.initialState, host.commandCreators.itemsSet({ ...identity, qty: 2 }))[0].type;
+    const aliasEvent = { type: wire, payload: aliasCommand.payload };
+    assert.throws(() => host.apply(host.initialState, aliasEvent), /Invalid mounted command target/);
     const selected = live.items(key);
     selected.set({ qty: 2 });
     live.items[0].setObject({ qty: 3 });
@@ -132,11 +188,12 @@ for (const api of [{ createAggregate, createEntity }, createRequire(import.meta.
     assert.throws(() => selected.set(), /number/);
     for (const target of [selected, live.items[0], [...live.items][0], live.selected()[0]]) {
       const aliases = fields.flatMap(field => [`items${field.charAt(0).toUpperCase()}${field.slice(1)}`, `item${field.charAt(0).toUpperCase()}${field.slice(1)}`]);
-      rejectsBeforeDispatch(live, target, [...fields, ...aliases, ...(typeof pk === 'string' ? ['itemsId', 'itemId'] : [])], identity, calls);
-      for (const alias of aliases) assert.throws(() => target.set({ [alias]: 'other', qty: 2 }), /identity/i);
+      rejectsBeforeDispatch(live, target, fields, identity, calls);
+      for (const alias of aliases) target.set({ [alias]: 'business', qty: 2 });
+      target.packed({ __entityPk: { business: true }, qty: 2 });
       const previousQty = target.qty;
-      target.aliasOnly(2);
-      assert.equal(target.qty, previousQty + 2);
+      assert.throws(() => target.aliasOnly(2), /identity/i);
+      assert.equal(target.qty, previousQty);
     }
     if (Array.isArray(pk)) selected.packed({ id: 'business-not-identity', qty: 1 });
     const events = live[MirageCoreSymbol].getPendingResults().events;
@@ -157,14 +214,14 @@ for (const api of [{ createAggregate, createEntity }, createRequire(import.meta.
   [...live.entries].find(entry => entry.qty === 3).setQuantity(3);
   assert.equal(live.entries.one.qty, 6);
   assert.throws(() => live.entries.one.set({ key: 'two', qty: 1 }), /identity/i);
-  rejectsBeforeDispatch(live, live.entries.one, ['key', 'entriesKey', 'entrieKey'], { key: 'one', id: 'business' }, calls);
+  rejectsBeforeDispatch(live, live.entries.one, ['key'], { key: 'one', id: 'business' }, calls);
   live.entries['0'].set({ key: 0, id: 'business', qty: 2 });
   live.entries['0'].packed({ key: 0, id: 'business', qty: 2 });
   assert.equal(live.entries['0'].qty, 5);
   live.entries[''].packed({ key: '', qty: 2 });
   assert.equal(live.entries[''].qty, 3);
-  live.entries[''].aliasOnly(2);
-  assert.equal(live.entries[''].qty, 5);
+  assert.throws(() => live.entries[''].aliasOnly(2), /identity/i);
+  assert.equal(live.entries[''].qty, 3);
   assert.throws(() => live.entries['0'].set({ key: false, qty: 2 }), /identity/i);
 }
 console.log('PASS selected shorthand/packed commands, Aggregate ESM/CJS and Mirage ESM');

@@ -1,5 +1,5 @@
 import type { EntityCommandTarget, EntityCommandTargets, MountedStructureMetadata, ResolvedCommandTargets } from '../types/entityMount';
-import { singular, toCamelCase, toSnakeCase } from '../naming';
+import { primaryKey } from './primaryKey';
 
 // Provenance belongs to a definition-map registration, never a reusable handler or grouped mount.
 const targetsByDefinitions = new WeakMap<object, EntityCommandTargets>();
@@ -17,12 +17,18 @@ export function definitionTargets(definitions: object): EntityCommandTargets {
 export function resolvedCommandTargets(definitions: Record<string, unknown>): ResolvedCommandTargets {
     const targets = definitionTargets(definitions);
     return Object.freeze(Object.fromEntries(Object.keys(definitions).map(key => [key,
-        Object.freeze((targets[key] ?? []).map(target => Object.freeze({
-            ...target,
-            statePath: Object.freeze([...target.statePath]),
-            pk: Array.isArray(target.pk) ? Object.freeze([...target.pk]) : target.pk
-        })))
+        snapshotTargetChain(targets[key] ?? [])
     ])));
+}
+
+// Freeze only dispatch-owned copies, never caller configuration or reusable functions.
+export function snapshotTargetChain(chain: readonly EntityCommandTarget[]): readonly EntityCommandTarget[] {
+    validateIdentityLayout(chain);
+    return Object.freeze(chain.map(target => Object.freeze({
+        ...target,
+        statePath: Object.freeze([...target.statePath]),
+        pk: typeof target.pk === 'string' || target.pk === undefined ? target.pk : Object.freeze([...target.pk])
+    })));
 }
 
 // Copy the winning definition and its registration together; an ordinary root replaces any old target.
@@ -56,32 +62,34 @@ function equal(left: unknown, right: unknown): boolean {
     return scalar(left) && scalar(right) && String(left) === String(right);
 }
 
-function identityFields(target: EntityCommandTarget, field: string): string[] {
-    const name = target.commandPrefix;
-    const names = new Set([name, singular(name), toCamelCase(name), singular(toCamelCase(name)), toSnakeCase(name), singular(toSnakeCase(name))]);
-    const suffix = field.charAt(0).toUpperCase() + field.slice(1);
-    return [...names].map(prefix => prefix + suffix).concat(field);
+function primaryKeyFields(target: EntityCommandTarget): readonly string[] {
+    const pk = target.kind === 'map' ? 'key' : primaryKey(target.pk);
+    return typeof pk === 'string' ? [pk] : pk;
 }
 
-function identity(target: EntityCommandTarget, payload: Record<string, unknown>, used: Set<string>, leaf: boolean): Record<string, unknown> {
-    const fields = target.kind === 'map' ? ['key'] : typeof target.pk === 'string' ? [target.pk] : target.pk ?? ['id'];
-    if (!fields.length) return invalidTarget();
-    const composite = leaf && target.kind === 'list' && payload.__entityPk !== undefined ? record(payload.__entityPk) : undefined;
-    const result: Record<string, unknown> = {};
-    for (const field of fields) {
-        const aliases = identityFields(target, field);
-        if (target.kind === 'list' && fields.length === 1 && field !== 'id') aliases.push(...identityFields(target, 'id'));
-        const keys = [...new Set(aliases)].filter(key => Object.hasOwn(payload, key) && (leaf || (key !== field && key !== 'id' && key !== 'key')));
-        const values = keys.map(key => payload[key]);
-        if (composite && Object.hasOwn(composite, field)) {
-            keys.push(`__entityPk.${field}`);
-            values.push(composite[field]);
+function payloadField(target: EntityCommandTarget, field: string, leaf: boolean): string {
+    return leaf ? field : target.commandPrefix + field.charAt(0).toUpperCase() + field.slice(1);
+}
+
+function validateIdentityLayout(chain: readonly EntityCommandTarget[]): void {
+    const used = new Set<string>();
+    for (const [index, target] of chain.entries()) {
+        const fields = primaryKeyFields(target);
+        if (!fields.length || new Set(fields).size !== fields.length) invalidTarget();
+        for (const field of fields) {
+            const key = payloadField(target, field, index === chain.length - 1);
+            if (used.has(key)) invalidTarget();
+            used.add(key);
         }
-        if (!values.length || values.some(value => !equal(value, values[0])) || keys.some(key => used.has(key))) invalidTarget();
-        keys.forEach(key => used.add(key));
-        result[field] = values[0];
     }
-    return result;
+}
+
+function identity(target: EntityCommandTarget, payload: Record<string, unknown>, leaf: boolean): Record<string, unknown> {
+    return Object.fromEntries(primaryKeyFields(target).map(field => {
+        const key = payloadField(target, field, leaf);
+        if (!Object.hasOwn(payload, key) || !equal(payload[key], payload[key])) invalidTarget();
+        return [field, payload[key]];
+    }));
 }
 
 function select(container: unknown, target: EntityCommandTarget, values: Record<string, unknown>): unknown {
@@ -98,10 +106,9 @@ function select(container: unknown, target: EntityCommandTarget, values: Record<
 }
 
 export function selectedCommandState(state: unknown, payload: unknown, chain: readonly EntityCommandTarget[]): unknown {
-    const used = new Set<string>();
     let selected = state;
     for (const [index, target] of chain.entries()) {
-        const values = identity(target, record(payload), used, index === chain.length - 1);
+        const values = identity(target, record(payload), index === chain.length - 1);
         const container = target.statePath.reduce<unknown>((parent, key) => {
             const current = record(parent);
             return Object.hasOwn(current, key) ? current[key] : invalidTarget();

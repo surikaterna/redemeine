@@ -5,6 +5,7 @@ import { assertSynchronous } from './descriptor';
 import { createEnvelopeRuntime } from './envelopeRuntime';
 import { envelopeSnapshot } from './envelopeData';
 import { stateContextSnapshot } from './stateContextSnapshot';
+import { copyCommandMetadata } from '../commandMetadata';
 
 type Host = {
   aggregateType: string;
@@ -149,6 +150,7 @@ export function decorateAggregate<A extends Host>(host: A, registrations: readon
   };
   record.lineage.add(result);
   attachments.set(result, record);
+  copyCommandMetadata(host, result);
   // The public attachment types replace state-facing methods; domain methods retain their original contracts.
   return result as A;
 }

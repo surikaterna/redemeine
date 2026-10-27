@@ -8,7 +8,10 @@ import type { BridgeableAggregate, BridgeConstructor, BridgeOptions, CommandCrea
 export function createDemeineBridge<S extends object, C extends CommandCreators>(
   builder: BridgeableAggregate<S, C>, options: BridgeOptions<S> = {},
 ): BridgeConstructor<S, C> {
-  if ('AggregateBase' in options) throw new TypeError('AggregateBase is no longer supported; the bridge owns its lifecycle');
+  const aggregateType = builder.aggregateType;
+  if (typeof aggregateType !== 'string' || !aggregateType.trim()) {
+    throw new TypeError('aggregateType must be a nonempty string');
+  }
   rejectLifecycle(builder);
   const dispatch = createDispatch(builder, options);
   class Bridge extends StandaloneAggregate<S> {
@@ -25,7 +28,7 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
       validateHandler(commands, 'commandHandler');
       const eventHandler = events == null ? { handle: dispatch.apply } : synchronousHandler(events);
       super(builder.initialState, sink, eventHandler, commands ?? { handle: dispatch.process });
-      this.type = builder.aggregateType ?? Object.values(builder.types.commands)[0]?.split('.')[0] ?? 'unknown';
+      this.type = aggregateType;
     }
   }
   installMethods(Bridge.prototype, builder, dispatch);

@@ -4,6 +4,8 @@ import type { MountedStructureKind, MountedStructureMetadata, MountedEntityPacka
 import type { MapEntityCommands } from './types/aggregate';
 import { entitySelectorContext } from './build/entityCommandContext';
 import { commandTarget, definitionTargets, mergeDefinitions } from './build/entityCommandTarget';
+import { eventDefinitionKeys, mergeEventDefinitions, recordEventAssignment } from './build/eventDefinitions';
+import { primaryKey, validateListMounts } from './build/primaryKey';
 
 export type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions, MapEntityCommands };
 
@@ -21,7 +23,7 @@ type ComponentBehaviorSnapshot = {
 export function createMountMethods<B extends object>(builder: B, mountedEntities: MountedEntityPackage[]): B {
   Object.assign(builder, {
     entityList: <const PK extends string | readonly string[]>(entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityListOptions<PK>, mountOverrides?: EntityMountOverrides) => {
-      mountedEntities.push({ name: entityName, kind: 'list', component: entityComponent, mountOverrides, pk: options?.pk || 'id' });
+      mountedEntities.push({ name: entityName, kind: 'list', component: entityComponent, mountOverrides, pk: primaryKey(options?.pk) });
       return builder;
     },
     entityMap: (entityName: string, entityComponent: EntityPackage<unknown, string>, options?: EntityMapOptions, mountOverrides?: EntityMountOverrides) => {
@@ -53,8 +55,9 @@ export function composeMountedComponentBehavior(
   commandFactory: GenericCommandFactory;
 } {
   const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+  validateListMounts(mountedEntities);
 
-  const mergedEvents = mergeDefinitions({}, snapshot.events);
+  const mergedEvents = mergeEventDefinitions({}, snapshot.events);
   const mergedEventMetadata: Record<string, Record<string, unknown> | undefined> = { ...snapshot.eventMetadata };
   const mergedEventOverrides: Record<string, string> = { ...snapshot.eventOverrides };
   const mergedCommandOverrides: Record<string, string> = { ...snapshot.commandOverrides };
@@ -83,17 +86,16 @@ export function composeMountedComponentBehavior(
     const nestedEventNameOverrides = nested.eventOverrides || {};
     const nestedCommandNameOverrides = nested.commandOverrides || {};
     const mountEventNameOverrides = {
-      ...((mountOverrides && mountOverrides.eventOverrides) || {}),
       ...((mountOverrides && mountOverrides.eventNameOverrides) || {})
     } as Record<string, string>;
     const mountCommandNameOverrides = {
-      ...((mountOverrides && mountOverrides.commandOverrides) || {}),
       ...((mountOverrides && mountOverrides.commandNameOverrides) || {})
     } as Record<string, string>;
 
-    Object.keys(nestedEvents).forEach((eventKey) => {
+    eventDefinitionKeys(nestedEvents).forEach((eventKey) => {
       const mappedEventKey = `${mountName}${capitalize(eventKey)}`;
       mergedEvents[mappedEventKey] = nestedEvents[eventKey];
+      recordEventAssignment(mergedEvents, mappedEventKey);
       mounts[mountName]!.eventTargets![mappedEventKey] = [target, ...(nestedEventTargets[eventKey] ?? [])];
       definitionTargets(mergedEvents)[mappedEventKey] = mounts[mountName]!.eventTargets![mappedEventKey]!;
       mergedEventMetadata[mappedEventKey] = (nestedEventMetadata as Record<string, Record<string, unknown> | undefined>)[eventKey];

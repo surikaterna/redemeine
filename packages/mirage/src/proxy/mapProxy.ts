@@ -1,8 +1,8 @@
-import { singular } from '@redemeine/aggregate';
 import type { MountMetadata, InvocationContext } from '../mirage.types';
 import type { ProxyContext } from './proxyContext';
 import { readProperty } from '../runtimeDefinition';
 import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
+import { isSelectedDescendant } from './selectedCommandContext';
 
 function makeMapItemProxy(path: string[], prefix: string[], key: string, mount: MountMetadata, context: InvocationContext, ctx: ProxyContext): unknown {
   const name = path.at(-1)!;
@@ -11,7 +11,7 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, mount: 
     if (!value || typeof value !== 'object') throw new Error(`Entity not found in ${name}.${key}`);
     return value;
   };
-  const selection: InvocationContext = { idsPayload: { ...context.idsPayload, key, [`${singular(name)}Key`]: key, [`${name}Key`]: key },
+  const selection: InvocationContext = { idsPayload: { ...context.idsPayload, key },
     packPrefix: [...context.packPrefix, key], resolveState, selectedMount: mount, selectedMapKey: key };
   return new Proxy({}, {
     ...readonlyTraps,
@@ -22,6 +22,7 @@ function makeMapItemProxy(path: string[], prefix: string[], key: string, mount: 
       const entity = resolveState();
       if (Object.hasOwn(entity, property)) return readonlyValue(readProperty(entity, property));
       if (!Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName([...prefix, property]))) return undefined;
+      if (isSelectedDescendant(ctx.toCommandName([...prefix, property]), ctx.builder, mount)) return undefined;
       return ctx.makeDeepProxy([...path, key, property], [...prefix, property], selection);
     }
   });

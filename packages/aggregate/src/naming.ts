@@ -65,21 +65,3 @@ export const namingStrategies = {
         event: formatFlatEventType
     } as NamingStrategy
 } as const;
-
-export const parseTargetedEventPath = (eventType: string, aggregateName: string) => {
-    const prefix = aggregateName + '.';
-    if (eventType.startsWith(prefix) && eventType.endsWith('.event')) {
-        const withoutSuffix = eventType.slice(0, -6); // remove .event
-        const parts = withoutSuffix.slice(prefix.length).split('.');
-        
-        if (parts.length > 1) {
-            const actionName = parts.pop()!;
-            return { 
-                parts, 
-                actionName, 
-                coreEventName: formatFlatEventType(aggregateName, actionName) 
-            };
-        }
-    }
-    return null;
-}

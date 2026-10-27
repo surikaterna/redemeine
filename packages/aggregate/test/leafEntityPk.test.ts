@@ -24,15 +24,19 @@ function nestedHost(composite: boolean, id: string | number = 'c') {
   return { host, called };
 }
 
-test.each([false, true])('leaf compatibility blob is not consumed by ancestors (composite=%s)', composite => {
+test.each([false, true])('authored __entityPk is ordinary business data (composite=%s)', composite => {
   const { host } = nestedHost(composite);
   const ancestor = { parentsId: 'p', ...(composite ? { parentsDomain: 'ancestor' } : {}) };
   const identity = { id: 'c', ...(composite ? { domain: 'leaf' } : {}) };
-  const qualified = composite ? { childrenId: 'c', childrenDomain: 'leaf' } : { id: 'c' };
   for (const canonical of [false, true]) {
-    const payload = { ...ancestor, ...(canonical ? qualified : {}), __entityPk: identity, qty: 2 };
+    const payload = { ...ancestor, ...(canonical ? identity : {}), __entityPk: { id: 'wrong' }, qty: 2 };
+    if (!canonical) {
+      expect(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet(payload))).toThrow('Invalid mounted command target');
+      continue;
+    }
     const before = structuredClone(payload);
     const event = host.process(host.initialState, host.commandCreators.parentsChildrenSet(payload))[0]!;
+    expect(event.payload).toEqual({ ...payload, qty: 3 });
     const expected = structuredClone(host.initialState);
     expected.parents[1]!.children[0]!.qty = 3;
     expect(host.apply(host.initialState, event)).toEqual(expected);
@@ -41,15 +45,15 @@ test.each([false, true])('leaf compatibility blob is not consumed by ancestors (
   }
 });
 
-test.each([0, ''])('leaf blob retains falsy identity %j', id => {
+test.each([0, ''])('canonical leaf retains falsy identity %j', id => {
   const { host } = nestedHost(false, id);
-  const event = host.process(host.initialState, host.commandCreators.parentsChildrenSet({ parentsId: 'p', __entityPk: { id } }))[0]!;
+  const event = host.process(host.initialState, host.commandCreators.parentsChildrenSet({ parentsId: 'p', id }))[0]!;
   expect(host.apply(host.initialState, event).parents[1]!.children[0]!.qty).toBe(3);
   expect(produce(host.initialState, draft => host.applyToDraft(draft, event))).toEqual(host.apply(host.initialState, event));
 });
 
 test.each([
-  { parentsId: 'p', id: 'c', __entityPk: { id: 'wrong' } },
+  { parentsId: 'p', __entityPk: { id: 'c' } },
   { __entityPk: { id: 'c' } },
   { parentsId: 'missing', __entityPk: { id: 'c' } }
 ])('invalid ancestor or inconsistent leaf still rejects %j', payload => {

@@ -51,9 +51,6 @@ function invokeByPath(path: string[], args: unknown[], context: InvocationContex
     throw new TypeError('Command creator returned an invalid envelope');
   }
   assertSelectedIdentity(command.payload, context, true);
-  if (context.entityPk && command.payload && typeof command.payload === 'object') {
-    command.payload = { ...command.payload, __entityPk: context.entityPk };
-  }
   // Creator output was checked above; payload remains unknown until the domain validates it.
   const result = ctx.core.dispatch(command as Command<unknown, string>);
   if (!context.resolveState) return result;

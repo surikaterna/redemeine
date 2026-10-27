@@ -45,10 +45,7 @@ test.each([
   ['id', 'code', { parentsId: 'p', code: 'c' }],
   [['code', 'region'], ['code', 'authority'], { parentsCode: 'p', parentsRegion: 'r', code: 'c', authority: 'a' }],
   [['code', 'authority'], ['region', 'authority'], { parentsCode: 'p', parentsAuthority: 'a', region: 'r', authority: 'a' }],
-  ['code', 'code', { parentsCode: 'p', childrenCode: 'c' }],
-  [['code', 'region'], ['code', 'authority'], { parentsCode: 'p', parentsRegion: 'r', childrenCode: 'c', childrenAuthority: 'a' }],
-  ['code', 'code', { parentsCode: 'p', __entityPk: { code: 'c' } }],
-  [['code', 'region'], ['code', 'authority'], { parentsCode: 'p', parentsRegion: 'r', __entityPk: { code: 'c', authority: 'a' } }]
+  ['code', 'code', { parentsCode: 'p', code: 'c', parentCode: 'ordinary', childrenCode: 'ordinary', __entityPk: { code: 'ordinary' } }]
 ] as [string | string[], string | string[], Record<string, unknown>][])('qualified ancestors do not consume leaf fields: %j / %j / %j', expectSelectedOnly);
 
 test.each([[0, 2], ['', 3]] as const)('preserves scalar leaf identity %j', (code, index) => {
@@ -56,9 +53,9 @@ test.each([[0, 2], ['', 3]] as const)('preserves scalar leaf identity %j', (code
 });
 
 test.each([
-  ['code', 'code', { parentsCode: 'p', parentCode: 'other', code: 'c' }],
-  ['code', 'code', { parentsCode: 'p', childrenCode: 'c', code: 'sibling' }],
-  ['code', 'code', { parentsCode: 'p', code: 'c', __entityPk: { code: 'sibling' } }],
+  ['code', 'code', { parentCode: 'p', code: 'c' }],
+  ['code', 'code', { parentsCode: 'p', childrenCode: 'c' }],
+  ['code', 'code', { parentsCode: 'p', __entityPk: { code: 'c' } }],
   ['code', 'code', { code: 'c' }],
   ['code', 'code', { __entityPk: { code: 'c' } }],
   ['code', 'code', { parentsCode: 'missing', code: 'c' }],
@@ -70,7 +67,7 @@ test.each([
   const before = structuredClone(host.initialState);
   const payloadBefore = structuredClone(payload);
   const validEvent = host.process(host.initialState, host.commandCreators.parentsChildrenSet({
-    parentsCode: 'p', parentsRegion: 'r', parentsAuthority: 'a', __entityPk: item('c', 2)
+    parentsCode: 'p', parentsRegion: 'r', parentsAuthority: 'a', ...item('c', 2)
   }))[0]!;
   called.mockClear();
   const command = host.commandCreators.parentsChildrenSet(payload);

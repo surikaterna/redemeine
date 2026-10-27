@@ -1,11 +1,13 @@
 import type { NamingStrategy } from '@redemeine/kernel';
-import type { EntityCommandTargets, MountedEntityPackage, MountedStructureMetadata } from '../types/entityMount';
+import type { MountedEntityPackage, MountedStructureMetadata } from '../types/entityMount';
+import type { CompiledEventRegistration } from '../applyEvent';
 import type { AggregateSelectorsMap } from '../types/aggregate';
 import type { GenericCommandMap } from '../redemeineComponent';
 import { createEmitProxy } from '../proxies/createEmitProxy';
 import { createCommandContextProxy } from '../proxies/createCommandContextProxy';
 import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
-import { commandTarget, definitionTargets } from './entityCommandTarget';
+import { commandTarget, definitionTargets, snapshotTargetChain } from './entityCommandTarget';
+import { eventDefinitionKeys } from './eventDefinitions';
 
 export type MountResult<TMeta> = {
     mounts: Record<string, MountedStructureMetadata>;
@@ -23,12 +25,9 @@ export function mountEntities<S, TMeta>(
     allCommandOverrides: Record<string, string>,
     allSelectors: AggregateSelectorsMap<S>,
     allCommandsMap: GenericCommandMap,
-    projectorByEventType: Map<string, Function>,
-    scopedProjectorByEventType: Record<string, Function>,
-    scopedEventProjectors: Record<string, Function>,
+    dispatch: Map<string, CompiledEventRegistration>,
     aggregateName: string,
-    namingStrategy: NamingStrategy,
-    eventTargetsByType: EntityCommandTargets = {}
+    namingStrategy: NamingStrategy
 ): Record<string, MountedStructureMetadata> {
     const mounts: Record<string, MountedStructureMetadata> = {};
     const eventDefinitionTargets = definitionTargets(allEvents);
@@ -58,17 +57,15 @@ export function mountEntities<S, TMeta>(
         const entityEventMetadata = (entity as unknown as { eventMetadata?: Record<string, TMeta | undefined> }).eventMetadata || {};
         const entityEventNameOverrides = entity.eventOverrides || {};
         const mountEventNameOverrides = {
-            ...((mountOverrides && mountOverrides.eventOverrides) || {}),
             ...((mountOverrides && mountOverrides.eventNameOverrides) || {})
         };
 
-        Object.keys(entityEvents).forEach((eventKey) => {
+        eventDefinitionKeys(entityEvents).forEach((eventKey) => {
             const chain = [target, ...(nestedEventTargets[eventKey] ?? [])];
             if (!rootEventKeys.has(eventKey)) {
                 allEvents[eventKey] = entityEvents[eventKey];
                 eventDefinitionTargets[eventKey] = chain;
             }
-            scopedEventProjectors[`${entityPath}:${eventKey}`] = entityEvents[eventKey];
             allEventMetadata[`${entityPath}:${eventKey}`] = entityEventMetadata[eventKey];
             const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
             const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
@@ -77,10 +74,8 @@ export function mountEntities<S, TMeta>(
                     ? composeMountedType(entityPath, entityEventOverride, 'event')
                     : namingStrategy.event(aggregateName, eventKey, entityPath));
             allEventOverrides[`${entityPath}:${eventKey}`] = scopedEventType;
-            projectorByEventType.set(scopedEventType, entityEvents[eventKey]);
-            scopedProjectorByEventType[scopedEventType] = entityEvents[eventKey];
+            dispatch.set(scopedEventType, { projector: entityEvents[eventKey]!, targets: snapshotTargetChain(chain) });
             mounts[mountName]!.eventTargets![scopedEventType] = chain;
-            eventTargetsByType[scopedEventType] = mounts[mountName]!.eventTargets![scopedEventType]!;
         });
 
         const mergedSelectors = entitySelectorContext(entity.selectors || {}, allSelectors, mountName);
@@ -95,7 +90,6 @@ export function mountEntities<S, TMeta>(
         mounts[mountName]!.getRoleCommandNames = createRoleCommandResolver(entityEmit, allSelectors, mountName);
         const entityCommandNameOverrides = entity.commandOverrides || {};
         const mountCommandNameOverrides = {
-            ...((mountOverrides && mountOverrides.commandOverrides) || {}),
             ...((mountOverrides && mountOverrides.commandNameOverrides) || {})
         };
 

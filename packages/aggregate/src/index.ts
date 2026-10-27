@@ -1,4 +1,5 @@
 export * from './createAggregate';
+export { commandMetadata, type CommandMetadata } from './commandMetadata';
 export { createContractFromAggregate } from './createContractFromAggregate';
 export * from './createEntity';
 export * from './createMixin';

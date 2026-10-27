@@ -15,7 +15,7 @@ type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = 
 type CommandHandler<S> = (
     state: AggregateStateView<S>,
     payload: unknown
-) => Event | Event[] | { events: Event[]; intents?: Record<string, unknown> };
+) => Event<unknown, string> | Event<unknown, string>[] | { events: Event<unknown, string>[]; intents?: Record<string, unknown> };
 
 export function normalizeCommandExecutionResult<TPlugins extends PluginExtensions = {}>(
     result: Event | CommandResult<Event, TPlugins>

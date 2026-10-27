@@ -1,8 +1,44 @@
-import { createAggregate, createEntity } from '@redemeine/aggregate';
+import { commandMetadata, type CommandMetadata, createAggregate, createEntity, createMixin } from '@redemeine/aggregate';
 import { createMirage, createDepot, dispatch, extractState, subscribe, MirageCoreSymbol } from '@redemeine/mirage';
 import type { Event } from '@redemeine/kernel';
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
+type NestedParent = { id: string; children: { id: string }[] };
+const nestedChild = createEntity<{ id: string }, 'nestedChild'>('nestedChild')
+  .commands(() => ({ read: (_state, _payload: { id: string }) => [] })).build();
+const nestedParent = createEntity<NestedParent, 'nestedParent'>('nestedParent').entityList('children', nestedChild)
+  .commands(() => ({ touch: (_state, _payload: { id: string; note: string }) => [] })).build();
+const nestedLater = createEntity<NestedParent, 'nestedLater'>('nestedLater').build();
+export const nestedExposureHost = createAggregate('nested', { parents: [{ id: 'p', children: [{ id: 'c' }] }] })
+  .entityList('parents', nestedParent).entityList('parents', nestedLater)
+  .selectors(({ bindContext }) => ({ parent: state => bindContext(state.parents[0], nestedParent, { mount: 'parents' }) })).build();
+const nestedLive = createMirage(nestedExposureHost, 'nested');
+nestedLive.parents('p').touch({ note: 'ok' });
+nestedLive.parent()!.touch({ note: 'bound' });
+const noAnyNested: IsAny<typeof nestedLive.parents> = false;
+// @ts-expect-error descendant identities cannot be supplied by a selected parent
+nestedLive.parents('p').childrenRead({});
+// @ts-expect-error bound earlier roles also omit unsupported descendants
+nestedLive.parent()!.childrenRead({});
+// @ts-expect-error parent business arguments remain checked, not never/any
+nestedLive.parent()!.touch({ note: 2 });
+nestedExposureHost.commandCreators.parentsChildrenRead({ id: 'c' });
+void noAnyNested;
+const nestedState = { parents: [{ id: 'p', children: [{ id: 'c' }] }] };
+const nestedMixin = createMixin<typeof nestedState>().entityList('parents', nestedParent).build();
+const mixedNested = createAggregate('mixedNested', nestedState).mixins(nestedMixin);
+const inheritedNested = createAggregate('inheritedNested', nestedState).extends(mixedNested).build();
+createMirage(inheritedNested, 'inherited').parents('p').touch({ note: 'ok' });
+// @ts-expect-error ancestry survives mixin mounting and inheritance
+createMirage(inheritedNested, 'inherited').parents('p').childrenRead({});
+const namedNested = createAggregate('namedNested', { nestedParent: nestedState.parents }).entities({ nestedParent }).build();
+createMirage(namedNested, 'named').nestedParent('p').touch({ note: 'ok' });
+// @ts-expect-error explicit named maps preserve descendant ancestry
+createMirage(namedNested, 'named').nestedParent('p').childrenRead({});
+const mappedNested = createAggregate('mappedNested', { parents: { p: nestedState.parents[0]! } }).entityMap('parents', nestedParent).build();
+createMirage(mappedNested, 'map').parents.p!.touch({ id: 'business', note: 'ok' });
+// @ts-expect-error map scopes omit descendant commands too
+createMirage(mappedNested, 'map').parents.p!.childrenRead({});
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const Line = createEntity<{ id: string; qty: number }, 'line'>('line')
   .events({ changed: (state, event: Event<{ id: string; qty: number }>) => { state.qty = event.payload.qty; } })
@@ -23,6 +59,14 @@ const builder = createAggregate('order', { total: 0, lines: [{ id: 'one', qty: 1
   })).build();
 const live = createMirage(builder, 'one');
 export const selectedCommandHost = createAggregate('selected', { lines: [{ id: 'one', qty: 1 }] }).entityList('lines', Line).build();
+const registration: CommandMetadata | undefined = commandMetadata(selectedCommandHost, 'linesSet');
+const noAnyRegistration: IsAny<NonNullable<typeof registration>> = false;
+const readonlyTargets: readonly { readonly statePath: readonly string[] }[] | undefined = registration?.targets;
+// @ts-expect-error registration query does not expose executable definitions
+registration?.handler;
+// @ts-expect-error registration target chains are readonly
+registration!.targets.push({});
+void [noAnyRegistration, readonlyTargets];
 live.lines('one').set({ qty: 2 });
 // Packed business arguments retain their authored shape; runtime enforces selection authority.
 live.lines('one').packed({ id: 'other', qty: 2 });
@@ -148,7 +192,9 @@ const Custom = createEntity<{ code: string; qty: number }, 'custom'>('custom').e
   })).build();
 const custom = createMirage(createAggregate('custom-root', { customs: [{ code: 'a', qty: 0 }] })
   .entityList('customs', Custom, { pk: 'code' }).build(), 'root');
-custom.customs('a').set({ qty: 1, note: 'optional' });
+custom.customs('a').set({ customId: 'business', qty: 1, note: 'optional' });
+// @ts-expect-error Former identity aliases declared as business fields stay required.
+custom.customs('a').set({ qty: 1 });
 custom.customs('a').alias(2);
 custom.customs[0]!.qualified({ customsCode: 'b', qty: 2 });
 // @ts-expect-error Alias-only pack retains required business arguments.

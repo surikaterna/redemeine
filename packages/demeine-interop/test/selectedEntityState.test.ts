@@ -4,6 +4,31 @@ import { createDemeineBridge } from '../src';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
+test.each(['__proto__', 'constructor', 'toString'])('bridge preserves own canonical %s identity predicates', async field => {
+  for (const pk of [field, [field, 'region']]) {
+    const calls = jest.fn();
+    const row = createEntity<{ qty: number }, 'row'>('row')
+      .events({ changed(state, event: Event<{ qty: number }>) { state.qty = event.payload.qty; } })
+      .commands(emit => ({ set(state, payload: Record<string, unknown>) {
+        calls(); return emit.changed({ ...payload, qty: state.qty + 1 });
+      } })).build();
+    const state = { qty: 99, rows: [{ [field]: 'actual', region: 'west', qty: 1 }] };
+    const host = createAggregate('store', state).entityList('rows', row, { pk }).build();
+    const Bridge = createDemeineBridge(host);
+    const bridge = new Bridge();
+    const input = { [field]: 'actual', region: 'west', __entityPk: 'business', id: 'business' };
+    await bridge.rowsSet(input);
+    expect(bridge._state.rows[0]!.qty).toBe(2);
+    calls.mockClear();
+    await expect(bridge.rowsSet({ ...input, [field]: 'MISSING' })).rejects.toThrow('Invalid mounted command target');
+    expect(calls).not.toHaveBeenCalled();
+    expect(bridge._state.rows[0]!.qty).toBe(2);
+    expect(bridge.getVersion()).toBe(1);
+    expect(state.rows[0]!.qty).toBe(1);
+    expect(Object.getPrototypeOf(input)).toBe(Object.prototype);
+  }
+});
+
 test('bridge flat mounted method matches native creator/process/apply and preserves packed definitions', async () => {
   const pack = (id: string, qty: number) => ({ id, qty });
   const line = createEntity<{ id: string; qty: number }, 'line'>('line')
@@ -42,7 +67,7 @@ test.each(['list', 'map'] as const)('bridge replays nested %s parents with list 
   for (const leaf of ['Children', 'ByKey'] as const) {
     const prefix = kind === 'list' ? 'parents' : 'byParent';
     const name = `${prefix}${leaf}Set` as const;
-    const payload = { [kind === 'list' ? 'parentsId' : 'byParentKey']: 'p2', [leaf === 'Children' ? 'id' : 'byKeyKey']: 'same' };
+    const payload = { [kind === 'list' ? 'parentsId' : 'byParentKey']: 'p2', [leaf === 'Children' ? 'id' : 'key']: 'same' };
     const event = host.process(state, { type: host.types.commands[name], payload })[0]!;
     const expected = structuredClone(state);
     const selected = kind === 'list' ? expected.parents[1]! : expected.byParent.p2;
@@ -128,9 +153,12 @@ async function checkLeafBlob(pk) {
   ] }).entityList('parents', parent, { pk }).build();
   const ancestor = Object.fromEntries(fields.map(field => ['parents' + field[0].toUpperCase() + field.slice(1), field === 'domain' ? 'ancestor' : 'p']));
   const identity = Object.fromEntries(fields.map(field => [field, field === 'domain' ? 'leaf' : 'c']));
-  const qualified = Object.fromEntries(fields.map(field => ['children' + field[0].toUpperCase() + field.slice(1), identity[field]]));
   for (const canonical of [false, true]) {
-    const payload = { ...ancestor, ...(canonical ? qualified : {}), __entityPk: identity, qty: 2 };
+    const payload = { ...ancestor, ...(canonical ? identity : {}), __entityPk: { business: true }, qty: 2 };
+    if (!canonical) {
+      assert.throws(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet(payload)), /Invalid mounted command target/);
+      continue;
+    }
     const before = structuredClone(payload);
     const event = host.process(host.initialState, host.commandCreators.parentsChildrenSet(payload))[0];
     const expected = structuredClone(host.initialState);
@@ -145,7 +173,7 @@ async function checkLeafBlob(pk) {
   }
   const field = fields[0];
   assert.throws(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet({
-    ...ancestor, ...qualified, __entityPk: { ...identity, [field]: 'wrong' }
+    ...ancestor, ...identity, [field]: 'wrong'
   })), /Invalid mounted command target/);
   assert.throws(() => host.process(host.initialState, host.commandCreators.parentsChildrenSet({ __entityPk: identity })), /Invalid mounted command target/);
 }

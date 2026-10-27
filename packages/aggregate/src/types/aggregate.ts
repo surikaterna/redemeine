@@ -11,7 +11,6 @@ import type {
     AggregateEntityRegistry,
     MountRegistry,
     ReplaceCommandMap,
-    ResolvedCommandTargets,
     MountedStructureMetadata,
     MountedEntityPackage,
     EntityMountOverrides,
@@ -66,8 +65,9 @@ export type CompatibleMixins<S, T extends AggregateMixinLike<any, any, any>[]> =
     [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
 };
 
+// Type-only ancestry survives outer registrations; flat creator arguments are unchanged.
 export type MapEntityCommands<Name extends string, CPayloads> = {
-    [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
+    [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K] & { readonly __nestedCommand: true }
 };
 
 // SAFETY: `any` in EntityPackage type params required for structural pattern matching via infer
@@ -209,7 +209,6 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         eventCreators: EventEmitterFactory<Name, E, EOverrides>;
         pure: {
             commandProcessors: Record<string, AnyFunction>;
-            readonly commandTargets: ResolvedCommandTargets;
             eventProjectors: AggregateEventProjectorsMap<E>;
         };
         selectors: EffectiveSelectors<Sel, SM>;

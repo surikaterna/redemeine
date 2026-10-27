@@ -1,18 +1,20 @@
 import type { Event, NamingStrategy, AggregateHooks, RedemeinePlugin, Contract } from '@redemeine/kernel';
-import type { EntityCommandTargets, MountedEntityPackage, MountedStructureMetadata } from './types/entityMount';
+import type { MountedEntityPackage } from './types/entityMount';
 import type { AggregateMixinLike, AggregateSelectorsMap } from './types/aggregate';
 import type { GenericCommandFactory } from './redemeineComponent';
 import type { UnmatchedEventHandler } from './createAggregate';
-import { resolveCommandHandler } from './redemeineComponent';
 import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
 import { applyEvent, applyEventToDraft } from './applyEvent';
 import type { Draft } from 'immer';
-import { resolveEvents, finalizeProjectorMap } from './build/resolveEvents';
+import { resolveEvents } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
-import { definitionTargets, mergeDefinitions, resolvedCommandTargets } from './build/entityCommandTarget';
+import { mergeDefinitions } from './build/entityCommandTarget';
+import { compileCommands } from './build/compileCommands';
+import { validateListMounts } from './build/primaryKey';
+import { attachCommandMetadata } from './commandMetadata';
 import type { AggregateStateView } from './types/aggregateState';
 import { decorateAggregate, inheritAggregateIdentity } from './plugins/attachment';
 import type { PluginRegistration } from './plugins/attachmentTypes';
@@ -45,10 +47,12 @@ export type BuildAggregateInput<S, TMeta> = {
  */
 export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: BuildAggregateInput<S, TMeta>) {
     const { aggregateName, initialState, snapshot, commandsFactory, mixins, entityPackages, namingStrategy, hooks, plugins, unmatchedEventHandler, contract } = input;
+    validateListMounts(entityPackages);
+    for (const mixin of mixins) validateListMounts(Object.values(mixin.mounts ?? {}));
 
     // 1. Resolve events from mixins
     const resolved = resolveEvents<S, TMeta>(snapshot, mixins, aggregateName, namingStrategy);
-    const { allEvents, allEventMetadata, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors } = resolved;
+    const { allEvents, allEventMetadata, allEventOverrides, dispatch } = resolved;
 
     // 2. Merge selectors and command overrides from mixins
     const allSelectors = mixins.reduce(
@@ -71,50 +75,41 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     }
 
     // 4. Mount entities (mutates allEvents, allEventOverrides, allCommandsMap, etc.)
-    const { eventTargetsByType } = resolved;
     const mounts = mountEntities<S, TMeta>(
         entityPackages, allEvents, allEventMetadata, allEventOverrides, allCommandOverrides,
-        allSelectors, allCommandsMap as any, projectorByEventType, scopedProjectorByEventType,
-        scopedEventProjectors, aggregateName, namingStrategy, eventTargetsByType
+        allSelectors, allCommandsMap, dispatch, aggregateName, namingStrategy
     );
-
-    // 5. Finalize projector map with remaining root events
-    finalizeProjectorMap(allEvents, allEventOverrides, projectorByEventType, aggregateName, namingStrategy);
 
     // 6. Build metadata
     const metadataByEventType = buildEventMetadata(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy);
 
     // 7. Build command handlers, metadata, and type maps in a single pass
-    const { commandHandlerByType, commandTypesByKey, metadataByCommandType, targetsByType } =
-        resolveCommandMaps<S, TMeta>(allCommandsMap as any, allCommandOverrides, aggregateName, namingStrategy);
+    const compiled = compileCommands(allCommandsMap, allCommandOverrides, aggregateName, namingStrategy);
     const eventTypesByKey = buildTypeMap(allEvents, allEventOverrides, aggregateName, namingStrategy, 'event');
 
-    // Convert Map to plain object for applyEvent compatibility
-    const projectorByEventTypeObj: Record<string, Function> = {};
-    projectorByEventType.forEach((fn, key) => { projectorByEventTypeObj[key] = fn; });
-
-    const host = decorateAggregate({
+    const domain = {
         aggregateType: aggregateName,
         initialState: initialState as AggregateStateView<S>,
-        process: createCommandProcessor<S>(aggregateName, allCommandsMap as any, allCommandOverrides, commandHandlerByType, contract, targetsByType),
-        apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, resolved.explicitRootProjectorByEventType, eventTargetsByType),
+        process: createCommandProcessor<S>(aggregateName, compiled.snapshot, allCommandOverrides, compiled.handlers, contract, compiled.targetsByType),
+        apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, dispatch, unmatchedEventHandler),
         applyToDraft: (draft: Draft<S>, event: Event): void => {
-            applyEventToDraft<S>(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventTypeObj, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, resolved.explicitRootProjectorByEventType, eventTargetsByType);
+            applyEventToDraft<S>(aggregateName, draft, event, dispatch, unmatchedEventHandler);
         },
-        commandCreators: createCommandCreatorsProxy(aggregateName, allCommandsMap as any, allCommandOverrides, namingStrategy),
+        commandCreators: createCommandCreatorsProxy(aggregateName, compiled.snapshot, compiled.types, namingStrategy),
         eventCreators: emit,
         pure: {
-            commandTargets: resolvedCommandTargets(allCommandsMap),
-            commandProcessors: allCommandsMap as unknown as Record<string, Function>,
+            commandProcessors: compiled.snapshot,
             eventProjectors: allEvents
         },
         selectors: allSelectors,
         hooks,
         mounts,
-        metadata: { commands: metadataByCommandType, events: metadataByEventType },
-        types: { commands: commandTypesByKey, events: eventTypesByKey },
+        metadata: { commands: compiled.metadata, events: metadataByEventType },
+        types: { commands: compiled.types, events: eventTypesByKey },
         plugins
-    });
+    };
+    attachCommandMetadata(domain, compiled.records);
+    const host = decorateAggregate(domain);
     inheritAggregateIdentity(host, input.parents ?? []);
     return decorateAggregate(host, input.aggregatePlugins);
 }
@@ -133,39 +128,6 @@ function buildEventMetadata<TMeta>(
         acc[resolvedEventType] = meta !== undefined ? { meta } : {};
         return acc;
     }, {} as Record<string, { meta?: TMeta }>);
-}
-
-/**
- * Single-pass resolution of command handlers, metadata, and type map.
- * Avoids iterating allCommandsMap three times with the same key resolution logic.
- */
-function resolveCommandMaps<S, TMeta>(
-    allCommandsMap: Record<string, any>,
-    allCommandOverrides: Record<string, string>,
-    aggregateName: string,
-    namingStrategy: NamingStrategy
-): {
-    commandHandlerByType: Record<string, any>;
-    commandTypesByKey: Record<string, string>;
-    metadataByCommandType: Record<string, { meta?: TMeta }>;
-    targetsByType: EntityCommandTargets;
-} {
-    const commandHandlerByType: Record<string, any> = {};
-    const commandTypesByKey: Record<string, string> = {};
-    const metadataByCommandType: Record<string, { meta?: TMeta }> = {};
-    const targetsByKey = definitionTargets(allCommandsMap);
-    const targetsByType: EntityCommandTargets = {};
-
-    for (const key of Object.keys(allCommandsMap)) {
-        const resolvedCommandType = allCommandOverrides[key] || namingStrategy.command(aggregateName, key);
-        commandHandlerByType[resolvedCommandType] = resolveCommandHandler<S>(allCommandsMap[key]!);
-        targetsByType[resolvedCommandType] = targetsByKey[key] ?? [];
-        commandTypesByKey[key] = resolvedCommandType;
-        const meta = (allCommandsMap[key] as any)?.meta as TMeta | undefined;
-        metadataByCommandType[resolvedCommandType] = meta !== undefined ? { meta } : {};
-    }
-
-    return { commandHandlerByType, commandTypesByKey, metadataByCommandType, targetsByType };
 }
 
 function buildTypeMap(

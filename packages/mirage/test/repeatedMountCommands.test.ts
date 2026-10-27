@@ -1,5 +1,5 @@
 import type { Event } from '@redemeine/kernel';
-import { createAggregate, createEntity, createMixin } from '../../aggregate/src';
+import { commandMetadata, createAggregate, createEntity, createMixin } from '../../aggregate/src';
 import { createMirage, extractState, MirageCoreSymbol } from '../src';
 
 type Row = { id: string; code: string; domain: string; authority: string; qty: number };
@@ -59,21 +59,25 @@ test('explicit earlier role admits surviving registrations and hides other role 
   expect(Reflect.get(bound, 'packedOther')).toBeUndefined();
 });
 
-test.each(['missing', 'root', 'kind', 'path'])('earlier role rejects %s winning registrations', failure => {
+test.each(['missing', 'root', 'kind', 'path'])('compiled registration ignores a %s compatibility-view edit', failure => {
   const old = first('id');
   const host = createAggregate('store', { rows: initial() }).entityList('rows', old)
     .entityList('rows', second('code'), { pk: 'code' })
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
   const targets = { ...Reflect.get(host.pure, 'commandTargets') };
+  const registration = commandMetadata(host, 'rowsSetFirst');
   if (failure === 'missing') Reflect.deleteProperty(targets, 'rowsSetFirst');
   if (failure === 'root') Reflect.set(targets, 'rowsSetFirst', []);
   if (failure === 'kind') Reflect.set(targets, 'rowsSetFirst', [{ kind: 'map', statePath: ['rows'], commandPrefix: 'rows' }]);
   if (failure === 'path') Reflect.set(targets, 'rowsSetFirst', [{ kind: 'list', statePath: ['other'], commandPrefix: 'rows' }]);
   expect(Reflect.set(host.pure, 'commandTargets', targets)).toBe(true);
   host.hooks = { onBeforeCommand: before };
-  expect(() => createMirage(host, 'store').chosen()).toThrow(/registration/i);
+  expect(commandMetadata(host, 'rowsSetFirst')).toBe(registration);
+  const chosen = createMirage(host, 'store').chosen();
   expect(before).not.toHaveBeenCalled();
   expect(handled).not.toHaveBeenCalled();
+  chosen!.setFirst({});
+  expect(handled.mock.calls[0]![0].id).toBe('id-a');
 });
 
 test('explicit unrelated role with absent commands is rejected', () => {
@@ -135,14 +139,14 @@ test('direct/index/iteration/bound-selector paths share command context and orig
   expect(extractState(live).rows.map(row => row.qty)).toEqual([5, 10]);
 });
 
-test('shorthand and final packed conflicts fail before hooks, including caller compatibility blobs', () => {
+test('shorthand and final packed canonical conflicts fail before hooks', () => {
   const { selected } = fixture('id', 'code');
-  for (const payload of [{ id: 'code-a' }, { __entityPk: { id: 'code-a' } }, { id: false }, { id: {} }]) {
+  for (const payload of [{ id: 'code-a' }, { id: false }, { id: {} }]) {
     expect(() => Reflect.apply(selected.setFirst, undefined, [payload])).toThrow(/identity/i);
   }
   expect(() => Reflect.apply(selected.badFirst, undefined, [])).toThrow(/identity/i);
   const composite = fixture(['domain', 'authority'], 'code').selected;
-  expect(() => Reflect.apply(composite.setFirst, undefined, [{ __entityPk: { domain: 'd-b', authority: 'auth-a' } }])).toThrow(/identity/i);
+  expect(() => Reflect.apply(composite.setFirst, undefined, [{ domain: 'd-b', authority: 'auth-a' }])).toThrow(/identity/i);
   expect(before).not.toHaveBeenCalled();
   expect(handled).not.toHaveBeenCalled();
 });
@@ -168,9 +172,10 @@ test('map commands use the own entry key rather than value id', () => {
 });
 
 test('missing registration and incompatible mount kinds reject before hooks', () => {
-  const { host, selected } = fixture('id', 'code');
+  const { host } = fixture('id', 'code');
   Reflect.deleteProperty(host.pure, 'commandTargets');
-  expect(() => Reflect.apply(selected.setFirst, undefined, [{}])).toThrow(/registration/i);
+  const unregistered = createMirage({ ...host }, 'store').rows('code-a');
+  expect(() => Reflect.apply(unregistered.setFirst, undefined, [{}])).toThrow(/registration/i);
   const incompatible = createAggregate('store', { rows: initial() }).entityMap('rows', first('key'))
     .entityList('rows', second('code'), { pk: 'code' }).build();
   incompatible.hooks = { onBeforeCommand: before };
