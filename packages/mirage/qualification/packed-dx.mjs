@@ -33,10 +33,13 @@ await writeFile(resolve(output, 'package.json'), JSON.stringify({ private: true,
 await run('install', 'npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 await writeFile(resolve(output, 'consumer.mts'), await readFile(resolve(root, 'packages/mirage/test/dx-contract.types.ts')));
 await writeFile(resolve(output, 'scoped.mts'), await readFile(resolve(root, 'packages/mirage/test/scopedCommands.fixture.ts.txt')));
+for (const extension of ['mts', 'cts']) {
+  await writeFile(resolve(output, `prototype.${extension}`), await readFile(resolve(root, 'packages/aggregate/test/prototypeRegistration.fixture.ts.txt')));
+}
 await writeFile(resolve(output, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   strict: true, skipLibCheck: false, noEmit: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
   exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, types: [], typeRoots: []
-}, files: ['consumer.mts', 'scoped.mts'] }, null, 2));
+}, files: ['consumer.mts', 'scoped.mts', 'prototype.mts', 'prototype.cts'] }, null, 2));
 for (const compiler of ['typescript', 'typescript7']) {
   const stdout = await run(compiler, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json', '--listFiles']);
   for (const file of stdout.trim().split('\n')) assert(file.startsWith(`${output}/`), `Ancestor type leaked: ${file}`);
@@ -98,6 +101,8 @@ await writeFile(resolve(output, 'exact-events.mjs'), await readFile(resolve(root
 await run('exact-events', process.execPath, ['--unhandled-rejections=strict', 'exact-events.mjs']);
 await writeFile(resolve(output, 'canonical-identity.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/canonical-identity.mjs')));
 await run('canonical-identity', process.execPath, ['--unhandled-rejections=strict', 'canonical-identity.mjs']);
+await writeFile(resolve(output, 'prototype-registration.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/prototype-registration.mjs')));
+await run('prototype-registration', process.execPath, ['--unhandled-rejections=strict', 'prototype-registration.mjs']);
 for (const extension of ['mts', 'cts']) {
   await writeFile(resolve(output, `bridge.${extension}`), await readFile(resolve(root,
     'packages/demeine-interop/qualification/explicit-type.cts')));

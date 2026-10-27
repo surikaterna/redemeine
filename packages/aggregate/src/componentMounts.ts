@@ -6,6 +6,7 @@ import { entitySelectorContext } from './build/entityCommandContext';
 import { commandTarget, definitionTargets, mergeDefinitions } from './build/entityCommandTarget';
 import { eventDefinitionKeys, mergeEventDefinitions, recordEventAssignment } from './build/eventDefinitions';
 import { primaryKey, validateListMounts } from './build/primaryKey';
+import { ownDefinition } from './build/definitionMap';
 
 export type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions, MapEntityCommands };
 
@@ -57,7 +58,7 @@ export function composeMountedComponentBehavior(
   const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
   validateListMounts(mountedEntities);
 
-  const mergedEvents = mergeEventDefinitions({}, snapshot.events);
+  const mergedEvents = mergeEventDefinitions(Object.create(null), snapshot.events);
   const mergedEventMetadata: Record<string, Record<string, unknown> | undefined> = { ...snapshot.eventMetadata };
   const mergedEventOverrides: Record<string, string> = { ...snapshot.eventOverrides };
   const mergedCommandOverrides: Record<string, string> = { ...snapshot.commandOverrides };
@@ -98,12 +99,9 @@ export function composeMountedComponentBehavior(
       recordEventAssignment(mergedEvents, mappedEventKey);
       mounts[mountName]!.eventTargets![mappedEventKey] = [target, ...(nestedEventTargets[eventKey] ?? [])];
       definitionTargets(mergedEvents)[mappedEventKey] = mounts[mountName]!.eventTargets![mappedEventKey]!;
-      mergedEventMetadata[mappedEventKey] = (nestedEventMetadata as Record<string, Record<string, unknown> | undefined>)[eventKey];
-      if (mountEventNameOverrides[eventKey]) {
-        mergedEventOverrides[mappedEventKey] = mountEventNameOverrides[eventKey];
-      } else if ((nestedEventNameOverrides as Record<string, string>)[eventKey]) {
-        mergedEventOverrides[mappedEventKey] = (nestedEventNameOverrides as Record<string, string>)[eventKey]!;
-      }
+      mergedEventMetadata[mappedEventKey] = ownDefinition(nestedEventMetadata, eventKey);
+      const override = ownDefinition(mountEventNameOverrides, eventKey) || ownDefinition(nestedEventNameOverrides, eventKey);
+      if (override) mergedEventOverrides[mappedEventKey] = override;
     });
 
     Object.keys(nestedCommandNameOverrides as Record<string, string>).forEach((cmdKey) => {
@@ -119,7 +117,7 @@ export function composeMountedComponentBehavior(
 
   const commandFactory: GenericCommandFactory = (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
-    const mergedCommands: GenericCommandMap = mergeDefinitions({}, baseCommandFactory(emit, resolvedContext));
+    const mergedCommands: GenericCommandMap = mergeDefinitions(Object.create(null), baseCommandFactory(emit, resolvedContext));
 
     mountedEntities.forEach(({ name: mountName, kind, component: nested, pk }) => {
       if (!nested || (kind !== 'list' && kind !== 'map')) {

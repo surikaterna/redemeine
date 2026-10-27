@@ -45,3 +45,8 @@ empty lists, duplicates, and invalid JavaScript declaration types reject before 
 All nonempty field names, including `__proto__`, remain supported as own identity predicates;
 empty-string and zero identity values remain valid. Caller arrays remain mutable and built
 dispatch/query snapshots stay detached (redemeine-skpd C1/C2).
+
+Treat declared command and event names such as `__proto__`, `constructor`, and `toString`
+as ordinary own registration keys through component composition, compilation, creators,
+metadata, and exact replay. This does not relax host/bridge reserved-method collision rules
+(redemeine-skpd, PR160 r4386301131).

@@ -5,11 +5,10 @@ import { primaryKey } from './primaryKey';
 const targetsByDefinitions = new WeakMap<object, EntityCommandTargets>();
 
 export function definitionTargets(definitions: object): EntityCommandTargets {
-    let targets = targetsByDefinitions.get(definitions);
-    if (!targets) {
-        targets = {};
-        targetsByDefinitions.set(definitions, targets);
-    }
+    const existing = targetsByDefinitions.get(definitions);
+    if (existing) return existing;
+    const targets: EntityCommandTargets = Object.create(null);
+    targetsByDefinitions.set(definitions, targets);
     return targets;
 }
 
@@ -36,7 +35,7 @@ export function mergeDefinitions<T>(destination: Record<string, T>, source: Reco
     const targets = definitionTargets(destination);
     const incoming = definitionTargets(source);
     for (const key of Object.keys(source)) {
-        destination[key] = source[key]!;
+        Object.defineProperty(destination, key, { value: source[key], enumerable: true, writable: true, configurable: true });
         targets[key] = incoming[key] ?? [];
     }
     return destination;

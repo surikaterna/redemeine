@@ -140,3 +140,11 @@ roles on a repeated mount. Nested data remains readonly. Flat aggregate command
 creators (for example `commandCreators.parentsChildrenRead`) remain available for
 explicit nested identities, native processing and replay. Command spelling does
 not determine ancestry; compiled structural targets do.
+
+## Declared prototype-like names
+
+Aggregate command and event registrations treat own names such as `__proto__`,
+`constructor`, and `toString` as ordinary local keys, including component composition
+and explicit wire-name overrides. Use computed object keys (`{ ['__proto__']: handler }`)
+to declare an own `__proto__` property rather than JavaScript's prototype-setting literal form.
+This is separate from host/bridge reserved-method collision checks, which remain enforced.

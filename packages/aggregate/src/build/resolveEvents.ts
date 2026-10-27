@@ -3,6 +3,7 @@ import type { AggregateMixinLike } from '../types/aggregate';
 import type { CompiledEventRegistration } from '../applyEvent';
 import { definitionTargets, snapshotTargetChain } from './entityCommandTarget';
 import { eventDefinitionKeys, mergeEventDefinitions } from './eventDefinitions';
+import { ownDefinition } from './definitionMap';
 
 export type ResolvedEvents<TMeta> = {
     allEvents: Record<string, Function>;
@@ -24,11 +25,9 @@ export function resolveEvents<S, TMeta>(
 ): ResolvedEvents<TMeta> {
     const allEvents = mixins.reduce<Record<string, Function>>(
         (acc, m) => mergeEventDefinitions(acc, m.projectors || m.events || {}),
-        mergeEventDefinitions({}, snapshot.events)
+        mergeEventDefinitions(Object.create(null), snapshot.events)
     );
-    const allEventMetadata: Record<string, TMeta | undefined> = {
-        ...(snapshot.eventMetadata as Record<string, TMeta | undefined>)
-    };
+    const allEventMetadata: Record<string, TMeta | undefined> = Object.assign(Object.create(null), snapshot.eventMetadata);
     mixins.forEach((m) => {
         Object.assign(allEventMetadata, (m.eventMetadata || {}) as Record<string, TMeta | undefined>);
     });
@@ -58,7 +57,7 @@ function compileDeclaredEvents(
         for (const key of eventDefinitionKeys(events)) {
             const chain = targets[key] ?? [];
             if (Boolean(chain.length) !== scoped) continue;
-            const type = overrides[key] || namingStrategy.event(aggregateName, key);
+            const type = ownDefinition(overrides, key) || namingStrategy.event(aggregateName, key);
             dispatch.set(type, { projector: events[key]!, targets: snapshotTargetChain(chain) });
         }
     }

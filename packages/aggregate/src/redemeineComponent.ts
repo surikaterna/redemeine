@@ -122,7 +122,7 @@ export function composeCommandFactories(
 ): GenericCommandFactory {
   return (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
-    const merged: GenericCommandMap = {};
+    const merged: GenericCommandMap = Object.create(null);
     for (const factory of factories) {
       Object.assign(merged, factory(emit, resolvedContext));
     }
@@ -195,8 +195,8 @@ export function createComponentBehaviorState<S>() {
 
   return {
     addEvents(next: Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>) {
-      const normalizedEvents: Record<string, AnyFunction> = {};
-      const normalizedMeta: Record<string, Record<string, unknown> | undefined> = {};
+      const normalizedEvents: Record<string, AnyFunction> = Object.create(null);
+      const normalizedMeta: Record<string, Record<string, unknown> | undefined> = Object.create(null);
 
       Object.keys(next).forEach((key) => {
         const definition = next[key];

@@ -13,6 +13,7 @@ import { resolveEvents } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
 import { mergeDefinitions } from './build/entityCommandTarget';
 import { compileCommands } from './build/compileCommands';
+import { ownDefinition } from './build/definitionMap';
 import { validateListMounts } from './build/primaryKey';
 import { attachCommandMetadata } from './commandMetadata';
 import type { AggregateStateView } from './types/aggregateState';
@@ -68,7 +69,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     // 3. Build commands
     const emit = createEmitProxy(aggregateName, allEventOverrides, namingStrategy);
     const context = () => ({ selectors: allSelectors, commands: createCommandContextProxy<Record<string, unknown>>() });
-    const allCommandsMap = mergeDefinitions({}, commandsFactory(emit, context()));
+    const allCommandsMap = mergeDefinitions(Object.create(null), commandsFactory(emit, context()));
     for (const mixin of mixins) {
         const commands = mixin.commandFactory?.(emit, context()) ?? {};
         mergeDefinitions(allCommandsMap, commands);
@@ -122,12 +123,12 @@ function buildEventMetadata<TMeta>(
     namingStrategy: NamingStrategy
 ): Record<string, { meta?: TMeta }> {
     const keys = Array.from(new Set([...Object.keys(allEvents), ...Object.keys(allEventMetadata)]));
-    return keys.reduce((acc, eventKey) => {
-        const resolvedEventType = allEventOverrides[eventKey] || namingStrategy.event(aggregateName, eventKey);
-        const meta = allEventMetadata[eventKey];
+    return keys.reduce<Record<string, { meta?: TMeta }>>((acc, eventKey) => {
+        const resolvedEventType = ownDefinition(allEventOverrides, eventKey) || namingStrategy.event(aggregateName, eventKey);
+        const meta = ownDefinition(allEventMetadata, eventKey);
         acc[resolvedEventType] = meta !== undefined ? { meta } : {};
         return acc;
-    }, {} as Record<string, { meta?: TMeta }>);
+    }, Object.create(null));
 }
 
 function buildTypeMap(
@@ -137,8 +138,8 @@ function buildTypeMap(
     namingStrategy: NamingStrategy,
     kind: 'command' | 'event'
 ): Record<string, string> {
-    return Object.keys(map).reduce((acc, key) => {
-        acc[key] = overrides[key] || namingStrategy[kind](aggregateName, key);
+    return Object.keys(map).reduce<Record<string, string>>((acc, key) => {
+        acc[key] = ownDefinition(overrides, key) || namingStrategy[kind](aggregateName, key);
         return acc;
-    }, {} as Record<string, string>);
+    }, Object.create(null));
 }

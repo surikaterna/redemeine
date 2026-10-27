@@ -8,6 +8,7 @@ import { createCommandContextProxy } from '../proxies/createCommandContextProxy'
 import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
 import { commandTarget, definitionTargets, snapshotTargetChain } from './entityCommandTarget';
 import { eventDefinitionKeys } from './eventDefinitions';
+import { ownDefinition } from './definitionMap';
 
 export type MountResult<TMeta> = {
     mounts: Record<string, MountedStructureMetadata>;
@@ -66,9 +67,9 @@ export function mountEntities<S, TMeta>(
                 allEvents[eventKey] = entityEvents[eventKey];
                 eventDefinitionTargets[eventKey] = chain;
             }
-            allEventMetadata[`${entityPath}:${eventKey}`] = entityEventMetadata[eventKey];
-            const mountEventOverride = (mountEventNameOverrides as Record<string, string>)[eventKey];
-            const entityEventOverride = (entityEventNameOverrides as Record<string, string>)[eventKey];
+            allEventMetadata[`${entityPath}:${eventKey}`] = ownDefinition(entityEventMetadata, eventKey);
+            const mountEventOverride = ownDefinition(mountEventNameOverrides, eventKey);
+            const entityEventOverride = ownDefinition<string>(entityEventNameOverrides, eventKey);
             const scopedEventType = mountEventOverride
                 || (entityEventOverride
                     ? composeMountedType(entityPath, entityEventOverride, 'event')
@@ -98,8 +99,8 @@ export function mountEntities<S, TMeta>(
             allCommandsMap[mappedCmd] = entityCommands[cmdProp]!;
             mounts[mountName]!.commandTargets![mappedCmd] = [target, ...(nestedTargets[cmdProp] ?? [])];
             definitionTargets(allCommandsMap)[mappedCmd] = mounts[mountName]!.commandTargets![mappedCmd]!;
-            const mountCommandOverride = (mountCommandNameOverrides as Record<string, string>)[cmdProp];
-            const entityCommandOverride = (entityCommandNameOverrides as Record<string, string>)[cmdProp];
+            const mountCommandOverride = ownDefinition(mountCommandNameOverrides, cmdProp);
+            const entityCommandOverride = ownDefinition<string>(entityCommandNameOverrides, cmdProp);
             if (mountCommandOverride) {
                 allCommandOverrides[mappedCmd] = mountCommandOverride;
             } else if (entityCommandOverride) {
