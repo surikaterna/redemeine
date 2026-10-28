@@ -1,0 +1,24 @@
+import { createAggregate } from '@redemeine/aggregate';
+
+export const host = createAggregate('typedPrototype', { qty: 0 }).events({
+  ['__proto__'](draft: { qty: number }, event: { payload: { qty: number } }) { draft.qty = event.payload.qty; },
+  ['constructor'](draft: { qty: number }, event: { payload: { qty: number } }) { draft.qty = event.payload.qty; },
+  ['toString'](draft: { qty: number }, event: { payload: { qty: number } }) { draft.qty = event.payload.qty; },
+  ['hasOwnProperty'](draft: { qty: number }, event: { payload: { qty: number } }) { draft.qty = event.payload.qty; }
+}).commands(emit => ({
+  ['__proto__']: (_state: { readonly qty: number }, qty: number) => emit.__proto__({ qty }),
+  ['constructor']: (_state: { readonly qty: number }, qty: number) => emit.constructor({ qty }),
+  ['toString']: (_state: { readonly qty: number }, qty: number) => emit.toString({ qty }),
+  ['hasOwnProperty']: (_state: { readonly qty: number }, qty: number) => emit.hasOwnProperty({ qty })
+})).build();
+
+host.commandCreators.__proto__(3);
+host.commandCreators.constructor(3);
+host.commandCreators.toString(3);
+host.commandCreators.hasOwnProperty(3);
+// @ts-expect-error Declared arguments remain checked, not inherited Object methods.
+host.commandCreators.constructor('wrong');
+// @ts-expect-error Own toString retains its declared required argument.
+host.commandCreators.toString();
+const noAny: 0 extends (1 & Parameters<typeof host.commandCreators.__proto__>[0]) ? true : false = false;
+void noAny;

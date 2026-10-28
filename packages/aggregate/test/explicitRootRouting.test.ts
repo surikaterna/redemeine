@@ -85,17 +85,17 @@ test.each(['apply', 'applyToDraft'] as const)('%s gives an exact mounted full ty
   expect(result.identifiers[0].count).toBe(10);
 });
 
-test('generated targeted names retain legacy core-handler and entity traversal behavior', () => {
+test('targeted naming formats a declared root wire without changing its ownership', () => {
   const state = initial();
   const aggregate = createAggregate('payment_attempt', state).naming(namingStrategies.targeted).events({
     identifierRegistered(draft) { draft.count++; },
     registered(draft) { draft.count += 100; }
   }).build();
   expect(aggregate.types.events.identifierRegistered).toBe(wire);
-  expect(aggregate.apply(state, event).identifiers[0].count).toBe(100);
+  expect(aggregate.apply(state, event)).toEqual({ ...initial(), count: 1 });
   aggregate.applyToDraft(state, event);
-  expect(state.identifiers[0].count).toBe(100);
-  expect(state.count).toBe(0);
+  expect(state.identifiers[0].count).toBe(0);
+  expect(state.count).toBe(1);
 });
 
 test.each(['apply', 'applyToDraft'] as const)('%s rejects asynchronous explicit root projectors', (method) => {
@@ -117,16 +117,17 @@ test.each(['apply', 'applyToDraft'] as const)('%s retains mounted map routing an
   expect(result.identifiers.same.count).toBe(10);
 });
 
-test('exported positional apply calls retain legacy nested targeted routing without the new map', () => {
+test('low-level apply calls use explicit paired registrations, never inferred nested paths', () => {
   const state = { identifiers: [{ id: 'same', details: { same: { count: 0 } } }] };
   const nested = { type: 'payment_attempt.identifier.detail.registered.event', payload };
   const projectors = { registered: (draft: { count: number }) => { draft.count++; } };
-  const types = { 'payment_attempt.registered.event': projectors.registered };
+  const dispatch = new Map([['payment_attempt.registered.event', { projector: projectors.registered, targets: [] }]]);
   const unmatched = jest.fn();
-  const result = applyEvent('payment_attempt', state, nested, projectors, {}, types, {}, {}, unmatched);
-  expect(result.identifiers[0].details.same.count).toBe(1);
+  const result = applyEvent('payment_attempt', state, nested, dispatch, unmatched);
+  expect(result).toEqual(state);
   expect(state.identifiers[0].details.same.count).toBe(0);
-  applyEventToDraft('payment_attempt', state, nested, projectors, {}, types, {}, {}, unmatched);
-  expect(state.identifiers[0].details.same.count).toBe(1);
-  expect(unmatched).not.toHaveBeenCalled();
+  applyEventToDraft('payment_attempt', state, nested, dispatch, unmatched);
+  expect(state.identifiers[0].details.same.count).toBe(0);
+  expect(unmatched).toHaveBeenCalledTimes(2);
+  expect(unmatched).toHaveBeenLastCalledWith(nested.type, 'payment_attempt');
 });

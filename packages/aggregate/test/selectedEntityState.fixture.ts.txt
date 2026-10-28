@@ -1,0 +1,31 @@
+import { createAggregate, createEntity, createMixin } from 'MODULE';
+import type { Event } from '@redemeine/kernel';
+
+type Row = { id: string; qty: number; date: Date; map: Map<string, { qty: number }> };
+export const entity = createEntity<Row, 'row'>('row')
+  .events({ changed(state, event: Event<{ id: string; qty: number }>) {
+    state.qty = event.payload.qty;
+    state.date.setTime(123);
+    state.map.set('a', { qty: 1 });
+  } })
+  .selectors({ qty: (state: { readonly qty: number }) => state.qty })
+  .commands((emit, context) => ({ set(state, payload: { id: string; qty: number }) {
+    const qty: number = context.selectors.qty(state);
+    // @ts-expect-error Commands receive readonly entity state.
+    state.qty = 1;
+    // @ts-expect-error Native values retain command-view readonly contracts.
+    state.date.setTime(1);
+    // @ts-expect-error Native collections cannot mutate selected state.
+    state.map.set('a', { qty: 1 });
+    // @ts-expect-error The handler does not receive the aggregate root.
+    state.rows;
+    return emit.changed({ id: payload.id, qty: qty + payload.qty });
+  } })).build();
+export const host = createAggregate('store', { rows: [] as Row[] }).entityList('rows', entity).build();
+host.commandCreators.rowsSet({ id: 'a', qty: 1 });
+
+const source = createMixin<{ rows: Row[]; qty: number }>().entityList('rows', entity).build();
+const flattened = { ...source, mountedEntities: [] };
+export const flattenedHost = createAggregate('store', { rows: [] as Row[], qty: 99 }).mixins(flattened).build();
+flattenedHost.commandCreators.rowsSet({ id: 'a', qty: 1 });
+flattenedHost.apply(flattenedHost.initialState, { type: 'store.rows_changed.event', payload: { id: 'a', qty: 3 } });

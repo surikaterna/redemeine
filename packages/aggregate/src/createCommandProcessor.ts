@@ -4,6 +4,8 @@ import type { AggregateStateView } from './types/aggregateState';
 import type { GenericCommandMap } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
+import { selectedCommandState } from './build/entityCommandTarget';
+import type { EntityCommandTargets } from './types/entityMount';
 
 type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
     events: Event[];
@@ -13,7 +15,7 @@ type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = 
 type CommandHandler<S> = (
     state: AggregateStateView<S>,
     payload: unknown
-) => Event | Event[] | { events: Event[]; intents?: Record<string, unknown> };
+) => Event<unknown, string> | Event<unknown, string>[] | { events: Event<unknown, string>[]; intents?: Record<string, unknown> };
 
 export function normalizeCommandExecutionResult<TPlugins extends PluginExtensions = {}>(
     result: Event | CommandResult<Event, TPlugins>
@@ -88,7 +90,8 @@ export function createCommandProcessor<S>(
     allCommandsMap: GenericCommandMap,
     allCommandOverrides: Record<string, string>,
     commandHandlerByType?: Record<string, CommandHandler<S>>,
-    contract?: Contract
+    contract?: Contract,
+    targetsByType: EntityCommandTargets = {}
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
@@ -115,7 +118,8 @@ export function createCommandProcessor<S>(
             }
         }
         
-        const readonlyState = commandStateView(state);
+        const selectedState = selectedCommandState(state, payload, targetsByType[commandType] ?? []);
+        const readonlyState = commandStateView(selectedState);
         const result = handler(readonlyState as AggregateStateView<S>, payload);
         const normalized = normalizeCommandExecutionResult(result as Event | CommandResult<Event, PluginExtensions>);
         const linkedEvents = normalized.events.map(event => withCommandLink(event, commandWithId));

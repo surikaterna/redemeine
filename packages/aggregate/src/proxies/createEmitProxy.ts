@@ -1,4 +1,5 @@
 import { createEvent, type NamingStrategy } from '@redemeine/kernel';
+import { ownDefinition } from '../build/definitionMap';
 
 export function createEmitProxy(
     aggregateName: string,
@@ -10,7 +11,7 @@ export function createEmitProxy(
     return new Proxy({} as any, {
         get: (_, prop: string) => {
             const scopedKey = path ? `${path}:${prop}` : prop;
-            const type = allEventOverrides[scopedKey] || allEventOverrides[prop] || namingStrategy.event(aggregateName, prop, path);
+            const type = ownDefinition(allEventOverrides, scopedKey) || ownDefinition(allEventOverrides, prop) || namingStrategy.event(aggregateName, prop, path);
             return createEvent(type);
         }
     });

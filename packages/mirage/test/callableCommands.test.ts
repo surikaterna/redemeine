@@ -9,8 +9,8 @@ test('scoped callable properties do not override shorthand while packed objects 
   const consumer = { exerciseCallableCommands: () => ({ received: [], packed: [] }) };
   new Function('require', 'exports', compiled.outputText)(require, consumer);
   expect(consumer.exerciseCallableCommands()).toEqual({
-    received: [{ rowId: 'one', rowsId: 'one', id: 'one' }],
-    packed: [{ rowId: 'one', count: 3 }]
+    received: [{ id: 'one' }],
+    packed: [{ id: 'one', count: 3 }]
   });
 });
 
@@ -21,7 +21,7 @@ test('public ESM exports preserve scoped callable and packed payloads', () => {
     `${compiled.outputText}\nconsole.log(JSON.stringify(exerciseCallableCommands()));`
   ], { cwd: join(__dirname, '..'), encoding: 'utf8' });
   expect(JSON.parse(output)).toEqual({
-    received: [{ rowId: 'one', rowsId: 'one', id: 'one' }],
-    packed: [{ rowId: 'one', count: 3 }]
+    received: [{ id: 'one' }],
+    packed: [{ id: 'one', count: 3 }]
   });
 });

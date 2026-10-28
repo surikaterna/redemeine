@@ -7,6 +7,8 @@ import { makeMapProxy } from './mapProxy';
 import { invokeSelector } from './selectorProxy';
 import { invoke, readProperty, type MirageBuilder } from '../runtimeDefinition';
 import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
+import { assertSelectedIdentity } from './selectedIdentity';
+import { selectedCommandContext } from './selectedCommandContext';
 
 export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
   const context: ProxyContext = {
@@ -27,8 +29,14 @@ export function createProxyContext(core: ProxyCore, mounts: Record<string, Mount
 function commandArguments(definition: unknown, args: unknown[], context: InvocationContext): unknown[] {
   if (typeof definition !== 'function' && typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
   const first = args[0];
-  if (first !== null && typeof first === 'object') return [{ ...context.idsPayload, ...first }];
-  if (Object.keys(context.idsPayload).length) return [{ ...context.idsPayload, ...(first === undefined ? {} : { value: first }) }];
+  if (context.selectedMount && first !== undefined && (first === null || typeof first !== 'object' || Array.isArray(first))) {
+    throw new TypeError('Scoped shorthand command payload must be an identity object or undefined');
+  }
+  if (first !== null && typeof first === 'object') {
+    assertSelectedIdentity(first, context);
+    return [{ ...context.idsPayload, ...first }];
+  }
+  if (Object.keys(context.idsPayload).length) return [{ ...context.idsPayload }];
   return [first];
 }
 
@@ -36,14 +44,13 @@ function invokeByPath(path: string[], args: unknown[], context: InvocationContex
   const name = ctx.toCommandName(path);
   const creator = readProperty(ctx.builder.commandCreators, name);
   if (!Object.hasOwn(ctx.builder.commandCreators, name) || typeof creator !== 'function') throw new Error(`Command ${name} not found on commandCreators.`);
+  context = selectedCommandContext(name, context, ctx.builder);
   const definition = readProperty(readProperty(readProperty(ctx.builder, 'pure'), 'commandProcessors'), name);
   const command: unknown = invoke(creator, ctx.builder.commandCreators, commandArguments(definition, args, context));
   if (!command || typeof command !== 'object' || typeof readProperty(command, 'type') !== 'string' || !('payload' in command)) {
     throw new TypeError('Command creator returned an invalid envelope');
   }
-  if (context.entityPk && command.payload && typeof command.payload === 'object') {
-    command.payload = { ...command.payload, __entityPk: context.entityPk };
-  }
+  assertSelectedIdentity(command.payload, context, true);
   // Creator output was checked above; payload remains unknown until the domain validates it.
   const result = ctx.core.dispatch(command as Command<unknown, string>);
   if (!context.resolveState) return result;

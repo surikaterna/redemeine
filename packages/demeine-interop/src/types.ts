@@ -8,7 +8,7 @@ export type CommandCreators = Record<string, (...args: never) => BridgeCommand>;
 
 export interface BridgeableAggregate<S extends object, C extends CommandCreators> {
   initialState: S;
-  aggregateType?: string;
+  aggregateType: string;
   process(state: S, command: Command<unknown, string>): Event[];
   prepareCommand?(state: S, command: Command<unknown, string>): BridgeCommand;
   aggregatePlugins?: readonly { commandEnvelope?: unknown; eventEnvelope?: unknown }[];

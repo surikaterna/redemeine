@@ -5,6 +5,7 @@ import type { ProxyContext } from './proxyContext';
 import { selectFromListEntity, makeEntityMirageProxy } from './collectionProxy';
 import { invoke, readProperty } from '../runtimeDefinition';
 import { readonlyArrayMember, readonlyTraps } from './readonlyView';
+import { isSelectedDescendant, selectedCommandMount } from './selectedCommandContext';
 
 function resolveMount(role: unknown, explicit: unknown, ctx: ProxyContext): [string, MountMetadata] {
   const mounts = Object.entries(ctx.mounts);
@@ -25,16 +26,22 @@ function bindEntity(entity: unknown, role: unknown, mountName: unknown, context:
   const selected = selectFromListEntity(name, mount, entity);
   const entityProxy = makeEntityMirageProxy(mount.statePath, [mount.commandPrefix], { ...selected,
     idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
-  return role === mount.entity ? entityProxy : restrictRole(entityProxy, role, mount);
+  return role === mount.entity ? entityProxy : restrictRole(entityProxy, role, mount, ctx);
 }
 
-function restrictRole(value: unknown, role: unknown, mount: MountMetadata): unknown {
+function restrictRole(value: unknown, role: unknown, mount: MountMetadata, ctx: ProxyContext): unknown {
   if (!value || typeof value !== 'object') throw new Error('Invalid entity proxy');
   if (!role || typeof role !== 'object' || !mount.getRoleCommandNames) throw new Error('Missing selector role metadata');
   const allowed = new Set(mount.getRoleCommandNames(role));
-  if ([...allowed].some(name => !mount.commandNames?.includes(name))) throw new Error('Selector role has commands absent from its explicit mount');
+  for (const name of allowed) {
+    const command = ctx.toCommandName([mount.commandPrefix, name]);
+    if (!Object.hasOwn(ctx.builder.commandCreators, command)) throw new Error('Selector role has commands absent from its explicit mount');
+    if (isSelectedDescendant(command, ctx.builder, mount)) { allowed.delete(name); continue; }
+    selectedCommandMount(command, ctx.builder, mount);
+  }
   return new Proxy(value, { ...readonlyTraps, get(target, property) {
-    if (typeof property === 'string' && mount.commandNames?.includes(property) && !allowed.has(property)) return undefined;
+    if (typeof property === 'string' && !allowed.has(property)
+      && Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName([mount.commandPrefix, property]))) return undefined;
     return Reflect.get(target, property);
   } });
 }

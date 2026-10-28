@@ -9,6 +9,8 @@ import type { AllKeys } from './AllKeys';
 import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './aggregateTyping';
 import type {
     AggregateEntityRegistry,
+    MountRegistry,
+    ReplaceCommandMap,
     MountedStructureMetadata,
     MountedEntityPackage,
     EntityMountOverrides,
@@ -63,8 +65,9 @@ export type CompatibleMixins<S, T extends AggregateMixinLike<any, any, any>[]> =
     [K in keyof T]: S extends ExtractMixinState<T[K]> ? T[K] : never;
 };
 
+// Type-only ancestry survives outer registrations; flat creator arguments are unchanged.
 export type MapEntityCommands<Name extends string, CPayloads> = {
-    [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K]
+    [K in keyof CPayloads as K extends string ? `${Name}${Capitalize<K>}` : never]: CPayloads[K] & { readonly __nestedCommand: true }
 };
 
 // SAFETY: `any` in EntityPackage type params required for structural pattern matching via infer
@@ -118,14 +121,14 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         entityComponent: T,
         options?: EntityListOptions<PK>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryListEntry<T, PK> }, TMeta, TPlugins, PS, EP, SM>;
+    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, EntityRegistryListEntry<T, PK>>, TMeta, TPlugins, PS, EP, SM>;
 
     entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
         name: EN,
         entityComponent: T,
         options?: EntityMapOptions<Keys>,
         mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, M & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer CPayloads, any> ? CPayloads : {}>, E, EOverrides, Sel, Registry & { [K in EN]: EntityRegistryMapEntry<T, Keys> }, TMeta, TPlugins, PS, EP, SM>;
+    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'map'; pk: 'key'; mountName: EN }, EntityRegistryMapEntry<T, Keys>>, TMeta, TPlugins, PS, EP, SM>;
 
     valueObject: <VOName extends string>(
         name: VOName,

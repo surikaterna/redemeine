@@ -89,8 +89,9 @@ test('malformed services and ambiguous/reserved generated names fail fast', () =
     expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands } })).toThrow('collision');
   }
   const built = definition();
-  expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands: { delete: 'x.remove.command' } } })).toThrow('collision');
-  expect(() => Reflect.apply(createDemeineBridge, undefined, [built, { AggregateBase: Aggregate }])).toThrow('AggregateBase is no longer supported');
+  const reserved = createAggregate('counter', { count: 0 }).commands(() => ({ delete: () => [] })).build();
+  expect(() => createDemeineBridge({ ...reserved, types: { ...reserved.types, commands: { delete: 'x.remove.command' } } })).toThrow('collision');
+  expect(() => createDemeineBridge({ ...built, types: { ...built.types, commands: { missing: 'x.missing.command' } } })).toThrow('Missing command creator: missing');
 });
 
 test.each(['then', '_sink', '_process', '_apply', '_rehydrate', 'delete', 'getUncommittedEventsAsync', '_commandQueue'])(

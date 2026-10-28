@@ -552,7 +552,7 @@ describe('Mirage tests', () => {
             .events({ verified: (identifier) => { identifier.verified = true; } })
             .commands((emit) => ({
                 verify: {
-                    pack: (identifierKey: string) => ({ identifierKey }),
+                    pack: (key: string) => ({ key }),
                     handler: (identifier, payload) => emit.verified(payload)
                 }
             }))

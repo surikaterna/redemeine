@@ -1,4 +1,4 @@
-import { createAggregate, createMixin, namingStrategies } from '@redemeine/aggregate';
+import { createAggregate, createEntity, createMixin, namingStrategies } from '@redemeine/aggregate';
 import { Event } from '@redemeine/kernel';
 
 // --- Setup Mock Data ---
@@ -155,7 +155,7 @@ it('should throw an error when processing an unknown command', () => {
     expect(cmd2.type).toBe('test.change_status.command');
   });
 
-  it('should support entities, nested entities, arrays and targeted events', () => {
+  it('supports nested arrays through declared mounts with explicit targeted wire names', () => {
     interface SubOrderLine { id: number; metadata: string; }
     interface OrderLine { id: string; qty: number; subitems: SubOrderLine[]; }
     interface OrderState { id: string; line: OrderLine[]; }
@@ -164,23 +164,26 @@ it('should throw an error when processing an unknown command', () => {
       line: [{ id: '123', qty: 1, subitems: [{ id: 456, metadata: 'old' }] }]
     };
 
+    const subitem = createEntity<SubOrderLine, 'subitem'>('subitem').events({
+      updated: (state, event: Event<{ metadata: string }>) => { state.metadata = event.payload.metadata; }
+    }).build();
+    const line = createEntity<OrderLine, 'line'>('line').events({
+      updated: (state, event: Event<{ qty: number }>) => { state.qty = event.payload.qty; }
+    }).entityList('subitems', subitem).build();
     const aggregate = createAggregate<OrderState, 'order'>('order', orderState)
       .naming(namingStrategies.targeted)
       .entities<{ line: OrderLine; subitems: SubOrderLine }>()
-      .events({
-        updated: (state: any, event: Event<{ qty?: number; metadata?: string }>) => {
-          if (event.payload.qty !== undefined) state.qty = event.payload.qty;
-          if (event.payload.metadata !== undefined) state.metadata = event.payload.metadata;
-        }
+      .entityList('line', line, {}, {
+        eventNameOverrides: { updated: 'order.line.updated.event', subitemsUpdated: 'order.line.subitems.updated.event' }
       })
       .selectors({}).commands((emit, ctx) => ({
         // Targeting line
         updateLine: (state, payload: { id: string; qty: number }) => 
-          emit.lineUpdated({ lineId: payload.id, qty: payload.qty }),
+          emit.lineUpdated({ id: payload.id, qty: payload.qty }),
 
         // Targeting subitems
         updateSubLine: (state, payload: { lineId: string; subId: number; metadata: string }) =>
-          emit.lineSubitemsUpdated({ lineId: payload.lineId, subitemsId: payload.subId, metadata: payload.metadata })
+          emit.lineSubitemsUpdated({ lineId: payload.lineId, id: payload.subId, metadata: payload.metadata })
       }))
       .build();
 
@@ -188,11 +191,11 @@ it('should throw an error when processing an unknown command', () => {
     // Using process to invoke command
     const events1 = aggregate.process(orderState, { type: 'order.update_line.command', payload: { id: '123', qty: 5 } });
     expect(events1[0].type).toBe('order.line.updated.event');
-    expect(events1[0].payload).toEqual({ lineId: '123', qty: 5 });
+    expect(events1[0].payload).toEqual({ id: '123', qty: 5 });
 
     const events2 = aggregate.process(orderState, { type: 'order.update_sub_line.command', payload: { lineId: '123', subId: 456, metadata: 'new' } });
     expect(events2[0].type).toBe('order.line.subitems.updated.event');
-    expect(events2[0].payload).toEqual({ lineId: '123', subitemsId: 456, metadata: 'new' });
+    expect(events2[0].payload).toEqual({ lineId: '123', id: 456, metadata: 'new' });
     const newState1 = aggregate.apply(orderState, events1[0]);
     expect(newState1.line[0].qty).toBe(5);
     expect(orderState.line[0].qty).toBe(1); // Immutability

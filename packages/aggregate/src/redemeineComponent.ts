@@ -122,7 +122,7 @@ export function composeCommandFactories(
 ): GenericCommandFactory {
   return (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
-    const merged: GenericCommandMap = {};
+    const merged: GenericCommandMap = Object.create(null);
     for (const factory of factories) {
       Object.assign(merged, factory(emit, resolvedContext));
     }
@@ -143,9 +143,23 @@ export function resolveCommandHandler<S>(
   ) => Event<unknown, string> | CommandResult<Event<unknown, string>, {}>;
 }
 
+// A non-enumerable carrier keeps the original receiver across ESM/CJS compilation.
+// This is internal registration data, not a public command-definition method.
+const packReceiver = Symbol.for('@redemeine/aggregate/compiled-pack-receiver/v1');
+type WithPackReceiver = { readonly [packReceiver]: object };
+
+export function getPackReceiver(definition: object): object {
+  return Object.hasOwn(definition, packReceiver)
+    ? (definition as WithPackReceiver)[packReceiver] : definition;
+}
+
+export function attachPackReceiver(snapshot: object, definition: object): void {
+  Object.defineProperty(snapshot, packReceiver, { value: getPackReceiver(definition) });
+}
+
 export function createCommandPayload<S>(commandDef: RedemeineCommandDefinition<S>, args: unknown[]): unknown {
   if (typeof commandDef !== 'function' && 'pack' in commandDef && typeof commandDef.pack === 'function') {
-    return commandDef.pack(...args);
+    return Reflect.apply(commandDef.pack, getPackReceiver(commandDef), args);
   }
   return args[0];
 }
@@ -181,8 +195,8 @@ export function createComponentBehaviorState<S>() {
 
   return {
     addEvents(next: Record<string, RedemeineEventDefinition<S, Record<string, unknown>>>) {
-      const normalizedEvents: Record<string, AnyFunction> = {};
-      const normalizedMeta: Record<string, Record<string, unknown> | undefined> = {};
+      const normalizedEvents: Record<string, AnyFunction> = Object.create(null);
+      const normalizedMeta: Record<string, Record<string, unknown> | undefined> = Object.create(null);
 
       Object.keys(next).forEach((key) => {
         const definition = next[key];

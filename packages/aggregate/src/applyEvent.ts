@@ -1,166 +1,37 @@
 import { produce, type Draft } from 'immer';
 import type { Event } from '@redemeine/kernel';
-import type { AnyFunction } from './redemeineComponent';
 import type { UnmatchedEventHandler } from './createAggregate';
-import { toCamelCase, singular, parseTargetedEventPath, formatFlatEventType } from './naming';
+import type { EntityCommandTarget } from './types/entityMount';
 import { assertSynchronous } from './plugins/descriptor';
+import { selectedCommandState } from './build/entityCommandTarget';
 
-/**
- * Resolves an event path segment to the matching entity container in the draft.
- * Tries multiple naming conventions (snake_case, camelCase, with/without plural 's')
- * because the event type path may use a different convention than the state property.
- * 
- * TODO: Pass entity mount metadata from the aggregate builder to eliminate guesswork.
- */
-function resolveEntityContainer(
-    part: string,
-    draft: Record<string, unknown>
-): { container: unknown; kind: 'array' | 'map' } | undefined {
-    const camelPart = toCamelCase(part);
-    const candidates = Array.from(new Set([
-        part,
-        part + 's',
-        camelPart,
-        camelPart + 's'
-    ]));
+/** An exact wire registration owns its projector and target chain together. */
+export type CompiledEventRegistration = {
+    readonly projector: Function;
+    readonly targets: readonly EntityCommandTarget[];
+};
 
-    for (const candidate of candidates) {
-        const value = draft[candidate];
-        if (Array.isArray(value)) return { container: value, kind: 'array' };
-        if (value && typeof value === 'object' && !Array.isArray(value)) return { container: value, kind: 'map' };
-    }
-
-    return undefined;
-}
-
-/**
- * Resolves the entity identifier from the event payload for a given path segment.
- * Tries multiple naming conventions for the ID/key fields.
- *
- * TODO: Pass entity mount metadata to use the known primary key field directly.
- */
-function resolveEntityIdentifier(
-    part: string,
-    payload: Record<string, unknown>
-): { id?: unknown; mapKey?: unknown; compositePk?: Record<string, unknown> | undefined } {
-    const camelPart = toCamelCase(part);
-    const singularPart = singular(part);
-    const singularCamelPart = singular(camelPart);
-
-    const id = payload[part + 'Id'] ||
-        payload[singularPart + 'Id'] ||
-        payload[camelPart + 'Id'] ||
-        payload[singularCamelPart + 'Id'] ||
-        payload.id;
-
-    const mapKey = payload[part + 'Key'] ||
-        payload[singularPart + 'Key'] ||
-        payload[camelPart + 'Key'] ||
-        payload[singularCamelPart + 'Key'] ||
-        payload.key;
-
-    const compositePk = payload.__entityPk && typeof payload.__entityPk === 'object'
-        ? payload.__entityPk as Record<string, unknown>
-        : undefined;
-
-    return { id, mapKey, compositePk };
-}
-
-function resolveTargetDraft<S>(draft: Draft<S>, event: Event, parts: string[]) {
-    // SAFETY: `any` required — targetDraft narrows to sub-entities during path traversal, losing the Draft<S> type
-    let targetDraft: any = draft;
-    for (const part of parts) {
-        const resolved = resolveEntityContainer(part, targetDraft as Record<string, unknown>);
-        if (!resolved) continue;
-
-        const { id, mapKey, compositePk } = event.payload
-            ? resolveEntityIdentifier(part, event.payload as Record<string, unknown>)
-            : { id: undefined, mapKey: undefined, compositePk: undefined };
-
-        if (resolved.kind === 'array') {
-            const arr = resolved.container as Record<string, unknown>[];
-            const found = arr.find((item) => {
-                if (id !== undefined) return String((item as Record<string, unknown>).id) === String(id);
-                if (compositePk) return Object.keys(compositePk).every(k => String((item as Record<string, unknown>)?.[k]) === String(compositePk[k]));
-                return false;
-            });
-            if (found) targetDraft = found;
-        } else if (resolved.kind === 'map' && mapKey !== undefined) {
-            const found = (resolved.container as Record<string, unknown>)[mapKey as string];
-            if (found) targetDraft = found;
-        }
-    }
-    return targetDraft;
-}
+export type CompiledEventDispatch = ReadonlyMap<string, CompiledEventRegistration>;
 
 /** Applies to a caller-owned mutable draft without wrapping it in Immer. */
 export function applyEventToDraft<S>(
     aggregateName: string,
     draft: Draft<S>,
     event: Event,
-    allEvents: Record<string, AnyFunction>,
-    allEventOverrides: Record<string, string>,
-    projectorByEventType: Record<string, AnyFunction> = {},
-    scopedProjectorByEventType: Record<string, AnyFunction> = {},
-    scopedEventProjectors: Record<string, AnyFunction> = {},
-    unmatchedEventHandler?: UnmatchedEventHandler,
-    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>
-): void {
-    const directScopedProjector = scopedProjectorByEventType[event.type];
-    const explicitRootProjector = explicitRootProjectorByEventType?.get(event.type);
-    if (!directScopedProjector && explicitRootProjector) {
-        assertSynchronous(explicitRootProjector(draft, event));
-        return;
-    }
-    const parsedPath = parseTargetedEventPath(event.type, aggregateName);
-    const targetDraft = resolveTargetDraft(draft, event, parsedPath?.parts ?? []);
-    const eventName = parsedPath?.coreEventName ?? event.type;
-
-    if (directScopedProjector) {
-        assertSynchronous(directScopedProjector(targetDraft, event));
-        return;
-    }
-
-    const directProjector = projectorByEventType[eventName] || projectorByEventType[event.type];
-    if (directProjector) {
-        assertSynchronous(directProjector(targetDraft, event));
-        return;
-    }
-
-    applyFallbackProjector(aggregateName, targetDraft, event, eventName, parsedPath?.parts.join('.'), allEvents, allEventOverrides, scopedEventProjectors, unmatchedEventHandler);
-}
-
-function applyFallbackProjector(
-    aggregateName: string,
-    targetDraft: unknown,
-    event: Event,
-    eventName: string,
-    scopedPath: string | undefined,
-    allEvents: Record<string, AnyFunction>,
-    allEventOverrides: Record<string, string>,
-    scopedEventProjectors: Record<string, AnyFunction>,
+    dispatch: CompiledEventDispatch,
     unmatchedEventHandler?: UnmatchedEventHandler
 ): void {
-    const eventKey = Object.keys(allEvents).find(key => {
-        const fallbackType = formatFlatEventType(aggregateName, key);
-        const scopedOverride = scopedPath ? allEventOverrides[`${scopedPath}:${key}`] : undefined;
-        const unscopedOverride = allEventOverrides[key];
-        const resolvedType = scopedOverride || unscopedOverride || fallbackType;
-        return resolvedType === eventName || resolvedType === event.type;
-    });
-
-    if (eventKey) {
-        const scopedProjector = scopedPath ? scopedEventProjectors[`${scopedPath}:${eventKey}`] : undefined;
-        const projector = scopedProjector || allEvents[eventKey];
-        if (projector) {
-            assertSynchronous(projector(targetDraft, event));
-        }
+    const registration = dispatch.get(event.type);
+    if (registration) {
+        const { projector, targets } = registration;
+        const target = selectedCommandState(draft, event.payload, targets);
+        assertSynchronous(projector(target, event));
+        return;
+    }
+    if (unmatchedEventHandler) {
+        assertSynchronous(unmatchedEventHandler(event.type, aggregateName));
     } else {
-        if (unmatchedEventHandler) {
-            assertSynchronous(unmatchedEventHandler(event.type, aggregateName));
-        } else {
-            console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
-        }
+        console.warn(`[redemeine] Event "${event.type}" has no projector on aggregate "${aggregateName}" — event was silently dropped`);
     }
 }
 
@@ -168,15 +39,10 @@ export function applyEvent<S>(
     aggregateName: string,
     state: S,
     event: Event,
-    allEvents: Record<string, AnyFunction>,
-    allEventOverrides: Record<string, string>,
-    projectorByEventType: Record<string, AnyFunction> = {},
-    scopedProjectorByEventType: Record<string, AnyFunction> = {},
-    scopedEventProjectors: Record<string, AnyFunction> = {},
-    unmatchedEventHandler?: UnmatchedEventHandler,
-    explicitRootProjectorByEventType?: ReadonlyMap<string, Function>
+    dispatch: CompiledEventDispatch,
+    unmatchedEventHandler?: UnmatchedEventHandler
 ): S {
     return produce(state, (draft: Draft<S>) => {
-        applyEventToDraft(aggregateName, draft, event, allEvents, allEventOverrides, projectorByEventType, scopedProjectorByEventType, scopedEventProjectors, unmatchedEventHandler, explicitRootProjectorByEventType);
+        applyEventToDraft(aggregateName, draft, event, dispatch, unmatchedEventHandler);
     }) as S;
 }

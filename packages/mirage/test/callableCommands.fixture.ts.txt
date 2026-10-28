@@ -2,7 +2,7 @@ import { createAggregate, createEntity, type AggregateStateView } from '@redemei
 import { createMirage } from '@redemeine/mirage';
 
 type Row = { id: string; count: number };
-type Payload = { rowId?: string; count?: number };
+type Payload = { id?: string; count?: number };
 
 export function exerciseCallableCommands() {
   const received: unknown[] = [];
@@ -14,7 +14,7 @@ export function exerciseCallableCommands() {
       return [];
     }, { pack: () => { throw new Error('Callable pack must be ignored'); } }),
     packed: {
-      pack: (rowId: string, count: number) => ({ rowId, count }),
+      pack: (id: string, count: number) => ({ id, count }),
       handler: (_state: AggregateStateView<Row>, payload: Payload) => { packed.push(payload); return []; }
     }
   })).build();

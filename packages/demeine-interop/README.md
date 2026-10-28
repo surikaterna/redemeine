@@ -18,9 +18,17 @@ const counter = new Counter(commandSink, eventHandler, commandHandler);
 await counter.add(2); // Same arguments/pack behavior as definition.commandCreators.add
 ```
 
-Options are optional and contain only `envelope`. The removed `AggregateBase`
-option is rejected at runtime rather than silently ignored. Instances do **not**
-inherit from Demeine; compatibility with its Factory/Repository is structural.
+Options are optional and contain only `envelope`. Every bridge definition requires
+an explicit, nonempty string `aggregateType`; built aggregates already provide it.
+Invalid or missing types fail at bridge creation, before lifecycle inspection.
+Types are never inferred from command wires, instance getters, or names.
+
+### Demeine host adaptation retained
+
+Instances do **not** inherit from Demeine; compatibility with its Factory/Repository
+is structural. The constructor service order, custom handlers, queued PromiseLike
+commands, empty payload normalization, class-own-data conversion, deletion, sink
+context and processing order remain supported host adaptations.
 The owned lifecycle supplies UUID v4 (`uuid@9.0.1`), the command queue,
 promised-command support, errors, replay, snapshots, versions and pending events.
 Initial state is cloned per

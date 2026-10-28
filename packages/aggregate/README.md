@@ -74,3 +74,12 @@ getters are trusted code, not sandboxed: closures can still mutate external data
 Methods operating on ordinary own data see the detached, frozen context rather
 than live state. Date setters can mutate that detached Date, never the original.
 Command/event envelope snapshots retain their stricter plain-data-only policy.
+
+## Resolved command provenance
+
+Use `commandMetadata(built, localName)` to inspect compiled command registration and deeply readonly structural `targets`. Root commands have an empty target chain. The query follows composition and mounting without parsing wire names; copied target arrays do not freeze caller-owned primary-key arrays. The former `built.pure.commandTargets` property has been removed. `pure.commandProcessors` and `pure.eventProjectors` remain available.
+
+Command creators exist only for declared flat keys, including mounted keys such as `built.commandCreators.rowsRead(payload)`. Undeclared paths such as `built.commandCreators.rows(id).read()` are not supported. Mount wire overrides use `eventNameOverrides` and `commandNameOverrides`; the former mount-option aliases `eventOverrides` and `commandOverrides` have been removed. Definition-level override fields remain unchanged.
+Scoped Mirage shorthand accepts a single object payload (including optional objects), or no payload/`undefined`. Scalars, arrays, functions, `null`, and unions containing these unsupported payloads are not callable in a selected scope and throw before command hooks if invoked from JavaScript. Root shorthand remains unchanged. Use an explicit `{ pack, handler }` command for scalar business arguments; its final packed payload must still contain the selected identity object.
+
+Repeated explicit list/map registrations keep the latest selection descriptor while surviving commands retain their own type-only registration identity and packed prefix length. Selected calls omit only canonical leaf PK fields injected by that command's registration (`key` for maps). Former singular/plural aliases and synthetic `id` fields are ordinary business data, not identity inputs. Partially specified generic command descriptors without registration information retain descriptor-based selection; they do not establish command-specific provenance.

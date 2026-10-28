@@ -1,5 +1,24 @@
 import type { EntityPackage } from '../createEntity';
 
+export type CommandRegistration = { kind: 'list' | 'map'; pk: string | readonly string[]; mountName: string };
+export type RegisteredCommands<C, R extends CommandRegistration> = {
+    [K in keyof C]: Omit<C[K], '__registration'> & { readonly __registration: R };
+};
+export type ReplaceCommandMap<Previous, Next> = { [K in keyof Previous as K extends keyof Next ? never : K]: Previous[K] } & Next;
+type CommandsOfEntry<E> = [E] extends [never] ? {} : E extends { entity: { commands: infer C } } ? C : {};
+type ReplaceCommands<T, C> = Omit<T, 'commands'> & { commands: C };
+/** Selection follows the last mount; surviving commands retain their own registration. */
+export type MountRegistry<Registry, Name extends string, T extends { commands: object }, R extends CommandRegistration, Entry> =
+    { [K in keyof Registry as K extends Name ? never : K]: Registry[K] } & { [K in Name]: Omit<Entry, 'entity'> & {
+        entity: ReplaceCommands<T, Omit<CommandsOfEntry<K extends keyof Registry ? Registry[K] : never>, keyof T['commands']> & RegisteredCommands<T['commands'], R>>;
+    } };
+
+export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[] };
+export type EntityCommandTargets = Record<string, readonly EntityCommandTarget[]>;
+export type ResolvedCommandTargets = Readonly<Record<string, readonly (Readonly<Omit<EntityCommandTarget, 'statePath'>> & {
+    readonly statePath: readonly string[];
+})[]>>;
+
 /** Canonical definition — all other usages must reference this. */
 export type MountedStructureKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
@@ -13,6 +32,8 @@ export type MountedStructureMetadata = {
     entity?: object | undefined;
     commandNames?: readonly string[] | undefined;
     getRoleCommandNames?: ((role: object) => readonly string[]) | undefined;
+    commandTargets?: EntityCommandTargets | undefined;
+    eventTargets?: EntityCommandTargets | undefined;
 };
 
 export type MountedEntityPackage = {
@@ -27,10 +48,6 @@ export type MountedEntityPackage = {
 export type EntityMountOverrides = {
     eventNameOverrides?: Record<string, string>;
     commandNameOverrides?: Record<string, string>;
-    /** @deprecated Use eventNameOverrides */
-    eventOverrides?: Record<string, string>;
-    /** @deprecated Use commandNameOverrides */
-    commandOverrides?: Record<string, string>;
 };
 
 export type EntityListOptions<PK extends string | readonly string[] = string | readonly string[]> = {

@@ -5,6 +5,7 @@ import { createComponentBehaviorState, bindFluentMethods } from './redemeineComp
 import { bindContext } from './bindContext';
 import { defaultNamingStrategy } from './naming';
 import { buildAggregate } from './buildAggregate';
+import { primaryKey } from './build/primaryKey';
 import type { PluginRegistration } from './plugins/attachmentTypes';
 import type {
     AggregateBuilder,
@@ -108,7 +109,7 @@ export function createAggregate<S, Name extends string, TMeta extends Record<str
         },
 
         entityList: <const PK extends string | readonly string[]>(name: string, entityComponent: EntityPackage<unknown, string>, options?: EntityListOptions<PK>, mountOverrides?: EntityMountOverrides) => {
-            _entityPackages.push({ name, kind: 'list', component: entityComponent, mountOverrides, pk: options?.pk || 'id' });
+            _entityPackages.push({ name, kind: 'list', component: entityComponent, mountOverrides, pk: primaryKey(options?.pk) });
             return builder;
         },
 

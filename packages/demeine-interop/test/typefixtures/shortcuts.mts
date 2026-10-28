@@ -1,7 +1,7 @@
 import { createAggregate } from '@redemeine/aggregate';
 import {
   createDemeineBridge, type BridgeArguments, type BridgeConstructor,
-  type BridgeableAggregate, type BridgeCommand, type CommandSink,
+  type BridgeableAggregate, type BridgeCommand, type CommandSink, type BridgeOptions,
 } from '@redemeine/demeine-interop';
 
 const definition = createAggregate('payment', { count: 0 })
@@ -22,6 +22,14 @@ function hostBridge<S extends object, C extends Record<string, (...args: never) 
   return createDemeineBridge(built);
 }
 const Base = hostBridge(definition);
+const { aggregateType: _aggregateType, ...untypedDefinition } = definition;
+// @ts-expect-error structural bridge definitions require an explicit aggregateType
+createDemeineBridge(untypedDefinition);
+// @ts-expect-error aggregateType must be a string
+createDemeineBridge({ ...definition, aggregateType: 1 });
+// @ts-expect-error removed lifecycle option is not part of the public contract
+createDemeineBridge(definition, { AggregateBase: class {} });
+export type NoBaseOption = Assert<Equal<'AggregateBase' extends keyof BridgeOptions<{}> ? true : false, false>>;
 class Payment extends Base {
   confirmWithReason(reason: string) { return this.confirm({ reason }); }
 }
