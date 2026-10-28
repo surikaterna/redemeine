@@ -1,5 +1,65 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.5
+
+### Major Changes
+
+- [#160](https://github.com/surikaterna/redemeine/pull/160) [`d5e5ec9`](https://github.com/surikaterna/redemeine/commit/d5e5ec9212759ea5e9a86fc196d06596334c05c6) Thanks [@spralle](https://github.com/spralle)! - Retire obsolete public execution APIs (redemeine-skpd, bounded surface and event-dispatch slices).
+
+  Use `commandMetadata(built, localName).targets` instead of `pure.commandTargets`.
+  Command creators now expose only declared flat keys, including mounted names;
+  undeclared nested creator paths no longer fabricate command envelopes or inject IDs.
+  Use `eventNameOverrides` and `commandNameOverrides` for mount options instead of
+  `eventOverrides` and `commandOverrides`. Definition-level override fields, raw
+  command processors/event projectors, and current plugin and host contracts remain.
+
+  Remove the public `parseTargetedEventPath` export and all inferred event routing.
+  Events now match exact compiled wire registrations pairing a projector with its target
+  chain. Undeclared targeted-looking wires and synthetic unscoped entity-only wires use
+  `onUnmatchedEvent` or the default warning; invalid targets on known mounted wires throw
+  before projection. Declared dotted root names stay root-owned, scoped wires beat root
+  wire collisions, and the last actual scoped assignment wins as a complete pair.
+  Compiled event target chains snapshot their steps, state paths, and primary-key arrays;
+  later mutations of public reflection or caller-owned options cannot redirect replay.
+  The low-level source `applyEvent` / `applyEventToDraft` helpers now take one explicit
+  `CompiledEventDispatch` map instead of positional projector/override/target tables;
+  built aggregate `apply(state, event)` and `applyToDraft(draft, event)` are unchanged.
+  Naming formatters (including the targeted naming preset) remain. Mounted commands and
+  events now route only by declared leaf primary-key fields (map `key`) and exact
+  registered ancestor command prefixes plus capitalized primary-key fields. Missing
+  canonical fields and ambiguous layouts fail; inferred aliases and the private
+  `__entityPk` payload protocol are retired. Former aliases and authored `__entityPk`
+  are ordinary business data. Mirage injects only canonical leaf fields and preserves
+  business arguments. Consumers, including host/bridge handlers, must carry canonical
+  identities into emitted events; client/server adoption is outside this slice.
+
+  Bridge definitions now require an explicit nonempty string `aggregateType` and
+  reject invalid types before lifecycle inspection. Command-wire inference and the
+  `unknown` fallback are removed. The obsolete `AggregateBase` option and its named
+  migration guard are retired; it is not a public option or an implementation hook.
+  Demeine constructor services and the owned host-adaptation lifecycle remain supported.
+
+  Validate every list PK declaration, including behaviorless/composed mounts, at registration
+  and build capture. Only an absent (`undefined`) declaration defaults to `id`; empty names,
+  empty lists, duplicates, and invalid JavaScript declaration types reject before execution.
+  All nonempty field names, including `__proto__`, remain supported as own identity predicates;
+  empty-string and zero identity values remain valid. Caller arrays remain mutable and built
+  dispatch/query snapshots stay detached (redemeine-skpd C1/C2).
+
+  Treat declared command and event names such as `__proto__`, `constructor`, and `toString`
+  as ordinary own registration keys through component composition, compilation, creators,
+  metadata, and exact replay. This does not relax host/bridge reserved-method collision rules
+  (redemeine-skpd, PR160 r4386301131).
+
+### Patch Changes
+
+- [#155](https://github.com/surikaterna/redemeine/pull/155) [`9d0a140`](https://github.com/surikaterna/redemeine/commit/9d0a140a67d14e8df0ed013bc62f6e9f41183d79) Thanks [@spralle](https://github.com/spralle)! - Admit command creators with correlated rest-tuple parameters without widening generated shortcut arguments. Preserve existing legacy argument defaults and runtime forwarding. This fixes creator admission only, not arbitrary overload or higher-order generic signature preservation.
+
+- [#151](https://github.com/surikaterna/redemeine/pull/151) [`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892) Thanks [@spralle](https://github.com/spralle)! - Check bridge and authored-subclass constructor service inputs contravariantly. Reject command handlers, event handlers, and sinks that require state the aggregate does not provide, while preserving exact-state services, supported broader services, and the legacy object-state command-handler overload. Runtime behavior is unchanged; previously accepted unsupported handlers may now produce type errors.
+
+- Updated dependencies [[`db9bdf9`](https://github.com/surikaterna/redemeine/commit/db9bdf94a4358a45835dd85c7fbe3ff8ed410892)]:
+  - @redemeine/kernel@0.2.0-pre.3
+
 ## 1.0.0-pre.4
 
 ### Major Changes
