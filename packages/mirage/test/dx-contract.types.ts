@@ -3,14 +3,141 @@ import { createMirage, createDepot, dispatch, extractState, subscribe, MirageCor
 import type { Event } from '@redemeine/kernel';
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
+const StaticProof = createEntity('staticProof', { id: '' })
+  .commands(() => ({ register: { pack: (id: string, label: number) => ({ id, label }), handler: () => [] },
+    ordinary: () => [] }), { static: ['register'] }).build();
+const staticLiteral: true = null as unknown as typeof StaticProof.commands.register.__staticCommand;
+// @ts-expect-error unmarked commands must not acquire a static marker
+StaticProof.commands.ordinary.__staticCommand;
+const staticArgs: [string, number] = null as unknown as typeof StaticProof.commands.register.args;
+const ReplacedProof = createEntity('replacedProof', { id: '' })
+  .commands(() => ({ register: () => [] }), { static: ['register'] })
+  .commands(() => ({ register: () => [] })).build();
+// @ts-expect-error same-name replacement clears the previous static marker
+ReplacedProof.commands.register.__staticCommand;
+// @ts-expect-error static options only accept authored command names
+createEntity<{ id: string }, 'badStatic'>('badStatic').commands(() => ({ ordinary: () => [] }), { static: ['missing'] });
+void [staticLiteral, staticArgs];
+export const staticCollectionHost = createAggregate('staticHost', { rows: [] as { id: string }[] })
+  .entityList('rows', StaticProof).build();
+const staticLive = createMirage(staticCollectionHost, 'static');
+export const staticAliasHost = createAggregate('staticAliases', { left: [] as { id: string }[], right: [] as { id: string }[] })
+  .entityList('left', StaticProof, {}, { commandNameOverrides: { register: 'shared' } })
+  .entityList('right', StaticProof, {}, { commandNameOverrides: { register: 'shared' } }).build();
+const staticAliases = createMirage(staticAliasHost, 'aliases');
+staticAliases.left.register('id', 1);
+staticAliases.right.register('id', 1);
+// @ts-expect-error Wire aliases still require the complete authored pack tuple.
+staticAliases.left.register(1);
+staticLive.rows.register('id', 1);
+// @ts-expect-error full packed tuple includes identity on collections
+staticLive.rows.register(1);
+// @ts-expect-error packed business argument stays checked
+staticLive.rows.register('id', 'wrong');
+// @ts-expect-error ordinary commands are not collection commands
+staticLive.rows.ordinary();
+const replacedStaticHost = createAggregate('replaced', { rows: [] as { id: string }[] })
+  .entityList('rows', ReplacedProof).build();
+// @ts-expect-error an ordinary same-name command replacement removes static exposure
+createMirage(replacedStaticHost, 'replaced').rows.register();
+const staticCollision = createEntity('collisionRow', { id: '' })
+  .commands(() => ({ push: () => [] }), { static: ['push'] }).build();
+const staticCollisionHost = createAggregate('staticCollision', { rows: [] as { id: string }[] }).entityList('rows', staticCollision).build();
+// @ts-expect-error static mutator names collide even on empty collections
+createMirage(staticCollisionHost, 'collision');
+async function staticResultContract() {
+  const result = await staticLive.rows.register('id', 1);
+  const noAnyStaticResult: IsAny<typeof result> = false;
+  const noAnyStaticArgs: IsAny<Parameters<typeof staticLive.rows.register>[0]> = false;
+  const id: string | undefined = result.rows[0]?.id;
+  // @ts-expect-error static collection commands return readonly aggregate state
+  result.rows.push({ id: 'bad' });
+  // @ts-expect-error no selected entity result promised
+  result.id;
+  // @ts-expect-error no execution context in public arguments
+  staticLive.rows.register('id', 1, { isNew: true });
+  void [noAnyStaticResult, noAnyStaticArgs, id];
+}
+void staticResultContract;
+const NestedStaticChild = createEntity('nestedStaticChild', { id: '', value: 0 }).commands(() => ({
+  register: (_state, _payload: { parentsRegion: string; parentsCode: string; branchesId: string; id: string; value: number }) => [],
+  optional: (_state, _payload?: { parentsRegion: string; parentsCode: string; branchesId: string; id: string; value: number }) => [],
+  packed: { pack: (id: string, value: number) => ({ id, value }), handler: () => [] },
+  explicit: { pack: (parentsCode: string, id: string, value: number) => ({ parentsCode, id, value }), handler: () => [] },
+  ordinary: () => []
+}), { static: ['register', 'optional', 'packed', 'explicit'] }).build();
+const NestedStaticBranch = createEntity('nestedStaticBranch', { id: '', leaves: [] as { id: string; value: number }[] })
+  .entityList('leaves', NestedStaticChild).commands(() => ({ touch: () => [] })).build();
+const NestedStaticParent = createEntity('nestedStaticParent', { region: '', code: '', branches: [] as { id: string; leaves: { id: string; value: number }[] }[] })
+  .entityList('branches', NestedStaticBranch).build();
+export const nestedStaticHost = createAggregate('nestedStatics', { parents: [{ region: 'r', code: 'p', branches: [{ id: 'b', leaves: [] as { id: string; value: number }[] }] }] })
+  .entityList('parents', NestedStaticParent, { pk: ['region', 'code'] }).build();
+const nestedLeaves = createMirage(nestedStaticHost, 'nested').parents({ region: 'r', code: 'p' }).branches('b').leaves;
+nestedLeaves.register({ id: 'c', value: 1 });
+nestedLeaves.optional();
+nestedLeaves.optional(undefined);
+nestedLeaves.optional({ id: 'c', value: 1 });
+nestedLeaves.optional({ id: 'c', value: 1, parentsCode: 'p' });
+// @ts-expect-error An optional payload still requires its business fields when supplied.
+nestedLeaves.optional({ id: 'c' });
+// @ts-expect-error An optional payload still requires the leaf identity when supplied.
+nestedLeaves.optional({ value: 1 });
+// @ts-expect-error Static command context is not a caller argument.
+nestedLeaves.optional({ id: 'c', value: 1 }, { isNew: true });
+nestedLeaves.register({ id: 'c', value: 1, parentsRegion: 'r', branchesId: 'b' });
+nestedLeaves.packed('c', 1);
+nestedLeaves.explicit('p', 'c', 1);
+// @ts-expect-error Final canonical leaf identity remains required.
+nestedLeaves.register({ value: 1 });
+// @ts-expect-error Business fields are not erased with ancestor identity.
+nestedLeaves.register({ id: 'c' });
+// @ts-expect-error Full authored pack is not shortened by bound ancestors.
+nestedLeaves.explicit('c', 1);
+// @ts-expect-error No positional ancestor arguments are prepended or invented.
+nestedLeaves.packed('p', 'c', 1);
+// @ts-expect-error Ordinary commands are not collection commands.
+nestedLeaves.ordinary();
+// @ts-expect-error Collections cannot be mutated.
+nestedLeaves[0] = { id: 'c', value: 1 };
+async function nestedStaticResultContract() {
+  const result = await nestedLeaves.packed('c', 1);
+  const noAny: IsAny<typeof result> = false;
+  const noAnyArgs: IsAny<Parameters<typeof nestedLeaves.register>[0]> = false;
+  const value: number | undefined = result.parents[0]?.branches[0]?.leaves[0]?.value;
+  // @ts-expect-error Nested collection calls return aggregate, not leaf state.
+  result.id;
+  // @ts-expect-error Aggregate dispatch results stay readonly.
+  result.parents[0]!.branches.push({ id: 'x', leaves: [] });
+  void [noAny, noAnyArgs, value];
+}
+void nestedStaticResultContract;
+const nestedStaticCollision = createEntity('nestedCollision', { id: '', children: [] as { id: string }[] })
+  .entityList('children', staticCollision).build();
+const nestedCollisionHost = createAggregate('nestedCollision', { parents: [] as { id: string; children: { id: string }[] }[] })
+  .entityList('parents', nestedStaticCollision).build();
+// @ts-expect-error Nested namespaces reject static array collisions, even without parents.
+createMirage(nestedCollisionHost, 'collision');
+const StaticIdentifier = createEntity('identifier', { domain: '', authority: '', identifier: '' })
+  .commands(() => ({ register: (_state, _payload: { domain: string; authority: string; identifier: string }, _context) => [] }), { static: ['register'] }).build();
+const staticIdentifierHost = createAggregate('identifiers', { identifiers: [] as { domain: string; authority: string; identifier: string }[] })
+  .entityList('identifiers', StaticIdentifier, { pk: ['domain', 'authority'] }).build();
+const staticIdentifiers = createMirage(staticIdentifierHost, 'root');
+staticIdentifiers.identifiers.register({ domain: 'd', authority: 'a', identifier: 'value' });
+// @ts-expect-error full composite identity is required on collection calls
+staticIdentifiers.identifiers.register({ identifier: 'value' });
+// @ts-expect-error execution context is not a public argument
+staticIdentifiers.identifiers.register({ domain: 'd', authority: 'a', identifier: 'value' }, { isNew: true });
+staticIdentifiers.identifiers({ domain: 'd', authority: 'a' }).register({ identifier: 'value' });
+const decoratedStatic = staticCollectionHost.withPlugins();
+createMirage(decoratedStatic, 'decorated').rows.register('id', 1);
 type NestedParent = { id: string; children: { id: string }[] };
 const nestedChild = createEntity<{ id: string }, 'nestedChild'>('nestedChild')
   .commands(() => ({ read: (_state, _payload: { id: string }) => [] })).build();
 const nestedParent = createEntity<NestedParent, 'nestedParent'>('nestedParent').entityList('children', nestedChild)
   .commands(() => ({ touch: (_state, _payload: { id: string; note: string }) => [] })).build();
 const nestedLater = createEntity<NestedParent, 'nestedLater'>('nestedLater').build();
-export const nestedExposureHost = createAggregate('nested', { parents: [{ id: 'p', children: [{ id: 'c' }] }] })
-  .entityList('parents', nestedParent).entityList('parents', nestedLater)
+export const nestedExposureHost = createAggregate('nested', { parents: [{ id: 'p', children: [{ id: 'c' }] }], others: [] as NestedParent[] })
+  .entityList('parents', nestedParent).entityList('others', nestedLater)
   .selectors(({ bindContext }) => ({ parent: state => bindContext(state.parents[0], nestedParent, { mount: 'parents' }) })).build();
 const nestedLive = createMirage(nestedExposureHost, 'nested');
 nestedLive.parents('p').touch({ note: 'ok' });
@@ -18,7 +145,7 @@ nestedLive.parent()!.touch({ note: 'bound' });
 const noAnyNested: IsAny<typeof nestedLive.parents> = false;
 // @ts-expect-error descendant identities cannot be supplied by a selected parent
 nestedLive.parents('p').childrenRead({});
-// @ts-expect-error bound earlier roles also omit unsupported descendants
+// @ts-expect-error bound parent roles also omit unsupported descendants
 nestedLive.parent()!.childrenRead({});
 // @ts-expect-error parent business arguments remain checked, not never/any
 nestedLive.parent()!.touch({ note: 2 });

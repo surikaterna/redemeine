@@ -85,7 +85,7 @@ test('native root wire winner rejects a selected scoped local registration befor
   const root = createMixin<State>().commands(() => ({ root: () => [] })).build();
   const built = createAggregate('store', { rows: [{ id: 'a', qty: 1 }] }).mixins(mounted, root)
     .overrideCommandNames({ rowsSet: 'shared.set.command', root: 'shared.set.command' })
-    .entityList('rows', createEntity<{ id: string; qty: number }, 'empty'>('empty').build()).build();
+    .entityList('rows', row).build();
   const before = jest.fn();
   built.hooks = { onBeforeCommand: before };
   const live = createMirage(built, 'store');

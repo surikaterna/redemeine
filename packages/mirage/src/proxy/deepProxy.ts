@@ -9,6 +9,7 @@ import { invoke, readProperty, type MirageBuilder } from '../runtimeDefinition';
 import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyView';
 import { assertSelectedIdentity } from './selectedIdentity';
 import { selectedCommandContext } from './selectedCommandContext';
+import { bindAncestors } from './nestedCollection';
 
 export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
   const context: ProxyContext = {
@@ -27,6 +28,7 @@ export function createProxyContext(core: ProxyCore, mounts: Record<string, Mount
 }
 
 function commandArguments(definition: unknown, args: unknown[], context: InvocationContext): unknown[] {
+  if (context.collectionCall) return args;
   if (typeof definition !== 'function' && typeof readProperty(definition, 'pack') === 'function') return [...context.packPrefix, ...args];
   const first = args[0];
   if (context.selectedMount && first !== undefined && (first === null || typeof first !== 'object' || Array.isArray(first))) {
@@ -51,8 +53,9 @@ function invokeByPath(path: string[], args: unknown[], context: InvocationContex
     throw new TypeError('Command creator returned an invalid envelope');
   }
   assertSelectedIdentity(command.payload, context, true);
+  const boundCommand = context.ancestors?.length ? { ...command, payload: bindAncestors(command.payload, context) } : command;
   // Creator output was checked above; payload remains unknown until the domain validates it.
-  const result = ctx.core.dispatch(command as Command<unknown, string>);
+  const result = ctx.core.dispatch(boundCommand as Command<unknown, string>);
   if (!context.resolveState) return result;
   const state = () => readonlyValue(context.resolveState!());
   return result instanceof Promise ? result.then(state) : state();

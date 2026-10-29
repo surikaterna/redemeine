@@ -13,7 +13,7 @@ export type MountRegistry<Registry, Name extends string, T extends { commands: o
         entity: ReplaceCommands<T, Omit<CommandsOfEntry<K extends keyof Registry ? Registry[K] : never>, keyof T['commands']> & RegisteredCommands<T['commands'], R>>;
     } };
 
-export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[] };
+export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[]; readonly initialState?: object };
 export type EntityCommandTargets = Record<string, readonly EntityCommandTarget[]>;
 export type ResolvedCommandTargets = Readonly<Record<string, readonly (Readonly<Omit<EntityCommandTarget, 'statePath'>> & {
     readonly statePath: readonly string[];

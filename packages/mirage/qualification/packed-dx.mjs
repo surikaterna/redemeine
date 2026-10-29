@@ -46,10 +46,44 @@ for (const compiler of ['typescript', 'typescript7']) {
   await run(`${compiler}-emit`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json',
     '--noEmit', 'false', '--declaration', '--emitDeclarationOnly', '--outDir', `emitted-${compiler}`]);
   await writeFile(resolve(output, 'downstream.mts'), `
-import { selectedCommandHost, nestedExposureHost } from './emitted-${compiler}/consumer.mjs';
+import { selectedCommandHost, nestedExposureHost, staticCollectionHost, staticAliasHost, nestedStaticHost } from './emitted-${compiler}/consumer.mjs';
 import { createMirage } from '@redemeine/mirage';
 import { scopedHost } from './emitted-${compiler}/scoped.mjs';
 const scoped = createMirage(scopedHost, 'scoped').rows('');
+const leaves = createMirage(nestedStaticHost, 'nested').parents({ region: 'r', code: 'p' }).branches('b').leaves;
+leaves.register({ id: 'c', value: 1 });
+leaves.optional();
+leaves.optional(undefined);
+leaves.optional({ id: 'c', value: 1 });
+// @ts-expect-error Optional payloads retain required business fields downstream.
+leaves.optional({ id: 'c' });
+// @ts-expect-error Optional payloads retain final identity downstream.
+leaves.optional({ value: 1 });
+// @ts-expect-error Context remains hidden downstream.
+leaves.optional({ id: 'c', value: 1 }, { isNew: true });
+leaves.packed('c', 1);
+leaves.explicit('p', 'c', 1);
+const noAnyNestedStatic: 0 extends (1 & Parameters<typeof leaves.register>[0]) ? true : false = false;
+// @ts-expect-error Final canonical identity stays required downstream.
+leaves.register({ value: 1 });
+// @ts-expect-error Explicit parent pack arguments are not removed downstream.
+leaves.explicit('c', 1);
+// @ts-expect-error Ordinary commands remain absent downstream.
+leaves.ordinary();
+void noAnyNestedStatic;
+const staticRows = createMirage(staticCollectionHost, 'static').rows;
+staticRows.register('id', 1);
+const aliases = createMirage(staticAliasHost, 'aliases');
+aliases.left.register('id', 1);
+aliases.right.register('id', 1);
+// @ts-expect-error Wire aliases preserve full public arguments downstream.
+aliases.left.register(1);
+const noAnyStatic: 0 extends (1 & Parameters<typeof staticRows.register>[0]) ? true : false = false;
+// @ts-expect-error full tuple retains its identity after declaration emission
+staticRows.register(1);
+// @ts-expect-error ordinary commands remain absent downstream
+staticRows.ordinary();
+void noAnyStatic;
 const parentLive = createMirage(nestedExposureHost, 'nested');
 parentLive.parents('p').touch({ note: 'ok' });
 parentLive.parent()!.touch({ note: 'ok' });
@@ -91,6 +125,8 @@ void noAny;
 }
 await writeFile(resolve(output, 'runtime.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/runtime.mjs')));
 await run('runtime', process.execPath, ['--unhandled-rejections=strict', 'runtime.mjs']);
+await writeFile(resolve(output, 'collection-static-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/collection-static-commands.mjs')));
+await run('collection-static-commands', process.execPath, ['--unhandled-rejections=strict', 'collection-static-commands.mjs']);
 await writeFile(resolve(output, 'selected-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/selected-commands.mjs')));
 await run('selected-commands', process.execPath, ['--unhandled-rejections=strict', 'selected-commands.mjs']);
 await writeFile(resolve(output, 'cache-identity.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/cache-identity.mjs')));

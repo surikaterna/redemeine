@@ -142,12 +142,12 @@ test('flattened scoped provenance and overrides survive without mount replay and
   }
 });
 
-test('last actual repeated wire assignment replaces both projector and list/map target', () => {
+test('last shared wire assignment replaces both projector and list/map target at distinct mounts', () => {
   const first = createEntity<Row, 'first'>('first').events({ changed(draft) { draft.qty += 1; } }).build();
   const last = createEntity<Row, 'last'>('last').events({ changed(draft) { draft.qty += 10; } }).build();
-  const state = { left: { a: { code: 'a', qty: 1 } }, right: [{ code: 'a', qty: 2 }] };
+  const state = { earlier: [{ code: 'a', qty: 0 }], left: { a: { code: 'a', qty: 1 } }, right: [{ code: 'a', qty: 2 }] };
   const overrides = { eventNameOverrides: { changed: wire } };
-  const host = createAggregate('store', state).entityList('left', first, { pk: 'code' }, overrides)
+  const host = createAggregate('store', state).entityList('earlier', first, { pk: 'code' }, overrides)
     .entityList('right', first, { pk: 'code' }, overrides).entityMap('left', last, {}, overrides).build();
   const expected = { ...state, left: { a: { code: 'a', qty: 11 } } };
   expect(host.apply(state, { type: wire, payload: { key: 'a' } })).toEqual(expected);
@@ -158,13 +158,13 @@ test('last actual repeated wire assignment replaces both projector and list/map 
 });
 
 test.each(['flattened', 'nested'] as const)('%s scoped wire collisions use assignment order rather than first key insertion', kind => {
-  const first = createEntity<Row, 'first'>('first').events({ changed(draft) { draft.qty += 1; } }).build();
   const last = createEntity<Row, 'last'>('last').events({ changed(draft) { draft.qty += 10; } }).build();
+  const first = createEntity<Row, 'first'>('first').events({ changed(draft) { draft.qty += 1; } }).build();
   const local = { id: 'p', left: [{ code: 'a', qty: 1 }], right: [{ code: 'a', qty: 2 }] };
   const overrides = { eventNameOverrides: { changed: 'shared.event' } };
-  const source = createMixin<typeof local>().entityList('left', first, { pk: 'code' }, overrides)
+  const source = createMixin<typeof local>().entityList('left', last, { pk: 'code' }, overrides)
     .entityList('right', first, { pk: 'code' }, overrides).entityList('left', last, { pk: 'code' }, overrides).build();
-  const parent = createEntity<typeof local, 'parent'>('parent').entityList('left', first, { pk: 'code' }, overrides)
+  const parent = createEntity<typeof local, 'parent'>('parent').entityList('left', last, { pk: 'code' }, overrides)
     .entityList('right', first, { pk: 'code' }, overrides).entityList('left', last, { pk: 'code' }, overrides).build();
   const state = { ...local, parents: [structuredClone(local)] };
   const base = createAggregate('store', state);

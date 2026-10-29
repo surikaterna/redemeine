@@ -6,9 +6,10 @@ import type { GenericCommandMap } from '../redemeineComponent';
 import { createEmitProxy } from '../proxies/createEmitProxy';
 import { createCommandContextProxy } from '../proxies/createCommandContextProxy';
 import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
-import { commandTarget, definitionTargets, snapshotTargetChain } from './entityCommandTarget';
+import { commandTarget, definitionTargets, snapshotTargetChain, recordCommandName } from './entityCommandTarget';
 import { eventDefinitionKeys } from './eventDefinitions';
 import { ownDefinition } from './definitionMap';
+import { commandModes } from '../entityCommandLifecycle';
 
 export type MountResult<TMeta> = {
     mounts: Record<string, MountedStructureMetadata>;
@@ -47,7 +48,7 @@ export function mountEntities<S, TMeta>(
         const previous = mounts[mountName];
         mounts[mountName] = { kind, commandPrefix: mountName, statePath: [mountName], pk, knownKeys, entity,
             commandTargets: { ...previous?.commandTargets }, eventTargets: { ...previous?.eventTargets } };
-        const target = commandTarget(mounts[mountName]!);
+        const target = commandTarget(mounts[mountName]!, entity?.initialState);
 
         if (!entity || kind === 'valueObject') return;
 
@@ -96,7 +97,9 @@ export function mountEntities<S, TMeta>(
 
         Object.keys(entityCommands).forEach(cmdProp => {
             const mappedCmd = mountName + cmdProp.charAt(0).toUpperCase() + cmdProp.slice(1);
+            recordCommandName(allCommandsMap, mappedCmd, entityCommands, cmdProp, mountName);
             allCommandsMap[mappedCmd] = entityCommands[cmdProp]!;
+            commandModes(allCommandsMap)[mappedCmd] = commandModes(entityCommands)[cmdProp] ?? false;
             mounts[mountName]!.commandTargets![mappedCmd] = [target, ...(nestedTargets[cmdProp] ?? [])];
             definitionTargets(allCommandsMap)[mappedCmd] = mounts[mountName]!.commandTargets![mappedCmd]!;
             const mountCommandOverride = ownDefinition(mountCommandNameOverrides, cmdProp);

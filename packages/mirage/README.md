@@ -61,6 +61,42 @@ operations return `undefined` when no item matches. A retained proxy re-resolves
 its key against the latest state and throws if its entity has been removed.
 Scoped commands return readonly entity state, not root state.
 
+Root list collections also expose commands explicitly marked by the entity's
+`.commands(factory, { static: ['register'] })` option (with an entity initial-state
+template). Call `registry.identifiers.register({ domain, authority, identifier })`
+or supply the **full** authored pack tuple, including identity. For an Identifier,
+`domain` + `authority` are the composite primary key; `identifier` is its value.
+These calls use Aggregate's shared lifecycle runtime: a missing entity is inserted
+only when an emitted event is applied; no-event calls do not insert anything.
+They return readonly **aggregate** dispatch state, possibly asynchronously, not a
+promised entity. Selected calls keep their existing injected-identity/entity-result
+contract. No command name is magic; unmarked commands, maps,
+and selector-bound lists gain no collection commands. Exposed static names must
+not collide with array members/mutators, `length`, `first`, protocols, or numeric
+indices; Mirage rejects collisions even when the collection is empty.
+
+Nested list collections under selected list parents expose the same explicit static
+commands: `live.parents('p').identifiers.register(childId, value)` for an authored
+`pack(childId, value)`. The full authored pack tuple is passed unchanged; a pack
+that explicitly requires a parent argument still requires it. After the creator
+runs, Mirage injects bound ancestor identity using Aggregate's canonical qualified
+fields (`commandPrefix + Capitalize(pkField)`, such as `parentsId`). Shorthand
+payloads may omit those bound fields; explicit conflicting qualifiers reject before
+the command handler. Composite keys and multiple list ancestors are supported.
+Final leaf identity remains required. Navigation never inserts anything, missing
+ancestors always reject (even no-event commands), and no ancestors are auto-created.
+Nested calls return readonly aggregate dispatch state, not the selected parent or
+leaf. Descendant commands gain no flattened aliases on parent proxies.
+
+Different entity definitions cannot occupy the same mount point; reusing the same
+definition is allowed. Different authored command names that flatten to the same
+compiled name (for example `rows.register` and `rows.Register`) are rejected, not
+treated as aliases. Shared **wire names** are legal: both collection calls dispatch
+through Aggregate's existing wire-winning registration, which can execute a command
+mounted elsewhere rather than the originating collection's command. Developers are
+responsible for compatible payloads/pack arguments and any discriminator such as
+customer versus supplier; Mirage does not infer routing from those fields.
+
 Command forms retain their authored business arguments. For a shorthand handler
 `set(state, payload: { id: string; qty: number })`, call
 `order.lines('line-1').set({ qty: 3 })`; object definitions with `{ handler, meta }`
@@ -72,7 +108,7 @@ Selected primary keys (all composite fields in declared order, or a map key) are
 injected. Conflicting caller identity is rejected, not used to retarget a command.
 Flat Aggregate creators and bridge methods still require their full identity
 arguments. The same scoped contract applies to indexing, iteration and explicitly
-bound selectors; ordinary nested readonly data gains no new navigation API.
+bound selectors; non-entity nested readonly data gains no new navigation API.
 
 For entity maps, select a key first: `order.entries.VAT.verify()`. There is no
 `order.entries.verify()` command without a selected entity. Missing keys return

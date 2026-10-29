@@ -14,8 +14,8 @@ for (const api of [esm, createRequire(import.meta.url)('@redemeine/aggregate')])
     const later = api.createEntity('later').commands(() => ({ other: () => [] })).build();
     for (const earlier of [false, true]) {
       const row = { id: 'p', qty: 0, children: childKind === 'entityList' ? [{ id: 'c', qty: 10 }] : { c: { qty: 10 } } };
-      const base = api.createAggregate('store', { parents: [row] }).entityList('parents', parent);
-      const builder = (earlier ? base.entityList('parents', later) : base)
+      const base = api.createAggregate('store', { parents: [row], others: [structuredClone(row)] }).entityList('parents', parent);
+      const builder = (earlier ? base.entityList('others', later) : base)
         .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.parents[0], parent, { mount: 'parents' }) }));
       const original = builder.build();
       const inherited = api.createAggregate('inherited', original.initialState).extends(builder).build();

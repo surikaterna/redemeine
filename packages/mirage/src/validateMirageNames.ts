@@ -1,4 +1,7 @@
 import type { MirageBuilder } from './runtimeDefinition';
+import { isStaticListCommand } from './proxy/collectionProxy';
+import type { MountMetadata } from './mirage.types';
+import { readProperty } from './runtimeDefinition';
 
 const protocols = new Set(['then', 'toJSON', 'toString', 'valueOf', 'inspect']);
 
@@ -15,6 +18,27 @@ function validateEntityNames(name: string, entries: unknown[], commands: readonl
   }
 }
 
+function validateMounts(builder: MirageBuilder, mounts: Record<string, MountMetadata>, states: unknown[], prefix: string[] = []): void {
+  for (const [name, mount] of Object.entries(mounts)) {
+    const commandPrefix = [...prefix, mount.commandPrefix].map((part, index) => index ? part.charAt(0).toUpperCase() + part.slice(1) : part).join('');
+    for (const command of mount.commandNames ?? []) {
+      const localName = `${commandPrefix}${command.charAt(0).toUpperCase()}${command.slice(1)}`;
+      if (isStaticListCommand(builder, localName, mount, prefix.length + 1)
+        && (command in Array.prototype || command === 'first' || protocols.has(command) || (command.trim() !== '' && !Number.isNaN(Number(command))))) {
+        throw new Error(`Mirage list static collision: ${[...prefix, name, command].join('.')}`);
+      }
+    }
+    const entries = states.flatMap(state => {
+      const collection = readProperty(state, name);
+      return mount.kind === 'list' && Array.isArray(collection) ? collection
+        : mount.kind === 'map' && collection && typeof collection === 'object' ? Object.values(collection) : [];
+    });
+    validateEntityNames(name, entries, mount.commandNames ?? []);
+    const nested = readProperty(mount.entity, 'mounts') as Record<string, MountMetadata> | undefined;
+    if (nested) validateMounts(builder, nested, entries, [...prefix, mount.commandPrefix]);
+  }
+}
+
 export function validateMirageNames(builder: MirageBuilder, state: unknown): void {
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new TypeError('Mirage root state must be a domain record');
   const stateKeys = state && typeof state === 'object' ? Object.keys(state) : [];
@@ -26,10 +50,5 @@ export function validateMirageNames(builder: MirageBuilder, state: unknown): voi
     if (claimed.has(name)) throw new Error(`Mirage namespace collision: ${name}`);
     claimed.add(name);
   }
-  for (const [name, mount] of Object.entries(builder.mounts ?? {})) {
-    const collection = state && typeof state === 'object' ? Reflect.get(state, name) : undefined;
-    const entries: unknown[] = mount.kind === 'list' && Array.isArray(collection) ? collection
-      : mount.kind === 'map' && collection && typeof collection === 'object' ? Object.values(collection) : [];
-    validateEntityNames(name, entries, mount.commandNames ?? []);
-  }
+  validateMounts(builder, builder.mounts ?? {}, [state]);
 }

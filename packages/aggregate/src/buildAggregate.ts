@@ -48,7 +48,8 @@ export type BuildAggregateInput<S, TMeta> = {
  */
 export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: BuildAggregateInput<S, TMeta>) {
     const { aggregateName, initialState, snapshot, commandsFactory, mixins, entityPackages, namingStrategy, hooks, plugins, unmatchedEventHandler, contract } = input;
-    validateListMounts(entityPackages);
+    validateListMounts([...entityPackages, ...mixins.flatMap(mixin =>
+        Object.entries(mixin.mounts ?? {}).map(([name, mount]) => ({ ...mount, name })))]);
     for (const mixin of mixins) validateListMounts(Object.values(mixin.mounts ?? {}));
 
     // 1. Resolve events from mixins
@@ -91,7 +92,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     const domain = {
         aggregateType: aggregateName,
         initialState: initialState as AggregateStateView<S>,
-        process: createCommandProcessor<S>(aggregateName, compiled.snapshot, allCommandOverrides, compiled.handlers, contract, compiled.targetsByType),
+        process: createCommandProcessor<S>(aggregateName, compiled.snapshot, allCommandOverrides, compiled.handlers, contract, compiled.targetsByType, compiled.staticByType),
         apply: (state: AggregateStateView<S>, event: Event): AggregateStateView<S> => applyEvent(aggregateName, state, event, dispatch, unmatchedEventHandler),
         applyToDraft: (draft: Draft<S>, event: Event): void => {
             applyEventToDraft<S>(aggregateName, draft, event, dispatch, unmatchedEventHandler);

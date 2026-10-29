@@ -3,6 +3,7 @@ import type { GenericCommandMap } from '../redemeineComponent';
 import { attachPackReceiver, resolveCommandHandler } from '../redemeineComponent';
 import type { CommandMetadata } from '../commandMetadata';
 import { resolvedCommandTargets } from './entityCommandTarget';
+import { commandModes } from '../entityCommandLifecycle';
 
 function snapshotDefinition(definition: GenericCommandMap[string]): GenericCommandMap[string] {
   if (typeof definition === 'function') return definition;
@@ -27,12 +28,14 @@ export function compileCommands(definitions: GenericCommandMap, overrides: Recor
   const targets = resolvedCommandTargets(definitions);
   const targetsByType: Record<string, typeof targets[string]> = Object.create(null);
   const winners = new Map<string, string>();
+  const staticByType: Record<string, boolean> = Object.create(null);
   for (const [localName, definition] of Object.entries(definitions)) {
     const owned = snapshotDefinition(definition);
     const wireType = (Object.hasOwn(overrides, localName) && overrides[localName]) || naming.command(aggregateName, localName);
     snapshot[localName] = owned;
     handlers[wireType] = resolveCommandHandler(owned);
     targetsByType[wireType] = targets[localName]!;
+    staticByType[wireType] = commandModes(definitions)[localName] ?? false;
     types[localName] = wireType;
     const meta = 'meta' in owned ? owned.meta : undefined;
     metadata[wireType] = meta !== undefined ? { meta } : {};
@@ -42,7 +45,8 @@ export function compileCommands(definitions: GenericCommandMap, overrides: Recor
   for (const [localName, wireType] of Object.entries(types)) {
     const winnerLocalName = winners.get(wireType)!;
     records.set(localName, Object.freeze({ localName, wireType, winnerLocalName,
-      isWireWinner: winnerLocalName === localName, targets: targets[localName]! }));
+      isWireWinner: winnerLocalName === localName, isStatic: commandModes(definitions)[localName] ?? false,
+      targets: targets[localName]! }));
   }
-  return { snapshot: Object.freeze(snapshot), handlers, types: Object.freeze(types), metadata, targets, targetsByType, records };
+  return { snapshot: Object.freeze(snapshot), handlers, types: Object.freeze(types), metadata, targets, targetsByType, staticByType, records };
 }

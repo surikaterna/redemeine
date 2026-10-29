@@ -2,7 +2,7 @@ import type { Event, PluginExtensions, RedemeinePlugin, Contract } from '@redeme
 import type { AggregateStateView as ReadonlyDeep } from '@redemeine/aggregate';
 import type { AggregateEntityRegistry } from '@redemeine/aggregate';
 import type { MirageContextPolymorphicBinding, MirageContextSingleBinding } from '@redemeine/aggregate';
-import type { InjectedArgCount, ListIdentity, MapIdentity, ScopedCommandArgs } from './scopedCommandTypes';
+import type { CollectionCommandArgs, InjectedArgCount, ListIdentity, MapIdentity, ScopedCommandArgs } from './scopedCommandTypes';
 
 export type MountKind = 'list' | 'map' | 'valueObject' | 'valueObjectList' | 'valueObjectMap';
 
@@ -24,6 +24,9 @@ export type InvocationContext = {
     resolveState?: (() => unknown) | undefined;
     selectedMount?: MountMetadata | undefined;
     selectedMapKey?: string | undefined;
+    ancestors?: readonly InvocationContext[] | undefined;
+    resolveCollection?: (() => unknown) | undefined;
+    collectionCall?: boolean | undefined;
 };
 
 export type { BuiltAggregate } from '@redemeine/aggregate';
@@ -65,9 +68,24 @@ type CompositePkArg<TEntityState, PK> = PK extends readonly (infer K)[]
 
 export type EntityScopedMirage<TEntityState, TEntityCommands, InjectedCount extends number = 1, Identity extends PropertyKey = 'id'> = ScopedMirageCommandMap<TEntityState, TEntityCommands, InjectedCount, Identity> & ReadonlyDeep<TEntityState>;
 
-type ListScopedMirage<TEntityState, TEntityCommands, PK, Name extends string> =
-    ReadonlyArray<EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>, ListIdentity<PK, Name>>> &
-    ((pk: CompositePkArg<TEntityState, PK>) => EntityScopedMirage<TEntityState, TEntityCommands, InjectedArgCount<PK>, ListIdentity<PK, Name>>);
+type StaticCommands<C> = {
+    [K in keyof C as C[K] extends { readonly __staticCommand: true }
+      ? C[K] extends { readonly __nestedCommand: true } ? never : K : never]: C[K];
+};
+type QualifiedIdentity<PK, Name extends string> = `${Name}${Capitalize<Extract<ListIdentity<PK, Name>, string>>}`;
+type CollectionCommands<S, C, Ancestors extends PropertyKey> = {
+    [K in keyof StaticCommands<C>]: StaticCommands<C>[K] extends { args: infer Args extends unknown[] }
+      ? (...args: CollectionCommandArgs<StaticCommands<C>[K], Args, Ancestors>) => DispatchResult<S> : never
+};
+type NestedRegistry<E> = E extends { readonly __registryType?: infer R extends AggregateEntityRegistry } ? R : {};
+type SelectedListMirage<Root, E, PK, Name extends string, Ancestors extends PropertyKey> =
+    ScopedMirageCommandMap<EntityStateOf<E>, EntityCommandsOf<E>, InjectedArgCount<PK>, ListIdentity<PK, Name>> &
+    Omit<ReadonlyDeep<EntityStateOf<E>>, keyof NestedRegistry<E>> &
+    MountedMirageProps<Root, NestedRegistry<E>, Ancestors | QualifiedIdentity<PK, Name>, EntityStateOf<E>>;
+type ListScopedMirage<Root, E, PK, Name extends string, Ancestors extends PropertyKey> =
+    CollectionCommands<Root, EntityCommandsOf<E>, Ancestors> &
+    ReadonlyArray<SelectedListMirage<Root, E, PK, Name, Ancestors>> &
+    ((pk: CompositePkArg<EntityStateOf<E>, PK>) => SelectedListMirage<Root, E, PK, Name, Ancestors>);
 
 type MapKnownKeys<TEntry> = TEntry extends { knownKeys?: readonly (infer K)[] }
     ? Extract<K, string>
@@ -77,9 +95,9 @@ type MapScopedMirage<TEntityState, TEntityCommands, Keys extends string, Name ex
     ? Readonly<Record<string, EntityScopedMirage<TEntityState, TEntityCommands, 1, MapIdentity<Name>> | undefined>>
     : Readonly<Record<Keys, EntityScopedMirage<TEntityState, TEntityCommands, 1, MapIdentity<Name>>>>);
 
-type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
-    [K in keyof Registry & keyof TState]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
-        ? ListScopedMirage<EntityStateOf<EP>, EntityCommandsOf<EP>, PK, Extract<K, string>>
+type MountedMirageProps<TState, Registry extends AggregateEntityRegistry, Ancestors extends PropertyKey = never, LocalState = TState> = {
+    [K in keyof Registry & keyof LocalState]: Registry[K] extends { kind: 'list'; entity: infer EP; pk: infer PK }
+        ? ListScopedMirage<TState, EP, PK, Extract<K, string>, Ancestors>
         : Registry[K] extends { kind: 'map'; entity: infer EP }
             ? MapScopedMirage<
                 EntityStateOf<EP>,
@@ -87,7 +105,7 @@ type MountedMirageProps<TState, Registry extends AggregateEntityRegistry> = {
                 MapKnownKeys<Registry[K]>, Extract<K, string>
             >
             : Registry[K] extends { kind: 'valueObject' | 'valueObjectList' | 'valueObjectMap' }
-                ? ReadonlyDeep<TState[K]>
+                ? ReadonlyDeep<LocalState[K]>
                 : never;
 };
 
@@ -305,11 +323,18 @@ type ProtocolNames = 'then' | 'toJSON' | 'toString' | 'valueOf' | 'inspect';
 type MountCollisionKeys<R> = {
     [K in keyof R]: R[K] extends { entity: infer E }
       ? Extract<KnownKeys<EntityStateOf<E>>, KnownKeys<EntityCommandsOf<E>>>
-        | Extract<KnownKeys<EntityStateOf<E>> | KnownKeys<EntityCommandsOf<E>>, ProtocolNames> : never
+        | Extract<KnownKeys<EntityStateOf<E>> | KnownKeys<EntityCommandsOf<E>>, ProtocolNames>
+        | MountCollisionKeys<NestedRegistry<E>> : never
+}[keyof R];
+type StaticCollisionKeys<R> = {
+    [K in keyof R]: R[K] extends { kind: 'list'; entity: infer E }
+      ? Extract<KnownKeys<StaticCommands<EntityCommandsOf<E>>>, keyof unknown[] | keyof Object | 'first' | '__proto__' | ProtocolNames | `${number}`>
+        | StaticCollisionKeys<NestedRegistry<E>>
+      : never
 }[keyof R];
 type CollisionKeys<B> = Extract<StateKeys<B>, CommandKeys<B> | SelectorKeys<B>>
   | Extract<CommandKeys<B>, SelectorKeys<B>>
   | Extract<StateKeys<B> | CommandKeys<B> | SelectorKeys<B>, ProtocolNames>
-  | MountCollisionKeys<BuiltAggregateRegistry<B>>;
+   | MountCollisionKeys<BuiltAggregateRegistry<B>> | StaticCollisionKeys<BuiltAggregateRegistry<B>>;
 export type NoMirageCollisions<B> = [CollisionKeys<B>] extends [never] ? unknown
   : { readonly __mirageNameCollision: CollisionKeys<B> };

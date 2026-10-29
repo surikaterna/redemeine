@@ -13,7 +13,7 @@ test('query uses local keys, includes root winners and safely misses prototype k
   const built = createAggregate('store', { rows: [] as { id: string; qty: number }[] })
     .commands(() => ({ root: () => [] })).entityList('rows', entity()).build();
   expect(commandMetadata(built, 'root')).toEqual({ localName: 'root', wireType: 'store.root.command',
-    winnerLocalName: 'root', isWireWinner: true, targets: [] });
+    winnerLocalName: 'root', isWireWinner: true, isStatic: false, targets: [] });
   for (const key of ['store.root.command', 'rows.set', '__proto__', 'constructor', 'missing']) {
     expect(commandMetadata(built, key)).toBeUndefined();
   }
@@ -116,7 +116,7 @@ test('captured packers retain private brands and original WeakMap identity with 
   expect(Object.isFrozen(originalHandler)).toBe(false);
   expect(commandMetadata(built, 'set')).toBe(registration);
   expect(Object.isFrozen(registration)).toBe(true);
-  expect(Object.keys(registration).sort()).toEqual(['isWireWinner', 'localName', 'targets', 'winnerLocalName', 'wireType']);
+  expect(Object.keys(registration).sort()).toEqual(['isStatic', 'isWireWinner', 'localName', 'targets', 'winnerLocalName', 'wireType']);
   const copyBuilder = createAggregate('copy', {}).commands(() => ({ set: owned }));
   const recompiled = copyBuilder.build();
   const inherited = createAggregate('child', {}).extends(copyBuilder).build();

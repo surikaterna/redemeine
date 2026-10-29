@@ -3,7 +3,7 @@ import type { Event } from '@redemeine/kernel';
 import type { UnmatchedEventHandler } from './createAggregate';
 import type { EntityCommandTarget } from './types/entityMount';
 import { assertSynchronous } from './plugins/descriptor';
-import { selectedCommandState } from './build/entityCommandTarget';
+import { applyEntityEvent } from './build/materializeEntityEvent';
 
 /** An exact wire registration owns its projector and target chain together. */
 export type CompiledEventRegistration = {
@@ -24,8 +24,8 @@ export function applyEventToDraft<S>(
     const registration = dispatch.get(event.type);
     if (registration) {
         const { projector, targets } = registration;
-        const target = selectedCommandState(draft, event.payload, targets);
-        assertSynchronous(projector(target, event));
+        if (targets.length) applyEntityEvent(draft as Record<string, unknown>, event, targets, projector);
+        else assertSynchronous(projector(draft, event));
         return;
     }
     if (unmatchedEventHandler) {

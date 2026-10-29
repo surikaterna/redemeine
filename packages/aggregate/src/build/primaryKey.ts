@@ -17,9 +17,19 @@ function validFields(fields: readonly unknown[]): fields is readonly string[] {
 
 // Revalidate at capture: callers may mutate PK arrays between registration and build.
 export function validateListMounts(mounts: readonly (Pick<MountedStructureMetadata, 'kind' | 'pk'> & {
+    name?: string;
+    entity?: object | undefined;
     component?: MountedEntityPackage['component'];
 })[]): void {
+    const definitions = new Map<string, object>();
     for (const mount of mounts) {
+        const entity = mount.component ?? mount.entity;
+        const previous = mount.name === undefined ? undefined : definitions.get(mount.name);
+        if (previous && entity && previous !== entity) {
+            const names = [previous, entity].map(definition => 'name' in definition ? String(definition.name) : '<anonymous>');
+            throw new Error(`Conflicting entity definitions at mount "${mount.name}": "${names[0]}" and "${names[1]}"`);
+        }
+        if (mount.name !== undefined && entity) definitions.set(mount.name, entity);
         if (mount.kind === 'list') primaryKey(mount.pk);
         if (!mount.component) continue;
         validateListMounts(mount.component.mountedEntities ?? []);

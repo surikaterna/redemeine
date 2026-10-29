@@ -94,12 +94,12 @@ function entities() {
   return { first, second };
 }
 function mount(builder, first, second, overrides) {
-  return builder.entityList('a', first, {}, overrides).entityList('aB', second).entityList('a', first, {}, overrides);
+  return builder.entityList('a', first, {}, overrides).entityList('sibling', second).entityList('a', first, {}, overrides);
 }
 function hostFor(kind, alias, siblingId) {
   const { first, second } = entities();
   const overrides = alias ? { commandNameOverrides: { bSet: 'custom.winningSet.command' }, eventNameOverrides: { bChanged: 'custom.winningChanged.event' } } : {};
-  const inner = { id: 'p', a: [{ id: 'chosen', qty: 2 }], aB: [{ id: siblingId, qty: 7 }] };
+  const inner = { id: 'p', a: [{ id: 'chosen', qty: 2 }], sibling: [{ id: siblingId, qty: 7 }] };
   const builder = createAggregate('store', { ...inner, parents: [structuredClone(inner)] });
   if (kind === 'direct') return mount(builder, first, second, overrides).build();
   if (kind === 'mixin') return builder.mixins(mount(createMixin(), first, second, overrides).build()).build();

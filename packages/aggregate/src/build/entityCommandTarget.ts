@@ -1,8 +1,24 @@
 import type { EntityCommandTarget, EntityCommandTargets, MountedStructureMetadata, ResolvedCommandTargets } from '../types/entityMount';
 import { primaryKey } from './primaryKey';
+import { commandModes } from '../entityCommandLifecycle';
 
 // Provenance belongs to a definition-map registration, never a reusable handler or grouped mount.
 const targetsByDefinitions = new WeakMap<object, EntityCommandTargets>();
+const namesByDefinitions = new WeakMap<object, Map<string, readonly string[]>>();
+
+// Preserve authored path segments only until compilation, so flattening cannot silently alias names.
+export function recordCommandName(destination: Record<string, unknown>, key: string,
+    source: object, sourceKey: string, mountName?: string): void {
+    const incoming = namesByDefinitions.get(source)?.get(sourceKey) ?? [sourceKey];
+    const path = mountName === undefined ? incoming : [mountName, ...incoming];
+    const names = namesByDefinitions.get(destination) ?? new Map<string, readonly string[]>();
+    const previous = names.get(key) ?? (Object.hasOwn(destination, key) ? [key] : undefined);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(path)) {
+        throw new Error(`Ambiguous authored commands "${previous.join('.')}" and "${path.join('.')}" compile to "${key}"`);
+    }
+    names.set(key, path);
+    namesByDefinitions.set(destination, names);
+}
 
 export function definitionTargets(definitions: object): EntityCommandTargets {
     const existing = targetsByDefinitions.get(definitions);
@@ -35,15 +51,17 @@ export function mergeDefinitions<T>(destination: Record<string, T>, source: Reco
     const targets = definitionTargets(destination);
     const incoming = definitionTargets(source);
     for (const key of Object.keys(source)) {
+        recordCommandName(destination, key, source, key);
         Object.defineProperty(destination, key, { value: source[key], enumerable: true, writable: true, configurable: true });
         targets[key] = incoming[key] ?? [];
+        commandModes(destination)[key] = commandModes(source)[key] ?? false;
     }
     return destination;
 }
 
-export function commandTarget(mount: MountedStructureMetadata): EntityCommandTarget {
+export function commandTarget(mount: MountedStructureMetadata, initialState?: object): EntityCommandTarget {
     const { kind, statePath, pk, commandPrefix } = mount;
-    return { kind, statePath: [...statePath], pk, commandPrefix };
+    return { kind, statePath: [...statePath], pk, commandPrefix, ...(initialState === undefined ? {} : { initialState }) };
 }
 
 function invalidTarget(): never {
@@ -91,28 +109,40 @@ function identity(target: EntityCommandTarget, payload: Record<string, unknown>,
     }));
 }
 
-function select(container: unknown, target: EntityCommandTarget, values: Record<string, unknown>): unknown {
+function select(container: unknown, target: EntityCommandTarget, values: Record<string, unknown>, allowMissing: boolean): string | number | undefined {
     if (target.kind === 'map') {
         const entries = record(container);
         const key = String(values.key);
         if (!Object.hasOwn(entries, key)) return invalidTarget();
-        return record(entries[key]);
+        record(entries[key]);
+        return key;
     }
     if (!Array.isArray(container)) return invalidTarget();
-    const matches = container.filter(item => Object.entries(values).every(([key, value]) => equal(record(item)[key], value)));
+    const matches = container.flatMap((item, index) => Object.entries(values).every(([key, value]) => equal(record(item)[key], value)) ? [index] : []);
+    if (!matches.length && allowMissing) return undefined;
     if (matches.length !== 1) return invalidTarget();
-    return record(matches[0]);
+    return matches[0];
 }
 
-export function selectedCommandState(state: unknown, payload: unknown, chain: readonly EntityCommandTarget[]): unknown {
+export function resolveEntityTarget(state: unknown, payload: unknown, chain: readonly EntityCommandTarget[], allowMissing = false) {
     let selected = state;
+    const path: (string | number)[] = [];
     for (const [index, target] of chain.entries()) {
         const values = identity(target, record(payload), index === chain.length - 1);
         const container = target.statePath.reduce<unknown>((parent, key) => {
             const current = record(parent);
+            path.push(key);
             return Object.hasOwn(current, key) ? current[key] : invalidTarget();
         }, selected);
-        selected = select(container, target, values);
+        const canCreate = allowMissing && index === chain.length - 1 && target.kind === 'list' && target.initialState !== undefined;
+        const key = select(container, target, values, canCreate);
+        if (key === undefined) return { state: target.initialState, isNew: true, path, identity: values };
+        path.push(key);
+        selected = (container as Record<string | number, unknown>)[key];
     }
-    return selected;
+    return { state: selected, isNew: false, path, identity: {} };
+}
+
+export function selectedCommandState(state: unknown, payload: unknown, chain: readonly EntityCommandTarget[]): unknown {
+    return resolveEntityTarget(state, payload, chain).state;
 }

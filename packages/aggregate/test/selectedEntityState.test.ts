@@ -103,18 +103,20 @@ test('compiled targets do not depend on entity names or overridden wire names', 
   expect(events[0]!.payload).toEqual({ code: 'a', qty: 8 });
 });
 
-test('target metadata follows last-wins command registration, including later root commands', () => {
+test('target dispatch follows last-wins wire registration, including later root commands', () => {
   type State = { rows: Row[]; qty: number };
-  const source = createMixin<State>().entityList('rows', reader()).build();
+  const entity = reader();
+  const source = createMixin<State>().entityList('rows', entity).build();
   const mounted = { ...source, mountedEntities: [] };
   const root = createMixin<State>().events({ read(_state, _event: Event<number>) {} })
-    .commands(emit => ({ rowsSet(state, _payload: Record<string, unknown>) { return emit.read(state.qty); } })).build();
+    .commands(emit => ({ rootRead(state, _payload: Record<string, unknown>) { return emit.read(state.qty); } })).build();
   const state = { rows: [row('a', 3)], qty: 99 };
-  const rootLast = createAggregate('store', state).mixins(mounted, root).build();
+  const overrides = { rowsSet: 'shared.command', rootRead: 'shared.command' };
+  const rootLast = createAggregate('store', state).mixins(mounted, root).overrideCommandNames(overrides).build();
   expect(rootLast.process(state, rootLast.commandCreators.rowsSet({}))[0]!.payload).toBe(99);
-  const mountedLast = createAggregate('store', state).mixins(root, mounted).build();
+  const mountedLast = createAggregate('store', state).mixins(root, mounted).overrideCommandNames(overrides).build();
   expect(mountedLast.process(state, mountedLast.commandCreators.rowsSet({ id: 'a' }))[0]!.payload).toEqual({ id: 'a', qty: 3 });
-  const remounted = createAggregate('store', state).mixins(source, root).build();
+  const remounted = createAggregate('store', state).mixins(root, source).entityList('rows', entity).overrideCommandNames(overrides).build();
   expect(remounted.process(state, remounted.commandCreators.rowsSet({ id: 'a' }))[0]!.payload).toEqual({ id: 'a', qty: 3 });
 });
 
@@ -225,10 +227,10 @@ test.each(['direct', 'mixin', 'nested'] as const)('repeated %s mounts retain sur
   const first = reader(called);
   const second = createEntity<Row, 'other'>('other').commands(() => ({ other() { return []; } })).build();
   const state = { qty: 99, rows: [row('a', 2)], parents: [{ id: 'p', rows: [row('a', 2)] }] };
-  const mixin = createMixin<typeof state>().entityList('rows', first).entityMap('rows', second).build();
-  const parent = createEntity<typeof state.parents[number], 'parent'>('parent').entityList('rows', first).entityMap('rows', second).build();
+  const mixin = createMixin<typeof state>().entityList('rows', first).entityMap('otherRows', second).entityList('rows', first).build();
+  const parent = createEntity<typeof state.parents[number], 'parent'>('parent').entityList('rows', first).entityMap('otherRows', second).entityList('rows', first).build();
   const builder = createAggregate('store', state);
-  const host = kind === 'direct' ? builder.entityList('rows', first).entityMap('rows', second).build()
+  const host = kind === 'direct' ? builder.entityList('rows', first).entityMap('otherRows', second).entityList('rows', first).build()
     : kind === 'mixin' ? builder.mixins(mixin).build() : builder.entityList('parents', parent).build();
   const name = kind === 'nested' ? 'parentsRowsSet' : 'rowsSet';
   const ancestor = kind === 'nested' ? { parentsId: 'p' } : {};
@@ -252,9 +254,9 @@ test.each([0, ''])('undeclared targeted wires are unmatched even with valid iden
   expect(unmatched).toHaveBeenCalledTimes(8);
 });
 
-test('later colliding mounted commands replace targets as well as handlers', () => {
+test('same-definition remount replaces list command targets with map targets', () => {
   const first = reader();
-  const second = reader();
+  const second = first;
   const state = { qty: 99, rows: { chosen: row('a', 7) } };
   const host = createAggregate('store', state).entityList('rows', first).entityMap('rows', second).build();
   expect(host.process(state, host.commandCreators.rowsSet({ key: 'chosen' }))[0]!.payload).toEqual({ key: 'chosen', qty: 7 });
@@ -287,18 +289,18 @@ function collisionHost(kind: 'direct' | 'mixin' | 'nested', alias: boolean, sibl
     .commands(emit => ({ set(state, payload: Record<string, unknown>) {
       called(); return emit.changed({ ...payload, qty: state.qty + 1 });
     } })).build();
-  const state = { id: 'p', a: [{ id: 'chosen', qty: 2 }], aB: [{ id: siblingId, qty: 7 }] };
+  const state = { id: 'p', a: [{ id: 'chosen', qty: 2 }], sibling: [{ id: siblingId, qty: 7 }] };
   const overrides = alias ? { commandNameOverrides: { bSet: 'custom.set.command' }, eventNameOverrides: { bChanged: 'custom.changed.event' } } : {};
-  const mixin = createMixin<typeof state>().entityList('a', first, {}, overrides).entityList('aB', second).entityList('a', first, {}, overrides).build();
+  const mixin = createMixin<typeof state>().entityList('a', first, {}, overrides).entityList('sibling', second).entityList('a', first, {}, overrides).build();
   const parent = createEntity<typeof state, 'parent'>('parent').entityList('a', first, {}, overrides)
-    .entityList('aB', second).entityList('a', first, {}, overrides).build();
+    .entityList('sibling', second).entityList('a', first, {}, overrides).build();
   const builder = createAggregate('store', { ...state, parents: [structuredClone(state)] });
-  const host = kind === 'direct' ? builder.entityList('a', first, {}, overrides).entityList('aB', second).entityList('a', first, {}, overrides).build()
+  const host = kind === 'direct' ? builder.entityList('a', first, {}, overrides).entityList('sibling', second).entityList('a', first, {}, overrides).build()
     : kind === 'mixin' ? builder.mixins(mixin).build() : builder.entityList('parents', parent).build();
   return { host, name: kind === 'nested' ? 'parentsABSet' as const : 'aBSet' as const };
 }
 
-describe.each(['direct', 'mixin', 'nested'] as const)('A-B-A %s flattened collisions', kind => {
+describe.each(['direct', 'mixin', 'nested'] as const)('A-B-A %s same-definition remounts', kind => {
   test.each([false, true])('winning provenance survives aliases=%s and same/different sibling IDs', alias => {
     for (const siblingId of ['chosen', 'sibling']) {
       const called = jest.fn();
@@ -386,8 +388,9 @@ test('a reused command function retains independent registration targets', () =>
   const handler = (state: { qty: number }) => ({ type: 'read.event', payload: state.qty });
   const first = createEntity<{ id: string; qty: number }, 'first'>('first').commands(() => ({ bSet: handler })).build();
   const second = createEntity<{ id: string; qty: number }, 'second'>('second').commands(() => ({ set: handler })).build();
-  const host = createAggregate('store', { a: [{ id: 'same', qty: 2 }], aB: [{ id: 'same', qty: 7 }] })
-    .entityList('a', first).entityList('aB', second).entityList('a', first).entityList('other', first).build();
+  const host = createAggregate('store', { a: [{ id: 'same', qty: 2 }], sibling: [{ id: 'same', qty: 7 }] })
+    .entityList('a', first).entityList('sibling', second).entityList('a', first).entityList('other', first).build();
   expect(host.process(host.initialState, host.commandCreators.aBSet({ id: 'same' }))[0]!.payload).toBe(2);
+  expect(host.process(host.initialState, host.commandCreators.siblingSet({ id: 'same' }))[0]!.payload).toBe(7);
   expect(() => host.process(host.initialState, host.commandCreators.otherBSet({ id: 'same' }))).toThrow('Invalid mounted command target');
 });

@@ -6,6 +6,7 @@ export type CommandMetadata = Readonly<{
   wireType: string;
   winnerLocalName: string;
   isWireWinner: boolean;
+  isStatic: boolean;
   targets: ResolvedCommandTargets[string];
 }>;
 
