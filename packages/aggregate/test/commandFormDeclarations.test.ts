@@ -4,7 +4,7 @@ import * as ts from 'typescript';
 test.each(['ts', 'mts', 'cts'])('%s command form metadata preserves flat signatures', suffix => {
   const entry = join(__dirname, `commandFormFixture.${suffix}`);
   const source = `
-import { createAggregate, createEntity, type MapCommandsToPayloads } from '${suffix === 'ts' ? '../src' : '@redemeine/aggregate'}';
+import { createAggregate, createEntity, createMixin, type MapCommandsToPayloads } from '${suffix === 'ts' ? '../src' : '@redemeine/aggregate'}';
 type Forms = MapCommandsToPayloads<{
   short: (state: unknown, payload: { id: string; qty: number }) => [];
   object: { handler: (state: unknown, payload: { id: string; qty: number }) => []; meta: { label: string } };
@@ -58,11 +58,11 @@ export const identifier = createEntity('identifier', initial).commands(() => ({
   }
 }), { static: ['register', 'packed'] }).build();
 export const registry = createAggregate('registry', { identifiers: [] as Identifier[] })
-  .entityList('identifiers', identifier, { pk: ['domain', 'authority'] }).build();
+  .entityList('identifiers', identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' }).build();
 registry.commandCreators.identifiersRegister(initial);
 const packedPayload: Identifier = registry.commandCreators.identifiersPacked('d', 'a', 'i').payload;
 export const nestedParent = createEntity('parent', { id: '', identifiers: [] as Identifier[] })
-  .entityList('identifiers', identifier, { pk: ['domain', 'authority'] })
+  .entityList('identifiers', identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' })
   .commands(() => ({ touch: () => [] })).build();
 type ChildRegistration = NonNullable<typeof nestedParent.__registryType>['identifiers'];
 const nestedKey: ChildRegistration['pk'] = ['domain', 'authority'];
@@ -70,6 +70,13 @@ const nestedStatic: true = null as unknown as ChildRegistration['entity']['comma
 // @ts-expect-error Nested registry retains the exact composite key.
 const wrongNestedKey: ChildRegistration['pk'] = 'id';
 void [nestedKey, nestedStatic, wrongNestedKey];
+createMixin<{ identifiers: Identifier[] }>().entityList('identifiers', identifier, {}, { semanticName: 'externalID' }).build();
+// @ts-expect-error Semantic aliases are strings on Aggregate mounts.
+createAggregate('badAlias', { identifiers: [] as Identifier[] }).entityList('identifiers', identifier, {}, { semanticName: 1 });
+// @ts-expect-error Semantic aliases are strings on Entity mounts.
+createEntity('badAlias', { identifiers: [] as Identifier[] }).entityList('identifiers', identifier, {}, { semanticName: 1 });
+// @ts-expect-error Semantic aliases are strings on Mixin mounts.
+createMixin<{ identifiers: Identifier[] }>().entityList('identifiers', identifier, {}, { semanticName: 1 });
 // @ts-expect-error Framework context is not a caller argument.
 registry.commandCreators.identifiersRegister(initial, { isNew: true });
 // @ts-expect-error Pack alone controls caller arguments.

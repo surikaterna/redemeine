@@ -8,6 +8,7 @@ import { eventDefinitionKeys, mergeEventDefinitions, recordEventAssignment } fro
 import { primaryKey, validateListMounts } from './build/primaryKey';
 import { ownDefinition } from './build/definitionMap';
 import { commandModes } from './entityCommandLifecycle';
+import { mountName as recordMountedName, semanticSegment } from './build/mountedNaming';
 
 export type { MountedStructureKind, MountedStructureMetadata, MountedEntityPackage, EntityMountOverrides, EntityListOptions, EntityMapOptions, MapEntityCommands };
 
@@ -83,45 +84,34 @@ export function composeMountedComponentBehavior(
     }
 
     const nestedEvents = nested.projectors || nested.events || {};
+    const segment = semanticSegment(nested.name, mountOverrides);
+    mounts[mountName]!.semanticName = segment;
     const nestedEventTargets = definitionTargets(nestedEvents);
     const target = commandTarget({ kind, commandPrefix: mountName, statePath: [mountName], pk }, nested.initialState);
     const nestedEventMetadata = nested.eventMetadata || {};
     const nestedEventNameOverrides = nested.eventOverrides || {};
-    const nestedCommandNameOverrides = nested.commandOverrides || {};
     const mountEventNameOverrides = {
       ...((mountOverrides && mountOverrides.eventNameOverrides) || {})
-    } as Record<string, string>;
-    const mountCommandNameOverrides = {
-      ...((mountOverrides && mountOverrides.commandNameOverrides) || {})
     } as Record<string, string>;
 
     eventDefinitionKeys(nestedEvents).forEach((eventKey) => {
       const mappedEventKey = `${mountName}${capitalize(eventKey)}`;
       mergedEvents[mappedEventKey] = nestedEvents[eventKey];
       recordEventAssignment(mergedEvents, mappedEventKey);
+      recordMountedName(mergedEvents, mappedEventKey, nestedEvents, eventKey, segment,
+        ownDefinition(nestedEventNameOverrides, eventKey), ownDefinition(mountEventNameOverrides, eventKey));
       mounts[mountName]!.eventTargets![mappedEventKey] = [target, ...(nestedEventTargets[eventKey] ?? [])];
       definitionTargets(mergedEvents)[mappedEventKey] = mounts[mountName]!.eventTargets![mappedEventKey]!;
       mergedEventMetadata[mappedEventKey] = ownDefinition(nestedEventMetadata, eventKey);
-      const override = ownDefinition(mountEventNameOverrides, eventKey) || ownDefinition(nestedEventNameOverrides, eventKey);
-      if (override) mergedEventOverrides[mappedEventKey] = override;
     });
 
-    Object.keys(nestedCommandNameOverrides as Record<string, string>).forEach((cmdKey) => {
-      const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = (nestedCommandNameOverrides as Record<string, string>)[cmdKey]!;
-    });
-
-    Object.keys(mountCommandNameOverrides).forEach((cmdKey) => {
-      const mappedCmdKey = `${mountName}${capitalize(cmdKey)}`;
-      mergedCommandOverrides[mappedCmdKey] = mountCommandNameOverrides[cmdKey]!;
-    });
   });
 
   const commandFactory: GenericCommandFactory = (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
     const mergedCommands: GenericCommandMap = mergeDefinitions(Object.create(null), baseCommandFactory(emit, resolvedContext));
 
-    mountedEntities.forEach(({ name: mountName, kind, component: nested, pk }) => {
+    mountedEntities.forEach(({ name: mountName, kind, component: nested, pk, mountOverrides }) => {
       if (!nested || (kind !== 'list' && kind !== 'map')) {
         return;
       }
@@ -145,6 +135,8 @@ export function composeMountedComponentBehavior(
       Object.keys(nestedCommands).forEach((cmdKey) => {
         const mapped = `${mountName}${capitalize(cmdKey)}`;
         recordCommandName(mergedCommands, mapped, nestedCommands, cmdKey, mountName);
+        recordMountedName(mergedCommands, mapped, nestedCommands, cmdKey, semanticSegment(nested.name, mountOverrides),
+          ownDefinition(nested.commandOverrides as Record<string, string>, cmdKey), ownDefinition(mountOverrides?.commandNameOverrides ?? {}, cmdKey));
         mergedCommands[mapped] = nestedCommands[cmdKey]!;
         commandModes(mergedCommands)[mapped] = commandModes(nestedCommands)[cmdKey] ?? false;
         mounts[mountName]!.commandTargets![mapped] = [target, ...(nestedTargets[cmdKey] ?? [])];

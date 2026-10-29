@@ -1,6 +1,7 @@
 import type { EntityCommandTarget, EntityCommandTargets, MountedStructureMetadata, ResolvedCommandTargets } from '../types/entityMount';
 import { primaryKey } from './primaryKey';
 import { commandModes } from '../entityCommandLifecycle';
+import { copyMountedName } from './mountedNaming';
 
 // Provenance belongs to a definition-map registration, never a reusable handler or grouped mount.
 const targetsByDefinitions = new WeakMap<object, EntityCommandTargets>();
@@ -52,6 +53,7 @@ export function mergeDefinitions<T>(destination: Record<string, T>, source: Reco
     const incoming = definitionTargets(source);
     for (const key of Object.keys(source)) {
         recordCommandName(destination, key, source, key);
+        copyMountedName(destination, key, source, key);
         Object.defineProperty(destination, key, { value: source[key], enumerable: true, writable: true, configurable: true });
         targets[key] = incoming[key] ?? [];
         commandModes(destination)[key] = commandModes(source)[key] ?? false;

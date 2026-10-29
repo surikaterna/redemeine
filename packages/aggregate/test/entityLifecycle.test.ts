@@ -106,7 +106,7 @@ test('ordinary projector replay creates only the final leaf and no-op still inse
   const replay = host.apply(host.initialState, changed);
   expect(replay.parents[0]!.children[0]).toEqual({ id: 'c', nested: { count: 1 }, log: [1] });
   expect(host.apply(replay, event(2)).parents[0]!.children[0]!.log).toEqual([1, 2]);
-  const noop = { type: 'nested.parents.children_untouched.event', payload: { parentsId: 'p', id: 'noop' } };
+  const noop = { type: 'nested.parent.child.untouched.event', payload: { parentsId: 'p', id: 'noop' } };
   expect(host.apply(host.initialState, noop).parents[0]!.children).toEqual([{ ...template, id: 'noop' }]);
   expect(() => host.apply({ parents: [] }, changed)).toThrow('Invalid mounted command target');
   expect(() => host.process({ parents: [] }, host.commandCreators.parentsChildrenSet(changed.payload as never)))
@@ -154,7 +154,7 @@ test('materialized Immer classes retain projector methods and leave templates an
   original.id = 'existing';
   const input = { rows: [original] };
   const host = createAggregate('classes', input).entityList('rows', entity).build();
-  const event = { type: 'classes.rows.changed.event', payload: { id: 'new' } };
+  const event = { type: 'classes.row.changed.event', payload: { id: 'new' } };
   const result = host.apply(input, event);
   expect(result.rows[1]).toBeInstanceOf(Row);
   expect(result.rows[1]!.read()).toBe('new:1');
@@ -224,10 +224,10 @@ test('instance commands and name-only entities keep missing behavior; map creati
     .commands(() => ({ read: (_state, _payload: { id: string; key?: string }) => [] })).build();
   const plain = createEntity<{ id: string; count: number }, 'plain'>('plain').events(entity.events).build();
   const host = createAggregate('ordinary', { rows: [], plain: [], byKey: {} })
-    .entityList('rows', entity).entityList('plain', plain).entityMap('byKey', entity).build();
+    .entityList('rows', entity).entityList('plain', plain).entityMap('byKey', entity, {}, { semanticName: 'byKey' }).build();
   expect(() => host.process(host.initialState, host.commandCreators.rowsRead({ id: 'missing' })))
     .toThrow('Invalid mounted command target');
-  for (const mount of ['plain', 'by_key']) {
+  for (const mount of ['plain', 'byKey']) {
     const changed = { type: `ordinary.${mount}.changed.event`, payload: { id: 'missing', key: 'missing' } };
     expect(() => host.apply(host.initialState, changed)).toThrow('Invalid mounted command target');
   }

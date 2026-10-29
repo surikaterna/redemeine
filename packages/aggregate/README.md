@@ -122,6 +122,31 @@ when events are applied; templates should be treated as readonly throughout.
 
 ### Migration: mount and authored-name collisions
 
+Mounted wires now use the entity's authored name, not its state key:
+`createEntity('identifier', state)` mounted at `identifiers` produces
+`party.identifier.register.command` and `party.identifier.registered.event`.
+Nesting under `createEntity('customer', state)` adds the complete semantic path:
+`party.customer.identifier.register.command`. Navigation, flat creators such as
+`identifiersRegister`, and qualified PK fields such as `customersId` are unchanged.
+Root commands retain their existing naming (`registerIdentifier` becomes
+`party.register_identifier.command`). Old mounted default wires are not dispatched.
+
+Override one semantic segment with the existing fourth mount argument:
+`.entityList('identifiers', Identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' })`.
+The alias must be one nonempty, nondotted string; authored segment spelling is
+preserved while member names use the configured naming strategy. Entity
+`.overrideCommandNames` / `.overrideEventNames` remain relative to the declaring
+entity's complete semantic path (the suffix is appended if absent). Mount
+`commandNameOverrides` / `eventNameOverrides` are full, verbatim strings, even when
+nested. An ancestor's relative override of a flattened descendant key replaces
+the descendant tail; an outer full mount override takes precedence.
+Aggregate `.overrideCommandNames({ identifiersRegister: 'custom.command' })`
+still overrides a mounted command's derived default wire.
+
+Reusing an entity at different state keys now shares default wires. Shared wires
+retain last-registration-wins dispatch, not per-collection routing. Use distinct
+`semanticName` aliases when mounts need independent routing.
+
 Different entity definitions at the same mount point now fail at build time.
 Compose their commands into **one entity definition**, or reuse the exact same
 definition object at that point. Mount different entities at distinct target paths.

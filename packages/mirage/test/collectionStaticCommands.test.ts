@@ -31,7 +31,7 @@ test('explicit shorthand and packed collection commands use full identity and re
   expect(await live.identifiers.packed(payload.domain, payload.authority, 'two'))
     .toEqual({ identifiers: [{ ...payload, identifier: 'two' }] });
   expect(live[MirageCoreSymbol].getPendingResults().events.map(event => event.type))
-    .toEqual(['registry.identifiers.registered.event', 'registry.identifiers.amended.event']);
+    .toEqual(['registry.identifier.registered.event', 'registry.identifier.amended.event']);
   expect(await live.identifiers({ domain: payload.domain, authority: payload.authority }).register({ identifier: 'three' }))
     .toEqual({ ...payload, identifier: 'three' });
   expect([...live.identifiers][0]!.identifier).toBe('three');
@@ -86,8 +86,8 @@ test('ordinary array-named commands remain valid and maps do not expose statics'
 test('wire aliases remain callable and both dispatch full payloads and packs to the winning mount', async () => {
   const entity = identifierEntity();
   const host = createAggregate('shadowed', { left: [] as Identifier[], right: [] as Identifier[] })
-    .entityList('left', entity, { pk: ['domain', 'authority'] }, { commandNameOverrides: { register: 'shared', packed: 'packed' } })
-    .entityList('right', entity, { pk: ['domain', 'authority'] }, { commandNameOverrides: { register: 'shared', packed: 'packed' } }).build();
+    .entityList('left', entity, { pk: ['domain', 'authority'] }, { semanticName: 'leftIdentifier', commandNameOverrides: { register: 'shared', packed: 'packed' } })
+    .entityList('right', entity, { pk: ['domain', 'authority'] }, { semanticName: 'rightIdentifier', commandNameOverrides: { register: 'shared', packed: 'packed' } }).build();
   const live = createMirage(host, 'root');
   const payload = { domain: 'd', authority: 'a', identifier: 'one' };
   expect(await live.left.register(payload)).toEqual({ left: [], right: [payload] });

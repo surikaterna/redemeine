@@ -6,9 +6,10 @@ import { assertSynchronous } from './plugins/descriptor';
 import { applyEntityEvent } from './build/materializeEntityEvent';
 
 /** An exact wire registration owns its projector and target chain together. */
-export type CompiledEventRegistration = {
+export type CompiledEventRegistration<TMeta = unknown> = {
     readonly projector: Function;
     readonly targets: readonly EntityCommandTarget[];
+    readonly metadata?: TMeta | undefined;
 };
 
 export type CompiledEventDispatch = ReadonlyMap<string, CompiledEventRegistration>;

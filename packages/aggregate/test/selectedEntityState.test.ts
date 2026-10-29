@@ -55,7 +55,7 @@ test('selected command views protect nested objects and native values and retain
   const host = createAggregate('store', { rows: [value] }).entityList('rows', entity).build();
   const events = host.process(host.initialState, host.commandCreators.rowsSet({ id: 'a' }));
   expect(Reflect.get(events, '__intents')).toEqual({ audit: 'kept' });
-  expect(events[0]!.type).toBe('store.rows.read.event');
+  expect(events[0]!.type).toBe('store.row.read.event');
   expect(value.nested.qty).toBe(1);
 });
 
@@ -74,9 +74,9 @@ function reader(called = jest.fn()) {
 test('list declared single/composite PK and map own keys use selected state', () => {
   const entity = reader();
   const host = createAggregate('store', { codes: [row('a', 3)], composite: [row('a', 4)], byKey: { a: row('x', 5) } })
-    .entityList('codes', entity, { pk: 'code' })
-    .entityList('composite', entity, { pk: ['domain', 'authority'] as const })
-    .entityMap('byKey', entity).build();
+    .entityList('codes', entity, { pk: 'code' }, { semanticName: 'codes' })
+    .entityList('composite', entity, { pk: ['domain', 'authority'] as const }, { semanticName: 'composite' })
+    .entityMap('byKey', entity, {}, { semanticName: 'byKey' }).build();
   for (const [key, payload, qty] of [
     ['codesSet', { code: 'a', codesId: 'ordinary' }, 3],
     ['compositeSet', { domain: 'a', authority: 'owner', key: 'ordinary-value' }, 4],
@@ -159,7 +159,7 @@ test('missing containers, duplicate list identities, incomplete PK and inherited
 test('nested list/map chains and mixin mounts resolve ancestors before children with local selectors', () => {
   const child = reader();
   const parent = createEntity<{ id: string; children: Row[]; byKey: Record<string, Row> }, 'parent'>('parent')
-    .entityList('children', child).entityMap('byKey', child)
+    .entityList('children', child, {}, { semanticName: 'children' }).entityMap('byKey', child, {}, { semanticName: 'byKey' })
     .selectors({ quantity: () => -1 }).build();
   const parents = [
     { id: 'p1', children: [row('same', 1)], byKey: { same: row('x', 11) } },
@@ -167,7 +167,7 @@ test('nested list/map chains and mixin mounts resolve ancestors before children 
   ];
   const mixin = createMixin<{ parents: typeof parents }>().entityList('parents', parent).build();
   const host = createAggregate('store', { parents, byParent: { p2: parents[1]! } })
-    .mixins(mixin).entityMap('byParent', parent).build();
+    .mixins(mixin).entityMap('byParent', parent, {}, { semanticName: 'byParent' }).build();
   const cases = [
     ['parentsChildrenSet', { parentsId: 'p2', id: 'same' }, 2],
     ['parentsChildrenSet', { parentsId: 'p2', id: 'same', childrenId: 'ordinary' }, 2],
@@ -178,7 +178,7 @@ test('nested list/map chains and mixin mounts resolve ancestors before children 
   for (const [name, payload, qty] of cases) {
     const events = host.process(host.initialState, { type: host.types.commands[name], payload });
     expect(events[0]!.payload).toEqual({ ...payload, qty });
-    expect(events[0]!.type).toBe(`store.${name.startsWith('parents') ? 'parents' : 'by_parent'}.${name.includes('Children') ? 'children' : 'by_key'}_read.event`);
+    expect(events[0]!.type).toBe(`store.${name.startsWith('parents') ? 'parent' : 'byParent'}.${name.includes('Children') ? 'children' : 'byKey'}.read.event`);
   }
   expect(() => host.process(host.initialState, { type: host.types.commands.parentsChildrenSet, payload: { id: 'same' } })).toThrow('Invalid mounted command target');
 });
@@ -188,10 +188,10 @@ test.each(['list', 'map'] as const)('nested %s parents replay every child mount 
     .events({ changed(state, event: Event<Record<string, unknown> & { qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ set(state, payload: Record<string, unknown>) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
   const parent = createEntity<{ id: string; children: { id: string; qty: number }[]; byKey: Record<string, { id: string; qty: number }> }, 'parent'>('parent')
-    .entityList('children', child).entityMap('byKey', child).build();
+    .entityList('children', child, {}, { semanticName: 'children' }).entityMap('byKey', child, {}, { semanticName: 'byKey' }).build();
   const parents = [1, 2].map(n => ({ id: `p${n}`, children: [{ id: 'same', qty: n }], byKey: { same: { id: 'same', qty: n } } }));
   const state = { qty: 99, parents, byParent: { p1: structuredClone(parents[0]!), p2: structuredClone(parents[1]!) } };
-  const host = createAggregate('store', state).entityList('parents', parent).entityMap('byParent', parent).build();
+  const host = createAggregate('store', state).entityList('parents', parent).entityMap('byParent', parent, {}, { semanticName: 'byParent' }).build();
   for (const leaf of ['Children', 'ByKey'] as const) {
     const prefix = kind === 'list' ? 'parents' : 'byParent';
     const payload = { [kind === 'list' ? 'parentsId' : 'byParentKey']: 'p2', [leaf === 'Children' ? 'id' : 'key']: 'same' };
@@ -210,7 +210,7 @@ test.each([0, ''])('falsy identity %j survives qualified and unqualified list/ma
     .events({ changed(state, event: Event<Record<string, unknown> & { qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ set(state, payload: Record<string, unknown>) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
   const state = { qty: 99, rows: [{ id, qty: 2 }], byKey: { [id]: { id, qty: 2 } } };
-  const host = createAggregate('store', state).entityList('rows', entity).entityMap('byKey', entity).build();
+  const host = createAggregate('store', state).entityList('rows', entity).entityMap('byKey', entity, {}, { semanticName: 'byKey' }).build();
   for (const [name, field] of [['rowsSet', 'id'], ['byKeySet', 'key']] as const) {
     const event = host.process(state, { type: host.types.commands[name], payload: { [field]: id } })[0]!;
     const expected = structuredClone(state);
@@ -268,9 +268,9 @@ test('scoped event wire collisions retain the last projector registration target
     .events({ changed(state, event: Event<{ id: string; qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ set(state, payload: { id: string }) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
   const state = { qty: 99, left: [{ id: 'a', qty: 2 }], right: [{ id: 'a', qty: 7 }] };
-  const override = { eventNameOverrides: { changed: 'custom.shared.event' } };
+  const override = { semanticName: 'left', eventNameOverrides: { changed: 'custom.shared.event' } };
   const host = createAggregate('store', state).entityList('left', entity, {}, override)
-    .entityList('right', entity, {}, override).entityList('left', entity, {}, override).build();
+    .entityList('right', entity, {}, { ...override, semanticName: 'right' }).entityList('left', entity, {}, override).build();
   const event = host.process(state, host.commandCreators.leftSet({ id: 'a' }))[0]!;
   expect(event.type).toBe('custom.shared.event');
   const expected = { ...state, left: [{ id: 'a', qty: 3 }] };
@@ -389,7 +389,7 @@ test('a reused command function retains independent registration targets', () =>
   const first = createEntity<{ id: string; qty: number }, 'first'>('first').commands(() => ({ bSet: handler })).build();
   const second = createEntity<{ id: string; qty: number }, 'second'>('second').commands(() => ({ set: handler })).build();
   const host = createAggregate('store', { a: [{ id: 'same', qty: 2 }], sibling: [{ id: 'same', qty: 7 }] })
-    .entityList('a', first).entityList('sibling', second).entityList('a', first).entityList('other', first).build();
+    .entityList('a', first).entityList('sibling', second).entityList('a', first).entityList('other', first, {}, { semanticName: 'other' }).build();
   expect(host.process(host.initialState, host.commandCreators.aBSet({ id: 'same' }))[0]!.payload).toBe(2);
   expect(host.process(host.initialState, host.commandCreators.siblingSet({ id: 'same' }))[0]!.payload).toBe(7);
   expect(() => host.process(host.initialState, host.commandCreators.otherBSet({ id: 'same' }))).toThrow('Invalid mounted command target');

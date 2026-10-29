@@ -40,7 +40,7 @@ test.each([false, true])('explicit wire override rejects shadowed selected comma
   expect(live[winner]('a').qty).toBe((reverse ? 1 : 2) + 5);
 });
 
-test.each([false, true])('default camel/snake collision rejects before packing, reverse=%s', reverse => {
+test.each([false, true])('shared default semantic wire rejects shadowed selection before packing, reverse=%s', reverse => {
   const { live, pack, handler, before } = fixture(['orderLines', 'order_lines'], reverse, false);
   const loser = reverse ? 'order_lines' : 'orderLines';
   const state = extractState(live);

@@ -86,7 +86,34 @@ the command handler. Composite keys and multiple list ancestors are supported.
 Final leaf identity remains required. Navigation never inserts anything, missing
 ancestors always reject (even no-event commands), and no ancestors are auto-created.
 Nested calls return readonly aggregate dispatch state, not the selected parent or
-leaf. Descendant commands gain no flattened aliases on parent proxies.
+leaf. Descendant commands gain no flattened navigation aliases on parent proxies.
+
+Explicit static commands also have parent aliases: `live.registerIdentifier(...)`
+and `live.customers('c').registerIdentifier(...)` call the corresponding immediate
+child list's `register` method. The name is the **authored command** followed by
+the capitalized **semantic entity name**; `{ semanticName: 'credential' }` changes
+it to `registerCredential`, never `registerIdentifiers` inferred from navigation.
+Arguments, ancestor binding, readonly aggregate results and async behavior are
+identical to collection calls; ordinary commands gain no aliases, and `register`
+is not magic. Aliases exist only at the root and on selected list parents, not on
+maps, collections themselves, singleton branches or selector-bound roles.
+Inferred aliases require one guaranteed literal name: the entity's exact default
+name, or a required single-literal `semanticName` override. Optional overrides,
+union names and widened strings still generate the actual runtime alias, but do
+not promise any alias property or callable index signature. Collection navigation
+and selected methods remain available; wire-only overrides retain the default alias.
+
+Known pre-existing declaration limitation: a CommonJS (`.cts`) graph consumed by
+ESM `MirageOf` can report TS2349 on ordinary selected methods under TypeScript 5.9
+and 7. The equivalent ESM (`.mts`) graph passes; alias inference does not resolve
+this cross-mode limitation.
+
+Breaking namespace rule: Mirage construction rejects duplicate sibling generated
+aliases and collisions with parent state, commands, root selectors or reserved
+protocol names, including parent templates when collections are empty. Give
+siblings distinct semantic names to disambiguate aliases. Explicit shared wire
+overrides remain legal and continue to use Aggregate's existing winner; distinct
+generated alias names do not create new routing or another command execution.
 
 Different entity definitions cannot occupy the same mount point; reusing the same
 definition is allowed. Different authored command names that flatten to the same
@@ -96,6 +123,14 @@ through Aggregate's existing wire-winning registration, which can execute a comm
 mounted elsewhere rather than the originating collection's command. Developers are
 responsible for compatible payloads/pack arguments and any discriminator such as
 customer versus supplier; Mirage does not infer routing from those fields.
+
+Mounted wire names follow entity semantic names, independent of Mirage navigation:
+`live.identifiers.register(...)` can dispatch `party.identifier.register.command`,
+and `live.customers('c').identifiers.register(...)` dispatches
+`party.customer.identifier.register.command`. To route reused definitions
+independently, set `{ semanticName: 'customerIdentifier' }` in the fourth mount
+argument. This changes wire identity and parent-alias suffixes, not collection/selector names or PK
+qualifiers. Equal semantic paths intentionally share Aggregate's wire winner.
 
 Command forms retain their authored business arguments. For a shorthand handler
 `set(state, payload: { id: string; qty: number })`, call

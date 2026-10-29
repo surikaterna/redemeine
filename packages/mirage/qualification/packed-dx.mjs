@@ -32,6 +32,8 @@ await writeFile(resolve(output, 'package.json'), JSON.stringify({ private: true,
   devDependencies: { typescript: '5.9.3', typescript7: 'npm:typescript@7.0.2' } }, null, 2));
 await run('install', 'npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 await writeFile(resolve(output, 'consumer.mts'), await readFile(resolve(root, 'packages/mirage/test/dx-contract.types.ts')));
+const semanticContracts = await readFile(resolve(root, 'packages/mirage/test/semanticAliases.types.ts'), 'utf8');
+await writeFile(resolve(output, 'semantic.mts'), semanticContracts);
 await writeFile(resolve(output, 'scoped.mts'), await readFile(resolve(root, 'packages/mirage/test/scopedCommands.fixture.ts.txt')));
 for (const extension of ['mts', 'cts']) {
   await writeFile(resolve(output, `prototype.${extension}`), await readFile(resolve(root, 'packages/aggregate/test/prototypeRegistration.fixture.ts.txt')));
@@ -39,14 +41,14 @@ for (const extension of ['mts', 'cts']) {
 await writeFile(resolve(output, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
   strict: true, skipLibCheck: false, noEmit: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
   exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, types: [], typeRoots: []
-}, files: ['consumer.mts', 'scoped.mts', 'prototype.mts', 'prototype.cts'] }, null, 2));
+}, files: ['consumer.mts', 'semantic.mts', 'scoped.mts', 'prototype.mts', 'prototype.cts'] }, null, 2));
 for (const compiler of ['typescript', 'typescript7']) {
   const stdout = await run(compiler, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json', '--listFiles']);
   for (const file of stdout.trim().split('\n')) assert(file.startsWith(`${output}/`), `Ancestor type leaked: ${file}`);
   await run(`${compiler}-emit`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'tsconfig.json',
     '--noEmit', 'false', '--declaration', '--emitDeclarationOnly', '--outDir', `emitted-${compiler}`]);
   await writeFile(resolve(output, 'downstream.mts'), `
-import { selectedCommandHost, nestedExposureHost, staticCollectionHost, staticAliasHost, nestedStaticHost } from './emitted-${compiler}/consumer.mjs';
+import { selectedCommandHost, nestedExposureHost, staticCollectionHost, staticAliasHost, nestedStaticHost, parentAliasHost, namedAliasHost, packagedAliasHost, inheritedAliasHost } from './emitted-${compiler}/consumer.mjs';
 import { createMirage } from '@redemeine/mirage';
 import { scopedHost } from './emitted-${compiler}/scoped.mjs';
 const scoped = createMirage(scopedHost, 'scoped').rows('');
@@ -74,6 +76,30 @@ void noAnyNestedStatic;
 const staticRows = createMirage(staticCollectionHost, 'static').rows;
 staticRows.register('id', 1);
 const aliases = createMirage(staticAliasHost, 'aliases');
+aliases.registerLeftProof('id', 1);
+aliases.registerRightProof('id', 1);
+const parentAliases = createMirage(parentAliasHost, 'parentAliases');
+createMirage(namedAliasHost, 'named').registerStaticProof('id', 1);
+createMirage(packagedAliasHost, 'packaged').registerStaticProof('id', 1);
+createMirage(inheritedAliasHost, 'inherited').registerMixedProof('id', 1);
+parentAliases.registerRootCredential('id', 1);
+parentAliases.parents('p').registerCredential('id', 1);
+const branchAliases = createMirage(nestedStaticHost, 'nestedAliases').parents({ region: 'r', code: 'p' }).branches('b');
+branchAliases.registerNestedStaticChild({ id: 'c', value: 1 });
+branchAliases.optionalNestedStaticChild();
+branchAliases.explicitNestedStaticChild('p', 'c', 1);
+const noAnyAlias: 0 extends (1 & Parameters<typeof parentAliases.registerRootCredential>[0]) ? true : false = false;
+// @ts-expect-error Aliases preserve complete authored tuples downstream.
+parentAliases.registerRootCredential(1);
+// @ts-expect-error Alias business types remain checked downstream.
+parentAliases.parents('p').registerCredential('id', 'wrong');
+// @ts-expect-error Semantic overrides replace default names downstream.
+parentAliases.parents('p').registerStaticProof('id', 1);
+// @ts-expect-error Alias shorthand still requires business data downstream.
+branchAliases.registerNestedStaticChild({ id: 'c' });
+// @ts-expect-error Aliases do not shorten authored packs downstream.
+branchAliases.explicitNestedStaticChild('c', 1);
+void noAnyAlias;
 aliases.left.register('id', 1);
 aliases.right.register('id', 1);
 // @ts-expect-error Wire aliases preserve full public arguments downstream.
@@ -120,13 +146,17 @@ live.lines('one').set();
 live.lines('one').set({ qty: 'bad' });
 void noAny;
 `);
-  await writeFile(resolve(output, 'downstream.json'), JSON.stringify({ extends: './tsconfig.json', files: ['downstream.mts'] }));
+  await writeFile(resolve(output, 'semantic-downstream.mts'),
+    `import { uncertainAliases, guaranteedAliases, explicitGenericNavigation } from './emitted-${compiler}/semantic.mjs';\n${semanticContracts.split('// Downstream contracts')[1]}`);
+  await writeFile(resolve(output, 'downstream.json'), JSON.stringify({ extends: './tsconfig.json', files: ['downstream.mts', 'semantic-downstream.mts'] }));
   await run(`${compiler}-downstream`, process.execPath, [`node_modules/${compiler}/bin/tsc`, '-p', 'downstream.json']);
 }
 await writeFile(resolve(output, 'runtime.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/runtime.mjs')));
 await run('runtime', process.execPath, ['--unhandled-rejections=strict', 'runtime.mjs']);
 await writeFile(resolve(output, 'collection-static-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/collection-static-commands.mjs')));
 await run('collection-static-commands', process.execPath, ['--unhandled-rejections=strict', 'collection-static-commands.mjs']);
+await writeFile(resolve(output, 'semantic-aliases.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/semantic-aliases.mjs')));
+await run('semantic-aliases', process.execPath, ['--unhandled-rejections=strict', 'semantic-aliases.mjs']);
 await writeFile(resolve(output, 'selected-commands.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/selected-commands.mjs')));
 await run('selected-commands', process.execPath, ['--unhandled-rejections=strict', 'selected-commands.mjs']);
 await writeFile(resolve(output, 'cache-identity.mjs'), await readFile(resolve(root, 'packages/mirage/qualification/cache-identity.mjs')));

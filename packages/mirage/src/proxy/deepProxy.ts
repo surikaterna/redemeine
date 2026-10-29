@@ -10,6 +10,7 @@ import { readonlyObjectMember, readonlyTraps, readonlyValue } from './readonlyVi
 import { assertSelectedIdentity } from './selectedIdentity';
 import { selectedCommandContext } from './selectedCommandContext';
 import { bindAncestors } from './nestedCollection';
+import { parentAlias } from './parentAliases';
 
 export function createProxyContext(core: ProxyCore, mounts: Record<string, MountMetadata>, selectors: object, builder: MirageBuilder): ProxyContext {
   const context: ProxyContext = {
@@ -76,6 +77,11 @@ function makeDeepProxy(statePath: string[], commandPath: string[], context: Invo
       const protocol = readonlyObjectMember(property);
       if (protocol) return protocol;
       if (property === 'then' || typeof property !== 'string') return undefined;
+      if (!statePath.length) {
+        const alias = parentAlias(property, ctx.builder, ctx.mounts, [], (key, mount) =>
+          ctx.makeCollectionProxy([key], [mount.commandPrefix], mount, context));
+        if (alias) return alias;
+      }
       if (!statePath.length && Object.hasOwn(ctx.selectors, property)) return (...args: unknown[]) => ctx.invokeSelector(property, args, context);
       const target = ctx.resolvePath(statePath);
       if (target && typeof target === 'object' && Object.hasOwn(target, property)) {

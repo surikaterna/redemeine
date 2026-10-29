@@ -21,12 +21,26 @@ void [staticLiteral, staticArgs];
 export const staticCollectionHost = createAggregate('staticHost', { rows: [] as { id: string }[] })
   .entityList('rows', StaticProof).build();
 const staticLive = createMirage(staticCollectionHost, 'static');
+const semanticLiteral: 'staticProof' = null as unknown as NonNullable<typeof staticCollectionHost.__registryType>['rows']['semanticName'];
+staticLive.registerStaticProof('id', 1);
+void semanticLiteral;
+export const namedAliasHost = createAggregate('namedAlias', { rows: [] as { id: string }[] }).entities({ rows: StaticProof }).build();
+export const packagedAliasHost = createAggregate('packagedAlias', { staticProof: [] as { id: string }[] }).entities({}, StaticProof).build();
+createMirage(namedAliasHost, 'named').registerStaticProof('id', 1);
+createMirage(packagedAliasHost, 'packaged').registerStaticProof('id', 1);
+const aliasMixinState = { rows: [] as { id: string }[] };
+const aliasMixin = createMixin<typeof aliasMixinState>().entityList('rows', StaticProof, {}, { semanticName: 'mixedProof' }).build();
+export const inheritedAliasHost = createAggregate('inheritedAlias', aliasMixinState)
+  .extends(createAggregate('aliasBase', aliasMixinState).mixins(aliasMixin)).build();
+createMirage(inheritedAliasHost, 'inherited').registerMixedProof('id', 1);
 export const staticAliasHost = createAggregate('staticAliases', { left: [] as { id: string }[], right: [] as { id: string }[] })
-  .entityList('left', StaticProof, {}, { commandNameOverrides: { register: 'shared' } })
-  .entityList('right', StaticProof, {}, { commandNameOverrides: { register: 'shared' } }).build();
+  .entityList('left', StaticProof, {}, { semanticName: 'leftProof', commandNameOverrides: { register: 'shared' } })
+  .entityList('right', StaticProof, {}, { semanticName: 'rightProof', commandNameOverrides: { register: 'shared' } }).build();
 const staticAliases = createMirage(staticAliasHost, 'aliases');
 staticAliases.left.register('id', 1);
 staticAliases.right.register('id', 1);
+staticAliases.registerLeftProof('id', 1);
+staticAliases.registerRightProof('id', 1);
 // @ts-expect-error Wire aliases still require the complete authored pack tuple.
 staticAliases.left.register(1);
 staticLive.rows.register('id', 1);
@@ -122,6 +136,82 @@ const StaticIdentifier = createEntity('identifier', { domain: '', authority: '',
 const staticIdentifierHost = createAggregate('identifiers', { identifiers: [] as { domain: string; authority: string; identifier: string }[] })
   .entityList('identifiers', StaticIdentifier, { pk: ['domain', 'authority'] }).build();
 const staticIdentifiers = createMirage(staticIdentifierHost, 'root');
+staticIdentifiers.registerIdentifier({ domain: 'd', authority: 'a', identifier: 'value' });
+// @ts-expect-error Parent aliases preserve full composite identity.
+staticIdentifiers.registerIdentifier({ identifier: 'value' });
+// @ts-expect-error Ordinary commands never gain parent aliases.
+staticLive.ordinaryStaticProof();
+// @ts-expect-error Alias tuples retain business argument types.
+staticLive.registerStaticProof('id', 'wrong');
+// @ts-expect-error Alias tuples retain identity arguments.
+staticLive.registerStaticProof(1);
+const nestedAliasParent = createMirage(nestedStaticHost, 'aliases').parents({ region: 'r', code: 'p' }).branches('b');
+nestedAliasParent.registerNestedStaticChild({ id: 'c', value: 1 });
+nestedAliasParent.optionalNestedStaticChild();
+nestedAliasParent.explicitNestedStaticChild('p', 'c', 1);
+// @ts-expect-error Alias shorthand retains business fields.
+nestedAliasParent.registerNestedStaticChild({ id: 'c' });
+// @ts-expect-error Alias packs are not shortened by ancestor bindings.
+nestedAliasParent.explicitNestedStaticChild('c', 1);
+const overrideParent = createEntity('overrideParent', { id: '', children: [] as { id: string }[] })
+  .entityList('children', StaticProof, {}, { semanticName: 'credential' }).build();
+export const parentAliasHost = createAggregate('parentAliasHost', { rows: [] as { id: string }[], parents: [{ id: 'p', children: [] as { id: string }[] }] })
+  .entityList('rows', StaticProof, {}, { semanticName: 'rootCredential' }).entityList('parents', overrideParent)
+  .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.parents[0], overrideParent, { mount: 'parents' }) })).build();
+const parentAliasLive = createMirage(parentAliasHost, 'alias');
+parentAliasLive.registerRootCredential('id', 1);
+parentAliasLive.parents('p').registerCredential('id', 1);
+// @ts-expect-error Selector-bound roles gain no parent aliases.
+parentAliasLive.chosen()!.registerCredential('id', 1);
+// @ts-expect-error Semantic overrides, not navigation keys, determine aliases.
+parentAliasLive.registerRows('id', 1);
+// @ts-expect-error Semantic overrides replace the entity-name suffix.
+parentAliasLive.parents('p').registerStaticProof('id', 1);
+const widenedSemantic: string = 'dynamic';
+const widenedAliasHost = createAggregate('wideAlias', { rows: [] as { id: string }[] })
+  .entityList('rows', StaticProof, {}, { semanticName: widenedSemantic }).build();
+const widenedAliasLive = createMirage(widenedAliasHost, 'wide');
+widenedAliasLive.rows.register('id', 1);
+// @ts-expect-error Widened semantic names do not introduce a callable index signature.
+widenedAliasLive.registerDynamic('id', 1);
+const siblingAliasCollision = createAggregate('siblings', { left: [] as { id: string }[], right: [] as { id: string }[] })
+  .entityList('left', StaticProof).entityList('right', StaticProof).build();
+// @ts-expect-error Sibling generated aliases must be unique, even with shared wires.
+createMirage(siblingAliasCollision, 'collision');
+const stateAliasCollision = createAggregate('aliasState', { rows: [] as { id: string }[], registerStaticProof: 0 })
+  .entityList('rows', StaticProof).build();
+// @ts-expect-error Parent aliases cannot shadow state.
+createMirage(stateAliasCollision, 'collision');
+const commandAliasCollision = createAggregate('aliasCommand', { rows: [] as { id: string }[] })
+  .entityList('rows', StaticProof).commands(() => ({ registerStaticProof: () => [] })).build();
+// @ts-expect-error Parent aliases cannot shadow commands.
+createMirage(commandAliasCollision, 'collision');
+const selectorAliasCollision = createAggregate('aliasSelector', { rows: [] as { id: string }[] })
+  .entityList('rows', StaticProof).selectors({ registerStaticProof: () => 1 }).build();
+// @ts-expect-error Parent aliases cannot shadow root selectors.
+createMirage(selectorAliasCollision, 'collision');
+const parentTemplateCollision = createEntity('collisionParent', { id: '', children: [] as { id: string }[], registerStaticProof: 0 })
+  .entityList('children', StaticProof).build();
+const emptyParentCollision = createAggregate('emptyParent', { parents: [] as { id: string; children: { id: string }[]; registerStaticProof: number }[] })
+  .entityList('parents', parentTemplateCollision).build();
+// @ts-expect-error Parent template collisions reject even without existing entries.
+createMirage(emptyParentCollision, 'collision');
+const protocolAliasEntity = createEntity('JSON', { id: '' }).commands(() => ({ to: () => [] }), { static: ['to'] }).build();
+const protocolAliasHost = createAggregate('protocolAlias', { rows: [] as { id: string }[] }).entityList('rows', protocolAliasEntity).build();
+// @ts-expect-error Generated aliases cannot occupy reserved protocol names.
+createMirage(protocolAliasHost, 'collision');
+async function aliasResultContract() {
+  const result = await parentAliasLive.parents('p').registerCredential('id', 1);
+  const noAny: IsAny<typeof result> = false;
+  const noAnyArgs: IsAny<Parameters<typeof parentAliasLive.registerRootCredential>[0]> = false;
+  const id: string | undefined = result.parents[0]?.id;
+  // @ts-expect-error Aliases return readonly aggregate state.
+  result.rows.push({ id: 'bad' });
+  // @ts-expect-error Aliases do not return a selected entity.
+  result.id;
+  void [noAny, noAnyArgs, id];
+}
+void aliasResultContract;
 staticIdentifiers.identifiers.register({ domain: 'd', authority: 'a', identifier: 'value' });
 // @ts-expect-error full composite identity is required on collection calls
 staticIdentifiers.identifiers.register({ identifier: 'value' });

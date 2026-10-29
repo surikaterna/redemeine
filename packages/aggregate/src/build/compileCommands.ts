@@ -4,6 +4,7 @@ import { attachPackReceiver, resolveCommandHandler } from '../redemeineComponent
 import type { CommandMetadata } from '../commandMetadata';
 import { resolvedCommandTargets } from './entityCommandTarget';
 import { commandModes } from '../entityCommandLifecycle';
+import { mountedWire } from './mountedNaming';
 
 function snapshotDefinition(definition: GenericCommandMap[string]): GenericCommandMap[string] {
   if (typeof definition === 'function') return definition;
@@ -31,7 +32,8 @@ export function compileCommands(definitions: GenericCommandMap, overrides: Recor
   const staticByType: Record<string, boolean> = Object.create(null);
   for (const [localName, definition] of Object.entries(definitions)) {
     const owned = snapshotDefinition(definition);
-    const wireType = (Object.hasOwn(overrides, localName) && overrides[localName]) || naming.command(aggregateName, localName);
+    const wireType = (Object.hasOwn(overrides, localName) && overrides[localName])
+      || mountedWire(definitions, localName, aggregateName, naming, 'command') || naming.command(aggregateName, localName);
     snapshot[localName] = owned;
     handlers[wireType] = resolveCommandHandler(owned);
     targetsByType[wireType] = targets[localName]!;

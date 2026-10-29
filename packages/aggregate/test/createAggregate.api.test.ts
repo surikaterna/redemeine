@@ -60,7 +60,7 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const command = aggregate.commandCreators.lineUpdate({ id: 'l1', qty: 9 });
-    expect(command.type).toBe('order.line_update.command');
+    expect(command.type).toBe('order.line.update.command');
 
     const events = aggregate.process(initial, command as any);
     expect(events[0].type).toBe('order.line.line_updated.event');
@@ -154,8 +154,8 @@ describe('createAggregate API coverage', () => {
       .build();
 
     const aggregate = createAggregate<State, 'order'>('order', state)
-        .entityList('orderLines', orderLineEntity)
-        .entityList('returnLines', returnLineEntity)
+        .entityList('orderLines', orderLineEntity, {}, { semanticName: 'orderLine' })
+        .entityList('returnLines', returnLineEntity, {}, { semanticName: 'returnLine' })
       .events({})
       .commands(() => ({}))
       .build();
@@ -168,8 +168,8 @@ describe('createAggregate API coverage', () => {
 
     expect(afterReturn.orderLines[0].qty).toBe(5);
     expect(afterReturn.returnLines[0].status).toBe('APPROVED');
-    expect(orderEvents[0].type).toBe('order.order_lines.updated.event');
-    expect(returnEvents[0].type).toBe('order.return_lines.updated.event');
+    expect(orderEvents[0].type).toBe('order.orderLine.updated.event');
+    expect(returnEvents[0].type).toBe('order.returnLine.updated.event');
   });
 
   test('mixins support entityList/entityMap/valueObjectList/valueObjectMap mounts', () => {
@@ -201,7 +201,7 @@ describe('createAggregate API coverage', () => {
 
     const mixin = createMixin<State>()
       .entityList('orderLines', lineEntity)
-      .entityMap('byCode', lineEntity, { knownKeys: ['A'] as const })
+      .entityMap('byCode', lineEntity, { knownKeys: ['A'] as const }, { semanticName: 'byCode' })
       .valueObjectList('aliases', {})
       .valueObjectMap('tagsByScope', {})
       .events({})
@@ -291,8 +291,8 @@ describe('createAggregate API coverage', () => {
     const command = aggregate.commandCreators.linesPartsChangeValue({ linesId: 'l1', id: 'p1', value: 99 });
     const emitted = aggregate.process(aggregate.initialState, command as any);
 
-    expect(command.type).toBe('order.lines_parts_change_value.command');
-    expect(emitted[0].type).toBe('order.lines.parts_value_changed.event');
+    expect(command.type).toBe('order.line.part.change_value.command');
+    expect(emitted[0].type).toBe('order.line.part.value_changed.event');
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'part-command', level: 2 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'part-event', level: 2 });
   });
@@ -337,8 +337,8 @@ describe('createAggregate API coverage', () => {
     const command = aggregate.commandCreators.linesUpdateQty({ id: 'l1', qty: 7 });
     const emitted = aggregate.process(aggregate.initialState, command as any);
 
-    expect(command.type).toBe('order.lines_update_qty.command');
-    expect(emitted[0].type).toBe('order.lines.qty_updated.event');
+    expect(command.type).toBe('order.line.update_qty.command');
+    expect(emitted[0].type).toBe('order.line.qty_updated.event');
     expect(aggregate.apply(aggregate.initialState, emitted[0]).lines[0].qty).toBe(7);
     expect(aggregate.metadata.commands[command.type].meta).toEqual({ source: 'mixin-mounted-entity-command', level: 1 });
     expect(aggregate.metadata.events[emitted[0].type].meta).toEqual({ source: 'mixin-mounted-entity-event', level: 1 });

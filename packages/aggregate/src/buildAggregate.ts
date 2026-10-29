@@ -7,7 +7,7 @@ import { createCommandProcessor } from './createCommandProcessor';
 import { createEmitProxy } from './proxies/createEmitProxy';
 import { createCommandCreatorsProxy } from './proxies/createCommandCreatorsProxy';
 import { createCommandContextProxy } from './proxies/createCommandContextProxy';
-import { applyEvent, applyEventToDraft } from './applyEvent';
+import { applyEvent, applyEventToDraft, type CompiledEventRegistration } from './applyEvent';
 import type { Draft } from 'immer';
 import { resolveEvents } from './build/resolveEvents';
 import { mountEntities } from './build/mountEntities';
@@ -83,11 +83,11 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     );
 
     // 6. Build metadata
-    const metadataByEventType = buildEventMetadata(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy);
+    const metadataByEventType = buildEventMetadata(dispatch);
 
     // 7. Build command handlers, metadata, and type maps in a single pass
     const compiled = compileCommands(allCommandsMap, allCommandOverrides, aggregateName, namingStrategy);
-    const eventTypesByKey = buildTypeMap(allEvents, allEventOverrides, aggregateName, namingStrategy, 'event');
+    const eventTypesByKey = buildTypeMap(allEvents, allEventOverrides, aggregateName, namingStrategy, 'event', Object.keys(allEventMetadata));
 
     const domain = {
         aggregateType: aggregateName,
@@ -117,19 +117,13 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
 }
 
 function buildEventMetadata<TMeta>(
-    allEvents: Record<string, Function>,
-    allEventMetadata: Record<string, TMeta | undefined>,
-    allEventOverrides: Record<string, string>,
-    aggregateName: string,
-    namingStrategy: NamingStrategy
+    dispatch: ReadonlyMap<string, CompiledEventRegistration<TMeta>>
 ): Record<string, { meta?: TMeta }> {
-    const keys = Array.from(new Set([...Object.keys(allEvents), ...Object.keys(allEventMetadata)]));
-    return keys.reduce<Record<string, { meta?: TMeta }>>((acc, eventKey) => {
-        const resolvedEventType = ownDefinition(allEventOverrides, eventKey) || namingStrategy.event(aggregateName, eventKey);
-        const meta = ownDefinition(allEventMetadata, eventKey);
-        acc[resolvedEventType] = meta !== undefined ? { meta } : {};
-        return acc;
-    }, Object.create(null));
+    const metadata: Record<string, { meta?: TMeta }> = Object.create(null);
+    for (const [type, registration] of dispatch) {
+        metadata[type] = registration.metadata !== undefined ? { meta: registration.metadata } : {};
+    }
+    return metadata;
 }
 
 function buildTypeMap(
@@ -137,9 +131,10 @@ function buildTypeMap(
     overrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy,
-    kind: 'command' | 'event'
+    kind: 'command' | 'event',
+    registrationKeys: string[] = []
 ): Record<string, string> {
-    return Object.keys(map).reduce<Record<string, string>>((acc, key) => {
+    return [...new Set([...Object.keys(map), ...registrationKeys])].reduce<Record<string, string>>((acc, key) => {
         acc[key] = ownDefinition(overrides, key) || namingStrategy[kind](aggregateName, key);
         return acc;
     }, Object.create(null));

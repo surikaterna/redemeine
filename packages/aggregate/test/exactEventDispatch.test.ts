@@ -3,7 +3,7 @@ import type { Event } from '@redemeine/kernel';
 import { commandMetadata, createAggregate, createAggregatePluginFor, createEntity, createMixin } from '../src';
 
 type Row = { code: string; qty: number };
-const wire = 'store.rows.changed.event';
+const wire = 'store.row.changed.event';
 const payload = { code: 'a', qty: 3 };
 
 test('compiled projectors retain unbound invocation semantics', () => {
@@ -170,7 +170,7 @@ test.each(['flattened', 'nested'] as const)('%s scoped wire collisions use assig
   const base = createAggregate('store', state);
   const host = kind === 'flattened' ? base.mixins({ ...source, mountedEntities: [] }).build()
     : base.entityList('parents', parent).build();
-  const event = { type: kind === 'flattened' ? 'shared.event' : 'store.parents.shared.event', payload: { parentsId: 'p', code: 'a' } };
+  const event = { type: 'shared.event', payload: { parentsId: 'p', code: 'a' } };
   const expected = structuredClone(state);
   (kind === 'flattened' ? expected : expected.parents[0]!).left[0]!.qty = 11;
   expect(host.apply(state, event)).toEqual(expected);

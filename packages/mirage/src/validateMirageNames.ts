@@ -2,6 +2,7 @@ import type { MirageBuilder } from './runtimeDefinition';
 import { isStaticListCommand } from './proxy/collectionProxy';
 import type { MountMetadata } from './mirage.types';
 import { readProperty } from './runtimeDefinition';
+import { parentAliases } from './proxy/parentAliases';
 
 const protocols = new Set(['then', 'toJSON', 'toString', 'valueOf', 'inspect']);
 
@@ -18,7 +19,14 @@ function validateEntityNames(name: string, entries: unknown[], commands: readonl
   }
 }
 
-function validateMounts(builder: MirageBuilder, mounts: Record<string, MountMetadata>, states: unknown[], prefix: string[] = []): void {
+function validateMounts(builder: MirageBuilder, mounts: Record<string, MountMetadata>, states: unknown[], prefix: string[] = [], commands: readonly string[] = [], aliasParent = true): void {
+  const claimed = new Set(commands);
+  for (const alias of aliasParent ? parentAliases(builder, mounts, prefix) : []) {
+    if (protocols.has(alias.name) || claimed.has(alias.name) || states.some(state => !!state && typeof state === 'object' && Object.hasOwn(state, alias.name))) {
+      throw new Error(`Mirage parent alias collision: ${[...prefix, alias.name].join('.')}`);
+    }
+    claimed.add(alias.name);
+  }
   for (const [name, mount] of Object.entries(mounts)) {
     const commandPrefix = [...prefix, mount.commandPrefix].map((part, index) => index ? part.charAt(0).toUpperCase() + part.slice(1) : part).join('');
     for (const command of mount.commandNames ?? []) {
@@ -33,9 +41,11 @@ function validateMounts(builder: MirageBuilder, mounts: Record<string, MountMeta
       return mount.kind === 'list' && Array.isArray(collection) ? collection
         : mount.kind === 'map' && collection && typeof collection === 'object' ? Object.values(collection) : [];
     });
-    validateEntityNames(name, entries, mount.commandNames ?? []);
+    const template = readProperty(mount.entity, 'initialState');
+    const parentStates = template && typeof template === 'object' ? [...entries, template] : entries;
+    validateEntityNames(name, parentStates, mount.commandNames ?? []);
     const nested = readProperty(mount.entity, 'mounts') as Record<string, MountMetadata> | undefined;
-    if (nested) validateMounts(builder, nested, entries, [...prefix, mount.commandPrefix]);
+    if (nested) validateMounts(builder, nested, parentStates, [...prefix, mount.commandPrefix], mount.commandNames ?? [], aliasParent && mount.kind === 'list');
   }
 }
 
@@ -50,5 +60,5 @@ export function validateMirageNames(builder: MirageBuilder, state: unknown): voi
     if (claimed.has(name)) throw new Error(`Mirage namespace collision: ${name}`);
     claimed.add(name);
   }
-  validateMounts(builder, builder.mounts ?? {}, [state]);
+  validateMounts(builder, builder.mounts ?? {}, [state], [], [...commands, ...selectors]);
 }

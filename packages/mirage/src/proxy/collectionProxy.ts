@@ -6,6 +6,7 @@ import { readonlyArrayMember, readonlyObjectMember, readonlyTraps, readonlyValue
 import { isSelectedDescendant } from './selectedCommandContext';
 import { commandMetadata } from '@redemeine/aggregate';
 import { nestedCollection } from './nestedCollection';
+import { parentAlias } from './parentAliases';
 
 export function isStaticListCommand(builder: object, name: string, mount: MountMetadata, depth = 1): boolean {
   const registration = commandMetadata(builder, name);
@@ -35,7 +36,7 @@ export function selectFromListEntity(name: string, mount: MountMetadata, entity:
   return selectFromList(name, mount, Array.isArray(mount.pk) ? entity : readProperty(entity, typeof mount.pk === 'string' ? mount.pk : 'id'));
 }
 
-export function makeEntityMirageProxy(path: string[], prefix: string[], selection: InvocationContext, ctx: ProxyContext): unknown {
+export function makeEntityMirageProxy(path: string[], prefix: string[], selection: InvocationContext, ctx: ProxyContext, parentAliasesEnabled = false): unknown {
   const resolveState = () => {
     const collection = selection.resolveCollection ? selection.resolveCollection() : ctx.resolvePath(path);
     const entity = Array.isArray(collection) ? findEntityInCollection(collection, selection, ctx.core.version) : undefined;
@@ -51,6 +52,9 @@ export function makeEntityMirageProxy(path: string[], prefix: string[], selectio
       if (protocol) return protocol;
       if (typeof property !== 'string' || property === 'then') return undefined;
       const entity = resolveState();
+      const mounts = parentAliasesEnabled ? readProperty(selection.selectedMount?.entity, 'mounts') as Record<string, MountMetadata> | undefined : undefined;
+      const alias = mounts && parentAlias(property, ctx.builder, mounts, prefix, key => nestedCollection(key, path, prefix, context, ctx));
+      if (alias) return alias;
       if (Object.hasOwn(entity, property)) return nestedCollection(property, path, prefix, context, ctx) ?? readonlyValue(readProperty(entity, property));
       if (!Object.hasOwn(ctx.builder.commandCreators, ctx.toCommandName([...prefix, property]))) return undefined;
       if (selection.selectedMount && isSelectedDescendant(ctx.toCommandName([...prefix, property]), ctx.builder, selection.selectedMount, selection.ancestors?.length ?? 0)) return undefined;
@@ -65,7 +69,7 @@ export function makeCollectionProxy(path: string[], prefix: string[], mount: Mou
     const selected = selectFromList(path.at(-1)!, mount, key);
     return makeEntityMirageProxy(path, prefix, { ...selected,
       ancestors: context.ancestors, resolveCollection: context.resolveCollection,
-      idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
+      idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx, true);
   };
   const items = () => {
     const entries = collection();
@@ -74,7 +78,7 @@ export function makeCollectionProxy(path: string[], prefix: string[], mount: Mou
       const selected = selectFromListEntity(path.at(-1)!, mount, entity);
       return makeEntityMirageProxy(path, prefix, { ...selected,
         ancestors: context.ancestors, resolveCollection: context.resolveCollection,
-        idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx);
+        idsPayload: { ...context.idsPayload, ...selected.idsPayload }, packPrefix: [...context.packPrefix, ...selected.packPrefix] }, ctx, true);
     });
   };
   return new Proxy(select, {

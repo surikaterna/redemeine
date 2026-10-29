@@ -4,7 +4,7 @@ import { createComponentBehaviorState, bindFluentMethods } from './redemeineComp
 import type { EventEmitterFactory, MapCommandsToPayloads, EntityCommandDefinition, NormalizeEntityCommands, ValidEntityCommandDefinitions } from './types/aggregateTyping';
 import { entityCommands } from './entityCommandLifecycle';
 import type { AggregateStateView } from './types/aggregateState';
-import type { ReplaceCommandMap, AggregateEntityRegistry, EntityRegistryListEntry } from './types/entityMount';
+import type { ReplaceCommandMap, AggregateEntityRegistry, EntityRegistryListEntry, MountSemanticName } from './types/entityMount';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -88,12 +88,12 @@ export interface EntityBuilder<S, Name extends string, E extends Record<string, 
   /**
    * Register a list-backed nested entity collection.
    */
-  entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
+  entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id', const Overrides extends [mountOverrides?: EntityMountOverrides | undefined] = [mountOverrides?: EntityMountOverrides | undefined]>(
     name: EN,
     entityComponent: T,
     options?: EntityListOptions<PK>,
-    mountOverrides?: EntityMountOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta, ReplaceCommandMap<Registry, { [K in EN]: EntityRegistryListEntry<T, PK> }>>;
+    ...mountOverrides: Overrides
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta, ReplaceCommandMap<Registry, { [K in EN]: EntityRegistryListEntry<T, PK, MountSemanticName<T['name'], Overrides[0]>> }>>;
 
   /**
    * Register a record-backed nested entity map.

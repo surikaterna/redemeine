@@ -104,7 +104,7 @@ test.each(builders)('retains explicit mounted wire keys without guessing camelCa
   const source = createAggregate('order', { lines: [{ id: 'l1', qty: 0 }] })
     .entityList('lines', line).events({}).commands(() => ({})).build();
   const emitted = source.process(source.initialState, source.commandCreators.linesUpdate({ id: 'l1', qty: 7 }))[0]!;
-  expect(emitted.type).toBe('order.lines.qty_updated.event');
+  expect(emitted.type).toBe('order.line.qty_updated.event');
   const handlers = { [emitted.type]: (state: State) => { state.total += 7; } };
   const definition = build === 'public'
     ? createProjection('mounted', () => ({ total: 0 })).from(source, handlers).build()
