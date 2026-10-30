@@ -54,7 +54,7 @@ test.each(['before', 'after', 'mixin'] as const)('root ownership survives %s reg
     expect(host.metadata.events[root.type].meta).toEqual({ owner: 'root' });
     expectReplay(host, root, { ...initial(), count: 11 });
     const child = host.process(initial(), host.commandCreators.identifiersRegister({ id: 'a' }))[0]!;
-    expect(child.type).toBe('payment_attempt.identifiers.registered.event');
+    expect(child.type).toBe('payment_attempt.identifier.registered.event');
     expect(child.payload).toEqual({ id: 'a', count: 3 });
     expect(host.metadata.events[child.type].meta).toEqual({ owner: 'entity' });
     expectReplay(host, child, { ...initial(), identifiers: [{ id: 'a', count: 3 }] });
@@ -64,12 +64,12 @@ test.each(['before', 'after', 'mixin'] as const)('root ownership survives %s reg
 test('root and two scoped definitions with one JS key retain independent handlers and targets', () => {
   const otherProjector = (state: Row, event: Event<Row>) => { state.count = event.payload.count + 100; };
   const host = createAggregate('payment_attempt', initial()).events(rootEvents)
-    .entityList('identifiers', entity()).entityList('others', entity(otherProjector)).build();
+    .entityList('identifiers', entity()).entityList('others', entity(otherProjector), {}, { semanticName: 'other' }).build();
   expect(host.pure.eventProjectors.registered).toBe(rootProjector);
   expectReplay(host, { type: 'payment_attempt.registered.event', payload: { id: 'a', count: 11 } }, { ...initial(), count: 11 });
-  expectReplay(host, { type: 'payment_attempt.identifiers.registered.event', payload: { id: 'a', count: 3 } },
+  expectReplay(host, { type: 'payment_attempt.identifier.registered.event', payload: { id: 'a', count: 3 } },
     { ...initial(), identifiers: [{ id: 'a', count: 3 }] });
-  expectReplay(host, { type: 'payment_attempt.others.registered.event', payload: { id: 'a', count: 8 } },
+  expectReplay(host, { type: 'payment_attempt.other.registered.event', payload: { id: 'a', count: 8 } },
     { ...initial(), others: [{ id: 'a', count: 108 }] });
 });
 
@@ -77,10 +77,10 @@ test('entity-only reflection keys do not declare synthetic root wires', () => {
   const last = (state: Row, event: Event<Row>) => { state.count = event.payload.count + 100; };
   const unmatched = jest.fn();
   const host = createAggregate('payment_attempt', initial()).entityList('identifiers', entity())
-    .entityList('others', entity(last)).onUnmatchedEvent(unmatched).build();
+    .entityList('others', entity(last), {}, { semanticName: 'other' }).onUnmatchedEvent(unmatched).build();
   expect(host.pure.eventProjectors.registered).toBe(last);
   expect(definitionTargets(host.pure.eventProjectors).registered?.[0]?.statePath).toEqual(['others']);
-  expectReplay(host, { type: 'payment_attempt.others.registered.event', payload: { id: 'a', count: 8 } },
+  expectReplay(host, { type: 'payment_attempt.other.registered.event', payload: { id: 'a', count: 8 } },
     { ...initial(), others: [{ id: 'a', count: 108 }] });
   expectReplay(host, { type: 'payment_attempt.registered.event', payload: { id: 'a', count: 8 } }, initial());
   expect(unmatched).toHaveBeenCalledTimes(2);
@@ -94,15 +94,15 @@ test('flattened mixin entity provenance is not protected as root ownership', () 
   for (const host of [builder.build(), builder.build()]) {
     expect(host.pure.eventProjectors.identifiersRegistered).toBe(last);
     expect(definitionTargets(host.pure.eventProjectors).identifiersRegistered?.[0]?.statePath).toEqual(['others']);
-    expectReplay(host, { type: 'payment_attempt.others.identifiers_registered.event', payload: { id: 'a', count: 8 } },
+    expectReplay(host, { type: 'payment_attempt.other.identifiers_registered.event', payload: { id: 'a', count: 8 } },
       { ...initial(), others: [{ id: 'a', count: 108 }] });
-    expectReplay(host, { type: 'payment_attempt.identifiers_registered.event', payload: { id: 'a', count: 8 } },
+    expectReplay(host, { type: 'payment_attempt.identifier.registered.event', payload: { id: 'a', count: 8 } },
       { ...initial(), identifiers: [{ id: 'a', count: 8 }] });
   }
 });
 
 test('an exact scoped full-wire collision still beats the explicit root override', () => {
-  const wire = 'payment_attempt.identifiers.registered.event';
+  const wire = 'payment_attempt.identifier.registered.event';
   const host = createAggregate('payment_attempt', initial()).events(rootEvents)
     .overrideEventNames({ registered: wire }).entityList('identifiers', entity()).build();
   expect(host.pure.eventProjectors.registered).toBe(rootProjector);

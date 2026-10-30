@@ -60,10 +60,10 @@ test.each(['list', 'map'] as const)('bridge replays nested %s parents with list 
     .events({ changed(state, event: Event<Record<string, unknown> & { qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ set(state, payload: Record<string, unknown>) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
   const parent = createEntity<{ id: string; children: { id: string; qty: number }[]; byKey: Record<string, { id: string; qty: number }> }, 'parent'>('parent')
-    .entityList('children', child).entityMap('byKey', child).build();
+    .entityList('children', child, {}, { semanticName: 'children' }).entityMap('byKey', child, {}, { semanticName: 'byKey' }).build();
   const parents = [1, 2].map(n => ({ id: `p${n}`, children: [{ id: 'same', qty: n }], byKey: { same: { id: 'same', qty: n } } }));
   const state = { qty: 99, parents, byParent: { p1: structuredClone(parents[0]!), p2: structuredClone(parents[1]!) } };
-  const host = createAggregate('store', state).entityList('parents', parent).entityMap('byParent', parent).build();
+  const host = createAggregate('store', state).entityList('parents', parent).entityMap('byParent', parent, {}, { semanticName: 'byParent' }).build();
   for (const leaf of ['Children', 'ByKey'] as const) {
     const prefix = kind === 'list' ? 'parents' : 'byParent';
     const name = `${prefix}${leaf}Set` as const;
@@ -94,12 +94,12 @@ function entities() {
   return { first, second };
 }
 function mount(builder, first, second, overrides) {
-  return builder.entityList('a', first, {}, overrides).entityList('aB', second).entityList('a', first, {}, overrides);
+  return builder.entityList('a', first, {}, overrides).entityList('sibling', second).entityList('a', first, {}, overrides);
 }
 function hostFor(kind, alias, siblingId) {
   const { first, second } = entities();
   const overrides = alias ? { commandNameOverrides: { bSet: 'custom.winningSet.command' }, eventNameOverrides: { bChanged: 'custom.winningChanged.event' } } : {};
-  const inner = { id: 'p', a: [{ id: 'chosen', qty: 2 }], aB: [{ id: siblingId, qty: 7 }] };
+  const inner = { id: 'p', a: [{ id: 'chosen', qty: 2 }], sibling: [{ id: siblingId, qty: 7 }] };
   const builder = createAggregate('store', { ...inner, parents: [structuredClone(inner)] });
   if (kind === 'direct') return mount(builder, first, second, overrides).build();
   if (kind === 'mixin') return builder.mixins(mount(createMixin(), first, second, overrides).build()).build();

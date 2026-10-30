@@ -14,6 +14,7 @@ import type {
     MountedStructureMetadata,
     MountedEntityPackage,
     EntityMountOverrides,
+    MountSemanticName,
     EntityListOptions,
     EntityMapOptions,
     EntityRegistryListEntry,
@@ -116,12 +117,12 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
         ...entityPackages: T
     ) => AggregateBuilder<S, Name, M & CommandsFromNamedEntities<EN> & MergeEntities<T>, E, EOverrides, Sel, Registry & RegistryFromNamedEntities<EN> & RegistryFromPackages<T>, TMeta, TPlugins, PS, EP, SM>;
 
-    entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
+    entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id', const Overrides extends [mountOverrides?: EntityMountOverrides | undefined] = [mountOverrides?: EntityMountOverrides | undefined]>(
         name: EN,
         entityComponent: T,
         options?: EntityListOptions<PK>,
-        mountOverrides?: EntityMountOverrides
-    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, EntityRegistryListEntry<T, PK>>, TMeta, TPlugins, PS, EP, SM>;
+        ...mountOverrides: Overrides
+    ) => AggregateBuilder<S, Name, ReplaceCommandMap<M, MapEntityCommands<EN, T['commands']>>, E, EOverrides, Sel, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, EntityRegistryListEntry<T, PK, MountSemanticName<T['name'], Overrides[0]>>>, TMeta, TPlugins, PS, EP, SM>;
 
     entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
         name: EN,

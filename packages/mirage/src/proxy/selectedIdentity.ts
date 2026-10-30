@@ -1,7 +1,7 @@
 import type { InvocationContext } from '../mirage.types';
 import { readProperty } from '../runtimeDefinition';
 
-function equalIdentity(left: unknown, right: unknown): boolean {
+export function equalIdentity(left: unknown, right: unknown): boolean {
   const scalar = (value: unknown) => typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint';
   return scalar(left) && scalar(right) && String(left) === String(right);
 }

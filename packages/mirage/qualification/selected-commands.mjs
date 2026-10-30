@@ -74,8 +74,8 @@ function earlierRoleParity(api) {
     }
   })).build();
   const latest = api.createEntity('latest').commands(() => ({ current: () => [] })).build();
-  const host = api.createAggregate('store', { rows: [{ id: 0, code: '' }] }).entityList('rows', old)
-    .entityList('rows', latest, { pk: 'code' })
+  const host = api.createAggregate('store', { rows: [{ id: 0, code: '' }], currentRows: [{ id: 0, code: '' }] }).entityList('rows', old)
+    .entityList('currentRows', latest, { pk: 'code' })
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
   const live = createMirage(host, 'store');
   live.chosen().optional({ body: 'bound' });

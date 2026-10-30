@@ -6,6 +6,7 @@ import type { ReplaceFirstArg } from './types/ReplaceFirstArg';
 import type { PackedCommandWithMeta, ShorthandCommandWithMeta } from './types/aggregateTyping';
 import type { Draft } from 'immer';
 import type { AggregateStateView } from './types/aggregateState';
+import { mergeDefinitions } from './build/entityCommandTarget';
 
 export type GenericSelectors = Record<string, unknown>;
 // SAFETY: `any` required — GenericCommandMap must accept commands with any state type (contravariant)
@@ -120,11 +121,12 @@ export type PublicCommandMethodsFromInternal<S, TCommands extends Record<string,
 export function composeCommandFactories(
   factories: GenericCommandFactory[]
 ): GenericCommandFactory {
+  const registrations = [...factories];
   return (emit: unknown, context: GenericCommandFactoryContext) => {
     const resolvedContext = resolveCommandFactoryContext(context);
     const merged: GenericCommandMap = Object.create(null);
-    for (const factory of factories) {
-      Object.assign(merged, factory(emit, resolvedContext));
+    for (const factory of registrations) {
+      mergeDefinitions(merged, factory(emit, resolvedContext));
     }
     return merged;
   };

@@ -13,7 +13,7 @@ export type MountRegistry<Registry, Name extends string, T extends { commands: o
         entity: ReplaceCommands<T, Omit<CommandsOfEntry<K extends keyof Registry ? Registry[K] : never>, keyof T['commands']> & RegisteredCommands<T['commands'], R>>;
     } };
 
-export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[] };
+export type EntityCommandTarget = Readonly<Pick<MountedStructureMetadata, 'kind' | 'pk' | 'commandPrefix'>> & { readonly statePath: readonly string[]; readonly initialState?: object };
 export type EntityCommandTargets = Record<string, readonly EntityCommandTarget[]>;
 export type ResolvedCommandTargets = Readonly<Record<string, readonly (Readonly<Omit<EntityCommandTarget, 'statePath'>> & {
     readonly statePath: readonly string[];
@@ -24,6 +24,7 @@ export type MountedStructureKind = 'list' | 'map' | 'valueObject' | 'valueObject
 
 export type MountedStructureMetadata = {
     kind: MountedStructureKind;
+    semanticName?: string | undefined;
     commandPrefix: string;
     statePath: string[];
     pk?: string | readonly string[] | undefined;
@@ -46,9 +47,17 @@ export type MountedEntityPackage = {
 };
 
 export type EntityMountOverrides = {
+    semanticName?: string;
     eventNameOverrides?: Record<string, string>;
     commandNameOverrides?: Record<string, string>;
 };
+
+/** An optional semantic override cannot guarantee either its value or the default. */
+export type MountSemanticName<Default extends string, Options> = Options extends unknown
+    ? 'semanticName' extends keyof Options
+        ? Options extends { semanticName: infer Name extends string } ? Name : string
+        : Default
+    : never;
 
 export type EntityListOptions<PK extends string | readonly string[] = string | readonly string[]> = {
     pk?: PK;
@@ -58,8 +67,9 @@ export type EntityMapOptions<K extends string = string> = {
     knownKeys?: readonly K[];
 };
 
-export type EntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
+export type EntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[], SemanticName extends string = T['name']> = {
     kind: 'list';
+    semanticName: SemanticName;
     entity: T;
     pk: PK;
 };

@@ -4,12 +4,13 @@ import type { CompiledEventRegistration } from '../applyEvent';
 import { definitionTargets, snapshotTargetChain } from './entityCommandTarget';
 import { eventDefinitionKeys, mergeEventDefinitions } from './eventDefinitions';
 import { ownDefinition } from './definitionMap';
+import { mountedWire } from './mountedNaming';
 
 export type ResolvedEvents<TMeta> = {
     allEvents: Record<string, Function>;
     allEventMetadata: Record<string, TMeta | undefined>;
     allEventOverrides: Record<string, string>;
-    dispatch: Map<string, CompiledEventRegistration>;
+    dispatch: Map<string, CompiledEventRegistration<TMeta>>;
 };
 
 /** Capture declared ownership before mounting adds entity-only reflection keys. */
@@ -39,17 +40,18 @@ export function resolveEvents<S, TMeta>(
         allEvents,
         allEventMetadata,
         allEventOverrides,
-        dispatch: compileDeclaredEvents(allEvents, allEventOverrides, aggregateName, namingStrategy)
+        dispatch: compileDeclaredEvents(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy)
     };
 }
 
-function compileDeclaredEvents(
+function compileDeclaredEvents<TMeta>(
     events: Record<string, Function>,
+    metadata: Record<string, TMeta | undefined>,
     overrides: Record<string, string>,
     aggregateName: string,
     namingStrategy: NamingStrategy
-): Map<string, CompiledEventRegistration> {
-    const dispatch = new Map<string, CompiledEventRegistration>();
+): Map<string, CompiledEventRegistration<TMeta>> {
+    const dispatch = new Map<string, CompiledEventRegistration<TMeta>>();
     const targets = definitionTargets(events);
     // Flattened components retain scoped ownership even without mounts to replay.
     // Scoped declarations win exact root collisions, regardless of root key order.
@@ -57,8 +59,10 @@ function compileDeclaredEvents(
         for (const key of eventDefinitionKeys(events)) {
             const chain = targets[key] ?? [];
             if (Boolean(chain.length) !== scoped) continue;
-            const type = ownDefinition(overrides, key) || namingStrategy.event(aggregateName, key);
-            dispatch.set(type, { projector: events[key]!, targets: snapshotTargetChain(chain) });
+            const type = ownDefinition(overrides, key) || mountedWire(events, key, aggregateName, namingStrategy, 'event')
+                || namingStrategy.event(aggregateName, key);
+            overrides[key] = type;
+            dispatch.set(type, { projector: events[key]!, targets: snapshotTargetChain(chain), metadata: ownDefinition(metadata, key) });
         }
     }
     return dispatch;

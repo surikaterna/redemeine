@@ -14,7 +14,7 @@ const initial = () => ({ rows: [{ id: 'one', count: 0 }], slots: { one: { id: 'o
 const payload = { id: 'one', key: 'one', amount: 2 };
 
 test.each([false, true])('direct list/map mounts process and apply (inherited=%s)', inherited => {
-  const parent = createAggregate('parent', initial()).entityList('rows', item).entityMap('slots', item, { knownKeys: ['one'] });
+  const parent = createAggregate('parent', initial()).entityList('rows', item).entityMap('slots', item, { knownKeys: ['one'] }, { semanticName: 'slot' });
   const host = inherited ? createAggregate('child', initial()).extends(parent).build() : parent.build();
   expect(host.mounts.rows).toMatchObject({ kind: 'list', entity: item, pk: 'id', statePath: ['rows'] });
   expect(host.mounts.slots).toMatchObject({ kind: 'map', entity: item, knownKeys: ['one'] });

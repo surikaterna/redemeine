@@ -4,7 +4,8 @@ import type { AggregateStateView } from './types/aggregateState';
 import type { GenericCommandMap } from './redemeineComponent';
 import { resolveCommandHandler } from './redemeineComponent';
 import { formatCommandType } from './naming';
-import { selectedCommandState } from './build/entityCommandTarget';
+import { resolveEntityTarget } from './build/entityCommandTarget';
+import type { EntityExecutionContext } from './entityCommandLifecycle';
 import type { EntityCommandTargets } from './types/entityMount';
 
 type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = {
@@ -14,7 +15,8 @@ type NormalizedCommandExecutionResult<TPlugins extends PluginExtensions = {}> = 
 
 type CommandHandler<S> = (
     state: AggregateStateView<S>,
-    payload: unknown
+    payload: unknown,
+    context: EntityExecutionContext
 ) => Event<unknown, string> | Event<unknown, string>[] | { events: Event<unknown, string>[]; intents?: Record<string, unknown> };
 
 export function normalizeCommandExecutionResult<TPlugins extends PluginExtensions = {}>(
@@ -91,7 +93,8 @@ export function createCommandProcessor<S>(
     allCommandOverrides: Record<string, string>,
     commandHandlerByType?: Record<string, CommandHandler<S>>,
     contract?: Contract,
-    targetsByType: EntityCommandTargets = {}
+    targetsByType: EntityCommandTargets = {},
+    staticByType: Record<string, boolean> = {}
 ) {
     const handlerByType: Record<string, CommandHandler<S>> = commandHandlerByType || Object.keys(allCommandsMap).reduce((acc, key) => {
         const commandType = allCommandOverrides[key] || formatCommandType(aggregateName, key);
@@ -118,9 +121,9 @@ export function createCommandProcessor<S>(
             }
         }
         
-        const selectedState = selectedCommandState(state, payload, targetsByType[commandType] ?? []);
-        const readonlyState = commandStateView(selectedState);
-        const result = handler(readonlyState as AggregateStateView<S>, payload);
+        const selected = resolveEntityTarget(state, payload, targetsByType[commandType] ?? [], staticByType[commandType]);
+        const readonlyState = commandStateView(selected.state);
+        const result = handler(readonlyState as AggregateStateView<S>, payload, Object.freeze({ isNew: selected.isNew }));
         const normalized = normalizeCommandExecutionResult(result as Event | CommandResult<Event, PluginExtensions>);
         const linkedEvents = normalized.events.map(event => withCommandLink(event, commandWithId));
         Object.defineProperty(linkedEvents, '__intents', {
