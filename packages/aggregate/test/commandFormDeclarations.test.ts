@@ -4,7 +4,7 @@ import * as ts from 'typescript';
 test.each(['ts', 'mts', 'cts'])('%s command form metadata preserves flat signatures', suffix => {
   const entry = join(__dirname, `commandFormFixture.${suffix}`);
   const source = `
-import { createAggregate, createEntity, createMixin, type MapCommandsToPayloads } from '${suffix === 'ts' ? '../src' : '@redemeine/aggregate'}';
+import { createAggregate, createEntity, createMixin, commandMetadata, type MapCommandsToPayloads } from '${suffix === 'ts' ? '../src' : '@redemeine/aggregate'}';
 type Forms = MapCommandsToPayloads<{
   short: (state: unknown, payload: { id: string; qty: number }) => [];
   object: { handler: (state: unknown, payload: { id: string; qty: number }) => []; meta: { label: string } };
@@ -37,6 +37,8 @@ const invalid: Forms['short']['form'] = 'packed';
 void [short, object, packed, invalid];
 type Identifier = { domain: string; authority: string; identifier: string };
 const initial: Identifier = { domain: '', authority: '', identifier: '' };
+export const omitted = createEntity<Identifier, 'omitted'>('omitted', undefined).build();
+export const forwarded = (state?: Identifier) => createEntity<Identifier, 'forwarded'>('forwarded', state).build();
 export const identifier = createEntity('identifier', initial).commands(() => ({
   register(state, payload: Identifier, context) {
     const isNew: boolean = context.isNew;
@@ -60,6 +62,9 @@ export const identifier = createEntity('identifier', initial).commands(() => ({
 export const registry = createAggregate('registry', { identifiers: [] as Identifier[] })
   .entityList('identifiers', identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' }).build();
 registry.commandCreators.identifiersRegister(initial);
+const publicTarget = commandMetadata(registry, 'identifiersRegister')!.targets[0]!;
+// @ts-expect-error Borrowed templates are not public command metadata.
+publicTarget.initialState;
 const packedPayload: Identifier = registry.commandCreators.identifiersPacked('d', 'a', 'i').payload;
 export const nestedParent = createEntity('parent', { id: '', identifiers: [] as Identifier[] })
   .entityList('identifiers', identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' })

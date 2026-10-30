@@ -48,7 +48,7 @@ export function compileCommands(definitions: GenericCommandMap, overrides: Recor
     const winnerLocalName = winners.get(wireType)!;
     records.set(localName, Object.freeze({ localName, wireType, winnerLocalName,
       isWireWinner: winnerLocalName === localName, isStatic: commandModes(definitions)[localName] ?? false,
-      targets: targets[localName]! }));
+      targets: Object.freeze(targets[localName]!.map(({ initialState: _initialState, ...target }) => Object.freeze(target))) }));
   }
   return { snapshot: Object.freeze(snapshot), handlers, types: Object.freeze(types), metadata, targets, targetsByType, staticByType, records };
 }

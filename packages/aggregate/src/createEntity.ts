@@ -147,7 +147,7 @@ export type EntityCommandOverridesStage<S, Name extends string, E extends Record
  */
 export function createEntity<S, Name extends string, TMeta extends Record<string, unknown> = Record<string, unknown>>(name: Name, ...templates: [initialState?: S]): EntityEventsStage<S, Name, TMeta> {
   const [initialState] = templates;
-  if (templates.length && (!initialState || typeof initialState !== 'object' || Array.isArray(initialState))) {
+  if (initialState !== undefined && (!initialState || typeof initialState !== 'object' || Array.isArray(initialState))) {
     throw new TypeError('Entity initial state must be an object');
   }
   const component = createComponentBehaviorState<S>();

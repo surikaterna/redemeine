@@ -1,4 +1,4 @@
-import type { ResolvedCommandTargets } from './types/entityMount';
+import type { EntityCommandTarget } from './types/entityMount';
 
 /** A compiled local command registration, not a wire name or proxy path. */
 export type CommandMetadata = Readonly<{
@@ -7,7 +7,7 @@ export type CommandMetadata = Readonly<{
   winnerLocalName: string;
   isWireWinner: boolean;
   isStatic: boolean;
-  targets: ResolvedCommandTargets[string];
+  targets: readonly Omit<EntityCommandTarget, 'initialState'>[];
 }>;
 
 // ESM and CJS definitions can meet in one host. A non-enumerable carrier survives

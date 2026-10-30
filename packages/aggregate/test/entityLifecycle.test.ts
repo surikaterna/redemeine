@@ -1,6 +1,6 @@
 import { createAggregate, createEntity, createMixin } from '../src';
 import type { Event } from '@redemeine/kernel';
-import { immerable, produce } from 'immer';
+import { Immer, immerable, produce } from 'immer';
 
 type Identifier = { domain: string; authority: string; identifier: string };
 const initialIdentifierState: Identifier = { domain: '', authority: '', identifier: '' };
@@ -167,6 +167,62 @@ test('materialized Immer classes retain projector methods and leave templates an
   expect(input.rows).toEqual([original]);
   expect(input.rows[0]).toBe(original);
   expect(original.read()).toBe('existing:0');
+});
+
+test.each([false, true])('ancestor copies retain own descriptors without invoking setters (raw=%s)', raw => {
+  const { host, event } = nestedLifecycle();
+  // Existing class drafts need strict outer copying too; raw insertions are not drafts.
+  const outerProduce = raw ? produce : new Immer({ useStrictShallowCopy: true }).produce;
+  const setter = jest.fn();
+  const marker = Symbol('hidden');
+  const visible = Symbol('visible');
+  class Parent {
+    [immerable] = true;
+    id = 'p';
+    children: { id: string; nested: { count: number }; log: number[] }[] = [];
+    set note(value: string) { setter(value); }
+  }
+  const ancestor = new Parent();
+  Object.defineProperties(ancestor, {
+    note: { value: 'own note', enumerable: true, configurable: true },
+    hidden: { value: 'hidden', enumerable: false, configurable: true },
+    [marker]: { value: 'symbol', enumerable: false, configurable: true },
+    [visible]: { value: 'visible symbol', enumerable: true, configurable: true }
+  });
+  Object.defineProperty(ancestor, '__proto__', { value: 'own proto', enumerable: true, configurable: true });
+  const input = { parents: raw ? [] as Parent[] : [ancestor] };
+  const apply = (draft: Parameters<typeof host.applyToDraft>[0]) => {
+    if (raw) draft.parents.push(ancestor);
+    host.applyToDraft(draft, event(1));
+    host.applyToDraft(draft, event(2));
+  };
+  expect(() => outerProduce(input, draft => { apply(draft); throw Error('rollback'); })).toThrow('rollback');
+  expect(setter).not.toHaveBeenCalled();
+  expect(ancestor.children).toEqual([]);
+  const result = outerProduce(input, apply).parents[0]!;
+  expect(Object.getPrototypeOf(result)).toBe(Parent.prototype);
+  expect(Object.getOwnPropertyDescriptor(result, 'note')?.value).toBe('own note');
+  expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toBe('own proto');
+  expect(Object.getOwnPropertyDescriptor(result, 'hidden')).toMatchObject({ value: 'hidden', enumerable: false });
+  expect(Object.getOwnPropertyDescriptor(result, marker)).toMatchObject({ value: 'symbol', enumerable: false });
+  expect(Object.getOwnPropertyDescriptor(result, visible)).toMatchObject({ value: 'visible symbol', enumerable: true });
+  expect(result.children[0]!.log).toEqual([1, 2]);
+  expect(setter).not.toHaveBeenCalled();
+  expect(ancestor.children).toEqual([]);
+  expect(input.parents).toHaveLength(raw ? 0 : 1);
+});
+
+test('undefined templates are omitted, including forwarded optional state', () => {
+  type Row = { id: string; count: number };
+  const forward = (state?: Row) => createEntity<Row, 'row'>('row', state);
+  for (const entity of [createEntity<Row, 'row'>('row', undefined).build(), forward().build()]) {
+    expect(Object.hasOwn(entity, 'initialState')).toBe(false);
+  }
+  expect(forward({ id: '', count: 0 }).build().initialState).toEqual({ id: '', count: 0 });
+  expect(() => forward().commands(() => ({ read: () => [] }), { static: ['read'] })).toThrow('require an initial state');
+  for (const invalid of [null, [], 1]) {
+    expect(() => createEntity('invalid', invalid)).toThrow('initial state must be an object');
+  }
 });
 
 test.each([['__proto__'], ['__proto__', 'tenant'], ['code']])('canonical own fields bypass inherited setters (%j)', (...pk) => {

@@ -45,6 +45,29 @@ test('compiled targets detach caller PKs and reject mutation without affecting d
   expect(() => built.process(built.initialState, built.commandCreators.rowsSet('a', 2))).not.toThrow();
 });
 
+test('public nested targets omit borrowed templates while dispatch retains them', () => {
+  const template = { id: '', count: 3 };
+  const row = createEntity('row', template).commands(() => ({
+    read(state, _payload: { id: string; parentsId: string }) {
+      expect(state.count).toBe(template.count);
+      return [];
+    }
+  }), { static: ['read'] }).build();
+  const parent = createEntity('parent', { id: '', rows: [] as typeof template[] }).entityList('rows', row).build();
+  const built = createAggregate('store', { parents: [{ id: 'p', rows: [] as typeof template[] }] })
+    .entityList('parents', parent).build();
+  const targets = commandMetadata(built, 'parentsRowsRead')!.targets;
+  expect(targets).toHaveLength(2);
+  for (const target of targets) {
+    expect(Object.hasOwn(target, 'initialState')).toBe(false);
+    expect(Object.values(target)).not.toContain(template);
+    expect(Object.isFrozen(target)).toBe(true);
+  }
+  template.count = 7;
+  built.process(built.initialState, built.commandCreators.parentsRowsRead({ id: 'new', parentsId: 'p' }));
+  expect(Object.isFrozen(template)).toBe(false);
+});
+
 test('creator and dispatch capture descriptor fields without freezing caller definitions or hooks', () => {
   const handler = jest.fn(() => []);
   const definition = { meta: { tag: 'original' }, pack(id: string) { return { id, tag: this.meta.tag }; }, handler };
@@ -224,6 +247,19 @@ test.each(['js', 'cjs'])('fresh built private descriptor receiver runtime: %s', 
     built.process(built.initialState, command);
     if (Object.isFrozen(definition) || Object.isFrozen(original)) throw Error('caller frozen');
     if (!Object.isFrozen(commandMetadata(built, 'set'))) throw Error('metadata mutable');
+    const { createEntity } = await import(${JSON.stringify(entry)});
+    const template = { id: '', count: 3 };
+    for (const state of [undefined, template]) {
+      const row = createEntity('row', state).build();
+      if (Object.hasOwn(row, 'initialState') !== (state !== undefined)) throw Error('template omission');
+    }
+    const row = createEntity('row', template).commands(() => ({
+      read(state) { if (state.count !== template.count) throw Error('lost template'); return []; }
+    }), { static: ['read'] }).build();
+    const host = createAggregate('templates', { rows: [] }).entityList('rows', row).build();
+    if (commandMetadata(host, 'rowsRead').targets.some(target => Object.hasOwn(target, 'initialState'))) throw Error('template leaked');
+    template.count = 7;
+    host.process(host.initialState, host.commandCreators.rowsRead({ id: 'new' }));
   `;
   expect(() => execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })).not.toThrow();
 });
