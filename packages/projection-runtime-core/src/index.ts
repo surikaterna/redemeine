@@ -212,3 +212,9 @@ export {
   validateProjectionQueueRegistryManifest,
   validateCommitProjectionSourceCommitRelationships
 } from './contracts';
+export type {
+  LiveStartRecord, LiveNativeStartRecord, LiveBrokerStartRecord, LiveConsumerSelection,
+  LiveSourcePosition, LiveDeliveryIdentity, FirstLiveEvidence, LiveEvidenceResult,
+  LiveFeedSession, LiveFeedOpenResult, LiveFeedEvidencePort, LiveSourceOrderPort, LiveWorkBudget, LiveCommitResult, LiveCommitCoordinator
+} from './contracts/liveDelivery';
+export { sameLiveFloor } from './contracts/liveDelivery';

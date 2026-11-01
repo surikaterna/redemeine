@@ -8,6 +8,7 @@ import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContr
 import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
+import { assertLiveRouting, assertLiveSnapshot, type LiveExecutionProfile } from './liveExecutionGuard';
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
   definition: ProjectionCommitDefinition<TState>;
@@ -17,6 +18,7 @@ export interface ProjectionDefinitionExecutorOptions<TState> {
   maxConflictRetries: number;
   stableSingleTarget?: boolean;
   baselineSequence?: number;
+  liveProfile?: LiveExecutionProfile;
 }
 
 function laneKey(name: string, generation: string, targetId: string): string {
@@ -98,6 +100,7 @@ async function commitReduction<TState>(
   attempt: number
 ): Promise<AttemptResult<TState>> {
   try {
+    options.liveProfile?.assertCurrent();
     const result = await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
       const outcome = result.commitSequence === commit.commitSequence
@@ -127,15 +130,22 @@ async function executeAttempt<TState>(
     let snapshot: ProjectionSourceCommitSnapshot<TState>;
     try {
       snapshot = await loadAttempt(options, commit, [...targets].sort(), links);
+      if (options.liveProfile) assertLiveSnapshot(options.liveProfile, options.definition, commit, snapshot);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'snapshot load failed';
       return { kind: 'done', outcome: failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
     }
     const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence);
-    if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
+    if (reduction.status === 'needs_snapshot') {
+      if (options.liveProfile) return { kind: 'done', outcome: failed('terminal', 'unsupported_live_routing', attempt) };
+      return { kind: 'expand', reduction };
+    }
     if (reduction.status === 'terminal') return { kind: 'done', outcome: failed('terminal', reduction.reason, attempt) };
     if (reduction.status === 'deduplicated') {
       return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
+    }
+    if (options.liveProfile && reduction.request.stagedLinks.length > 0) {
+      return { kind: 'done', outcome: failed('terminal', 'unsupported_live_routing', attempt) };
     }
     if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
       || reduction.request.stagedLinks.length > 0)) {
@@ -149,12 +159,22 @@ export async function executeProjectionDefinition<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit
 ): Promise<ProjectionDefinitionCommitOutcome> {
+  try {
+    if (options.liveProfile) assertLiveRouting(options.definition);
+  } catch {
+    return failed('terminal', 'unsupported_live_routing', 0);
+  }
   let links = routingLinkRequests(options.definition, commit.events);
   let initial: ProjectionSourceCommitSnapshot<TState>;
   try {
     initial = await loadInitial(options, commit, links);
+    if (options.liveProfile) assertLiveSnapshot(options.liveProfile, options.definition, commit, initial);
   } catch (error) {
     return failed('ambiguous', error instanceof Error ? error.message : 'snapshot load failed', 0);
+  }
+  if (options.liveProfile?.coveredDuplicate && options.definition.deduplication.strategy === 'own_record'
+    && (initial.ownRecordSequence === null || initial.ownRecordSequence < commit.commitSequence)) {
+    return failed('terminal', 'marker_lifetime_violation', 0);
   }
   if (options.definition.deduplication.strategy === 'own_record'
     && initial.ownRecordSequence !== null

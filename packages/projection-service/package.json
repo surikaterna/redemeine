@@ -1,0 +1,30 @@
+{
+  "name": "@redemeine/projection-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-node projection worker with trusted application definition bundle input",
+  "bin": { "projection-reference": "./dist/main.js", "projection-worker": "./dist-worker/main.js" },
+  "scripts": {
+    "build": "tsup && node scripts/seal-artifact.mjs && tsup --config tsup.worker.config.ts && node scripts/seal-artifact.mjs dist-worker && node scripts/worker-notices.mjs",
+    "start": "node dist/main.js",
+    "start:worker": "node dist-worker/main.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "build:test-host": "tsup --config test/support/tsup.config.ts",
+    "build:integration": "tsup --config integration/tsup.config.ts",
+    "build:application-example": "tsup --config test/support/tsup.application.config.ts",
+    "test:external-stack": "sh integration/run-external-stack.sh",
+    "test": "pnpm run build:test-host && pnpm run build:integration && pnpm run build:application-example && pnpm exec jest --config ../../jest.config.js --roots packages/projection-service/test --runInBand"
+  },
+  "dependencies": {
+    "@redemeine/projection-runtime-core": "workspace:*",
+    "@redemeine/projection-runtime-store-mongodb": "workspace:*",
+    "@redemeine/projection-transport": "workspace:*",
+    "@redemeine/projection-worker-core": "workspace:*",
+    "amqplib": "2.0.1",
+    "mongodb": "6.18.0"
+  },
+  "devDependencies": { "@types/amqplib": "0.10.8", "tapeworm": "0.6.0", "tapeworm_persistence_store_mongodb": "3.1.0",
+    "tsup": "8.4.0", "tsx": "4.21.0", "typescript": "5.8.3" }
+}

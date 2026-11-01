@@ -45,3 +45,5 @@ export { reduceProjectionSourceCommit } from './projectionCommitReducer';
 export type { ProjectionReductionResult } from './projectionCommitReducer';
 export { createProjectionLaneScheduler } from './targetLaneScheduler';
 export type { ProjectionLaneScheduler } from './targetLaneScheduler';
+export { createLiveCommitCoordinator } from './liveCommitCoordinator';
+export type { LiveCommitCoordinatorOptions } from './liveCommitCoordinator';

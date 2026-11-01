@@ -1,0 +1,76 @@
+name: Projection runtime image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Committed source ref containing the reviewed main Dockerfile
+        required: true
+        default: main
+        type: string
+      image_version:
+        description: Explicit image version (for example 0.1.0-rc.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'projection-runtime-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.source_ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Validate image identity
+        id: metadata
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+        run: |
+          export SOURCE_SHA="$(git rev-parse HEAD)"
+          node .github/scripts/projection-image-metadata.mjs
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish main image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/projection-service/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.metadata.outputs.image }}:${{ steps.metadata.outputs.version }}
+            ${{ steps.metadata.outputs.image }}:sha-${{ steps.metadata.outputs.short_sha }}
+          build-args: |
+            VCS_REF=${{ steps.metadata.outputs.sha }}
+            IMAGE_VERSION=${{ steps.metadata.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.metadata.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.metadata.outputs.version }}
+      - name: Record delivery identity
+        env:
+          IMAGE: ${{ steps.metadata.outputs.image }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          SOURCE_SHA: ${{ steps.metadata.outputs.sha }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          printf '## Projection runtime image\n\nVersion: `%s`\n\nSource commit: `%s`\n\nDeploy by digest: `%s@%s`\n' "$VERSION" "$SOURCE_SHA" "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
