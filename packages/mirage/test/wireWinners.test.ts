@@ -40,7 +40,7 @@ test.each([false, true])('explicit wire override rejects shadowed selected comma
   expect(live[winner]('a').qty).toBe((reverse ? 1 : 2) + 5);
 });
 
-test.each([false, true])('default camel/snake collision rejects before packing, reverse=%s', reverse => {
+test.each([false, true])('shared default semantic wire rejects shadowed selection before packing, reverse=%s', reverse => {
   const { live, pack, handler, before } = fixture(['orderLines', 'order_lines'], reverse, false);
   const loser = reverse ? 'order_lines' : 'orderLines';
   const state = extractState(live);
@@ -85,7 +85,7 @@ test('native root wire winner rejects a selected scoped local registration befor
   const root = createMixin<State>().commands(() => ({ root: () => [] })).build();
   const built = createAggregate('store', { rows: [{ id: 'a', qty: 1 }] }).mixins(mounted, root)
     .overrideCommandNames({ rowsSet: 'shared.set.command', root: 'shared.set.command' })
-    .entityList('rows', createEntity<{ id: string; qty: number }, 'empty'>('empty').build()).build();
+    .entityList('rows', row).build();
   const before = jest.fn();
   built.hooks = { onBeforeCommand: before };
   const live = createMirage(built, 'store');

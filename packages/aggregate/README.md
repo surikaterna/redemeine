@@ -83,3 +83,74 @@ Command creators exist only for declared flat keys, including mounted keys such 
 Scoped Mirage shorthand accepts a single object payload (including optional objects), or no payload/`undefined`. Scalars, arrays, functions, `null`, and unions containing these unsupported payloads are not callable in a selected scope and throw before command hooks if invoked from JavaScript. Root shorthand remains unchanged. Use an explicit `{ pack, handler }` command for scalar business arguments; its final packed payload must still contain the selected identity object.
 
 Repeated explicit list/map registrations keep the latest selection descriptor while surviving commands retain their own type-only registration identity and packed prefix length. Selected calls omit only canonical leaf PK fields injected by that command's registration (`key` for maps). Former singular/plural aliases and synthetic `id` fields are ordinary business data, not identity inputs. Partially specified generic command descriptors without registration information retain descriptor-based selection; they do not establish command-specific provenance.
+
+## Entity registration and replay
+
+`createEntity('identifier', initialIdentifierState)` borrows an object template,
+just as an aggregate borrows initial state. Do not mutate the template after
+declaration. No serialization, cloning or freezing happens at declaration time.
+
+Declare `.commands(factory, { static: ['register'] })` to allow the named commands
+to decide against a missing final **list** leaf. Names are checked against that
+factory's commands. A later registration without the option resets that command
+to ordinary instance lookup. Handlers receive `(state, payload, { isNew })`;
+the last argument is framework context, never a creator/pack argument. Annotate
+packed handler payloads explicitly when sibling inference needs it.
+
+For `{ domain: string; authority: string; identifier: string }` with primary key
+`['domain', 'authority']`, `identifier` is business data, not identity. A register
+handler can emit `registered` when `isNew`, return `[]` for an unchanged value,
+or emit `amended` for a changed value. Validate domain rules before emitting.
+State is borrowed readonly: missing lookups supply the template with `isNew=true`;
+existing lookups supply actual state with `false`, even if equal to the template.
+Processing never inserts; no events means no creation.
+
+Applying an exactly registered ordinary entity event can initialize a missing
+templated list leaf regardless of command classification. Replay applies canonical
+PK fields and calls the normal mutable Immer projector `(state, event)`. Even a
+no-op projector inserts the leaf. There are no static events, replacement-state
+returns or special creation projectors. Full scalar canonical identity, a valid
+list container and all ancestors must exist; duplicate identity matches reject
+before a handler/projector runs. No ancestors are auto-created. Name-only entities
+retain missing-target errors. New map-entry creation is not supported.
+
+Creation and subsequent update work within one outer Immer transaction, including
+raw ancestors inserted earlier in that transaction. Target paths are replaced at
+the ownership boundary so borrowed input is not mutated and an outer throw rolls
+back the transaction. Normal Immer structural sharing/auto-freezing still applies
+when events are applied; templates should be treated as readonly throughout.
+
+### Migration: mount and authored-name collisions
+
+Mounted wires now use the entity's authored name, not its state key:
+`createEntity('identifier', state)` mounted at `identifiers` produces
+`party.identifier.register.command` and `party.identifier.registered.event`.
+Nesting under `createEntity('customer', state)` adds the complete semantic path:
+`party.customer.identifier.register.command`. Navigation, flat creators such as
+`identifiersRegister`, and qualified PK fields such as `customersId` are unchanged.
+Root commands retain their existing naming (`registerIdentifier` becomes
+`party.register_identifier.command`). Old mounted default wires are not dispatched.
+
+Override one semantic segment with the existing fourth mount argument:
+`.entityList('identifiers', Identifier, { pk: ['domain', 'authority'] }, { semanticName: 'externalID' })`.
+The alias must be one nonempty, nondotted string; authored segment spelling is
+preserved while member names use the configured naming strategy. Entity
+`.overrideCommandNames` / `.overrideEventNames` remain relative to the declaring
+entity's complete semantic path (the suffix is appended if absent). Mount
+`commandNameOverrides` / `eventNameOverrides` are full, verbatim strings, even when
+nested. An ancestor's relative override of a flattened descendant key replaces
+the descendant tail; an outer full mount override takes precedence.
+Aggregate `.overrideCommandNames({ identifiersRegister: 'custom.command' })`
+still overrides a mounted command's derived default wire.
+
+Reusing an entity at different state keys now shares default wires. Shared wires
+retain last-registration-wins dispatch, not per-collection routing. Use distinct
+`semanticName` aliases when mounts need independent routing.
+
+Different entity definitions at the same mount point now fail at build time.
+Compose their commands into **one entity definition**, or reuse the exact same
+definition object at that point. Mount different entities at distinct target paths.
+Distinct authored command paths that flatten to the same compiled key also fail:
+use distinct authored compiled paths, with explicit shared wire names if shared
+dispatch is desired. Same authored command overrides remain valid; sharing a wire
+name still routes both calls to the existing Aggregate winner.

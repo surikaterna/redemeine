@@ -1,5 +1,21 @@
 import type { CommandResult, Event, EventType, PluginExtensions } from '@redemeine/kernel';
 import type { AggregateStateView } from './aggregateState';
+import type { EntityExecutionContext } from '../entityCommandLifecycle';
+
+// Existential payload/argument shapes preserve each explicitly annotated handler and pack tuple.
+export type EntityCommandDefinition<S, Meta> =
+  | ((state: AggregateStateView<S>, payload: any, context: EntityExecutionContext) => Event<unknown, string> | CommandResult<Event<unknown, string>>)
+  | { handler: (state: AggregateStateView<S>, payload: any, context: EntityExecutionContext) => Event<unknown, string> | CommandResult<Event<unknown, string>>;
+      pack?: (...args: any[]) => unknown; meta?: Meta };
+type WithoutEntityContext<F> = F extends (...args: infer A) => infer R
+  ? A extends [infer S, ...infer Rest]
+    ? Rest extends [] | [unknown?] ? F
+      : (state: S, ...args: [] extends Rest ? [payload?: Rest[0]] : [payload: Rest[0]]) => R
+    : F
+  : never;
+export type NormalizeEntityCommands<C> = { [K in keyof C]: C[K] extends (...args: any[]) => any
+  ? WithoutEntityContext<C[K]>
+  : C[K] extends { handler: infer H } ? Omit<C[K], 'handler'> & { handler: WithoutEntityContext<H> } : never };
 
 // SAFETY: `any` in ReplaceFirstArg required for conditional type inference on arbitrary function shapes
 type ReplaceFirstArg<S, F> = F extends (x: any, ...args: infer P) => infer R ? (state: S, ...args: P) => R : never;
@@ -98,3 +114,10 @@ type ValidCommandDefinition<T> = T extends (...args: never[]) => unknown
       : never;
 
 export type ValidCommandDefinitions<C> = { [K in keyof C]: ValidCommandDefinition<C[K]> };
+type ValidEntityDefinition<T> = T extends (...args: infer A) => unknown
+  ? A['length'] extends 0 | 1 | 2 | 3
+    ? 3 extends A['length'] ? EntityExecutionContext extends A[2] ? T : never : T
+    : never
+  : T extends { pack: (...args: any[]) => unknown } ? T
+    : T extends { handler: infer H } ? ValidEntityDefinition<H> extends never ? never : T : never;
+export type ValidEntityCommandDefinitions<C> = { [K in keyof C]: ValidEntityDefinition<C[K]> };

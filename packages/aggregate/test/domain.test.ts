@@ -106,7 +106,7 @@ describe('Domain Exmaple', () => {
     const events = orderAggregateDef.process(orderAggregateDef.initialState, cmd as any);
     const nextState = orderAggregateDef.apply(orderAggregateDef.initialState, events[0]);
 
-    expect(events[0].type).toBe('order.order_lines.qty_changed.event');
+    expect(events[0].type).toBe('order.orderLine.qty_changed.event');
     expect(nextState.orderLines[0].qty).toBe(5);
     const order = await createMirage(orderAggregateDef, 'order-1', { events });
     await order.orderLines('l1').changeQty(10);

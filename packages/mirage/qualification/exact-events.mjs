@@ -80,7 +80,7 @@ for (const api of [esm, cjs]) {
   for (const host of [builder.build(), builder.build().withPlugins()]) {
     const state = host.initialState;
     const [event] = host.process(state, host.commandCreators.rowsSet({ code: 'a', qty: 3 }));
-    assert.equal(event.type, 'store.rows.changed.event');
+    assert.equal(event.type, 'store.row.changed.event');
     assert.deepEqual(host.apply(state, event), { qty: 99, rows: [{ code: 'a', qty: 3 }] });
     const draft = structuredClone(state);
     host.applyToDraft(draft, event);

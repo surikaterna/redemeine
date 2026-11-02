@@ -21,6 +21,11 @@ type ScopedPayloadArgs<Args extends unknown[], Identity extends PropertyKey> = A
                 : [payload: OmitIdentity<Args[0], Identity> | Extract<Args[0], undefined>]
         : never;
 
+type OptionalIdentity<P, Identity extends PropertyKey> = P extends object ? Omit<P, Identity> & Partial<Pick<P, Extract<Identity, keyof P>>> : P;
+export type CollectionCommandArgs<C, Args extends unknown[], Identity extends PropertyKey> = C extends { form: 'shorthand' }
+    ? { [K in keyof Args]: K extends '0' ? OptionalIdentity<Args[K], Identity> : Args[K] }
+    : Args;
+
 type CommandIdentity<C, Fallback extends PropertyKey> = C extends { readonly __registration: infer R }
     ? R extends { kind: 'list'; pk: infer PK; mountName: infer Name extends string } ? ListIdentity<PK, Name>
         : R extends { kind: 'map'; mountName: infer Name extends string } ? MapIdentity<Name> : Fallback
