@@ -1,5 +1,28 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.8
+
+### Major Changes
+
+- [#163](https://github.com/surikaterna/redemeine/pull/163) [`62226fb`](https://github.com/surikaterna/redemeine/commit/62226fb40deb10431b024d50b9f961e18f5bf0c2) Thanks [@spralle](https://github.com/spralle)! - Expose explicitly marked static entity commands on Mirage root list collections with full authored arguments and readonly aggregate dispatch results. Preserve static classification in compiled command metadata and public declarations; reject collection namespace collisions without exposing ordinary, map, or nested commands.
+
+  Collection navigation and static call signatures are unchanged by Aggregate's semantic wire naming; use mount `semanticName` aliases when reused definitions should route independently.
+
+  Expose explicit static commands as root and selected-list-parent aliases named authored command plus capitalized semantic entity name (for example `registerIdentifier`). Reuse the collection method, preserving complete pack tuples, ancestor-bound shorthand, readonly aggregate results and asynchronous dispatch. No aliases are inferred for ordinary commands, maps or navigation keys; widened semantic names need literal typing for inferred properties.
+
+  Breaking: construction now rejects generated parent-alias ambiguity against sibling aliases, parent state/commands, root selectors and reserved protocols, even with empty parents. Use distinct semantic names for reused siblings; retain explicit shared wire overrides when shared winner dispatch is intended. Equal wire names alone remain legal, but do not excuse duplicate generated aliases.
+
+### Minor Changes
+
+- [#163](https://github.com/surikaterna/redemeine/pull/163) [`62226fb`](https://github.com/surikaterna/redemeine/commit/62226fb40deb10431b024d50b9f961e18f5bf0c2) Thanks [@spralle](https://github.com/spralle)! - Expose explicitly static commands on nested Mirage list collections under selected list ancestors. Preserve complete authored pack arguments and bind canonical qualified ancestor identity after command creation; reject conflicts and missing ancestors before handlers. Collection calls return readonly aggregate dispatch state without parent aliases or automatic ancestor creation.
+
+  Retain nested list registry types and authored command names for collection navigation and eager namespace validation. Ordinary commands and map collection statics remain unexposed.
+
+### Patch Changes
+
+- Updated dependencies [[`62226fb`](https://github.com/surikaterna/redemeine/commit/62226fb40deb10431b024d50b9f961e18f5bf0c2), [`62226fb`](https://github.com/surikaterna/redemeine/commit/62226fb40deb10431b024d50b9f961e18f5bf0c2)]:
+  - @redemeine/aggregate@1.0.0-pre.8
+
 ## 1.0.0-pre.7
 
 ### Major Changes
