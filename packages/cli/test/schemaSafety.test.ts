@@ -7,6 +7,7 @@ import { describeContract } from '../src/describeContract';
 import { generateSchemaFiles } from '../src/generateSchemaFiles';
 import { generateOutput } from '../src/extract/outputGenerator';
 import { TypeToZodConverter } from '../src/extract/typeConverter';
+import { extractZodSchemas } from '../src/extractZodSchemas';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(__dirname, '.schema-safety-')); });
@@ -111,6 +112,164 @@ function evaluate(source: string): { commandSchemas: Record<string, z.ZodType>; 
     new Function('require', 'exports', code)(require, exports);
     return exports as { commandSchemas: Record<string, z.ZodType>; eventSchemas: Record<string, z.ZodType> };
 }
+
+test('mounted command Zod strictly compiles and validates canonical rather than pack arguments', () => {
+    const entry = join(dir, 'input.ts');
+    const outFile = join(dir, 'generated.ts');
+    const tsconfig = join(dir, 'tsconfig.json');
+    writeFileSync(entry, readFileSync(join(__dirname, 'fixtures/mountedCommands.ts'), 'utf8'));
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { strict: true, skipLibCheck: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', paths: {
+        '@redemeine/aggregate': ['../../../aggregate/src/index.ts'], '@redemeine/kernel': ['../../../kernel/src/index.ts'],
+    } }, include: ['*.ts'] }));
+    extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate' });
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([outFile], compilerOptions()))).toEqual([]);
+    const { commandSchemas: commands, eventSchemas } = evaluate(readFileSync(outFile, 'utf8'));
+    expect(Object.keys(commands).sort()).toEqual(['byKeyChangeLabel', 'byKeyLeavesChangeQty', 'changeTitle', 'childrenChangeLabel', 'childrenLeavesChangeQty']);
+    for (const [key, schema] of Object.entries(commands)) {
+        const good = key === 'changeTitle' ? { title: 'ok' } : key.endsWith('ChangeLabel') ? { id: 'child', label: 'ok' } : { id: 'leaf', qty: 2 };
+        expect(schema.safeParse(good).success).toBe(true);
+        expect(schema.safeParse({}).success).toBe(false);
+        expect(schema.safeParse({ title: 1, id: 1, label: 1, qty: 'bad' }).success).toBe(false);
+        expect(schema.safeParse(['child', 'label']).success).toBe(false);
+    }
+    expect(Object.keys(eventSchemas)).toEqual(['titleChanged']);
+});
+
+test.each(['value: Input', ''])('remapped creators retain authored return payload provenance (%s) and named imports', parameters => {
+    const entry = join(dir, 'input.ts');
+    const outFile = join(dir, 'generated.ts');
+    const tsconfig = join(dir, 'tsconfig.json');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ redemeine: { schemas: { mode: 'zod-first' } } }));
+    writeFileSync(join(dir, 'schemas.ts'), `import { z as validator } from 'zod';
+        export const inputSchema = validator.string().min(10);
+        export type Input = validator.infer<typeof inputSchema>;
+        export const labelSchema = validator.string().min(3);
+        export type Label = validator.infer<typeof labelSchema>;`);
+    writeFileSync(entry, `import type { Input, Label } from './schemas';
+        type Creators = { save(${parameters}): { payload: Label } };
+        declare const aggregate: { commandCreators: { [K in keyof Creators as \`mounted\${Capitalize<K>}\`]: Creators[K] };
+            pure: { eventProjectors: {} }; initialState: { ready: boolean } };
+        export { aggregate }; throw Error('must not execute');`);
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' }, include: ['*.ts'] }));
+    extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false });
+    const source = readFileSync(outFile, 'utf8');
+    expect(source).toMatch(/import \{ "labelSchema" as \w+ \} from "\.\/schemas"/);
+    expect(source).not.toContain('inputSchema');
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([outFile], compilerOptions()))).toEqual([]);
+    const exports = {} as { commandSchemas: Record<string, z.ZodType> };
+    const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+    const authored = {};
+    const schemaCode = ts.transpileModule(readFileSync(join(dir, 'schemas.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+    new Function('require', 'exports', schemaCode)(require, authored);
+    new Function('require', 'exports', code)((name: string) => name === './schemas' ? authored : require(name), exports);
+    expect(exports.commandSchemas.mountedSave!.safeParse('valid').success).toBe(true);
+    expect(exports.commandSchemas.mountedSave!.safeParse('no').success).toBe(false);
+    expect(exports.commandSchemas.mountedSave!.safeParse(123).success).toBe(false);
+    const jsonFile = join(dir, 'generated.json');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ redemeine: { schemas: { mode: 'types-first' } } }));
+    expect(() => extractZodSchemas({ entry, tsconfig, outFile: jsonFile, aggregateExport: 'aggregate', includeState: false, format: 'json-schema' }))
+        .toThrow(/existing Zod schema.*discard its constraints/);
+    expect(existsSync(jsonFile)).toBe(false);
+});
+
+test.each(['zod', 'json-schema'] as const)('generic canonical return fails closed before %s output', format => {
+    const entry = join(dir, 'input.ts');
+    const outFile = join(dir, 'generated.' + (format === 'zod' ? 'ts' : 'json'));
+    const tsconfig = join(dir, 'tsconfig.json');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ redemeine: { schemas: { mode: 'types-first' } } }));
+    writeFileSync(join(dir, 'schemas.ts'), `import { z } from 'zod';
+        export const inputSchema = z.string().min(10); export type Input = z.infer<typeof inputSchema>;
+        export const outputSchema = z.string().min(3); export type Output = z.infer<typeof outputSchema>;`);
+    writeFileSync(entry, `import type { Input, Output } from './schemas';
+        type Result<T> = { payload: T }; type Creators = { save(value: Input): Result<Output> };
+        declare const aggregate: { commandCreators: { [K in keyof Creators as \`mounted\${Capitalize<K>}\`]: Creators[K] };
+            pure: { eventProjectors: {} }; initialState: { ready: boolean } };
+        export { aggregate }; throw Error('must not execute');`);
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' }, include: ['*.ts'] }));
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([entry], compilerOptions()))).toEqual([]);
+    expect(() => extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false, format }))
+        .toThrow(/mountedSave: cannot preserve schema-linked return payload provenance; use an authored concrete return payload type/);
+    expect(existsSync(outFile)).toBe(false);
+    writeFileSync(entry, readFileSync(entry, 'utf8').replace('Result<Output>', 'Result<string>'));
+    extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false, format });
+    if (format === 'zod') {
+        const schema = evaluate(readFileSync(outFile, 'utf8')).commandSchemas.mountedSave!;
+        expect(schema.safeParse('no').success).toBe(true);
+        expect(schema.safeParse(123).success).toBe(false);
+    } else {
+        expect(JSON.parse(readFileSync(outFile, 'utf8')).commands.mountedSave).toMatchObject({ type: 'string' });
+    }
+});
+
+test.each([
+    ['mixed siblings', 'type Result<T> = { payload: { generic: T; concrete: Output } }', 'Result<Output>'],
+    ['unrelated sibling', 'type Result<T> = { payload: { generic: T; concrete: Choice } }', 'Result<Output>'],
+    ['multiple parameters', 'type Result<T, U> = { payload: { first: T; second: U; concrete: Choice } }', 'Result<Output, Output>'],
+    ['nested wrapper', 'type Wrapped<T> = { value: T }; type Result<T> = { payload: { nested: Wrapped<T>; concrete: Choice } }', 'Result<Output>'],
+    ['repeated parameter', 'type Result<T> = { payload: { first: T; second: T; concrete: Output } }', 'Result<Output>'],
+    ['inherited payload', 'interface Fields<T> { generic: T }; interface Mixed<T> extends Fields<T> { concrete: Choice }; type Result<T> = { payload: Mixed<T> }', 'Result<Output>'],
+])('schema-linked generic return rejects %s regardless of concrete sibling links', (_name, wrapper, result) => {
+    const entry = join(dir, 'input.ts');
+    const tsconfig = join(dir, 'tsconfig.json');
+    writeFileSync(join(dir, 'schemas.ts'), `import { z } from 'zod';
+        export const inputSchema = z.string().min(10); export type Input = z.infer<typeof inputSchema>;
+        export const outputSchema = z.string().min(3); export type Output = z.infer<typeof outputSchema>;
+        export const choiceSchema = z.enum(['yes', 'no']); export type Choice = z.infer<typeof choiceSchema>;`);
+    writeFileSync(entry, `import type { Input, Output, Choice } from './schemas'; ${wrapper};
+        type Creators = { save(value: Input): ${result} };
+        declare const aggregate: { commandCreators: { [K in keyof Creators as \`mounted\${Capitalize<K>}\`]: Creators[K] };
+            pure: { eventProjectors: {} }; initialState: { ready: boolean } };
+        export { aggregate }; throw Error('must not execute');`);
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' }, include: ['*.ts'] }));
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([entry], compilerOptions()))).toEqual([]);
+    for (const mode of ['types-first', undefined]) {
+        writeFileSync(join(dir, 'package.json'), JSON.stringify(mode ? { redemeine: { schemas: { mode } } } : {}));
+        for (const format of ['zod', 'json-schema'] as const) {
+            const outFile = join(dir, `generated.${format === 'zod' ? 'ts' : 'json'}`);
+            writeFileSync(outFile, 'sentinel');
+            expect(() => extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false, format }))
+                .toThrow(/mountedSave: cannot preserve schema-linked return payload provenance; use an authored concrete return payload type/);
+            expect(readFileSync(outFile, 'utf8')).toBe('sentinel');
+            rmSync(outFile);
+            expect(() => extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false, format }))
+                .toThrow(/cannot preserve schema-linked return payload provenance/);
+            expect(existsSync(outFile)).toBe(false);
+        }
+    }
+});
+
+test.each([
+    ['default class', 'declare class Result<T = Output> { payload: T }', 'Result'],
+    ['explicit class', 'declare class Result<T> { payload: T }', 'Result<Output>'],
+    ['inherited class', 'declare class Base<T = Output> { payload: T }; declare class Result extends Base {}', 'Result'],
+    ['structural class', 'declare class Result<T> { payload: T }', 'Result<string>'],
+])('unresolved generic %s rejects before schema visibility checks', (_name, wrapper, result) => {
+    const entry = join(dir, 'input.ts');
+    const tsconfig = join(dir, 'tsconfig.json');
+    writeFileSync(join(dir, 'schemas.ts'), `import { z } from 'zod';
+        export const inputSchema = z.string().min(10); export type Input = z.infer<typeof inputSchema>;
+        export const outputSchema = z.string().min(3); export type Output = z.infer<typeof outputSchema>;`);
+    writeFileSync(entry, `import type { Input, Output } from './schemas'; ${wrapper};
+        type Creators = { save(value: Input): ${result} };
+        declare const aggregate: { commandCreators: { [K in keyof Creators as \`mounted\${Capitalize<K>}\`]: Creators[K] };
+            pure: { eventProjectors: {} }; initialState: { ready: boolean } };
+        export { aggregate }; throw Error('must not execute');`);
+    writeFileSync(tsconfig, JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler' }, include: ['*.ts'] }));
+    expect(ts.getPreEmitDiagnostics(ts.createProgram([entry], compilerOptions()))).toEqual([]);
+    for (const mode of ['types-first', 'zod-first']) {
+        writeFileSync(join(dir, 'package.json'), JSON.stringify({ redemeine: { schemas: { mode } } }));
+        for (const format of ['zod', 'json-schema'] as const) {
+            const outFile = join(dir, `generated.${format === 'zod' ? 'ts' : 'json'}`);
+            writeFileSync(outFile, 'sentinel');
+            const extract = () => extractZodSchemas({ entry, tsconfig, outFile, aggregateExport: 'aggregate', includeState: false, format });
+            expect(extract).toThrow(/mountedSave: cannot establish generic class return payload provenance; use an authored concrete return payload type/);
+            expect(readFileSync(outFile, 'utf8')).toBe('sentinel');
+            rmSync(outFile);
+            expect(extract).toThrow(/cannot establish generic class return payload provenance/);
+            expect(existsSync(outFile)).toBe(false);
+        }
+    }
+});
 
 test('bundle TypeScript keeps __proto__ as data at runtime', () => {
     const outDir = join(dir, 'out');

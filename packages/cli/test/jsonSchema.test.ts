@@ -210,3 +210,48 @@ test('compiler-only JSON refuses to discard imported Zod constraints and never e
   expect(() => f.extract()).toThrow(/existing Zod schema.*discard its constraints/);
   expect(existsSync(f.out)).toBe(false);
 });
+
+test('mounted list/map/nested command JSON describes canonical payloads and unchanged full state', () => {
+  const f = fixture('string');
+  writeFileSync(f.entry, readFileSync(join(__dirname, 'fixtures/mountedCommands.ts'), 'utf8'));
+  const config = JSON.parse(readFileSync(f.tsconfig, 'utf8'));
+  config.compilerOptions.paths = {
+    '@redemeine/aggregate': ['../../../aggregate/src/index.ts'],
+    '@redemeine/kernel': ['../../../kernel/src/index.ts'],
+  };
+  writeFileSync(f.tsconfig, JSON.stringify(config));
+  f.extract();
+  const output = f.read();
+  expect(Object.keys(output.commands)).toEqual(['byKeyChangeLabel', 'byKeyLeavesChangeQty', 'changeTitle', 'childrenChangeLabel', 'childrenLeavesChangeQty']);
+  expect(output.commands.changeTitle.required).toEqual(['title']);
+  for (const key of ['childrenChangeLabel', 'byKeyChangeLabel']) {
+    expect(output.commands[key]).toMatchObject({ type: 'object', required: ['id', 'label'], properties: { id: { type: 'string' }, label: { type: 'string' } } });
+  }
+  for (const key of ['childrenLeavesChangeQty', 'byKeyLeavesChangeQty']) {
+    expect(output.commands[key]).toMatchObject({ type: 'object', required: ['id', 'qty'], properties: { id: { type: 'string' }, qty: { type: 'number' } } });
+  }
+  expect(output.state.required).toEqual(['byKey', 'children', 'title']);
+  for (const child of [output.state.properties.children.items, output.state.properties.byKey.additionalProperties]) {
+    expect(child.required).toEqual(['id', 'label', 'leaves']);
+    expect(child.properties.leaves.items.required).toEqual(['id', 'qty']);
+  }
+  // Mounted events remain a separate, deferred aggregate typing limitation.
+  expect(Object.keys(output.events)).toEqual(['titleChanged']);
+});
+
+test.each([
+  ['unknown', /unresolved aggregate property/],
+  ['number', /missing resolved payload/],
+  ['() => { other: string }', /missing resolved payload/],
+  ['() => { payload: { late: Missing } }', /late.*Cannot find name/],
+  ['() => { payload: { late: () => void } }', /late.*functions/],
+])('mapped creators without declarations still reject %s atomically', (creator, error) => {
+  const f = fixture('string');
+  writeFileSync(f.entry, `type Creators = { save: ${creator} }; declare const aggregate: {
+    commandCreators: { [K in keyof Creators as \`mounted\${Capitalize<K>}\`]: Creators[K] };
+    pure: { eventProjectors: {} }; initialState: { ready: boolean };
+  }; export { aggregate };`);
+  writeFileSync(f.out, 'sentinel');
+  expect(() => f.extract()).toThrow(error);
+  expect(readFileSync(f.out, 'utf8')).toBe('sentinel');
+});

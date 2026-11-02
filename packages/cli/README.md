@@ -43,6 +43,10 @@ Use Zod 4 and strict TypeScript. Generated tests explicitly import Vitest; adapt
 those imports manually if your project uses Jest. Keep the builder export
 `ordersAggregate` for composition and built export `orders` for discovery.
 Compiler-only extraction does not execute application source.
+Standalone `extract-schemas` includes list-, map-, and nested-mounted **command**
+payloads in the root bundle (not separate entity files), using canonical payloads
+rather than pack argument tuples. Mounted event extraction remains deferred;
+this command fix does not change `extract-schema-registries`.
 Scaffold preflight checks dependency presence, not installed version ranges: it
 prints the Zod 4 requirement but never silently upgrades an existing Zod 3 entry.
 Upgrade incompatible project dependencies explicitly before compiling the scaffold.
@@ -99,6 +103,15 @@ extraction (including each alias route), and to the compiler-only JSON path.
 Exceeding the configured limit fails before output writes; increasing it does not
 allow unsupported schema-derived generics, discard authored refinements, or turn
 recursive structural types into `z.any()`.
+
+Schema-linked command creator returns with unresolved generic payload parameters
+fail closed, even when a sibling field has a concrete schema link. This conservative
+check can also reject unusual wrappers with otherwise concrete arguments: author
+a concrete return payload type (without generic wrappers) to preserve every schema
+link. Generic class payload declarations with unresolved parameters (including
+inherited declarations and default parameters) are also rejected when schema links
+cannot be established, even with plain structural arguments. Increasing depth
+limits does not enable generic substitution.
 
 **Zod-first:** each selected command payload, event payload and included state must
 resolve to an existing importable Zod schema. Generated maps import the originals;
