@@ -72,7 +72,8 @@ export function aggregateJsonOutput(
   completePayloads(checker, projectors, events, `${name}.events`, true);
   const convertMap = (types: Map<string, ts.Type>, group: string, handlers: ts.Type) => Object.fromEntries([...types].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([key, type]) => {
-      const declaration = type.aliasSymbol?.declarations?.[0] ?? payloadDeclaration(checker, handlers, key, name, group === 'events', location);
+      const declaration = group === 'events' ? declarations?.events.get(key)
+        : type.aliasSymbol?.declarations?.[0] ?? payloadDeclaration(checker, handlers, key, name, false, location);
       return [key, jsonSchemaDocument(converter.convert(type, `${name}.${group}[${JSON.stringify(key)}]`, declaration), options.target)];
     }));
   if (options.includeState !== false && !state) throw new Error(`${name}.state: missing resolved initialState`);

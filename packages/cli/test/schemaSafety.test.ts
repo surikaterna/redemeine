@@ -132,7 +132,8 @@ test('mounted command Zod strictly compiles and validates canonical rather than 
         expect(schema.safeParse({ title: 1, id: 1, label: 1, qty: 'bad' }).success).toBe(false);
         expect(schema.safeParse(['child', 'label']).success).toBe(false);
     }
-    expect(Object.keys(eventSchemas)).toEqual(['titleChanged']);
+    expect(Object.keys(eventSchemas)).toEqual(['titleChanged', 'children.labelChanged',
+        'children.leaves.qtyChanged', 'byKey.labelChanged', 'byKey.leaves.qtyChanged']);
 });
 
 test.each(['value: Input', ''])('remapped creators retain authored return payload provenance (%s) and named imports', parameters => {

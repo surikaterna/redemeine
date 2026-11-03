@@ -154,3 +154,36 @@ Distinct authored command paths that flatten to the same compiled key also fail:
 use distinct authored compiled paths, with explicit shared wire names if shared
 dispatch is desired. Same authored command overrides remain valid; sharing a wire
 name still routes both calls to the existing Aggregate winner.
+## Runtime schema bindings
+
+`schemaBindings(builtAggregate)` returns a deeply frozen, detached JSON-safe
+`{ aggregateType, commands, events }` snapshot. Each kind contains
+`schemaToWire[id] = { wireType, winnerSchemaId, isWireWinner }` and
+`wireToSchema[wireType] = winnerSchemaId`. Wires and winners are captured from
+actual compilation, including custom naming and overrides.
+
+```ts
+import { schemaBindings } from '@redemeine/aggregate';
+const aggregate = aggregateBuilder.build();
+const bindings = schemaBindings(aggregate);
+const command = aggregate.commandCreators.create('42');
+const id = bindings.commands.wireToSchema[command.type];
+if (!id || !Object.hasOwn(commandSchemas, id)) throw new Error(`Missing schema: ${id}`);
+commandSchemas[id].parse(command.payload); // validate the packed payload, not creator arguments
+```
+
+Command schema IDs are local creator keys (e.g. `parentsChildrenRegister`);
+event IDs are declared paths (e.g. `parents.children.registered`), never semantic
+names. Inbound wire validation uses the reverse winner, not an arbitrary alias.
+Shared wires remain legal and have no automatic payload adaptation: callers own
+losing-alias compatibility. Check generated schema entries explicitly; this API
+does not load or validate a generated schema file.
+
+Supported plugin decorations preserve bindings. Unknown objects/clones,
+ambiguous schema IDs (including dotted root/mount collisions and repeated mounts
+retaining distinct wires), and direct mixin-owned events throw at accessor time,
+without changing build/dispatch behavior. Direct mixin event payload ownership
+is unproven even when projector functions match; mixin-owned mounts are supported.
+No handlers, templates, or mutable runtime metadata appear in the snapshot.
+See the [CLI schema join example](../cli/README.md#joining-schema-ids-to-runtime-wires):
+extraction stays compiler-only; applications build and query bindings separately.

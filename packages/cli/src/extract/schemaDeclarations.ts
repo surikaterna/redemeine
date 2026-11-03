@@ -5,6 +5,7 @@ import { containsSchema, referenceTarget } from './schemaProvenance';
 import { aggregateStateModel } from './aggregateStateModel';
 import { schemaPolicyForEntry } from './schemaConfig';
 import { assertProvenanceDepth, defaultMaxProvenanceDepth, searchProvenance, syntaxChildren } from './provenanceTraversal';
+import type { ResolvedEvent } from './mountedEventWalker';
 
 export interface SchemaDeclarations {
     /** Compiler resolution context only; never an authored payload annotation. */
@@ -169,7 +170,8 @@ function stateAnnotation(program: ts.Program, entry: string, name: string, maxPr
     }, maxProvenanceDepth, `${name}.state`);
 }
 
-export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.Type, entry: string, name: string): SchemaDeclarations {
+export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.Type, entry: string, name: string,
+    resolvedEvents?: Map<string, ResolvedEvent>): SchemaDeclarations {
     const maxProvenanceDepth = schemaPolicyForEntry(entry).maxProvenanceDepth ?? defaultMaxProvenanceDepth;
     const checker = program.getTypeChecker();
     const pure = property(checker, aggregate, 'pure');
@@ -195,8 +197,22 @@ export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.T
     }
     for (const [key, declaration] of commandAnnotations(program, entry, name, maxProvenanceDepth)) commands.set(key, declaration);
     return { commands, ...(resolutionLocation ? { resolutionLocation } : {}),
-        events: handlers(checker, property(checker, pure, 'eventProjectors'), false, maxProvenanceDepth),
+        events: resolvedEvents ? resolvedEventAnnotations(checker, resolvedEvents, maxProvenanceDepth)
+            : handlers(checker, property(checker, pure, 'eventProjectors'), false, maxProvenanceDepth),
         ...(annotation ? { creatorState: annotation } : {}), ...(state ? { state } : {}) };
+}
+
+function resolvedEventAnnotations(checker: ts.TypeChecker, events: Map<string, ResolvedEvent>, depth: number): Map<string, ts.Node> {
+    const result = new Map<string, ts.Node>();
+    for (const [key, event] of events) {
+        if (!event.parameter) continue;
+        const annotation = eventPayloadAnnotation(checker, event.parameter) ?? event.payloadDeclaration;
+        if (annotation && hasPayloadTypeParameter(checker, annotation, depth)) {
+            throw new Error(`${key}: cannot preserve schema-linked event payload provenance; use an authored concrete Event payload`);
+        }
+        result.set(key, annotation ?? event.parameter);
+    }
+    return result;
 }
 
 /** A concrete sibling schema cannot establish provenance for an unsubstituted parameter. */

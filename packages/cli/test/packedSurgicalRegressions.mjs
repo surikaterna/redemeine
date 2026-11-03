@@ -107,14 +107,7 @@ function mountedCommands(consumer, command, bin) {
     console.log(command(bin, [...args, '--out', `mounted-commands/generated${index}.ts`]));
     console.log(command(bin, [...args, '--format', 'json-schema', '--out', `mounted-commands/generated${index}.json`]));
   }
-  // The existing event generic emitter leaks NewE; do not hide it with skipLibCheck.
-  const declarations = spawnSync('npx', ['--no-install', 'tsc', '-p', 'mounted-commands/extract.json'], { cwd: consumer, encoding: 'utf8' });
-  assert.equal(declarations.status, 2);
-  assert.deepEqual(declarations.stdout.trim().replace(/\(\d+,\d+\)/g, '').split('\n'), [
-    "mounted-commands/dist/common.d.cts: error TS2304: Cannot find name 'NewE'.",
-    "mounted-commands/dist/input.d.ts: error TS2304: Cannot find name 'NewE'.",
-  ]);
-  console.log('Known deferred event declaration diagnostics:', declarations.stdout);
+  console.log(command('npx', ['--no-install', 'tsc', '-p', 'mounted-commands/extract.json']));
   console.log(command('npx', ['--no-install', 'tsc', '--strict', '--skipLibCheck', 'false', '--noEmit', '--target', 'ES2022',
     '--module', 'ESNext', '--moduleResolution', 'Bundler', ...entries.map((_, index) => `mounted-commands/generated${index}.ts`)]));
   console.log(command('node', ['--input-type=module', '-e', `
@@ -138,10 +131,11 @@ for (let i = 0; i < 3; i++) {
   const child = { id: 'c', label: 'ok', leaves: [{ id: 'l', qty: 2 }] };
   assert(stateSchema.safeParse({ title: 'ok', children: [child], byKey: { c: child } }).success);
   assert(!stateSchema.safeParse({ title: 'ok', children: [child], byKey: { c: { ...child, leaves: [{ id: 'l', qty: 'bad' }] } } }).success);
-  assert.deepEqual(Object.keys(eventSchemas), ['titleChanged']); assert.deepEqual(Object.keys(json.events), ['titleChanged']);
+  const events = ['byKey.labelChanged', 'byKey.leaves.qtyChanged', 'children.labelChanged', 'children.leaves.qtyChanged', 'titleChanged'];
+  assert.deepEqual(Object.keys(eventSchemas).sort(), events); assert.deepEqual(Object.keys(json.events), events);
   if (baseline) assert.deepEqual(json, baseline); else baseline = json;
 }
-console.log('Packed mounted commands: source/ESM/CJS declarations, canonical JSON/Zod payloads and unchanged state/events PASS');` ]));
+console.log('Packed mounted commands/events: source/ESM/CJS declarations, canonical JSON/Zod payloads and unchanged state PASS');` ]));
 }
 
 function restrictedNames(consumer, bin) {

@@ -235,8 +235,8 @@ test('mounted list/map/nested command JSON describes canonical payloads and unch
     expect(child.required).toEqual(['id', 'label', 'leaves']);
     expect(child.properties.leaves.items.required).toEqual(['id', 'qty']);
   }
-  // Mounted events remain a separate, deferred aggregate typing limitation.
-  expect(Object.keys(output.events)).toEqual(['titleChanged']);
+  expect(Object.keys(output.events)).toEqual(['byKey.labelChanged', 'byKey.leaves.qtyChanged',
+    'children.labelChanged', 'children.leaves.qtyChanged', 'titleChanged']);
 });
 
 test.each([

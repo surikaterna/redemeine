@@ -16,3 +16,5 @@ export type {
   ShorthandCommandWithMeta,
   MapCommandsToPayloads
 } from './types/aggregateTyping';
+export { schemaBindings } from './schemaBindings';
+export type { SchemaBindings, SchemaBindingMap, SchemaBinding } from './schemaBindings';
