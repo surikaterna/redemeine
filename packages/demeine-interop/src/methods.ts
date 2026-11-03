@@ -21,10 +21,10 @@ export function installMethods<S extends object, C extends CommandCreators>(
     if (name in prototype || reserved.has(name)) throw new Error(`Legacy method collision: ${name}`);
     Object.defineProperty(prototype, name, { value, writable: true, configurable: true });
   };
-  for (const type of Object.values(builder.types.commands)) {
+  for (const type of new Set(Object.values(builder.types.commands))) {
     define(dispatchName(type, true), function (this: BridgeContext<S>, command: BridgeCommand) { return dispatch.process(this, command); });
   }
-  for (const type of Object.values(builder.types.events)) {
+  for (const type of new Set(Object.values(builder.types.events))) {
     define(dispatchName(type, false), function (this: BridgeContext<S>, event: Event) { return dispatch.apply(this, event); });
   }
   for (const key of Object.keys(builder.types.commands)) {

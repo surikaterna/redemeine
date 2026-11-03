@@ -14,8 +14,8 @@ const later = createEntity<Parent, 'later'>('later').commands(() => ({ other: ()
 const row = (): Parent => ({ id: 'p', qty: 0, children: [{ id: 'c', qty: 10 }] });
 
 test.each([false, true])('selected parent hides descendants with earlier role=%s', earlier => {
-  const base = createAggregate('store', { parents: [row()] }).entityList('parents', parent);
-  const host = (earlier ? base.entityList('parents', later) : base)
+  const base = createAggregate('store', { parents: [row()], others: [row()] }).entityList('parents', parent);
+  const host = (earlier ? base.entityList('others', later) : base)
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.parents[0], parent, { mount: 'parents' }) })).build();
   const live = createMirage(host, 'store');
   const views = [live.parents('p'), live.parents[0]!, [...live.parents][0]!, live.chosen()!];
@@ -23,7 +23,7 @@ test.each([false, true])('selected parent hides descendants with earlier role=%s
     expect(Reflect.get(view, 'childrenRead')).toBeUndefined();
     expect(typeof view.touch).toBe('function');
     view.touch({});
-    expect(Reflect.set(view.children[0]!, 'qty', 99)).toBe(false);
+    expect(() => Reflect.set(view.children[0]!, 'qty', 99)).toThrow('Cannot mutate');
   }
   expect(Reflect.get(live.chosen()!, 'other')).toBeUndefined();
   expect(extractState(live).parents[0]!.qty).toBe(4);
@@ -52,7 +52,7 @@ test('a shadowed descendant does not prevent binding a valid earlier parent role
   const host = createAggregate('store', { parents: [row()], others: [{ id: 'c', qty: 10 }] })
     .entityList('parents', parent, undefined, { commandNameOverrides: { childrenRead: 'shared.read.command' } })
     .entityList('others', child, undefined, { commandNameOverrides: { read: 'shared.read.command' } })
-    .entityList('parents', later)
+    .entityList('unrelated', later)
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.parents[0], parent, { mount: 'parents' }) })).build();
   expect(commandMetadata(host, 'parentsChildrenRead')!.isWireWinner).toBe(false);
   const live = createMirage(host, 'store');

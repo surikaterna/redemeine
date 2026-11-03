@@ -1,5 +1,11 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.6
+
+### Patch Changes
+
+- [#163](https://github.com/surikaterna/redemeine/pull/163) [`b5d22cc`](https://github.com/surikaterna/redemeine/commit/b5d22cc7bffa311e513fbb43c709e693881e47f0) Thanks [@spralle](https://github.com/spralle)! - Install each identical command/event wire dispatch method once when multiple registrations intentionally share it. Keep errors for different wires that derive the same legacy method name.
+
 ## 1.0.0-pre.5
 
 ### Major Changes

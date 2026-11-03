@@ -69,7 +69,7 @@ test('role discovery uses the real emitter and isolates caches for mounts in the
   const Role = createEntity<{ id: string }, 'role'>('role').events({ changed: (_state, _event: Event<{ id: string }>) => {} })
     .commands(emit => ({ [emit.changed({ id: 'a' }).type.includes('.left.') ? 'touch' : 'other']: () => [] })).build();
   const builder = createAggregate('root', { left: [{ id: 'a' }], right: [{ id: 'a' }] })
-    .entityList('left', Item).entityList('right', Item).events({}).commands(() => ({}))
+    .entityList('left', Item, {}, { semanticName: 'left' }).entityList('right', Item, {}, { semanticName: 'right' }).events({}).commands(() => ({}))
     .selectors(({ bindContext }) => ({
       leftRole: state => bindContext(state.left[0]!, Role, { mount: 'left' }),
       rightRole: state => bindContext(state.right[0]!, Role, { mount: 'right' })

@@ -33,14 +33,15 @@ function second(pk: PK) {
 }
 
 function fixture(oldPk: PK, livePk: PK, rows = initial()) {
+  const old = first(oldPk);
   const role = second(livePk);
-  const host = createAggregate('store', { rows }).entityList('rows', first(oldPk), { pk: oldPk })
-    .entityList('rows', role, { pk: livePk })
-    .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], role, { mount: 'rows' }) })).build();
+  const host = createAggregate('store', { rows, currentRows: structuredClone(rows) }).entityList('rows', old, { pk: oldPk })
+    .entityList('currentRows', role, { pk: livePk })
+    .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
   host.hooks = { onBeforeCommand: before };
   const live = createMirage(host, 'store');
-  const raw = typeof livePk === 'string' ? Reflect.get(rows[0]!, livePk) : Object.fromEntries(livePk.map(key => [key, Reflect.get(rows[0]!, key)]));
-  return { live, host, selected: Reflect.apply(live.rows, undefined, [raw]) };
+  const identity = (pk: PK) => typeof pk === 'string' ? Reflect.get(rows[0]!, pk) : Object.fromEntries(pk.map(key => [key, Reflect.get(rows[0]!, key)]));
+  return { live, host, selected: Reflect.apply(live.rows, undefined, [identity(oldPk)]), current: Reflect.apply(live.currentRows, undefined, [identity(livePk)]) };
 }
 
 beforeEach(() => { before.mockClear(); handled.mockClear(); });
@@ -48,7 +49,7 @@ beforeEach(() => { before.mockClear(); handled.mockClear(); });
 test('explicit earlier role admits surviving registrations and hides other role commands', () => {
   const old = first('id');
   const host = createAggregate('store', { rows: initial() }).entityList('rows', old)
-    .entityList('rows', second('code'), { pk: 'code' })
+    .entityList('currentRows', second('code'), { pk: 'code' })
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
   const live = createMirage(host, 'store');
   const bound = live.chosen()!;
@@ -62,7 +63,7 @@ test('explicit earlier role admits surviving registrations and hides other role 
 test.each(['missing', 'root', 'kind', 'path'])('compiled registration ignores a %s compatibility-view edit', failure => {
   const old = first('id');
   const host = createAggregate('store', { rows: initial() }).entityList('rows', old)
-    .entityList('rows', second('code'), { pk: 'code' })
+    .entityList('currentRows', second('code'), { pk: 'code' })
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
   const targets = { ...Reflect.get(host.pure, 'commandTargets') };
   const registration = commandMetadata(host, 'rowsSetFirst');
@@ -84,7 +85,7 @@ test('explicit unrelated role with absent commands is rejected', () => {
   const old = first('id');
   const unrelated = createEntity<Row, 'unrelated'>('unrelated').commands(() => ({ absent: () => [] })).build();
   const host = createAggregate('store', { rows: initial() }).entityList('rows', old)
-    .entityList('rows', second('code'), { pk: 'code' })
+    .entityList('currentRows', second('code'), { pk: 'code' })
     .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], unrelated, { mount: 'rows' }) })).build();
   expect(() => createMirage(host, 'store').chosen()).toThrow(/absent/i);
 });
@@ -100,35 +101,38 @@ test('scoped primitive shorthand rejects before hooks and state changes', () => 
   expect(live[MirageCoreSymbol].getPendingResults().events).toEqual([]);
 });
 
-test('natural business-only calls retain old id and new code on the selected row', () => {
+test('natural business-only calls retain each mount registration identity', () => {
   const old = createEntity<Row, 'old'>('old')
     .events({ oldChanged(state, event: Event<{ id: string; qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ setOld: (state, payload: { id: string; qty: number }) => emit.oldChanged(payload) })).build();
   const latest = createEntity<Row, 'latest'>('latest')
     .events({ newChanged(state, event: Event<{ code: string; qty: number }>) { state.qty = event.payload.qty; } })
     .commands(emit => ({ setNew: (state, payload: { code: string; qty: number }) => emit.newChanged(payload) })).build();
-  const host = createAggregate('store', { rows: initial() }).entityList('rows', old)
-    .entityList('rows', latest, { pk: 'code' }).build();
+  const host = createAggregate('store', { rows: initial(), currentRows: initial() }).entityList('rows', old)
+    .entityList('currentRows', latest, { pk: 'code' }).build();
   const live = createMirage(host, 'store');
-  live.rows('code-a').setOld({ qty: 7 });
-  live.rows('code-a').setNew({ qty: 8 });
-  expect(extractState(live).rows.map(row => row.qty)).toEqual([8, 10]);
+  live.rows('id-a').setOld({ qty: 7 });
+  live.currentRows('code-a').setNew({ qty: 8 });
+  expect(extractState(live).rows.map(row => row.qty)).toEqual([7, 10]);
+  expect(extractState(live).currentRows.map(row => row.qty)).toEqual([8, 10]);
 });
 
 test.each([
   ['id', 'code'], ['code', 'id'], ['code', ['domain', 'authority']],
   [['domain', 'authority'], 'code'], [['domain', 'authority'], ['authority', 'domain']],
   [['id', 'domain', 'authority'], ['authority', 'domain']]
-] satisfies [PK, PK][])('command identity follows its registration (%j then %j)', (oldPk, livePk) => {
-  const { live, selected } = fixture(oldPk, livePk);
+] satisfies [PK, PK][])('command identity follows its mount registration (%j and %j)', (oldPk, livePk) => {
+  const { live, selected, current } = fixture(oldPk, livePk);
   for (const name of ['setFirst', 'other', 'packedFirst', 'packedOther']) {
-    const result = Reflect.apply(Reflect.get(selected, name), undefined, name.startsWith('packed') ? [] : [{}]);
+    const view = name.endsWith('First') ? selected : current;
+    const result = Reflect.apply(Reflect.get(view, name), undefined, name.startsWith('packed') ? [] : [{}]);
     expect(result.id).toBe('id-a');
     const pk = name.endsWith('First') ? oldPk : livePk;
     const payload = handled.mock.calls.at(-1)![0];
     for (const field of typeof pk === 'string' ? [pk] : pk) expect(payload[field]).toBe(Reflect.get(initial()[0]!, field));
   }
-  expect(extractState(live).rows.map(row => row.qty)).toEqual([5, 10]);
+  expect(extractState(live).rows.map(row => row.qty)).toEqual([3, 10]);
+  expect(extractState(live).currentRows.map(row => row.qty)).toEqual([3, 10]);
 });
 
 test('direct/index/iteration/bound-selector paths share command context and original return view', () => {
@@ -154,7 +158,7 @@ test('shorthand and final packed canonical conflicts fail before hooks', () => {
 test('missing old primary key fails before hooks; duplicate old identity remains Aggregate policy', () => {
   const missing = initial();
   Reflect.deleteProperty(missing[0]!, 'id');
-  expect(() => Reflect.apply(fixture('id', 'code', missing).selected.setFirst, undefined, [{}])).toThrow(/primary key/i);
+  expect(() => fixture('id', 'code', missing)).toThrow(/primary key/i);
   expect(before).not.toHaveBeenCalled();
   const duplicate = initial();
   duplicate[1]!.id = 'id-a';
@@ -164,23 +168,20 @@ test('missing old primary key fails before hooks; duplicate old identity remains
 
 test('map commands use the own entry key rather than value id', () => {
   const host = createAggregate('store', { rows: { chosen: initial()[0]! } })
-    .entityMap('rows', first('key')).entityMap('rows', second('key')).build();
+    .entityMap('rows', first('key')).entityMap('currentRows', second('key')).build();
   const live = createMirage(host, 'store');
   Reflect.apply(live.rows.chosen!.packedFirst, undefined, []);
   expect(handled.mock.calls[0]![0].key).toBe('chosen');
   expect(extractState(live).rows.chosen.qty).toBe(2);
 });
 
-test('missing registration and incompatible mount kinds reject before hooks', () => {
+test('missing registration and different definitions at one mount reject before hooks', () => {
   const { host } = fixture('id', 'code');
   Reflect.deleteProperty(host.pure, 'commandTargets');
-  const unregistered = createMirage({ ...host }, 'store').rows('code-a');
+  const unregistered = createMirage({ ...host }, 'store').rows('id-a');
   expect(() => Reflect.apply(unregistered.setFirst, undefined, [{}])).toThrow(/registration/i);
-  const incompatible = createAggregate('store', { rows: initial() }).entityMap('rows', first('key'))
-    .entityList('rows', second('code'), { pk: 'code' }).build();
-  incompatible.hooks = { onBeforeCommand: before };
-  const live = createMirage(incompatible, 'store');
-  expect(() => Reflect.apply(live.rows('code-a').setFirst, undefined, [{}])).toThrow(/registration/i);
+  expect(() => createAggregate('store', { rows: initial() }).entityMap('rows', first('key'))
+    .entityList('rows', second('code'), { pk: 'code' }).build()).toThrow(/Conflicting entity definitions.*rows/);
   expect(before).not.toHaveBeenCalled();
   expect(handled).not.toHaveBeenCalled();
 });
@@ -190,28 +191,31 @@ test('selected scalar identities keep numeric/string/bigint equivalence', () => 
     .commands(() => ({ read: (_state, _payload: Record<string, unknown>) => { handled(); return []; } })).build();
   const other = createEntity<{ id: bigint; code: string }, 'other'>('other').build();
   const host = createAggregate('store', { rows: [{ id: 0n, code: '' }] })
-    .entityList('rows', item).entityList('rows', other, { pk: 'code' }).build();
+    .entityList('rows', item).entityList('currentRows', other, { pk: 'code' }).build();
   host.hooks = { onBeforeCommand: before };
   const live = createMirage(host, 'store');
-  for (const id of [0n, 0, '0']) Reflect.apply(live.rows('').read, undefined, [{ id }]);
+  for (const id of [0n, 0, '0']) Reflect.apply(live.rows(0n).read, undefined, [{ id }]);
   expect(handled).toHaveBeenCalledTimes(3);
-  expect(() => Reflect.apply(live.rows('').read, undefined, [{ id: false }])).toThrow(/identity/i);
+  expect(() => Reflect.apply(live.rows(0n).read, undefined, [{ id: false }])).toThrow(/identity/i);
   expect(before).toHaveBeenCalledTimes(3);
 });
 
 test('root-winning selected command rejects before hooks while bare root invocation stays root', () => {
   const state = { rows: initial() };
   const old = first('id');
+  const role = first('id');
   const source = createMixin<typeof state>().entityList('rows', old).build();
-  const root = createMixin<typeof state>().commands(() => ({ rowsSetFirst: () => { handled(); return []; } })).build();
-  const host = createAggregate('store', state).mixins({ ...source, mountedEntities: [] }, root).entityList('rows', second('code'), { pk: 'code' })
-    .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], old, { mount: 'rows' }) })).build();
+  const root = createMixin<typeof state>().commands(() => ({ rootRead: () => { handled(); return []; } })).build();
+  const host = createAggregate('store', state).mixins({ ...source, mountedEntities: [] }, root)
+    .entityList('rows', old)
+    .overrideCommandNames({ rowsSetFirst: 'shared.command', rootRead: 'shared.command' })
+    .selectors(({ bindContext }) => ({ chosen: state => bindContext(state.rows[0], role, { mount: 'rows' }) })).build();
   host.hooks = { onBeforeCommand: before };
   const live = createMirage(host, 'store');
-  expect(() => Reflect.apply(live.rows('code-a').setFirst, undefined, [{}])).toThrow(/registration/i);
-  expect(() => live.chosen()).toThrow(/registration/i);
+  expect(() => Reflect.apply(live.rows('id-a').setFirst, undefined, [{}])).toThrow(/shadowed/i);
+  expect(() => live.chosen()).toThrow(/shadowed/i);
   expect(before).not.toHaveBeenCalled();
   expect(handled).not.toHaveBeenCalled();
-  live.rowsSetFirst();
+  live.rootRead();
   expect(handled).toHaveBeenCalledTimes(1);
 });

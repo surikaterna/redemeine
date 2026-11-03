@@ -32,7 +32,7 @@ async function check(host) {
   assert.deepEqual(host.metadata.events[root.type].meta, { owner: 'root' });
   replay(host, root, { ...initial(), count: 11 });
   const child = host.process(initial(), host.commandCreators.identifiersRegister({ id: 'a' }))[0];
-  assert.equal(child.type, 'payment_attempt.identifiers.registered.event');
+  assert.equal(child.type, 'payment_attempt.identifier.registered.event');
   assert.deepEqual(child.payload, { id: 'a', count: 3 });
   assert.deepEqual(host.metadata.events[child.type].meta, { owner: 'entity' });
   replay(host, child, { ...initial(), identifiers: [{ id: 'a', count: 3 }, { id: 'b', count: 7 }] });

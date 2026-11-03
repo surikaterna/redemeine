@@ -7,6 +7,6 @@
       "@redemeine/kernel": ["../kernel/dist/index.d.ts"]
     }
   },
-  "files": ["test/dx-contract.types.ts"],
+  "files": ["test/dx-contract.types.ts", "test/semanticAliases.types.ts"],
   "include": []
 }

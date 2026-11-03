@@ -3,7 +3,7 @@ import type { RedemeineComponent, RedemeineCommandDefinition, RedemeineEventDefi
 import { createComponentBehaviorState, bindFluentMethods } from './redemeineComponent';
 import type { EntityPackage } from './createEntity';
 import type { EventEmitterFactory, MapCommandsToPayloads, ValidCommandDefinitions } from './types/aggregateTyping';
-import type { MountRegistry, ReplaceCommandMap } from './types/entityMount';
+import type { MountRegistry, ReplaceCommandMap, MountSemanticName } from './types/entityMount';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -15,8 +15,9 @@ import type {
 import { composeMountedComponentBehavior, createMountMethods } from './componentMounts';
 import type { ReplaceSelectors } from './types/aggregateSelectors';
 
-type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[]> = {
+type MixinEntityRegistryListEntry<T extends EntityPackage<any, any, any, any, any, any>, PK extends string | readonly string[], SemanticName extends string = T['name']> = {
   kind: 'list';
+  semanticName: SemanticName;
   entity: T;
   pk: PK;
 };
@@ -75,12 +76,12 @@ export interface MixinBuilder<S, E extends Record<string, any> = {}, EOverrides 
     factory: (emit: EventEmitterFactory<string, E, EOverrides>, context: { selectors: Selectors; commands: CommandContext<CommandIntents<CPayloads>> }) => NewC
   ) => MixinBuilder<S, E, EOverrides, CPayloads & MapCommandsToPayloads<NewC>, COverrides, Selectors, Registry, TMeta>;
 
-  entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id'>(
+  entityList: <EN extends string, T extends EntityPackage<any, any, any, any, any, any>, const PK extends string | readonly string[] = 'id', const Overrides extends [mountOverrides?: EntityMountOverrides | undefined] = [mountOverrides?: EntityMountOverrides | undefined]>(
     name: EN,
     entityComponent: T,
     options?: EntityListOptions<PK>,
-    mountOverrides?: EntityMountOverrides
-  ) => MixinBuilder<S, E, EOverrides, ReplaceCommandMap<CPayloads, MapEntityCommands<EN, T['commands']>>, COverrides, Selectors, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, MixinEntityRegistryListEntry<T, PK>>, TMeta>;
+    ...mountOverrides: Overrides
+  ) => MixinBuilder<S, E, EOverrides, ReplaceCommandMap<CPayloads, MapEntityCommands<EN, T['commands']>>, COverrides, Selectors, MountRegistry<Registry, EN, T, { kind: 'list'; pk: PK; mountName: EN }, MixinEntityRegistryListEntry<T, PK, MountSemanticName<T['name'], Overrides[0]>>>, TMeta>;
 
   entityMap: <EN extends string, Keys extends string, T extends EntityPackage<any, any, any, any, any, any>>(
     name: EN,
