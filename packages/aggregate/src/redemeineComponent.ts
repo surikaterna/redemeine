@@ -52,7 +52,7 @@ export type NormalizeEventDefinitions<T extends Record<string, RedemeineEventDef
 // Keep replacement keys scoped when TypeScript emits inferred downstream declarations.
 // SAFETY: `any` matches NormalizeEventDefinitions' existential projector constraint, not the inferred event map.
 export type MergeEventDefinitions<Existing, Incoming extends Record<string, RedemeineEventDefinition<any, any>>> =
-  Omit<Existing, keyof Incoming> & NormalizeEventDefinitions<Incoming>;
+  { [K in keyof Existing as K extends keyof Incoming ? never : K]: Existing[K] } & NormalizeEventDefinitions<Incoming>;
 
 export type RedemeineShorthandCommand<S, Args extends unknown[] = unknown[], TPlugins extends PluginExtensions = {}> = (
   state: AggregateStateView<S>,

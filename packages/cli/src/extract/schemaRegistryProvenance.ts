@@ -68,7 +68,7 @@ function declarationEvidence(node: ts.Node, cache: Map<string, string | undefine
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
     if (!ts.isInterfaceDeclaration(current) && !ts.isTypeAliasDeclaration(current)) continue;
     const name = current.name.text;
-    if (packageId === '@redemeine/aggregate' && ['BuiltAggregate', 'DecoratedAggregate'].includes(name)) return { kind: 'aggregate', commit: false };
+    if (packageId === '@redemeine/aggregate' && ['BuiltAggregate', 'DecoratedAggregate', 'BuiltAggregateResult'].includes(name)) return { kind: 'aggregate', commit: false };
     if (packageId !== '@redemeine/aggregate' && ['ProjectionDefinition', 'ProjectionCommitDefinition'].includes(name)) {
       return { kind: 'projection', commit: name === 'ProjectionCommitDefinition' };
     }

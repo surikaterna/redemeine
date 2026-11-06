@@ -19,6 +19,7 @@ import { attachCommandMetadata } from './commandMetadata';
 import type { AggregateStateView } from './types/aggregateState';
 import { decorateAggregate, inheritAggregateIdentity } from './plugins/attachment';
 import type { PluginRegistration } from './plugins/attachmentTypes';
+import { attachSchemaBindings } from './schemaBindings';
 
 export type BuildAggregateInput<S, TMeta> = {
     aggregateName: string;
@@ -79,7 +80,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
     // 4. Mount entities (mutates allEvents, allEventOverrides, allCommandsMap, etc.)
     const mounts = mountEntities<S, TMeta>(
         entityPackages, allEvents, allEventMetadata, allEventOverrides, allCommandOverrides,
-        allSelectors, allCommandsMap, dispatch, aggregateName, namingStrategy
+        allSelectors, allCommandsMap, dispatch, aggregateName, namingStrategy, resolved.forward
     );
 
     // 6. Build metadata
@@ -111,6 +112,7 @@ export function buildAggregate<S, TMeta extends Record<string, unknown>>(input: 
         plugins
     };
     attachCommandMetadata(domain, compiled.records);
+    attachSchemaBindings(domain, aggregateName, compiled.records, resolved.forward, dispatch);
     const host = decorateAggregate(domain);
     inheritAggregateIdentity(host, input.parents ?? []);
     return decorateAggregate(host, input.aggregatePlugins);

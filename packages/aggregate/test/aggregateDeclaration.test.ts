@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as ts from 'typescript';
+import { readFileSync } from 'node:fs';
 
 const root = path.resolve(__dirname, '../../..');
 const fixture = path.join(__dirname, 'typefixtures/inferredAggregate.ts');
@@ -38,4 +39,9 @@ test('inferred generic aggregate factories emit self-contained replacement event
   expect(compile(files, fixture, true)).toEqual([]);
   expect(files.has(declaration)).toBe(true);
   expect(compile(files, declaration, false)).toEqual([]);
+});
+
+test('named build result preserves every legacy field, registry and command constraint', () => {
+  const source = readFileSync(path.join(__dirname, 'buildResultCompatibility.fixture.ts.txt'), 'utf8');
+  expect(compile(new Map([[fixture, source]]), fixture, false)).toEqual([]);
 });

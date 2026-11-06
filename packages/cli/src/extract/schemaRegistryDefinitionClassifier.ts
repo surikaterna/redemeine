@@ -90,12 +90,23 @@ function aggregateFunction(checker: ts.TypeChecker, type: ts.Type, state: ts.Typ
   if (key === 'applyToDraft' && !(result.flags & ts.TypeFlags.Void)) throw new Error(`${path}.applyToDraft: expected void`);
 }
 
-function functionMap(checker: ts.TypeChecker, type: ts.Type, path: string, parameters: number): void {
+export function registryMemberType(checker: ts.TypeChecker, symbol: ts.Symbol, path: string, location?: ts.Node, selector = false): ts.Type {
+  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+  if (declaration) return checker.getTypeOfSymbolAtLocation(symbol, declaration);
+  if (location && canonicalAggregateDeclaration(location)) {
+    const type = checker.getTypeOfSymbolAtLocation(symbol, location);
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const signature = signatures.length === 1 ? signatures[0] : undefined;
+    // EffectiveSelectors preserves authored signatures, unlike canonical command creator signatures.
+    if (signature?.declaration && (canonicalAggregateDeclaration(signature.declaration) || selector)) return type;
+  }
+  throw new Error(`${path}: unresolved handler`);
+}
+
+function functionMap(checker: ts.TypeChecker, type: ts.Type, path: string, parameters: number, location?: ts.Node, selector = false): void {
   object(type, path);
   for (const symbol of checker.getPropertiesOfType(type)) {
-    const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
-    if (!declaration) throw new Error(`${path}.${symbol.name}: unresolved handler`);
-    const value = checker.getTypeOfSymbolAtLocation(symbol, declaration);
+    const value = registryMemberType(checker, symbol, `${path}.${symbol.name}`, location, selector);
     const parts = value.isUnion() ? value.types.filter((part) => !(part.flags & ts.TypeFlags.Undefined)) : [value];
     if (parts.length !== 1 || !parts[0]) throw new Error(`${path}.${symbol.name}: ambiguous handler`);
     mapFunction(checker, parts[0], `${path}.${symbol.name}`, parameters);
@@ -115,23 +126,26 @@ export function aggregateContract(checker: ts.TypeChecker, type: ts.Type, path: 
   stringType(member(checker, type, 'aggregateType', path), `${path}.aggregateType`);
   const state = member(checker, type, 'initialState', path);
   for (const key of ['process', 'apply', 'applyToDraft']) aggregateFunction(checker, type, state, key, path);
-  functionMap(checker, member(checker, type, 'commandCreators', path), `${path}.commandCreators`, 0);
+  const commands = member(checker, type, 'commandCreators', path);
+  const commandSymbol = checker.getPropertyOfType(type, 'commandCreators');
+  const commandLocation = commandSymbol?.valueDeclaration ?? commandSymbol?.declarations?.[0];
+  functionMap(checker, commands, `${path}.commandCreators`, 0, commandLocation);
   functionMap(checker, member(checker, type, 'eventCreators', path), `${path}.eventCreators`, 0);
-  functionMap(checker, member(checker, type, 'selectors', path), `${path}.selectors`, 0);
+  const selectorSymbol = checker.getPropertyOfType(type, 'selectors');
+  const selectorLocation = selectorSymbol?.valueDeclaration ?? selectorSymbol?.declarations?.[0];
+  functionMap(checker, member(checker, type, 'selectors', path), `${path}.selectors`, 0, selectorLocation, true);
   const pure = member(checker, type, 'pure', path);
   object(pure, `${path}.pure`);
   functionMap(checker, member(checker, pure, 'commandProcessors', `${path}.pure`), `${path}.pure.commandProcessors`, 0);
   functionMap(checker, member(checker, pure, 'eventProjectors', `${path}.pure`), `${path}.pure.eventProjectors`, 2);
-  creatorReturns(checker, member(checker, type, 'commandCreators', path), `${path}.commandCreators`);
+  creatorReturns(checker, commands, `${path}.commandCreators`, undefined, commandLocation);
   creatorReturns(checker, member(checker, type, 'eventCreators', path), `${path}.eventCreators`,
     member(checker, pure, 'eventProjectors', `${path}.pure`));
 }
 
-function creatorReturns(checker: ts.TypeChecker, creators: ts.Type, path: string, projectors?: ts.Type): void {
+function creatorReturns(checker: ts.TypeChecker, creators: ts.Type, path: string, projectors?: ts.Type, location?: ts.Node): void {
   for (const symbol of checker.getPropertiesOfType(creators)) {
-    const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
-    if (!declaration) throw new Error(`${path}.${symbol.name}: unresolved creator`);
-    const signature = callable(checker, checker.getTypeOfSymbolAtLocation(symbol, declaration), `${path}.${symbol.name}`, 0);
+    const signature = callable(checker, registryMemberType(checker, symbol, `${path}.${symbol.name}`, location), `${path}.${symbol.name}`, 0);
     const result = checker.getReturnTypeOfSignature(signature);
     message(checker, result, `${path}.${symbol.name} result`);
     if (projectors) creatorProjector(checker, projectors, symbol.name, signature, path);

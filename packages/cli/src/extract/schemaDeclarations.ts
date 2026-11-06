@@ -5,18 +5,22 @@ import { containsSchema, referenceTarget } from './schemaProvenance';
 import { aggregateStateModel } from './aggregateStateModel';
 import { schemaPolicyForEntry } from './schemaConfig';
 import { assertProvenanceDepth, defaultMaxProvenanceDepth, searchProvenance, syntaxChildren } from './provenanceTraversal';
+import type { ResolvedEvent } from './mountedEventWalker';
 
 export interface SchemaDeclarations {
+    /** Compiler resolution context only; never an authored payload annotation. */
+    resolutionLocation?: ts.Node;
     commands: Map<string, ts.Node>;
     events: Map<string, ts.Node>;
     state?: ts.Node;
     creatorState?: ts.Node;
 }
 
-function property(checker: ts.TypeChecker, type: ts.Type | undefined, name: string): ts.Type | undefined {
+function property(checker: ts.TypeChecker, type: ts.Type | undefined, name: string, location?: ts.Node): ts.Type | undefined {
     const symbol = type && checker.getPropertyOfType(type, name);
     const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-    return symbol && declaration ? checker.getTypeOfSymbolAtLocation(symbol, declaration) : undefined;
+    const context = declaration ?? location;
+    return symbol && context ? checker.getTypeOfSymbolAtLocation(symbol, context) : undefined;
 }
 
 function parameter(type: ts.Type | undefined, index: number): ts.Node | undefined {
@@ -166,7 +170,8 @@ function stateAnnotation(program: ts.Program, entry: string, name: string, maxPr
     }, maxProvenanceDepth, `${name}.state`);
 }
 
-export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.Type, entry: string, name: string): SchemaDeclarations {
+export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.Type, entry: string, name: string,
+    resolvedEvents?: Map<string, ResolvedEvent>): SchemaDeclarations {
     const maxProvenanceDepth = schemaPolicyForEntry(entry).maxProvenanceDepth ?? defaultMaxProvenanceDepth;
     const checker = program.getTypeChecker();
     const pure = property(checker, aggregate, 'pure');
@@ -178,14 +183,70 @@ export function aggregateSchemaDeclarations(program: ts.Program, aggregate: ts.T
     const state = annotation && model === checker.getTypeAtLocation(annotation) ? annotation : undefined;
     const commands = handlers(checker, property(checker, pure, 'commandProcessors'), true, maxProvenanceDepth);
     const creators = property(checker, aggregate, 'commandCreators');
+    const resolutionLocation = program.getSourceFile(resolve(entry));
     for (const key of creators?.getProperties() ?? []) {
-        const declaration = parameter(property(checker, creators, key.name), 0);
-        if (declaration && !commands.has(key.name)) commands.set(key.name, declaration);
+        const creator = property(checker, creators, key.name, resolutionLocation);
+        const signature = creator?.getCallSignatures()[0];
+        const payload = signature && checker.getPropertyOfType(checker.getReturnTypeOfSignature(signature), 'payload');
+        // Pack inputs need not carry the canonical payload's validation constraints.
+        const declaration = payload?.valueDeclaration ?? payload?.declarations?.[0];
+        if (declaration && !commands.has(key.name)) {
+            assertCreatorPayloadProvenance(checker, signature, declaration, key.name, maxProvenanceDepth);
+            commands.set(key.name, declaration);
+        }
     }
     for (const [key, declaration] of commandAnnotations(program, entry, name, maxProvenanceDepth)) commands.set(key, declaration);
-    return { commands,
-        events: handlers(checker, property(checker, pure, 'eventProjectors'), false, maxProvenanceDepth),
+    return { commands, ...(resolutionLocation ? { resolutionLocation } : {}),
+        events: resolvedEvents ? resolvedEventAnnotations(checker, resolvedEvents, maxProvenanceDepth)
+            : handlers(checker, property(checker, pure, 'eventProjectors'), false, maxProvenanceDepth),
         ...(annotation ? { creatorState: annotation } : {}), ...(state ? { state } : {}) };
+}
+
+function resolvedEventAnnotations(checker: ts.TypeChecker, events: Map<string, ResolvedEvent>, depth: number): Map<string, ts.Node> {
+    const result = new Map<string, ts.Node>();
+    for (const [key, event] of events) {
+        if (!event.parameter) continue;
+        const annotation = eventPayloadAnnotation(checker, event.parameter) ?? event.payloadDeclaration;
+        if (annotation && hasPayloadTypeParameter(checker, annotation, depth)) {
+            throw new Error(`${key}: cannot preserve schema-linked event payload provenance; use an authored concrete Event payload`);
+        }
+        result.set(key, annotation ?? event.parameter);
+    }
+    return result;
+}
+
+/** A concrete sibling schema cannot establish provenance for an unsubstituted parameter. */
+function hasPayloadTypeParameter(checker: ts.TypeChecker, payload: ts.Node, maxProvenanceDepth: number): boolean {
+    return searchProvenance([typeAnnotation(payload) ?? payload], node => {
+        const target = ts.isTypeReferenceNode(node) || ts.isExpressionWithTypeArguments(node)
+            ? referenceTarget(checker, node) : undefined;
+        if (target && (target.flags & ts.SymbolFlags.TypeParameter)) return { value: true };
+        const children = syntaxChildren(node);
+        for (const declaration of target?.declarations ?? []) {
+            if (/[/\\](?:lib\.[^/\\]+\.d\.ts$|zod[/\\])/.test(declaration.getSourceFile().fileName)) continue;
+            if (ts.isTypeAliasDeclaration(declaration)) children.push(declaration.type);
+            if (ts.isInterfaceDeclaration(declaration)) {
+                children.push(...declaration.members);
+                for (const clause of declaration.heritageClauses ?? []) children.push(...clause.types);
+            }
+        }
+        return { children };
+    }, maxProvenanceDepth, 'Command return payload') ?? false;
+}
+
+function assertCreatorPayloadProvenance(checker: ts.TypeChecker, signature: ts.Signature | undefined,
+    payload: ts.Node, command: string, maxProvenanceDepth: number): void {
+    const owner = payload.parent;
+    if ((ts.isClassDeclaration(owner) || ts.isClassExpression(owner)) && owner.typeParameters?.length
+        && hasPayloadTypeParameter(checker, payload, maxProvenanceDepth)) {
+        throw new Error(`${command}: cannot establish generic class return payload provenance; use an authored concrete return payload type instead of a generic class wrapper`);
+    }
+    const returnAnnotation = signature?.getDeclaration()?.type;
+    if (containsSchema(checker, returnAnnotation, maxProvenanceDepth)
+        && (hasPayloadTypeParameter(checker, payload, maxProvenanceDepth)
+            || !containsSchema(checker, payload, maxProvenanceDepth))) {
+        throw new Error(`${command}: cannot preserve schema-linked return payload provenance; use an authored concrete return payload type instead of a generic wrapper`);
+    }
 }
 
 export function projectionSchemaDeclaration(program: ts.Program, definition: ts.Type, entry: string, name: string): ts.Node | undefined {

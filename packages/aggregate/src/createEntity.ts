@@ -4,7 +4,7 @@ import { createComponentBehaviorState, bindFluentMethods } from './redemeineComp
 import type { EventEmitterFactory, MapCommandsToPayloads, EntityCommandDefinition, NormalizeEntityCommands, ValidEntityCommandDefinitions } from './types/aggregateTyping';
 import { entityCommands } from './entityCommandLifecycle';
 import type { AggregateStateView } from './types/aggregateState';
-import type { ReplaceCommandMap, AggregateEntityRegistry, EntityRegistryListEntry, MountSemanticName } from './types/entityMount';
+import type { ReplaceCommandMap, AggregateEntityRegistry, EntityRegistryListEntry, EntityRegistryMapEntry, MountSemanticName } from './types/entityMount';
 import type {
   MapEntityCommands,
   EntityListOptions,
@@ -103,7 +103,7 @@ export interface EntityBuilder<S, Name extends string, E extends Record<string, 
     entityComponent: T,
     options?: EntityMapOptions<Keys>,
     mountOverrides?: EntityMountOverrides
-  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta, Registry>;
+  ) => EntityBuilder<S, Name, E, EOverrides, CPayloads & MapEntityCommands<EN, T extends EntityPackage<any, any, any, any, infer SubCPayloads, any> ? SubCPayloads : {}>, COverrides, Selectors, TMeta, ReplaceCommandMap<Registry, { [K in EN]: EntityRegistryMapEntry<T, Keys> }>>;
 
   /**
    * Register a read-only nested value object list branch.
