@@ -6,23 +6,29 @@ export function registryCommandRegressions(consumer, command, bin) {
   const directory = join(consumer, 'registry-commands');
   mkdirSync(directory);
   const fixture = readFileSync(new URL('./fixtures/registryCommands.ts', import.meta.url), 'utf8');
-  writeFileSync(join(directory, 'input.mts'), fixture);
-  writeFileSync(join(directory, 'input.cts'), fixture);
+  for (const extension of ['mts', 'cts']) {
+    writeFileSync(join(directory, `input.${extension}`), fixture.replace(': ReturnType<typeof builder.build>', ''));
+    writeFileSync(join(directory, `annotated.${extension}`), fixture);
+  }
   writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
-    strict: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', types: [],
+    strict: true, skipLibCheck: false, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', types: [],
     declaration: true, emitDeclarationOnly: true, outDir: './public',
-  }, files: ['./input.mts', './input.cts'] }));
+  }, files: ['./input.mts', './input.cts', './annotated.mts', './annotated.cts'] }));
   console.log(command('npx', ['--no-install', 'tsc', '-p', 'registry-commands/tsconfig.json']));
   writeFileSync(join(directory, 'extract.json'), JSON.stringify({ compilerOptions: {
-    strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [],
+    strict: true, skipLibCheck: false, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [],
   }, include: ['./*.mts', './*.cts', './public/*'] }));
-  for (const entry of ['input.mts', 'input.cts', 'public/input.d.mts', 'public/input.d.cts']) {
+  let expected;
+  for (const entry of ['annotated.mts', 'annotated.cts', 'input.mts', 'input.cts', 'public/input.d.mts', 'public/input.d.cts']) {
     writeFileSync(join(directory, 'manifest.json'), JSON.stringify({ version: 1, tsconfig: './extract.json',
       discover: [{ kind: 'aggregate', entry: `./${entry}` }] }));
     console.log(command(bin, ['extract-schema-registries', '--manifest', 'registry-commands/manifest.json',
       '--out', 'registry-commands/generated.ts']));
     const output = readFileSync(join(directory, 'generated.ts'), 'utf8');
     assert(output.includes('lineChange') && output.includes('noteChange'));
+    if (expected) assert.equal(output, expected);
+    else expected = output;
+    console.log(command('npx', ['--no-install', 'tsc', '-p', 'registry-commands/extract.json', '--noEmit']));
     console.log(command('node', ['--input-type=module', '-e', check]));
   }
 }

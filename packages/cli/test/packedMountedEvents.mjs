@@ -12,6 +12,10 @@ export function mountedEventRegressions(consumer, command, bin) {
     .replace("'../../../aggregate/src'", "'@redemeine/aggregate'")
     .replace("'../../../kernel/src'", "'@redemeine/kernel'");
   for (const extension of ['mts', 'cts']) writeFileSync(join(directory, `input.${extension}`), fixture);
+  const annotated = fixture.replace('export const aggregate = ', 'const builder = ')
+    .replace(".naming({ event: () => 'custom.wire.event' })\n    .build();",
+      ".naming({ event: () => 'custom.wire.event' });\nexport const aggregate: ReturnType<typeof builder.build> = builder.build();");
+  writeFileSync(join(directory, 'annotated.mts'), annotated);
   writeFileSync(join(directory, 'schemas.ts'), `import { z } from 'zod';
 export const payload = z.object({ code: z.string().min(4) });
 export type Payload = z.output<typeof payload>;`);
@@ -32,20 +36,18 @@ export const aggregate = createAggregate('unsupported', { count: 0 }).entityList
   writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
     strict: true, skipLibCheck: false, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
     types: [], declaration: true, emitDeclarationOnly: true, outDir: './public'
-  }, files: ['./input.mts', './input.cts'] }));
+  }, files: ['./input.mts', './input.cts', './annotated.mts'] }));
   console.log(command('npx', ['--no-install', 'tsc', '-p', 'mounted-events/tsconfig.json']));
   writeFileSync(join(directory, 'extract.json'), JSON.stringify({ compilerOptions: {
     strict: true, skipLibCheck: false, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: []
   }, include: ['./*.ts', './*.mts', './*.cts', './public/*'] }));
-  for (const entry of ['input.mts', 'input.cts', 'linked.ts']) {
+  let expectedJson;
+  for (const entry of ['annotated.mts', 'input.mts', 'input.cts', 'public/input.d.mts', 'public/input.d.cts', 'linked.ts']) {
     extractAndCheck(command, bin, entry);
-  }
-  // Expanded inferred declarations currently hit the independent state-marker trust boundary.
-  // Keep the limitation visible rather than masking it with explicit public annotations.
-  for (const extension of ['mts', 'cts']) {
-    assert.throws(() => command(bin, ['extract-schemas', '--entry', `mounted-events/public/input.d.${extension}`,
-      '--export', 'aggregate', '--tsconfig', 'mounted-events/extract.json', '--out', 'mounted-events/public-output.ts']),
-    diagnostic(/noncanonical aggregate model marker/));
+    if (entry === 'linked.ts') continue;
+    const json = JSON.parse(readFileSync(join(directory, 'output.json'), 'utf8'));
+    if (expectedJson) assert.deepEqual(json, expectedJson);
+    else expectedJson = json;
   }
   for (const format of ['zod', 'json-schema']) {
     const out = join(directory, 'sentinel');
@@ -64,10 +66,16 @@ function bindingRegressions(directory, command, bin) {
   const fixture = readFileSync(new URL('./fixtures/schemaBindings.ts', import.meta.url), 'utf8')
     .replace("'../../../aggregate/src'", "'@redemeine/aggregate'")
     .replace("'../../../kernel/src'", "'@redemeine/kernel'");
+  for (const extension of ['mts', 'cts']) writeFileSync(join(directory, `bindings.${extension}`), fixture);
+  console.log(command('npx', ['--no-install', 'tsc', '--strict', '--skipLibCheck', 'false', '--declaration',
+    '--emitDeclarationOnly', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+    '--outDir', 'mounted-events/public', 'mounted-events/bindings.mts', 'mounted-events/bindings.cts']));
   writeFileSync(join(directory, 'bindings.ts'), fixture);
-  for (const format of ['zod', 'json-schema']) {
-    console.log(command(bin, ['extract-schemas', '--entry', 'mounted-events/bindings.ts', '--export', 'aggregate',
-      '--tsconfig', 'mounted-events/extract.json', '--format', format, '--out', `mounted-events/bindings.${format === 'zod' ? 'schemas.ts' : 'json'}`]));
+  for (const entry of ['bindings.ts', 'public/bindings.d.mts', 'public/bindings.d.cts']) {
+    for (const format of ['zod', 'json-schema']) {
+      console.log(command(bin, ['extract-schemas', '--entry', `mounted-events/${entry}`, '--export', 'aggregate',
+        '--tsconfig', 'mounted-events/extract.json', '--format', format, '--out', `mounted-events/bindings.${format === 'zod' ? 'schemas.ts' : 'json'}`]));
+    }
   }
   console.log(command('npx', ['--no-install', 'tsc', '-p', 'mounted-events/extract.json', '--noEmit']));
   console.log(command('node', ['--input-type=module', '-e', `

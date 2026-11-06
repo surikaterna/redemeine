@@ -1,0 +1,86 @@
+import { createAggregate, createEntity, createAggregatePlugin, createAggregatePluginFor } from '../../src';
+import type { AggregateBuilder, BuiltAggregate, BuiltAggregateResult } from '../../src';
+import type { Event, Command, AggregateHooks, RedemeinePlugin } from '@redemeine/kernel';
+import type { Draft } from 'immer';
+import type { AggregateStateView } from '../../src/types/aggregateState';
+import type { AggregateDecoration, PreparedCommand, PreparedEvent, MountedEnvelopes, MountedEventExtensions, AttachedEnvelopeTypes } from '../../src/plugins/attachmentTypes';
+import type { EventEmitterFactory } from '../../src/types/aggregateTyping';
+import type { EffectiveSelectors } from '../../src/types/aggregateSelectors';
+import type { AggregateEventProjectorsMap } from '../../src/types/aggregate';
+import type { AnyFunction } from '../../src/redemeineComponent';
+import type { MountedStructureMetadata } from '../../src/types/entityMount';
+
+// Snapshot of the anonymous build return contract before the named-interface extraction.
+type LegacyResult<B> = B extends AggregateBuilder<infer S, infer Name, infer M, infer E, infer EOverrides, infer Sel, infer Registry, infer TMeta, infer TPlugins, infer PS, infer EP, infer SM> ? {
+    aggregateType: Name;
+    readonly initialState: AggregateStateView<S & PS>;
+    readonly __stateType?: S & PS;
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C, MountedEnvelopes<EP, 'commandEnvelope'>>;
+    process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => PreparedEvent<MountedEventExtensions<EP>>[];
+    readonly __envelopeTypes?: AttachedEnvelopeTypes<{}, EP>;
+    apply: (state: AggregateStateView<S & PS>, event: Event) => AggregateStateView<S & PS>;
+    applyToDraft: (draft: Draft<S & PS>, event: Event) => void;
+    commandCreators: {
+        [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+            ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
+            : [M[K]] extends [void] | [undefined] | [never]
+                ? () => { type: string; payload: void }
+                : (payload: M[K]) => { type: string; payload: M[K] };
+    };
+    eventCreators: EventEmitterFactory<Name, E, EOverrides>;
+    pure: { commandProcessors: Record<string, AnyFunction>; eventProjectors: AggregateEventProjectorsMap<E> };
+    selectors: EffectiveSelectors<Sel, SM>;
+    hooks: AggregateHooks<S>;
+    mounts: Record<string, MountedStructureMetadata>;
+    metadata: { commands: Record<string, { meta?: TMeta }>; events: Record<string, { meta?: TMeta }> };
+    types: { commands: Record<string, string>; events: Record<string, string> };
+    plugins: RedemeinePlugin<TPlugins>[];
+    __registryType?: Registry;
+} & AggregateDecoration<S & PS, Registry> : never;
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+type Fields<T> = { [K in keyof T]: T[K] };
+const leaf = createEntity('leaf', { id: '', label: '' }).events({
+    changed: (state, event: Event<{ label: string }>) => { state.label = event.payload.label; },
+}).commands(emit => ({ change: {
+    pack: (raw: string) => ({ id: 'one', label: raw.trim() }),
+    handler: (_state, payload: { id: string; label: string }) => [emit.changed(payload)],
+} })).build();
+const mixin = createAggregate('mixin', { count: 0 }).selectors({ count: state => state.count }).build();
+const plugin = createAggregatePlugin('audit').state(() => ({ at: new Date() })).build();
+const builder = createAggregate('compatible', { count: 0 }).mixins(mixin).plugins(plugin)
+    .events({ changed: (state, event: Event<{ count: number }>) => { state.count = event.payload.count; } })
+    .commands(emit => ({ change: (_state, payload: { count: number }) => [emit.changed(payload)] }))
+    .entityList('items', leaf).entityMap('byKey', leaf, { knownKeys: ['one'] });
+const built = builder.build();
+type Actual = typeof built;
+type Expected = LegacyResult<typeof builder>;
+type SameKeys = Assert<Equal<keyof Actual, keyof Expected>>;
+type SameFields = Assert<Equal<Fields<Actual>, Fields<Expected>>>;
+const forward: Expected = built;
+const backward: Actual = forward;
+const legacyPublic: BuiltAggregate<{ count: number; audit: { at: Date } }> = built;
+const named: BuiltAggregateResult<{ count: number; audit: { at: Date } }, 'compatible'> = built;
+const literal: 'compatible' = built.aggregateType;
+const model: NonNullable<Actual['__stateType']> = { count: 1, audit: { at: new Date() } };
+built.selectors.count(model);
+built.commandCreators.itemsChange(' value ');
+built.commandCreators.byKeyChange(' value ');
+type Registry = NonNullable<Actual['__registryType']>;
+type RegistryKeys = Assert<Equal<keyof Registry, 'items' | 'byKey'>>;
+// @ts-expect-error Mapped commands retain the original pack arguments.
+built.commandCreators.itemsChange({ id: 'one', label: 'value' });
+// @ts-expect-error Root commands retain their payload constraint.
+built.commandCreators.change({ count: 'wrong' });
+// @ts-expect-error Plugin state remains mandatory.
+const invalid: NonNullable<Actual['__stateType']> = { count: 1 };
+
+const sourceBuilder = createAggregate('source', { count: 0 }).events({ changed(_state, _event: Event<number>) {} });
+const source = sourceBuilder.build();
+const sourcePlugin = createAggregatePluginFor(source, 'audit').state(() => ({}))
+    .events({ changed(_draft, event) { event.payload.toFixed(2); } }).build();
+const incompatible = createAggregate('incompatible', { count: 0 }).extends(sourceBuilder).plugins(sourcePlugin)
+    .events({ changed(_state, _event: Event<string>) {} });
+// @ts-expect-error A named return annotation cannot bypass final source-contract validation.
+const invalidAnnotated: ReturnType<typeof incompatible.build> = incompatible.build();

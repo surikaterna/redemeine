@@ -151,6 +151,10 @@ For genuine Aggregate declarations, state means the canonical model retained by
 `__stateType`, not the borrowed readonly `initialState` view (in particular, a
 readonly Date facade is not treated as a Date model). Markerless legacy contracts
 still use `initialState`; an unresolvable or noncanonical marker fails closed.
+Ordinary unannotated exports (`export const aggregate = builder.build()`) retain
+this canonical contract in emitted ESM and CJS declarations. Explicit
+`ReturnType<typeof builder.build>` annotations remain supported; foreign structural
+lookalikes do not establish canonical marker provenance.
 An authored creator-state schema is reused only when it covers the complete model.
 Plugin-mounted namespaces are part of that model, even when their fields are
 optional: a base-only schema cannot validate the whole aggregate state. Supply an

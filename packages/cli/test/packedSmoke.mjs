@@ -14,6 +14,7 @@ import { packedAggregateDeclarations } from '../../aggregate/test/packedDeclarat
 import { schemaReconciliationRegressions } from './packedSchemaReconciliation.mjs';
 import { mountedEventRegressions } from './packedMountedEvents.mjs';
 import { registryCommandRegressions } from './packedRegistryCommands.mjs';
+import { buildResultRegressions } from './packedBuildResult.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -55,6 +56,7 @@ for (const name of Object.keys(tarballs)) assert(realpathSync(join(consumer, 'no
 console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 'redemeine', 'help']));
 const bin = join(consumer, 'node_modules/.bin/redemeine');
 mountedEventRegressions(consumer, command, bin);
+buildResultRegressions(consumer, command, bin);
 registryCommandRegressions(consumer, command, bin);
 jsonSchemaRegressions(consumer, command, bin);
 reviewRegressions(consumer, command);
