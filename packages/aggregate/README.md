@@ -180,10 +180,16 @@ losing-alias compatibility. Check generated schema entries explicitly; this API
 does not load or validate a generated schema file.
 
 Supported plugin decorations preserve bindings. Unknown objects/clones,
-ambiguous schema IDs (including dotted root/mount collisions and repeated mounts
-retaining distinct wires), and direct mixin-owned events throw at accessor time,
-without changing build/dispatch behavior. Direct mixin event payload ownership
-is unproven even when projector functions match; mixin-owned mounts are supported.
+ambiguous schema IDs (including dotted root/mixin/mount collisions and repeated mounts
+retaining distinct wires) throw at accessor time, without changing build/dispatch
+behavior. Distinct direct mixin-owned events use unqualified authored keys; multiple
+mixins, multiple calls, inherited registrations, and mixin-owned mounts are supported.
+Duplicate direct keys reject access, even for identical projectors or repeated use of
+the same mixin. Root emitter and command/selector types are unchanged. Standalone CLI
+extraction requires canonical mixin provenance; registry event catalogs remain root-only.
+Prefer inferred types or `ReturnType<typeof builder.build>` for built aggregates.
+Explicit `BuiltAggregateResult` annotations must retain the existing `SM` mixin tuple;
+its default `[]` describes no mixin declarations.
 No handlers, templates, or mutable runtime metadata appear in the snapshot.
 See the [CLI schema join example](../cli/README.md#joining-schema-ids-to-runtime-wires):
 extraction stays compiler-only; applications build and query bindings separately.
