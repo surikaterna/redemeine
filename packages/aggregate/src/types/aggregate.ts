@@ -59,7 +59,10 @@ export type AggregateMixinLike<S = any, Commands = {}, Registry extends Aggregat
 export type ExtractMixinCommands<T> = T extends { commands?: infer CPayloads } ? CPayloads : {};
 export type MergeMixins<T extends any[]> = Merge<ExtractMixinCommands<T[number]> & {}>;
 export type ExtractMixinRegistry<T> = T extends { __registryType?: infer Registry } ? Registry : {};
-export type MergeMixinRegistries<T extends any[]> = Merge<ExtractMixinRegistry<T[number]> & {}>;
+type RegistryValue<R, K extends PropertyKey> = R extends unknown ? K extends keyof R ? R[K] : never : never;
+export type MergeMixinRegistries<T extends any[]> = {
+    [K in AllKeys<ExtractMixinRegistry<T[number]>>]: RegistryValue<ExtractMixinRegistry<T[number]>, K>
+};
 export type ExtractMixinState<T> = T extends { __stateType?: infer MS } ? MS : never;
 // SAFETY: `any` required for contravariant mixin compatibility checks
 export type CompatibleMixins<S, T extends AggregateMixinLike<any, any, any>[]> = {
@@ -103,6 +106,7 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
 
 /** Named build contract preserves member provenance in inferred public declarations. */
 export interface BuiltAggregateResult<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = [], SM extends readonly unknown[] = []> {
+    readonly __mixinEventDeclarationsType?: SM;
     aggregateType: Name;
     readonly initialState: AggregateStateView<S & PS>;
     readonly __stateType?: S & PS;

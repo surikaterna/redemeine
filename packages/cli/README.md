@@ -49,8 +49,12 @@ rather than pack argument tuples. Event schema IDs use declaration paths such as
 `parents.children.registered`, not semantic names, custom naming strategies, or
 wire-name overrides. Reusing an entity at two mounts produces two schema IDs;
 collisions with authored dotted event names fail before writing output.
-Inherited and mixin-owned mounts are included. Direct mixin-owned events absent
-from the aggregate's declared root event type remain outside this extraction contract.
+Inherited and mixin-owned mounts are included. Multiple canonical
+`createMixin<State>().events(...).build()` registrations contribute direct events
+using their unqualified authored keys (for example, `audited`). Multiple `.mixins()`
+calls and inherited registrations are supported. Duplicate root/mixin or mixin/mixin
+keys, including repeated registration of the same direct-event mixin, fail before
+writing output. Opaque or structural direct handler provenance fails closed.
 `extract-schema-registries` event catalogs remain unchanged and root-only; mounted command
 and inherited selector resolution are corrected. Runtime event dispatch remains unchanged.
 Scaffold preflight checks dependency presence, not installed version ranges: it
@@ -311,9 +315,10 @@ Custom naming and overrides come from actual compilation, not a second naming
 algorithm. Shared wires are legal: reverse lookup selects the actual winning
 handler schema; no payload adapter is inserted for a losing local alias. Callers
 must ensure a losing alias's payload suits that winner. Snapshots survive
-supported plugin decoration, but unknown objects/clones throw. Direct mixin-owned
-events are unsupported (even with the same projector function): CLI root payload
-ownership cannot be proven. Mixin-owned mounts are supported. Dotted root names
+supported plugin decoration, but unknown objects/clones throw. Distinct direct
+mixin-owned event keys and mixin-owned mounts are supported. Duplicate direct
+keys reject the accessor even with identical projectors or the same mixin repeated.
+The type-only declaration marker exposes no runtime handlers. Dotted root or mixin names
 colliding with qualified mount IDs, distinct registrations sharing one schema ID,
 or repeated mounts retaining different wires for that ID also throw from the
 accessor only; build and dispatch are unchanged. Schemas describe declarations,

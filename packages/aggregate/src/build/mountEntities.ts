@@ -7,7 +7,7 @@ import { createEmitProxy } from '../proxies/createEmitProxy';
 import { createCommandContextProxy } from '../proxies/createCommandContextProxy';
 import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
 import { commandTarget, definitionTargets, snapshotTargetChain, recordCommandName } from './entityCommandTarget';
-import { eventDefinitionKeys, eventOrigin, recordEventOrigin } from './eventDefinitions';
+import { eventDefinitionKeys, eventOrigin, recordEventOrigin, scopeEventOrigin } from './eventDefinitions';
 import { ownDefinition } from './definitionMap';
 import { commandModes } from '../entityCommandLifecycle';
 import { mountName as recordMountedName, mountedWire, semanticSegment } from './mountedNaming';
@@ -60,7 +60,7 @@ export function mountEntities<S, TMeta>(
 
         eventDefinitionKeys(entityEvents).forEach((eventKey) => {
             const origin = eventOrigin(entityEvents, eventKey);
-            const schemaOrigin = { ...origin, segments: [mountName, ...origin.segments] };
+            const schemaOrigin = scopeEventOrigin(origin, mountName);
             const chain = [target, ...(nestedEventTargets[eventKey] ?? [])];
             recordMountedName(eventNames, eventKey, entityEvents, eventKey, segment,
                 ownDefinition<string>(entityEventNameOverrides, eventKey), ownDefinition(mountEventNameOverrides, eventKey));

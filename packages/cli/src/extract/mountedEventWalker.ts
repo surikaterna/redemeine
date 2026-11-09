@@ -1,4 +1,5 @@
 import * as ts from 'typescript';
+import { canonicalMixinPackage } from './schemaRegistryProvenance';
 
 export interface ResolvedEvent {
     payload: ts.Type;
@@ -50,8 +51,40 @@ export function resolvedAggregateEvents(checker: ts.TypeChecker, aggregate: ts.T
     };
     const pure = property(checker, aggregate, 'pure', node);
     add(pure && property(checker, pure, 'eventProjectors', node), []);
+    walkDirectMixins(checker, aggregate, node, add);
     walkRegistry(checker, aggregate, node, [], new Set(), add);
     return result;
+}
+
+function walkDirectMixins(checker: ts.TypeChecker, aggregate: ts.Type, node: ts.Node,
+    add: (handlers: ts.Type | undefined, segments: readonly string[]) => void): void {
+    const marker = property(checker, aggregate, '__mixinEventDeclarationsType', node);
+    if (!marker) return;
+    const tuple = checker.getNonNullableType(marker);
+    if (!checker.isTupleType(tuple)) throw new Error('direct mixins: unresolved declaration tuple');
+    const target = (tuple as ts.TupleTypeReference).target;
+    if (target.elementFlags.some(flag => flag !== ts.ElementFlags.Required)) {
+        throw new Error('direct mixins: optional or rest declaration tuple');
+    }
+    for (const mixin of checker.getTypeArguments(tuple as ts.TypeReference)) {
+        const owner = concrete(checker, mixin, 'direct mixin');
+        const member = directEventMember(checker, owner, node);
+        const handlers = property(checker, owner, member, node);
+        if (!handlers) continue; // Built aggregates contribute mounts, not their pure root handlers.
+        const container = concrete(checker, handlers, 'direct mixin events');
+        if (!container.getProperties().length) continue;
+        if (!canonicalMixinPackage(checker, owner, member)) throw new Error('Unsupported direct mixin event declaration provenance');
+        add(container, []);
+    }
+}
+
+function directEventMember(checker: ts.TypeChecker, owner: ts.Type, node: ts.Node): 'projectors' | 'events' {
+    const projectors = property(checker, owner, 'projectors', node);
+    if (!projectors) return 'events';
+    const alternatives = projectors.isUnion() ? projectors.types : [projectors];
+    // A possibly-present handler object is ambiguous, not evidence for the fallback.
+    return alternatives.every(type => Boolean(type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)))
+        ? 'events' : 'projectors';
 }
 
 function walkRegistry(checker: ts.TypeChecker, owner: ts.Type, node: ts.Node, segments: readonly string[],

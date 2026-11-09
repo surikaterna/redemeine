@@ -56,12 +56,17 @@ const builder = createAggregate('compatible', { count: 0 }).mixins(mixin).plugin
 const built = builder.build();
 type Actual = typeof built;
 type Expected = LegacyResult<typeof builder>;
-type SameKeys = Assert<Equal<keyof Actual, keyof Expected>>;
-type SameFields = Assert<Equal<Fields<Actual>, Fields<Expected>>>;
+// The declaration-only marker is intentionally additive; every legacy field stays exact.
+type LegacyActual = Omit<Actual, '__mixinEventDeclarationsType'>;
+type SameKeys = Assert<Equal<keyof LegacyActual, keyof Expected>>;
+// Polymorphic `this` in withPlugins also retains the new marker in its return type.
+type SameFields = Assert<Equal<Fields<Omit<LegacyActual, 'withPlugins'>>, Fields<Omit<Expected, 'withPlugins'>>>>;
+type MixinDeclarations = Assert<Equal<NonNullable<Actual['__mixinEventDeclarationsType']>, [typeof mixin]>>;
 const forward: Expected = built;
 const backward: Actual = forward;
 const legacyPublic: BuiltAggregate<{ count: number; audit: { at: Date } }> = built;
-const named: BuiltAggregateResult<{ count: number; audit: { at: Date } }, 'compatible'> = built;
+const named: BuiltAggregateResult<{ count: number; audit: { at: Date } }, 'compatible', {}, {}, {}, {}, {},
+    Record<string, unknown>, {}, {}, [], [typeof mixin]> = built;
 const literal: 'compatible' = built.aggregateType;
 const model: NonNullable<Actual['__stateType']> = { count: 1, audit: { at: new Date() } };
 built.selectors.count(model);

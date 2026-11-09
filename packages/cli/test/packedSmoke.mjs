@@ -15,6 +15,7 @@ import { schemaReconciliationRegressions } from './packedSchemaReconciliation.mj
 import { mountedEventRegressions } from './packedMountedEvents.mjs';
 import { registryCommandRegressions } from './packedRegistryCommands.mjs';
 import { buildResultRegressions } from './packedBuildResult.mjs';
+import { directMixinEventRegressions } from './packedDirectMixinEvents.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -56,6 +57,7 @@ for (const name of Object.keys(tarballs)) assert(realpathSync(join(consumer, 'no
 console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 'redemeine', 'help']));
 const bin = join(consumer, 'node_modules/.bin/redemeine');
 mountedEventRegressions(consumer, command, bin);
+directMixinEventRegressions(consumer, command, bin);
 buildResultRegressions(consumer, command, bin);
 registryCommandRegressions(consumer, command, bin);
 jsonSchemaRegressions(consumer, command, bin);

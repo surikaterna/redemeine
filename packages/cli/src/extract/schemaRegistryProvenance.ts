@@ -6,6 +6,18 @@ import { canonicalSymbol } from './schemaRegistryIdentity';
 export type DefinitionEvidence = { kind: 'aggregate' | 'projection'; commit: boolean };
 const packageNames = new Set(['@redemeine/aggregate', '@redemeine/projection', '@redemeine/projection-runtime-core']);
 
+export function canonicalMixinPackage(checker: ts.TypeChecker, type: ts.Type, member: 'projectors' | 'events'): boolean {
+  const declarations = checker.getPropertyOfType(type, member)?.declarations;
+  if (!declarations?.length) return false;
+  return declarations.every(node => {
+    if (packageName(node.getSourceFile().fileName, new Map()) !== '@redemeine/aggregate') return false;
+    for (let parent: ts.Node | undefined = node; parent; parent = parent.parent) {
+      if ((ts.isInterfaceDeclaration(parent) || ts.isTypeAliasDeclaration(parent)) && parent.name.text === 'MixinPackage') return true;
+    }
+    return false;
+  });
+}
+
 export function canonicalCreatorSignature(signature: ts.Signature): boolean {
   const declaration = signature.declaration;
   if (!declaration || packageName(declaration.getSourceFile().fileName, new Map()) !== '@redemeine/aggregate') return false;
