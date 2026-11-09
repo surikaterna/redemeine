@@ -1,6 +1,6 @@
 {
   "name": "@redemeine/aggregate",
-  "version": "1.0.0-pre.8",
+  "version": "1.0.0-pre.9",
   "description": "Event-sourced aggregate builder with type-safe command handlers and state reducers",
   "license": "MIT",
   "repository": {

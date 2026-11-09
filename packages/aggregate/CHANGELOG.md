@@ -1,5 +1,13 @@
 # @redemeine/aggregate
 
+## 1.0.0-pre.9
+
+### Minor Changes
+
+- [#166](https://github.com/surikaterna/redemeine/pull/166) [`f8171e2`](https://github.com/surikaterna/redemeine/commit/f8171e26171a52424ed95dff598165f713d01a7c) Thanks [@spralle](https://github.com/spralle)! - Retain nested entity-map declarations in entity package registry types, matching nested lists, so compiler-only tools can discover their declared events. Keep event replacement keys scoped in inferred consumer declarations rather than emitting an unbound generic name.
+
+  Export schemaBindings for immutable, JSON-safe schema-ID to actual compiled wire mappings, including collision winners, mounted declaration paths, and supported plugin decorations. Fail closed on ambiguous event schema IDs and unproven direct mixin event ownership without changing runtime dispatch.
+
 ## 1.0.0-pre.8
 
 ### Major Changes
