@@ -43,6 +43,16 @@ Use Zod 4 and strict TypeScript. Generated tests explicitly import Vitest; adapt
 those imports manually if your project uses Jest. Keep the builder export
 `ordersAggregate` for composition and built export `orders` for discovery.
 Compiler-only extraction does not execute application source.
+Standalone `extract-schemas` includes list-, map-, and nested-mounted **command and event**
+payloads in the root bundle (not separate entity files), using canonical payloads
+rather than pack argument tuples. Event schema IDs use declaration paths such as
+`parents.children.registered`, not semantic names, custom naming strategies, or
+wire-name overrides. Reusing an entity at two mounts produces two schema IDs;
+collisions with authored dotted event names fail before writing output.
+Inherited and mixin-owned mounts are included. Direct mixin-owned events absent
+from the aggregate's declared root event type remain outside this extraction contract.
+`extract-schema-registries` event catalogs remain unchanged and root-only; mounted command
+and inherited selector resolution are corrected. Runtime event dispatch remains unchanged.
 Scaffold preflight checks dependency presence, not installed version ranges: it
 prints the Zod 4 requirement but never silently upgrades an existing Zod 3 entry.
 Upgrade incompatible project dependencies explicitly before compiling the scaffold.
@@ -100,6 +110,15 @@ Exceeding the configured limit fails before output writes; increasing it does no
 allow unsupported schema-derived generics, discard authored refinements, or turn
 recursive structural types into `z.any()`.
 
+Schema-linked command creator returns with unresolved generic payload parameters
+fail closed, even when a sibling field has a concrete schema link. This conservative
+check can also reject unusual wrappers with otherwise concrete arguments: author
+a concrete return payload type (without generic wrappers) to preserve every schema
+link. Generic class payload declarations with unresolved parameters (including
+inherited declarations and default parameters) are also rejected when schema links
+cannot be established, even with plain structural arguments. Increasing depth
+limits does not enable generic substitution.
+
 **Zod-first:** each selected command payload, event payload and included state must
 resolve to an existing importable Zod schema. Generated maps import the originals;
 their refinements/defaults/transform behavior are not reconstructed from types.
@@ -132,6 +151,10 @@ For genuine Aggregate declarations, state means the canonical model retained by
 `__stateType`, not the borrowed readonly `initialState` view (in particular, a
 readonly Date facade is not treated as a Date model). Markerless legacy contracts
 still use `initialState`; an unresolvable or noncanonical marker fails closed.
+Ordinary unannotated exports (`export const aggregate = builder.build()`) retain
+this canonical contract in emitted ESM and CJS declarations. Explicit
+`ReturnType<typeof builder.build>` annotations remain supported; foreign structural
+lookalikes do not establish canonical marker provenance.
 An authored creator-state schema is reused only when it covers the complete model.
 Plugin-mounted namespaces are part of that model, even when their fields are
 optional: a base-only schema cannot validate the whole aggregate state. Supply an
@@ -252,6 +275,49 @@ Aggregate **void/undefined/never** becomes boolean `false`: no JSON value inhabi
 that type. It does **not** mean `{}`, `null`, an omitted command, or permission to
 change domain payloads. Optional fields are omitted from `required`; undefined is
 not converted to null. Required undefined-only fields remain required with `false`.
+
+### Joining schema IDs to runtime wires
+
+Extraction is compiler-only: it never runs application code or custom naming
+functions. Separately, application code can explicitly build its aggregate and
+query `schemaBindings` from `@redemeine/aggregate`; no CLI wire/manifest flag is
+needed. Commands use flat local creator keys (`parentsChildrenRegister`), while
+events use declared mount paths (`parents.children.registered`), not semantic
+names. The snapshot contains both `schemaToWire` (including losing aliases) and
+`wireToSchema` (the actual dispatch winner), for commands and events.
+
+```ts
+import { schemaBindings } from '@redemeine/aggregate';
+import { aggregateBuilder } from './aggregate';
+import { commandSchemas, eventSchemas } from './generated/schemas';
+
+const aggregate = aggregateBuilder.build(); // explicitly executes application code
+const bindings = schemaBindings(aggregate); // deeply frozen, detached JSON-safe data
+function requiredSchema(schemas, id) {
+  if (!id || !Object.hasOwn(schemas, id)) throw new Error(`Missing schema: ${id}`);
+  return schemas[id];
+}
+// Check the join: bindings cannot prove a separately generated file has entries.
+for (const id of Object.keys(bindings.commands.schemaToWire)) requiredSchema(commandSchemas, id);
+for (const id of Object.keys(bindings.events.schemaToWire)) requiredSchema(eventSchemas, id);
+const command = aggregate.commandCreators.create('42');
+requiredSchema(commandSchemas, 'create').parse(command.payload); // AFTER pack, not ['42']
+function validateIncoming(event) {
+  return requiredSchema(eventSchemas, bindings.events.wireToSchema[event.type]).parse(event.payload);
+}
+```
+
+Custom naming and overrides come from actual compilation, not a second naming
+algorithm. Shared wires are legal: reverse lookup selects the actual winning
+handler schema; no payload adapter is inserted for a losing local alias. Callers
+must ensure a losing alias's payload suits that winner. Snapshots survive
+supported plugin decoration, but unknown objects/clones throw. Direct mixin-owned
+events are unsupported (even with the same projector function): CLI root payload
+ownership cannot be proven. Mixin-owned mounts are supported. Dotted root names
+colliding with qualified mount IDs, distinct registrations sharing one schema ID,
+or repeated mounts retaining different wires for that ID also throw from the
+accessor only; build and dispatch are unchanged. Schemas describe declarations,
+not a guarantee that every possible wire payload is validated.
 
 These artifacts are structural **documentation**, not active transport validators.
 For the unchanged PaymentAttempt author aggregate, confirm/expire processor

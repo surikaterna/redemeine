@@ -22,19 +22,19 @@ export function jsonSchemaDocument(schema: JsonSchema, target: SchemaOutputOptio
   return { $schema: dialect, ...schema };
 }
 
-function propertyType(checker: ts.TypeChecker, type: ts.Type, key: string, path: string): ts.Type {
+function propertyType(checker: ts.TypeChecker, type: ts.Type, key: string, path: string, location?: ts.Node): ts.Type {
   const property = checker.getPropertyOfType(type, key);
-  const declaration = property?.valueDeclaration ?? property?.declarations?.[0];
+  const declaration = property?.valueDeclaration ?? property?.declarations?.[0] ?? location;
   if (!property || !declaration) throw new Error(`${path}.${key}: missing resolved aggregate property`);
   const result = checker.getTypeOfSymbolAtLocation(property, declaration);
   if (result.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) throw new Error(`${path}.${key}: unresolved aggregate property`);
   return result;
 }
 
-function completePayloads(checker: ts.TypeChecker, handlers: ts.Type, payloads: Map<string, ts.Type>, path: string, events: boolean): void {
+function completePayloads(checker: ts.TypeChecker, handlers: ts.Type, payloads: Map<string, ts.Type>, path: string, events: boolean, location?: ts.Node): void {
   for (const property of checker.getPropertiesOfType(handlers)) {
     if (payloads.has(property.name)) continue;
-    const type = propertyType(checker, handlers, property.name, path);
+    const type = propertyType(checker, handlers, property.name, path, location);
     const signature = type.getCallSignatures()[0];
     if (events && signature && signature.getParameters().length < 2) payloads.set(property.name, checker.getVoidType());
     else throw new Error(`${path}[${JSON.stringify(property.name)}]: missing resolved payload`);
@@ -42,8 +42,8 @@ function completePayloads(checker: ts.TypeChecker, handlers: ts.Type, payloads: 
   if (checker.getIndexInfosOfType(handlers).length) throw new Error(`${path}: unresolved handler keys`);
 }
 
-function payloadDeclaration(checker: ts.TypeChecker, handlers: ts.Type, key: string, path: string, event: boolean): ts.Declaration | undefined {
-  const signature = propertyType(checker, handlers, key, path).getCallSignatures()[0];
+function payloadDeclaration(checker: ts.TypeChecker, handlers: ts.Type, key: string, path: string, event: boolean, location?: ts.Node): ts.Declaration | undefined {
+  const signature = propertyType(checker, handlers, key, path, location).getCallSignatures()[0];
   if (!signature) throw new Error(`${path}[${JSON.stringify(key)}]: unresolved handler signature`);
   let container = checker.getReturnTypeOfSignature(signature);
   if (event) {
@@ -64,14 +64,16 @@ export function aggregateJsonOutput(
   const converter = new JsonSchemaConverter(program, options.maxDepth, options.maxProvenanceDepth);
   const { checker } = converter;
   const name = options.aggregateExport;
-  const creators = propertyType(checker, aggregate, 'commandCreators', name);
-  completePayloads(checker, creators, commands, `${name}.commands`, false);
+  const location = declarations?.resolutionLocation;
+  const creators = propertyType(checker, aggregate, 'commandCreators', name, location);
+  completePayloads(checker, creators, commands, `${name}.commands`, false, location);
   const pure = propertyType(checker, aggregate, 'pure', name);
   const projectors = propertyType(checker, pure, 'eventProjectors', `${name}.pure`);
   completePayloads(checker, projectors, events, `${name}.events`, true);
   const convertMap = (types: Map<string, ts.Type>, group: string, handlers: ts.Type) => Object.fromEntries([...types].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([key, type]) => {
-      const declaration = type.aliasSymbol?.declarations?.[0] ?? payloadDeclaration(checker, handlers, key, name, group === 'events');
+      const declaration = group === 'events' ? declarations?.events.get(key)
+        : type.aliasSymbol?.declarations?.[0] ?? payloadDeclaration(checker, handlers, key, name, false, location);
       return [key, jsonSchemaDocument(converter.convert(type, `${name}.${group}[${JSON.stringify(key)}]`, declaration), options.target)];
     }));
   if (options.includeState !== false && !state) throw new Error(`${name}.state: missing resolved initialState`);

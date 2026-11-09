@@ -7,7 +7,7 @@ import { createEmitProxy } from '../proxies/createEmitProxy';
 import { createCommandContextProxy } from '../proxies/createCommandContextProxy';
 import { createRoleCommandResolver, entitySelectorContext } from './entityCommandContext';
 import { commandTarget, definitionTargets, snapshotTargetChain, recordCommandName } from './entityCommandTarget';
-import { eventDefinitionKeys } from './eventDefinitions';
+import { eventDefinitionKeys, eventOrigin, recordEventOrigin } from './eventDefinitions';
 import { ownDefinition } from './definitionMap';
 import { commandModes } from '../entityCommandLifecycle';
 import { mountName as recordMountedName, mountedWire, semanticSegment } from './mountedNaming';
@@ -30,7 +30,8 @@ export function mountEntities<S, TMeta>(
     allCommandsMap: GenericCommandMap,
     dispatch: Map<string, CompiledEventRegistration<TMeta>>,
     aggregateName: string,
-    namingStrategy: NamingStrategy
+    namingStrategy: NamingStrategy,
+    forward: { wireType: string; registration: CompiledEventRegistration<TMeta> }[]
 ): Record<string, MountedStructureMetadata> {
     const mounts: Record<string, MountedStructureMetadata> = {};
     const eventDefinitionTargets = definitionTargets(allEvents);
@@ -58,6 +59,8 @@ export function mountEntities<S, TMeta>(
         };
 
         eventDefinitionKeys(entityEvents).forEach((eventKey) => {
+            const origin = eventOrigin(entityEvents, eventKey);
+            const schemaOrigin = { ...origin, segments: [mountName, ...origin.segments] };
             const chain = [target, ...(nestedEventTargets[eventKey] ?? [])];
             recordMountedName(eventNames, eventKey, entityEvents, eventKey, segment,
                 ownDefinition<string>(entityEventNameOverrides, eventKey), ownDefinition(mountEventNameOverrides, eventKey));
@@ -65,13 +68,17 @@ export function mountEntities<S, TMeta>(
             eventWires[eventKey] = scopedEventType;
             if (!rootEventKeys.has(eventKey)) {
                 allEvents[eventKey] = entityEvents[eventKey];
+                recordEventOrigin(allEvents, eventKey, schemaOrigin);
                 eventDefinitionTargets[eventKey] = chain;
                 allEventOverrides[eventKey] = scopedEventType;
             }
             allEventMetadata[`${mountName}:${eventKey}`] = ownDefinition(entityEventMetadata, eventKey);
             allEventOverrides[`${mountName}:${eventKey}`] = scopedEventType;
-            dispatch.set(scopedEventType, { projector: entityEvents[eventKey]!, targets: snapshotTargetChain(chain),
-                metadata: ownDefinition(entityEventMetadata, eventKey) });
+            const registration = { projector: entityEvents[eventKey]!, targets: snapshotTargetChain(chain),
+                metadata: ownDefinition(entityEventMetadata, eventKey),
+                schemaOrigin };
+            dispatch.set(scopedEventType, registration);
+            forward.push({ wireType: scopedEventType, registration });
             mounts[mountName]!.eventTargets![scopedEventType] = chain;
         });
 

@@ -101,6 +101,43 @@ export type RegistryFromPackages<T extends readonly EntityPackage<any, any, any,
         : {}
 >;
 
+/** Named build contract preserves member provenance in inferred public declarations. */
+export interface BuiltAggregateResult<S, Name extends string, M = {}, E = {}, EOverrides = {}, Sel = {}, Registry extends AggregateEntityRegistry = {}, TMeta extends Record<string, unknown> = Record<string, unknown>, TPlugins extends PluginExtensions = {}, PS = {}, EP extends readonly unknown[] = [], SM extends readonly unknown[] = []> {
+    aggregateType: Name;
+    readonly initialState: AggregateStateView<S & PS>;
+    readonly __stateType?: S & PS;
+    prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C, MountedEnvelopes<EP, 'commandEnvelope'>>;
+    process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => PreparedEvent<MountedEventExtensions<EP>>[];
+    readonly __envelopeTypes?: AttachedEnvelopeTypes<{}, EP>;
+    apply: (state: AggregateStateView<S & PS>, event: Event) => AggregateStateView<S & PS>;
+    applyToDraft: (draft: Draft<S & PS>, event: Event) => void;
+    commandCreators: {
+        [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
+            ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
+            : [M[K]] extends [void] | [undefined] | [never]
+                ? () => { type: string; payload: void }
+                : (payload: M[K]) => { type: string; payload: M[K] };
+    };
+    eventCreators: EventEmitterFactory<Name, E, EOverrides>;
+    pure: {
+        commandProcessors: Record<string, AnyFunction>;
+        eventProjectors: AggregateEventProjectorsMap<E>;
+    };
+    selectors: EffectiveSelectors<Sel, SM>;
+    hooks: AggregateHooks<S>;
+    mounts: Record<string, MountedStructureMetadata>;
+    metadata: {
+        commands: Record<string, { meta?: TMeta }>;
+        events: Record<string, { meta?: TMeta }>;
+    };
+    types: {
+        commands: Record<string, string>;
+        events: Record<string, string>;
+    };
+    plugins: RedemeinePlugin<TPlugins>[];
+    __registryType?: Registry;
+}
+
 /**
  * The core builder interface for composing Aggregates in Redemeine.
  * Uses a fluent chained API to progressively layer events, commands, mixins, and entities.
@@ -191,41 +228,7 @@ export interface AggregateBuilder<S, Name extends string, M = {}, E = {}, EOverr
 
     contract: (contract: Contract) => AggregateBuilder<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM>;
 
-    build: (...validation: EP extends ValidSourceEvents<{ aggregateType: Name; initialState: S & PS; pure: { eventProjectors: AggregateEventProjectorsMap<E> } }, EP> ? [] : [incompatibleSourceEvents: never]) => {
-        aggregateType: Name;
-        readonly initialState: AggregateStateView<S & PS>;
-        readonly __stateType?: S & PS;
-        prepareCommand: <C extends Command<unknown, string>>(state: AggregateStateView<S & PS>, command: C) => PreparedCommand<C, MountedEnvelopes<EP, 'commandEnvelope'>>;
-        process: (state: AggregateStateView<S & PS>, command: Command<unknown, string>) => PreparedEvent<MountedEventExtensions<EP>>[];
-        readonly __envelopeTypes?: AttachedEnvelopeTypes<{}, EP>;
-        apply: (state: AggregateStateView<S & PS>, event: Event) => AggregateStateView<S & PS>;
-        applyToDraft: (draft: Draft<S & PS>, event: Event) => void;
-        commandCreators: {
-            [K in keyof M]: M[K] extends { args: infer Args, payload: infer P }
-                ? (...args: Args extends any[] ? Args : never) => { type: string; payload: P }
-                : [M[K]] extends [void] | [undefined] | [never]
-                    ? () => { type: string; payload: void }
-                    : (payload: M[K]) => { type: string; payload: M[K] };
-        };
-        eventCreators: EventEmitterFactory<Name, E, EOverrides>;
-        pure: {
-            commandProcessors: Record<string, AnyFunction>;
-            eventProjectors: AggregateEventProjectorsMap<E>;
-        };
-        selectors: EffectiveSelectors<Sel, SM>;
-        hooks: AggregateHooks<S>;
-        mounts: Record<string, MountedStructureMetadata>;
-        metadata: {
-            commands: Record<string, { meta?: TMeta }>;
-            events: Record<string, { meta?: TMeta }>;
-        };
-        types: {
-            commands: Record<string, string>;
-            events: Record<string, string>;
-        };
-        plugins: RedemeinePlugin<TPlugins>[];
-        __registryType?: Registry;
-    } & AggregateDecoration<S & PS, Registry>;
+    build: (...validation: EP extends ValidSourceEvents<{ aggregateType: Name; initialState: S & PS; pure: { eventProjectors: AggregateEventProjectorsMap<E> } }, EP> ? [] : [incompatibleSourceEvents: never]) => BuiltAggregateResult<S, Name, M, E, EOverrides, Sel, Registry, TMeta, TPlugins, PS, EP, SM> & AggregateDecoration<S & PS, Registry>;
 
     _state: {
         events: Record<string, AnyFunction>;

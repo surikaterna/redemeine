@@ -3,7 +3,7 @@ import { extractCommandPayloads, extractEventPayloads, extractStateType, resolve
 import { resolveProjectionState } from './projectionNavigator';
 import type { SchemaRegistrySelection } from '../schemaRegistryManifest';
 import { aggregateSchemaDeclarations, projectionSchemaDeclaration, type SchemaDeclarations } from './schemaDeclarations';
-import { aggregateContract } from './schemaRegistryDefinitionClassifier';
+import { aggregateContract, registryMemberType } from './schemaRegistryDefinitionClassifier';
 import { canonicalAggregateDeclaration } from './schemaRegistryProvenance';
 
 export type RegistryDefinition = {
@@ -51,7 +51,7 @@ export function registryName(checker: ts.TypeChecker, type: ts.Type, selection: 
   return literal;
 }
 
-function validateHandlers(checker: ts.TypeChecker, handlers: ts.Type, path: string, event: boolean, canonical = false): void {
+function validateHandlers(checker: ts.TypeChecker, handlers: ts.Type, path: string, event: boolean, canonical = false, location?: ts.Node): void {
   if (canonical && handlers.isIntersection()) {
     for (const part of handlers.types) resolvedObject(checker, part, path);
   } else resolvedObject(checker, handlers, path);
@@ -60,7 +60,7 @@ function validateHandlers(checker: ts.TypeChecker, handlers: ts.Type, path: stri
     if (handler.flags & ts.SymbolFlags.Optional || handler.escapedName !== ts.escapeLeadingUnderscores(handler.getName())) {
       throw new Error(`${handlerPath}: optional or symbol handler unsupported`);
     }
-    const type = symbolType(checker, handler, handlerPath);
+    const type = registryMemberType(checker, handler, handlerPath, location);
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     const signature = signatures[0];
     if (type.isUnion() || signatures.length !== 1 || !signature || signature.typeParameters?.length) {
@@ -94,11 +94,14 @@ function aggregateMembers(program: ts.Program, type: ts.Type, path: string) {
   const state = property(checker, type, 'initialState', path);
   if (checker.getSignaturesOfType(state, ts.SignatureKind.Call).length) throw new Error(`${path}: expected aggregate initialState value, not factory`);
   const commands = property(checker, type, 'commandCreators', path);
+  const commandSymbol = checker.getPropertyOfType(type, 'commandCreators');
+  const commandLocation = commandSymbol?.valueDeclaration ?? commandSymbol?.declarations?.[0];
   const pure = property(checker, type, 'pure', path);
   const events = property(checker, pure, 'eventProjectors', `${path}.pure`);
   const eventDeclarations = checker.getPropertyOfType(pure, 'eventProjectors')?.declarations ?? [];
   const canonicalEvents = eventDeclarations.length > 0 && eventDeclarations.every(canonicalAggregateDeclaration);
-  validateHandlers(checker, commands, `${path}.commandCreators`, false);
+  validateHandlers(checker, commands, `${path}.commandCreators`, false,
+    !!commandLocation && canonicalAggregateDeclaration(commandLocation), commandLocation);
   validateHandlers(checker, events, `${path}.pure.eventProjectors`, true, canonicalEvents);
   const node = program.getSourceFiles()[0];
   if (!node) throw new Error(`${path}: missing compiler source`);

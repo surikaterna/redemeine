@@ -7,6 +7,7 @@ export * from './bindContext';
 export * from './naming';
 export * from './plugins';
 export type { BuiltAggregate } from './builtAggregate';
+export type { BuiltAggregateResult } from './types/aggregate';
 export type { AggregateStateView, AggregateStateModel } from './types/aggregateState';
 export type {
   ResolveEventName,
@@ -16,3 +17,5 @@ export type {
   ShorthandCommandWithMeta,
   MapCommandsToPayloads
 } from './types/aggregateTyping';
+export { schemaBindings } from './schemaBindings';
+export type { SchemaBindings, SchemaBindingMap, SchemaBinding } from './schemaBindings';

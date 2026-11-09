@@ -12,6 +12,9 @@ import { schemaPolicyRegressions } from './packedSchemaPolicy.mjs';
 import { canonicalModelRegressions } from './packedCanonicalModel.mjs';
 import { packedAggregateDeclarations } from '../../aggregate/test/packedDeclarations.mjs';
 import { schemaReconciliationRegressions } from './packedSchemaReconciliation.mjs';
+import { mountedEventRegressions } from './packedMountedEvents.mjs';
+import { registryCommandRegressions } from './packedRegistryCommands.mjs';
+import { buildResultRegressions } from './packedBuildResult.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const tempParent = join(tmpdir(), 'opencode');
@@ -52,6 +55,9 @@ console.log(command('npm', ['ls', '--all']));
 for (const name of Object.keys(tarballs)) assert(realpathSync(join(consumer, 'node_modules/@redemeine', name)).startsWith(consumer));
 console.log(command('npm', ['exec', '--yes', `--package=${tarballs.cli}`, '--', 'redemeine', 'help']));
 const bin = join(consumer, 'node_modules/.bin/redemeine');
+mountedEventRegressions(consumer, command, bin);
+buildResultRegressions(consumer, command, bin);
+registryCommandRegressions(consumer, command, bin);
 jsonSchemaRegressions(consumer, command, bin);
 reviewRegressions(consumer, command);
 surgicalRegressions(consumer, command, bin);
@@ -115,11 +121,26 @@ it('materializes four maps with strict payload/state schemas', () => {
     expect(schema.safeParse({ id: '123' }).success).toBe(true);
     expect(schema.safeParse({ id: 123 }).success).toBe(false);
   }
+  expect(Object.keys(aggregate.events)).toEqual(['accepted']);
+  expect(aggregateJsonSchemas.has('orders')).toBe(true);
+  const aggregateJson = aggregateJsonSchemas.get('orders');
+  if (aggregateJson === undefined) throw Error('Missing aggregate JSON schemas');
+  expect(Object.keys(aggregateJson.events)).toEqual(['accepted']);
+  for (const key of ['lineChange', 'noteChange']) {
+    const schema = aggregate.commands[key];
+    if (!schema) throw Error('Missing mounted command schema');
+    expect(schema.safeParse({ id: '123', value: 'changed' }).success).toBe(true);
+    expect(schema.safeParse({ id: 123, value: 'changed' }).success).toBe(false);
+    expect(schema.safeParse({ id: '123' }).success).toBe(false);
+    expect(aggregateJson.commands[key]).toMatchObject({
+      type: 'object', properties: { id: { type: 'string' }, value: { type: 'string' } }, required: ['id', 'value'],
+    });
+  }
   const projection = projectionSchemas.get('ordersView');
   if (!projection) throw Error('Missing projection schema');
   expect(projection.safeParse({ total: 1 }).success).toBe(true);
   expect(projection.safeParse({ total: '1' }).success).toBe(false);
-  expect(aggregateJsonSchemas.get('orders')).toEqual({
+  expect(aggregateJson).toEqual({
     state: z.toJSONSchema(aggregate.state),
     commands: Object.fromEntries(Object.entries(aggregate.commands).map(([key, schema]) => [key, z.toJSONSchema(schema)])),
     events: Object.fromEntries(Object.entries(aggregate.events).map(([key, schema]) => [key, z.toJSONSchema(schema)])),

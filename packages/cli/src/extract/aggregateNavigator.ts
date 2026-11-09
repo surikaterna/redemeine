@@ -195,7 +195,7 @@ function getPropertyType(
     const prop = checker.getPropertyOfType(parentType, propName);
     if (!prop) return null;
     const decl = prop.valueDeclaration || prop.declarations?.[0];
-    return decl ? checker.getTypeOfSymbolAtLocation(prop, decl) : null;
+    return checker.getTypeOfSymbolAtLocation(prop, decl ?? node);
 }
 
 /**
@@ -215,9 +215,7 @@ export function extractCommandPayloads(
 
     for (const prop of checker.getPropertiesOfType(creatorsType)) {
         const decl = prop.valueDeclaration || prop.declarations?.[0];
-        if (!decl) continue;
-
-        const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
+        const propType = checker.getTypeOfSymbolAtLocation(prop, decl ?? node);
         const signatures = checker.getSignaturesOfType(propType, ts.SignatureKind.Call);
         const signature = signatures[0];
         if (!signature) continue;

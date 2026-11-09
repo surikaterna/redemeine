@@ -4,7 +4,6 @@ import {
     createProgramFromConfig,
     resolveAggregateType,
     extractCommandPayloads,
-    extractEventPayloads,
     extractStateType
 } from './extract/aggregateNavigator';
 import { TypeToZodConverter } from './extract/typeConverter';
@@ -13,6 +12,7 @@ import { aggregateJsonOutput, validateSchemaOutput, type SchemaOutputOptions } f
 import { schemaPolicyForEntry } from './extract/schemaConfig';
 import { aggregateSchemaDeclarations } from './extract/schemaDeclarations';
 import { assertStructuralJson, requireStructuralJson } from './extract/jsonSchemaPolicy';
+import { resolvedAggregateEvents } from './extract/mountedEventWalker';
 
 export interface ExtractZodOptions extends SchemaOutputOptions {
     /** Path to tsconfig.json */
@@ -38,7 +38,7 @@ export interface ExtractZodOptions extends SchemaOutputOptions {
  * Extracts types from a built aggregate using the TypeScript Compiler API
  * and generates Zod source (default) or structural JSON Schema metadata.
  *
- * Navigates the aggregate's `commandCreators`, `pure.eventProjectors`,
+ * Navigates `commandCreators`, root projectors, declared entity registries,
  * and `initialState` to extract payload and state types, then converts
  * them recursively into Zod schema definitions.
  */
@@ -64,9 +64,10 @@ export function extractZodSchemas(options: ExtractZodOptions): void {
     }
 
     const commandPayloads = extractCommandPayloads(checker, aggType, sourceFile);
-    const eventPayloads = extractEventPayloads(checker, aggType, sourceFile);
+    const resolvedEvents = resolvedAggregateEvents(checker, aggType, sourceFile);
+    const eventPayloads = new Map([...resolvedEvents].map(([key, event]) => [key, event.payload]));
     const stateType = extractStateType(checker, aggType, sourceFile);
-    const declarations = aggregateSchemaDeclarations(program, aggType, resolve(options.entry), options.aggregateExport);
+    const declarations = aggregateSchemaDeclarations(program, aggType, resolve(options.entry), options.aggregateExport, resolvedEvents);
     if (options.format === 'json-schema') {
         requireStructuralJson(policy);
         for (const [key, type] of commandPayloads) assertStructuralJson(checker, type, `${options.aggregateExport}.commands.${key}`, declarations.commands.get(key), policy.maxDepth, policy.maxProvenanceDepth);
