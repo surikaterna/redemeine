@@ -206,8 +206,12 @@ function resolvedEventAnnotations(checker: ts.TypeChecker, events: Map<string, R
     const result = new Map<string, ts.Node>();
     for (const [key, event] of events) {
         if (!event.parameter) continue;
-        const annotation = eventPayloadAnnotation(checker, event.parameter) ?? event.payloadDeclaration;
-        if (annotation && hasPayloadTypeParameter(checker, annotation, depth)) {
+        const authored = eventPayloadAnnotation(checker, event.parameter);
+        const annotation = authored ?? event.payloadDeclaration;
+        const structural = authored && checker.getTypeAtLocation(authored) === event.payload
+            && !containsSchema(checker, authored, depth)
+            && !hasPayloadTypeParameter(checker, authored, depth, true);
+        if (annotation && !structural && hasPayloadTypeParameter(checker, annotation, depth)) {
             throw new Error(`${key}: cannot preserve schema-linked event payload provenance; use an authored concrete Event payload`);
         }
         result.set(key, annotation ?? event.parameter);
@@ -215,15 +219,27 @@ function resolvedEventAnnotations(checker: ts.TypeChecker, events: Map<string, R
     return result;
 }
 
-/** A concrete sibling schema cannot establish provenance for an unsubstituted parameter. */
-function hasPayloadTypeParameter(checker: ts.TypeChecker, payload: ts.Node, maxProvenanceDepth: number): boolean {
+/** Structural instantiations may bind parameters, but cannot prove class or schema-linked substitutions. */
+function hasPayloadTypeParameter(checker: ts.TypeChecker, payload: ts.Node, maxProvenanceDepth: number, structural = false): boolean {
     return searchProvenance([typeAnnotation(payload) ?? payload], node => {
+        // The structural exception cannot prove value-query or type-operator substitutions; retain the original guard.
+        if (structural && (ts.isTypeQueryNode(node) || ts.isTypeOperatorNode(node))) return { value: true };
         const target = ts.isTypeReferenceNode(node) || ts.isExpressionWithTypeArguments(node)
             ? referenceTarget(checker, node) : undefined;
-        if (target && (target.flags & ts.SymbolFlags.TypeParameter)) return { value: true };
         const children = syntaxChildren(node);
+        if (target && (target.flags & ts.SymbolFlags.TypeParameter)) {
+            if (!structural) return { value: true };
+            const linked = target.declarations?.some(item => ts.isTypeParameterDeclaration(item)
+                && (containsSchema(checker, item.constraint, maxProvenanceDepth) || containsSchema(checker, item.default, maxProvenanceDepth)));
+            if (linked) return { value: true };
+            for (const item of target.declarations ?? []) {
+                if (ts.isTypeParameterDeclaration(item)) children.push(...[item.constraint, item.default].filter((part): part is ts.TypeNode => !!part));
+            }
+        }
         for (const declaration of target?.declarations ?? []) {
             if (/[/\\](?:lib\.[^/\\]+\.d\.ts$|zod[/\\])/.test(declaration.getSourceFile().fileName)) continue;
+            // Class defaults and inherited payloads are not covered by authored interface/alias provenance.
+            if (structural && (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration))) return { value: true };
             if (ts.isTypeAliasDeclaration(declaration)) children.push(declaration.type);
             if (ts.isInterfaceDeclaration(declaration)) {
                 children.push(...declaration.members);

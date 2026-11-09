@@ -7,3 +7,5 @@ Resolve list-, map-, and nested-mounted command and event payload schemas in sta
 Document explicitly building an aggregate and joining generated payload schemas to runtime schemaBindings, checking for missing schema entries and selecting inbound schemas by the compiled wire winner. Preserve authored callable signatures when validating inherited selectors in canonical aggregate registries. Extraction remains compiler-only.
 
 Recognize package-owned BuiltAggregateResult declarations so ordinary unannotated build exports remain supported after declaration emission, without trusting foreign structural markers.
+
+Preserve concrete structural generic event payloads at root and mounted paths without relaxing schema-linked generic provenance guards.

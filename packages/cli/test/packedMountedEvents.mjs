@@ -60,6 +60,58 @@ export const aggregate = createAggregate('unsupported', { count: 0 }).entityList
     }
   }
   bindingRegressions(directory, command, bin);
+  structuralEventRegressions(directory, command, bin);
+}
+
+function structuralEventRegressions(directory, command, bin) {
+  const fixture = readFileSync(new URL('./fixtures/structuralEvents.ts', import.meta.url), 'utf8')
+    .replace("'../../../aggregate/src'", "'@redemeine/aggregate'")
+    .replace("'../../../kernel/src'", "'@redemeine/kernel'");
+  for (const extension of ['mts', 'cts']) writeFileSync(join(directory, `structural.${extension}`), fixture);
+  console.log(command('npx', ['--no-install', 'tsc', '--strict', '--skipLibCheck', 'false', '--declaration',
+    '--emitDeclarationOnly', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+    '--outDir', 'mounted-events/public', 'mounted-events/structural.mts', 'mounted-events/structural.cts']));
+  let expected;
+  for (const entry of ['structural.mts', 'structural.cts', 'public/structural.d.mts', 'public/structural.d.cts']) {
+    for (const [format, out] of [['zod', 'structural.schemas.ts'], ['json-schema', 'structural.json']]) {
+      console.log(command(bin, ['extract-schemas', '--entry', `mounted-events/${entry}`, '--export', 'aggregate',
+        '--tsconfig', 'mounted-events/extract.json', '--format', format, '--out', `mounted-events/${out}`]));
+      for (const name of ['opaqueQuery', 'opaqueUtility']) {
+        writeFileSync(join(directory, 'sentinel'), 'sentinel');
+        assert.throws(() => command(bin, ['extract-schemas', '--entry', `mounted-events/${entry}`, '--export', name,
+          '--tsconfig', 'mounted-events/extract.json', '--format', format, '--out', 'mounted-events/sentinel']),
+        diagnostic(/changed:.*(?:schema-linked|provenance)/));
+        assert.equal(readFileSync(join(directory, 'sentinel'), 'utf8'), 'sentinel');
+      }
+    }
+    const json = JSON.parse(readFileSync(join(directory, 'structural.json'), 'utf8'));
+    if (expected) assert.deepEqual(json, expected);
+    else expected = json;
+    console.log(command('npx', ['--no-install', 'tsc', '-p', 'mounted-events/extract.json', '--noEmit']));
+    console.log(command('node', ['--input-type=module', '-e', `
+import assert from 'node:assert/strict'; import ts from 'typescript';
+import { readFileSync, writeFileSync } from 'node:fs'; import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+writeFileSync('./mounted-events/runtime/structural.js', ts.transpileModule(
+  readFileSync('./mounted-events/structural.schemas.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText);
+const { eventSchemas } = require('./mounted-events/runtime/structural.js');
+const json = JSON.parse(readFileSync('./mounted-events/structural.json', 'utf8'));
+const keys = ['byKey.aliased', 'byKey.changed', 'byKey.nested', 'changed', 'items.aliased',
+  'items.changed', 'items.nested', 'parents.children.aliased', 'parents.children.changed', 'parents.children.nested'];
+assert.deepEqual(Object.keys(eventSchemas).sort(), keys); assert.deepEqual(Object.keys(json.events), keys);
+for (const key of keys) {
+  const nested = key.endsWith('.nested');
+  assert(eventSchemas[key].safeParse({ value: nested ? { value: 1 } : 1 }).success);
+  assert(!eventSchemas[key].safeParse({ value: nested ? { value: 'bad' } : 'bad' }).success);
+  assert(!eventSchemas[key].safeParse({}).success);
+  const schema = json.events[key];
+  assert.equal(schema.type, 'object'); assert.deepEqual(schema.required, ['value']);
+  const inner = nested ? schema.properties.value : schema;
+  assert.equal(inner.type, 'object'); assert.deepEqual(inner.required, ['value']);
+  assert.deepEqual(inner.properties.value, { type: 'number' });
+}
+` ]));
+  }
 }
 
 function bindingRegressions(directory, command, bin) {
