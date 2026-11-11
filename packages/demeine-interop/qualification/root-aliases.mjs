@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -52,10 +52,29 @@ for (const extension of ['js', 'cjs']) {
 }
 for (const extension of ['mts', 'cts']) {
   await copyFile(resolve(root, 'packages/demeine-interop/test/typefixtures/aliases.mts'), resolve(consumer, `aliases.${extension}`));
+  const aliases = await readFile(resolve(consumer, `aliases.${extension}`), 'utf8');
+  await writeFile(resolve(consumer, `missing-property.${extension}`),
+    aliases.replace('// @ts-expect-error widened command keys cannot promise a fabricated alias', ''));
   await copyFile(resolve(root, 'packages/demeine-interop/test/typefixtures/spread.mts'), resolve(consumer, `spread.${extension}`));
+  const keys = await readFile(resolve(root, 'packages/demeine-interop/test/typefixtures/aliasKeys.mts'), 'utf8');
+  await writeFile(resolve(consumer, `aliasKeys.${extension}`), keys);
+  await writeFile(resolve(consumer, `missing-patterns.${extension}`),
+    keys.replaceAll('// @ts-expect-error open command key has no guaranteed alias', ''));
 }
 run('pnpm', ['exec', 'tsc', '--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false', '--types', 'node',
-  '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--noEmit', 'aliases.mts', 'aliases.cts']);
+  '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--noEmit', 'aliases.mts', 'aliases.cts', 'aliasKeys.mts', 'aliasKeys.cts']);
+for (const [fixture, count] of [['missing-property', 1], ['missing-patterns', 10]]) {
+  for (const extension of ['mts', 'cts']) {
+    const result = spawnSync('pnpm', ['exec', 'tsc', '--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false', '--types', 'node',
+      '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--pretty', 'false', '--noEmit', `${fixture}.${extension}`],
+    { cwd: consumer, encoding: 'utf8' });
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal((result.stdout.match(/error TS\d+:/g) ?? []).length, count, result.stdout);
+    assert.equal((result.stdout.match(/error TS2339: Property '.*Identifier' does not exist on type/g) ?? []).length, count, result.stdout);
+    console.log(result.stdout.trim());
+  }
+}
 run('pnpm', ['exec', 'tsc', '--strict', '--exactOptionalPropertyTypes', '--skipLibCheck', 'false', '--types', 'node',
   '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--outDir', 'emitted', 'spread.mts', 'spread.cts']);
 for (const extension of ['mjs', 'cjs']) run('node', ['--unhandled-rejections=strict', `emitted/spread.${extension}`]);
@@ -72,6 +91,8 @@ for (const aggregate of [esmAggregate, cjsAggregate]) {
     registered(state, event) { Object.assign(state, event.payload); }
   }).commands(emit => ({ register: {
     pack: (id, value) => ({ id, value }), handler: (_, payload) => emit.registered(payload)
+  }, rename: {
+    pack: (id, value) => ({ id, value }), handler: (_, payload) => emit.registered(payload)
   } }), { static: ['register'] }).build();
   const built = aggregate.createAggregate('registry', { identifiers: [] }).entityList('identifiers', entity).build();
   const decorated = built.withPlugins(aggregate.createAggregatePlugin('audit').state(() => ({ count: 0 })).build());
@@ -86,15 +107,75 @@ for (const aggregate of [esmAggregate, cjsAggregate]) {
       const input = { ...definition, commandCreators: { ...definition.commandCreators, identifiersRegister: replacement } };
       const Bridge = interop.createDemeineBridge(input);
       assert.equal(Bridge.prototype.registerIdentifier, Bridge.prototype.identifiersRegister);
+      assert.equal(Bridge.prototype.renameIdentifier, Bridge.prototype.identifiersRename);
       const bridge = new Bridge();
       await bridge.registerIdentifier('one', 'alias');
       await bridge.identifiersRegister('one', 'flat');
+      await bridge.renameIdentifier('one', 'renamed');
+      await bridge.identifiersRename('one', 'renamed-flat');
+      await assert.rejects(bridge.renameIdentifier('missing', 'wrong'), /Invalid mounted command target/);
+      await assert.rejects(bridge.identifiersRename('missing', 'wrong'), /Invalid mounted command target/);
+      await assert.rejects(bridge.renameIdentifier(undefined, 'wrong'), /Invalid mounted command target/);
+      await assert.rejects(bridge.identifiersRename(undefined, 'wrong'), /Invalid mounted command target/);
       assert.deepEqual(calls, [['one', 'alias'], ['one', 'flat']]);
-      assert.deepEqual(bridge._state.identifiers, [{ id: 'one', value: 'FLAT' }]);
-      assert.equal(bridge.getVersion(), 2);
-      assert.deepEqual(bridge.getUncommittedEvents().map(event => event.type), [built.types.events.registered, built.types.events.registered]);
+      assert.deepEqual(bridge._state.identifiers, [{ id: 'one', value: 'renamed-flat' }]);
+      assert.equal(bridge.getVersion(), 4);
+      assert.deepEqual(bridge.getUncommittedEvents().map(event => event.type), Array(4).fill(built.types.events.registered));
+    }
+    await checkDirectLists(aggregate, interop);
+    checkExcludedMounts(aggregate, interop, entity);
+  }
+}
+function checkExcludedMounts(aggregate, interop, entity) {
+  const parent = aggregate.createEntity('parent', { children: [] }).entityList('children', entity).build();
+  const host = aggregate.createAggregate('excluded', { lookup: {}, parents: [] })
+    .entityMap('lookup', entity).entityList('parents', parent).build();
+  const bridge = new (interop.createDemeineBridge(host))();
+  for (const name of ['registerIdentifier', 'renameIdentifier', 'childrenRegisterParent', 'childrenRenameParent', 'lookup', 'parents']) {
+    assert.equal(bridge[name], undefined);
+  }
+  for (const name of ['lookupRegister', 'lookupRename', 'parentsChildrenRegister', 'parentsChildrenRename']) {
+    assert.equal(typeof bridge[name], 'function');
+  }
+}
+async function checkDirectLists(aggregate, interop) {
+  const row = aggregate.createEntity('row', { id: '', qty: 0 })
+    .events({ changed(state, event) { state.qty = event.payload.qty; } })
+    .commands(emit => ({ set(state, payload) { return emit.changed({ ...payload, qty: state.qty + 1 }); } })).build();
+  const line = aggregate.createEntity('line', { id: '', qty: 0 })
+    .events({ changed(state, event) { state.qty = event.payload.qty; } })
+    .commands(emit => ({ set: { pack: (id, qty) => ({ id, qty }),
+      handler(state, payload) { return emit.changed({ id: payload.id, qty: state.qty + payload.qty }); } } })).build();
+  const parent = aggregate.createEntity('parent', { children: [] }).entityList('children', row).build();
+  const host = aggregate.createAggregate('order', { rows: [{ id: 'a', qty: 2 }], lines: [{ id: 'a', qty: 2 }], parents: [] })
+    .entityList('rows', row).entityList('lines', line).entityList('parents', parent).build();
+  const bridge = new (interop.createDemeineBridge(host))();
+  assert.equal(bridge.setRow, bridge.rowsSet);
+  assert.equal(bridge.setLine, bridge.linesSet);
+  await bridge.setRow({ id: 'a' });
+  await bridge.setLine('a', 3);
+  assert.deepEqual(bridge._state.rows, [{ id: 'a', qty: 3 }]);
+  assert.deepEqual(bridge._state.lines, [{ id: 'a', qty: 5 }]);
+  for (const method of [bridge.setRow, bridge.rowsSet]) {
+    for (const payload of [{}, { id: 'missing' }]) {
+      await assert.rejects(method.call(bridge, payload), /Invalid mounted command target/);
     }
   }
+  assert.equal(bridge.getVersion(), 2);
+  assert.equal(bridge._state.rows.length, 1);
+  for (const name of ['childrenSetParent', 'setParent', 'rows']) assert.equal(bridge[name], undefined);
+  const mapped = aggregate.createAggregate('map', { lookup: {} }).entityMap('lookup', row).build();
+  assert.equal(new (interop.createDemeineBridge(mapped))().setRow, undefined);
+  const overridden = aggregate.createAggregate('override', { rows: [{ id: 'a', qty: 2 }] })
+    .entityList('rows', row, {}, { semanticName: 'credential', commandNameOverrides: { set: 'CUSTOM.WIRE.set' } }).build();
+  const custom = new (interop.createDemeineBridge(overridden))();
+  assert.equal(custom.setCredential, custom.rowsSet);
+  assert.equal(custom.setRow, undefined);
+  await custom.setCredential({ id: 'a' });
+  assert.equal(custom._state.rows[0].qty, 3);
+  const collision = aggregate.createAggregate('collision', { rows: [] }).commands(() => ({ setRow: () => [] }))
+    .entityList('rows', row).overrideCommandNames({ setRow: 'custom.root.command' }).build();
+  assert.throws(() => interop.createDemeineBridge(collision), /Legacy method collision: setRow/);
 }
 `);
 run('node', ['--unhandled-rejections=strict', 'cross-format.mjs']);

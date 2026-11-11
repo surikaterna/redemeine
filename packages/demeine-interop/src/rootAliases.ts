@@ -10,7 +10,7 @@ export function rootAliases<S extends object, C extends CommandCreators>(builder
       const key = mount.commandPrefix + command.charAt(0).toUpperCase() + command.slice(1);
       const registration = commandMetadata(builder, key);
       const target = registration?.targets[0];
-      if (!registration?.isStatic || registration.targets.length !== 1 || target?.kind !== 'list'
+      if (!registration || registration.targets.length !== 1 || target?.kind !== 'list'
         || target.statePath.length !== mount.statePath.length
         || !target.statePath.every((part, index) => part === mount.statePath[index])) return [];
       return [{ name: command + suffix, key }];

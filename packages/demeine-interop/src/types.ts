@@ -49,10 +49,10 @@ type IsUnion<T, Whole = T> = T extends Whole ? [Whole] extends [T] ? false : tru
 type AliasEntries<C, R> = {
   [Mount in keyof R & string]: R[Mount] extends { kind: 'list'; semanticName: infer N extends string; entity: { commands: infer Commands } }
     ? string extends N ? never : true extends IsUnion<N> ? never : {
-        [Key in keyof Commands & string]: Commands[Key] extends { readonly __staticCommand: true }
-          ? Commands[Key] extends { readonly __nestedCommand: true } ? never
-            : `${Mount}${Capitalize<Key>}` extends keyof C ? { name: `${Key}${Capitalize<N>}`; key: `${Mount}${Capitalize<Key>}` } : never
-          : never
+        // Index signatures admit {}, so only required named properties promise aliases.
+        [Key in keyof Commands & string]: {} extends Pick<Commands, Key> ? never
+          : Commands[Key] extends { readonly __nestedCommand: true } ? never
+          : `${Mount}${Capitalize<Key>}` extends keyof C ? { name: `${Key}${Capitalize<N>}`; key: `${Mount}${Capitalize<Key>}` } : never
       }[keyof Commands & string] : never
 }[keyof R & string];
 type RootAliases<S extends object, C extends CommandCreators, R> = {

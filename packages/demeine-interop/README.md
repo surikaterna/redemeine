@@ -286,9 +286,9 @@ qualification uses a fresh `.cache/standalone-ov0e6` namespace and published
 dependencies. Source qualification is not publication authorization; consult
 `docs/releasing.md` for the normal reviewed release workflow.
 
-## Static list root aliases
+## Direct list root aliases
 
-Explicitly static commands on direct entity-list mounts also have semantic root
+Static and non-static commands on direct entity-list mounts also have semantic root
 aliases. For an entity authored as `identifier`, mounted at `identifiers`,
 `bridge.registerIdentifier(...)` is the same prototype function as
 `bridge.identifiersRegister(...)`, with identical payload/packed arguments,
@@ -297,17 +297,26 @@ per-instance alias allocation is introduced.
 
 Names follow Mirage: command key + capitalized authored entity semantic name.
 A mount's `semanticName` override wins; wire naming/overrides do not affect aliases.
-Only direct lists qualify: instance commands, nested descendant commands, maps,
+Non-static aliases require the same explicit target identity as their flat methods:
+`bridge.setLine('a', 3)` is exactly `bridge.linesSet('a', 3)` for that packed command.
+No implicit entity selection or identity injection is added.
+Only direct lists qualify: nested descendant commands, maps,
 value objects and root commands do not gain aliases. All existing flat methods
 remain available; there is no `bridge.identifiers.register` namespace API.
 Structural builders without Aggregate's compiled metadata retain flat methods only.
 Shallow spread and `Object.assign` copies of built/plugin-decorated Aggregate
 definitions retain that compiled snapshot and their root aliases.
-Types expose aliases only for statically known semantic names.
+Types expose aliases only for statically known semantic names and required named
+command properties. Open index signatures (including patterned strings such as
+`change${string}` or `${number}`) do not guarantee those properties and cannot
+promise aliases. Mixed explicit/indexed declarations may conservatively omit
+aliases when their named keys are lost to the index signature. Flat method typing
+is unchanged, and actual registered commands still receive their runtime aliases.
 
 Aliases use the existing method collision checks. Duplicate aliases or collisions
 with root/flat methods, lifecycle/reserved names or inherited prototype members
 throw `Legacy method collision: <name>` during bridge creation, never overwrite.
-For example, a root `registerIdentifier` command collides with the list alias.
+For example, root `registerIdentifier` or `renameIdentifier` commands collide with
+the corresponding static or non-static list aliases.
 Subclass members declared after bridge creation follow ordinary JavaScript
 overriding rules, just as existing flat bridge methods do.

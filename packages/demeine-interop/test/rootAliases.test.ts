@@ -8,7 +8,7 @@ function entity(name = 'identifier') {
   }).commands(emit => ({
     register: { pack: (id: string, value: string) => ({ id, value }),
       handler: (_state: unknown, payload: { id: string; value: string }) => emit.registered(payload) },
-    change: () => []
+    change: (_state: unknown, _payload: { id: string }) => []
   }), { static: ['register'] }).build();
 }
 
@@ -27,19 +27,23 @@ test('aliases reuse flat functions, lifecycle, envelopes and packed arguments', 
   expect(bridge.getVersion()).toBe(2);
   expect(bridge.getUncommittedEvents()).toHaveLength(2);
   expect(bridge.getUncommittedEvents()[0]).toMatchObject({ actor: 'host', aggregateId: bridge.id });
-  expect(Reflect.get(bridge, 'changeIdentifier')).toBeUndefined();
+  expect(bridge.changeIdentifier).toBe(bridge.identifiersChange);
+  await bridge.changeIdentifier({ id: 'one' });
+  await expect(bridge.changeIdentifier({ id: 'missing' })).rejects.toThrow('Invalid mounted command target');
+  expect(bridge.getVersion()).toBe(2);
 });
 
 test('semantic overrides ignore wire spelling; maps and descendants stay flat only', () => {
   const nested = createEntity('parent', { children: [] as { id: string; value: string }[] })
     .entityList('children', entity()).build();
   const host = createAggregate('registry', { rows: [], lookup: {}, parents: [] })
-    .entityList('rows', entity(), {}, { semanticName: 'credential', commandNameOverrides: { register: 'CUSTOM.WIRE.command' } })
+    .entityList('rows', entity(), {}, { semanticName: 'credential', commandNameOverrides: { register: 'CUSTOM.WIRE.command', change: 'CUSTOM.RENAME.command' } })
     .entityMap('lookup', entity('mapped'))
     .entityList('parents', nested).build();
   const bridge = new (createDemeineBridge(host))();
   expect(Reflect.get(bridge, 'registerCredential')).toBe(bridge.rowsRegister);
-  for (const name of ['registerIdentifier', 'registerMapped', 'childrenRegisterParent', 'registerParent', 'rows']) {
+  expect(bridge.changeCredential).toBe(bridge.rowsChange);
+  for (const name of ['registerIdentifier', 'changeIdentifier', 'registerMapped', 'changeMapped', 'childrenRegisterParent', 'childrenChangeParent', 'changeParent', 'registerParent', 'rows']) {
     expect(Reflect.get(bridge, name)).toBeUndefined();
   }
   expect(bridge.lookupRegister).toBeInstanceOf(Function);
@@ -54,6 +58,7 @@ test('inherited and single-mixin-owned lists expose aliases', () => {
   for (const host of [inherited, mixed]) {
     const bridge = new (createDemeineBridge(host))();
     expect(Reflect.get(bridge, 'registerIdentifier')).toBe(bridge.rowsRegister);
+    expect(bridge.changeIdentifier).toBe(bridge.rowsChange);
   }
 });
 
@@ -64,7 +69,9 @@ test('shallow spread and assign retain aliases, including plugin-decorated defin
     for (const copy of [{ ...definition }, Object.assign({}, definition)]) {
       const bridge = new (createDemeineBridge(copy))();
       expect(Reflect.get(bridge, 'registerIdentifier')).toBe(bridge.rowsRegister);
+      expect(bridge.changeIdentifier).toBe(bridge.rowsChange);
       await Reflect.apply(Reflect.get(bridge, 'registerIdentifier'), bridge, ['one', 'value']);
+      await bridge.changeIdentifier({ id: 'one' });
       expect(bridge._state.rows).toEqual([{ id: 'one', value: 'value' }]);
       expect(bridge.getVersion()).toBe(1);
     }
@@ -85,14 +92,34 @@ test('genuinely metadata-less structural builders retain only their flat methods
   expect(Reflect.get(bridge, 'addCounter')).toBeUndefined();
 });
 
+test('open command maps install only actual registered runtime aliases', async () => {
+  const commands: Record<string, (state: unknown, payload: { id: string }) => []> = { change: () => [] };
+  const patterned: Record<`change${string}`, (state: unknown, payload: { id: string }) => []> = { change: () => [] };
+  for (const authored of [commands, patterned]) {
+    const item = createEntity('identifier', { id: '' }).commands(() => authored).build();
+    const host = createAggregate('registry', { rows: [{ id: 'a' }] }).entityList('rows', item).build();
+    const bridge = new (createDemeineBridge(host))();
+    expect(Reflect.get(bridge, 'changeIdentifier')).toBe(bridge.rowsChange);
+    expect(Reflect.get(bridge, 'registerIdentifier')).toBeUndefined();
+    expect(Reflect.get(bridge, 'changeMissingIdentifier')).toBeUndefined();
+    await Reflect.apply(Reflect.get(bridge, 'changeIdentifier'), bridge, [{ id: 'a' }]);
+    expect(bridge._state.rows).toEqual([{ id: 'a' }]);
+  }
+});
+
 test('original no-payload spread repro reaches the same validation through alias and flat methods', async () => {
-  const item = createEntity('identifier', { id: '' }).commands(() => ({ register: () => [] }), { static: ['register'] }).build();
+  const item = createEntity('identifier', { id: '' }).commands(() => ({ register: () => [], change: () => [] }), { static: ['register'] }).build();
   const host = createAggregate('registry', { rows: [] }).entityList('rows', item).build();
   const structural = { ...host };
   const bridge = new (createDemeineBridge(structural))();
   expect(bridge.registerIdentifier).toBe(bridge.rowsRegister);
+  expect(bridge.changeIdentifier).toBe(bridge.rowsChange);
   await expect(bridge.registerIdentifier()).rejects.toThrow('Invalid mounted command target');
   await expect(bridge.rowsRegister()).rejects.toThrow('Invalid mounted command target');
+  await expect(bridge.changeIdentifier()).rejects.toThrow('Invalid mounted command target');
+  await expect(bridge.rowsChange()).rejects.toThrow('Invalid mounted command target');
+  expect(bridge._state.rows).toEqual([]);
+  expect(bridge.getVersion()).toBe(0);
 });
 
 test('replacement creators under existing keys serve flat methods and aliases identically', async () => {
@@ -117,13 +144,22 @@ test('duplicate aliases and root flat collisions fail deterministically', () => 
   const root = createAggregate('registry', { rows: [] }).commands(() => ({ registerIdentifier: () => [] }))
     .entityList('rows', entity()).overrideCommandNames({ registerIdentifier: 'registry.root.command' }).build();
   expect(() => createDemeineBridge(root)).toThrow('Legacy method collision: registerIdentifier');
+  const nonstatic = createAggregate('registry', { rows: [] }).commands(() => ({ changeIdentifier: () => [] }))
+    .entityList('rows', entity()).overrideCommandNames({ changeIdentifier: 'registry.root.command' }).build();
+  expect(() => createDemeineBridge(nonstatic)).toThrow('Legacy method collision: changeIdentifier');
+  const firstNonstatic = createEntity('identifier', { id: '' }).commands(() => ({ change: () => [] })).build();
+  const duplicateNonstatic = createAggregate('registry', { one: [], two: [] })
+    .entityList('one', firstNonstatic).entityList('two', firstNonstatic).build();
+  expect(() => createDemeineBridge(duplicateNonstatic)).toThrow('Legacy method collision: changeIdentifier');
 });
 
 test.each([['get', 'version', 'getVersion'], ['to', 'string', 'toString']])(
   'aliases cannot overwrite inherited members: %s + %s', (command, semantic, alias) => {
-    const component = createEntity(semantic, { id: '' }).commands(() => ({ [command]: () => [] }), { static: [command] }).build();
-    const host = createAggregate('registry', { rows: [] }).entityList('rows', component).build();
-    expect(() => createDemeineBridge(host)).toThrow(`Legacy method collision: ${alias}`);
+    for (const options of [{ static: [command] }, {}]) {
+      const component = createEntity(semantic, { id: '' }).commands(() => ({ [command]: () => [] }), options).build();
+      const host = createAggregate('registry', { rows: [] }).entityList('rows', component).build();
+      expect(() => createDemeineBridge(host)).toThrow(`Legacy method collision: ${alias}`);
+    }
     expect(Object.getPrototypeOf({})).toBe(Object.prototype);
   }
 );

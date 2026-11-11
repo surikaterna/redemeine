@@ -17,10 +17,12 @@ test.each(['__proto__', 'constructor', 'toString'])('bridge preserves own canoni
     const Bridge = createDemeineBridge(host);
     const bridge = new Bridge();
     const input = { [field]: 'actual', region: 'west', __entityPk: 'business', id: 'business' };
-    await bridge.rowsSet(input);
+    expect(bridge.setRow).toBe(bridge.rowsSet);
+    await bridge.setRow(input);
     expect(bridge._state.rows[0]!.qty).toBe(2);
     calls.mockClear();
     await expect(bridge.rowsSet({ ...input, [field]: 'MISSING' })).rejects.toThrow('Invalid mounted command target');
+    await expect(bridge.setRow({ ...input, [field]: 'MISSING' })).rejects.toThrow('Invalid mounted command target');
     expect(calls).not.toHaveBeenCalled();
     expect(bridge._state.rows[0]!.qty).toBe(2);
     expect(bridge.getVersion()).toBe(1);
@@ -45,13 +47,38 @@ test('bridge flat mounted method matches native creator/process/apply and preser
   const expected = host.apply(host.initialState, events[0]!);
   const Bridge = createDemeineBridge(host);
   const bridge = new Bridge();
-  await bridge.linesSet('a', 3);
+  expect(bridge.setLine).toBe(bridge.linesSet);
+  const result = bridge.setLine('a', 3);
+  expect(result).toBeInstanceOf(Promise);
+  await result;
   expect(bridge._state).toEqual(expected);
   expect(expected.lines[0]!.qty).toBe(5);
   expect(Reflect.get(host.pure.commandProcessors.linesSet!, 'pack')).toBe(pack);
   expect(host.metadata.commands[command.type]).toEqual({ meta: { description: 'set quantity' } });
   await expect(bridge.linesSet('missing', 3)).rejects.toThrow('Invalid mounted command target');
+  await expect(bridge.setLine('missing', 3)).rejects.toThrow('Invalid mounted command target');
   expect(bridge._state).toEqual(expected);
+  expect(bridge.getVersion()).toBe(1);
+});
+
+test('object-payload aliases keep required identity and never select or create rows implicitly', async () => {
+  const calls = jest.fn();
+  const row = createEntity('row', { id: '', qty: 0 })
+    .events({ changed(state, event: Event<{ id: string; qty: number }>) { state.qty = event.payload.qty; } })
+    .commands(emit => ({ set(state, payload: { id: string }) {
+      calls(); return emit.changed({ id: payload.id, qty: state.qty + 1 });
+    } })).build();
+  const host = createAggregate('store', { rows: [{ id: 'a', qty: 2 }] }).entityList('rows', row).build();
+  const bridge = new (createDemeineBridge(host))();
+  expect(bridge.setRow).toBe(bridge.rowsSet);
+  await bridge.setRow({ id: 'a' });
+  calls.mockClear();
+  for (const method of [bridge.setRow, bridge.rowsSet]) {
+    await expect(method.call(bridge, { id: 'unknown' })).rejects.toThrow('Invalid mounted command target');
+    await expect(Reflect.apply(method, bridge, [{}])).rejects.toThrow('Invalid mounted command target');
+  }
+  expect(calls).not.toHaveBeenCalled();
+  expect(bridge._state.rows).toEqual([{ id: 'a', qty: 3 }]);
   expect(bridge.getVersion()).toBe(1);
 });
 

@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": []
   },
-  "files": ["shortcuts.mts", "shortcuts.cts", "aliases.mts", "spread.mts"]
+  "files": ["shortcuts.mts", "shortcuts.cts", "aliases.mts", "aliasKeys.mts", "spread.mts"]
 }
