@@ -1,5 +1,6 @@
 import type { Event } from '@redemeine/kernel';
 import { requireLegacyPayload } from './dispatch';
+import { rootAliases } from './rootAliases';
 import type { BridgeableAggregate, BridgeCommand, BridgeContext, CommandCreators } from './types';
 
 function dispatchName(type: string, command: boolean): string {
@@ -11,7 +12,7 @@ function dispatchName(type: string, command: boolean): string {
 }
 
 export function installMethods<S extends object, C extends CommandCreators>(
-  prototype: object, builder: BridgeableAggregate<S, C>,
+  prototype: object, builder: BridgeableAggregate<S, C, unknown>,
   dispatch: { process(aggregate: BridgeContext<S>, command: BridgeCommand): unknown; apply(aggregate: BridgeContext<S>, event: Event): void },
 ): void {
   // The base resolves commands to this instance; a `then` shortcut would cause
@@ -39,5 +40,8 @@ export function installMethods<S extends object, C extends CommandCreators>(
       const payload = command.payload === undefined ? {} : command.payload;
       return this._sink(requireLegacyPayload({ ...command, payload, aggregateId: command.aggregateId ?? this.id }));
     });
+  }
+  for (const { name, key } of rootAliases(builder)) {
+    define(name, Object.getOwnPropertyDescriptor(prototype, key)!.value);
   }
 }

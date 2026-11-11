@@ -79,6 +79,17 @@ Command/event envelope snapshots retain their stricter plain-data-only policy.
 
 Use `commandMetadata(built, localName)` to inspect compiled command registration and deeply readonly structural `targets`. Root commands have an empty target chain. The query follows composition and mounting without parsing wire names; copied target arrays do not freeze caller-owned primary-key arrays. The former `built.pure.commandTargets` property has been removed. `pure.commandProcessors` and `pure.eventProjectors` remain available.
 
+Shallow spread (`{ ...built }`) and `Object.assign({}, built)` preserve the same
+frozen compiled-command metadata snapshot, including copies of `withPlugins(...)`
+definitions. Its enumerable symbol carrier is absent from `Object.keys` and JSON;
+the carrier is readonly on built/decorated definitions, while ordinary shallow
+copies have normal writable JavaScript property descriptors. The snapshot contains
+structural registration data, not handlers, packers, templates or plugins. It
+describes the compiled plan, not proof that later definition rewrites are valid;
+deleting the carrier or changing registrations independently is unsupported.
+This does not change other metadata contracts: `schemaBindings` still does not
+support arbitrary shallow copies.
+
 Command creators exist only for declared flat keys, including mounted keys such as `built.commandCreators.rowsRead(payload)`. Undeclared paths such as `built.commandCreators.rows(id).read()` are not supported. Mount wire overrides use `eventNameOverrides` and `commandNameOverrides`; the former mount-option aliases `eventOverrides` and `commandOverrides` have been removed. Definition-level override fields remain unchanged.
 Scoped Mirage shorthand accepts a single object payload (including optional objects), or no payload/`undefined`. Scalars, arrays, functions, `null`, and unions containing these unsupported payloads are not callable in a selected scope and throw before command hooks if invoked from JavaScript. Root shorthand remains unchanged. Use an explicit `{ pack, handler }` command for scalar business arguments; its final packed payload must still contain the selected identity object.
 

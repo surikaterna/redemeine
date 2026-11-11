@@ -17,7 +17,40 @@ test('query uses local keys, includes root winners and safely misses prototype k
   for (const key of ['store.root.command', 'rows.set', '__proto__', 'constructor', 'missing']) {
     expect(commandMetadata(built, key)).toBeUndefined();
   }
-  expect(commandMetadata({ ...built }, 'root')).toBeUndefined();
+  expect(commandMetadata({ ...built }, 'root')).toBe(commandMetadata(built, 'root'));
+  expect(commandMetadata({}, 'root')).toBeUndefined();
+});
+
+test('shallow copies and plugin decorations retain the same frozen structural snapshot', () => {
+  const built = createAggregate('store', { rows: [] }).entityList('rows', entity(), { pk: ['id'] }).build();
+  const decorated = built.withPlugins(createAggregatePlugin('stamp').state(() => ({ count: 0 })).build());
+  const symbol = Symbol.for('@redemeine/aggregate/compiled-command-metadata/v1');
+  const snapshot: unknown = Reflect.get(built, symbol);
+  const registration = commandMetadata(built, 'rowsSet')!;
+  for (const definition of [built, decorated]) {
+    expect(Object.getOwnPropertyDescriptor(definition, symbol)).toEqual({
+      value: snapshot, enumerable: true, writable: false, configurable: false
+    });
+    const spread = { ...definition };
+    const assigned = Object.assign({}, spread);
+    for (const copy of [definition, spread, assigned, { ...assigned }]) {
+      expect(Reflect.get(copy, symbol)).toBe(snapshot);
+      expect(commandMetadata(copy, 'rowsSet')).toBe(registration);
+      expect(commandMetadata(copy, 'missing')).toBeUndefined();
+      expect(Object.keys(copy)).not.toContain(String(symbol));
+      expect(JSON.stringify(copy)).not.toContain('"winnerLocalName"');
+      const onlyCarrier = { visible: true, [symbol]: Reflect.get(copy, symbol) };
+      expect(Object.keys(onlyCarrier)).toEqual(['visible']);
+      expect(JSON.stringify(onlyCarrier)).toBe('{"visible":true}');
+    }
+    expect(Object.getOwnPropertyDescriptor(spread, symbol)).toEqual({
+      value: snapshot, enumerable: true, writable: true, configurable: true
+    });
+  }
+  for (const value of [snapshot, registration, registration.targets, registration.targets[0],
+    registration.targets[0]!.statePath, registration.targets[0]!.pk]) {
+    expect(Object.isFrozen(value)).toBe(true);
+  }
 });
 
 test('prototype-like wire names have ordinary last-winner semantics', () => {

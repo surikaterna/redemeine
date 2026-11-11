@@ -177,13 +177,26 @@ test('map commands use the own entry key rather than value id', () => {
 
 test('missing registration and different definitions at one mount reject before hooks', () => {
   const { host } = fixture('id', 'code');
-  Reflect.deleteProperty(host.pure, 'commandTargets');
-  const unregistered = createMirage({ ...host }, 'store').rows('id-a');
-  expect(() => Reflect.apply(unregistered.setFirst, undefined, [{}])).toThrow(/registration/i);
+  const { aggregateType, initialState, commandCreators, process, apply, mounts } = host;
+  const structural = { aggregateType, initialState, commandCreators, process, apply, mounts };
+  const rows = Reflect.get(createMirage(structural, 'store'), 'rows');
+  const unregistered = Reflect.apply(rows, undefined, ['id-a']);
+  expect(() => Reflect.apply(Reflect.get(unregistered, 'setFirst'), undefined, [{}])).toThrow(/registration/i);
   expect(() => createAggregate('store', { rows: initial() }).entityMap('rows', first('key'))
     .entityList('rows', second('code'), { pk: 'code' }).build()).toThrow(/Conflicting entity definitions.*rows/);
   expect(before).not.toHaveBeenCalled();
   expect(handled).not.toHaveBeenCalled();
+});
+
+test('shallow spread retains selected-command registration and routing', () => {
+  const { host } = fixture('id', 'code');
+  const structural = { ...host };
+  expect(commandMetadata(structural, 'rowsSetFirst')).toBe(commandMetadata(host, 'rowsSetFirst'));
+  const live = createMirage(structural, 'store');
+  Reflect.apply(live.rows('id-a').setFirst, undefined, [{}]);
+  expect(handled.mock.calls[0]![0].id).toBe('id-a');
+  expect(extractState(live).rows[0]!.qty).toBe(2);
+  expect(before).toHaveBeenCalledTimes(1);
 });
 
 test('selected scalar identities keep numeric/string/bigint equivalence', () => {

@@ -1,3 +1,23 @@
+# Focused root-alias qualification (redemeine-m6lb.1)
+
+From the feature worktree, after installing workspace dependencies:
+
+```sh
+TMPDIR=/tmp/opencode/bridgealias NODE_OPTIONS=--max-old-space-size=4096 mise exec node@24.20.0 pnpm@11.9.0 -- node packages/demeine-interop/qualification/root-aliases.mjs /tmp/opencode/bridgealias/fresh-output
+```
+
+The output directory must not exist. This builds/packs actual kernel, Aggregate
+and interop sources without release versioning. A fresh standalone consumer uses
+only those local tarballs (transitive workspace versions are overridden to the
+same packs), checks strict ESM/CJS declarations with `skipLibCheck: false`, runs
+negative type cases, and exercises all four Aggregate/interop ESM/CJS factory
+combinations. Installed package paths must remain inside that consumer.
+It also executes the shallow-spread regression with strict ESM/CJS types,
+checks `Object.assign` and decorated copies, and proves replacement creators
+serve both flat methods and aliases with identical state/event routing. The fresh
+output includes complete packed manifests and SHA-256 hashes (`inventory.json`)
+and hashes of every delivered dirty file (`scope.sha256`) for independent audit.
+
 # Historical non-publishing qualification (redemeine-ov0e.1)
 
 The procedure below describes the original four-package/local developer-CLI

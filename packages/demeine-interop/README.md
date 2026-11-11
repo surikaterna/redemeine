@@ -285,3 +285,29 @@ Changesets rather than guessing or overwriting an earlier artifact. Standalone
 qualification uses a fresh `.cache/standalone-ov0e6` namespace and published
 dependencies. Source qualification is not publication authorization; consult
 `docs/releasing.md` for the normal reviewed release workflow.
+
+## Static list root aliases
+
+Explicitly static commands on direct entity-list mounts also have semantic root
+aliases. For an entity authored as `identifier`, mounted at `identifiers`,
+`bridge.registerIdentifier(...)` is the same prototype function as
+`bridge.identifiersRegister(...)`, with identical payload/packed arguments,
+dispatch, envelopes, state and return behavior. No extra per-call dispatch or
+per-instance alias allocation is introduced.
+
+Names follow Mirage: command key + capitalized authored entity semantic name.
+A mount's `semanticName` override wins; wire naming/overrides do not affect aliases.
+Only direct lists qualify: instance commands, nested descendant commands, maps,
+value objects and root commands do not gain aliases. All existing flat methods
+remain available; there is no `bridge.identifiers.register` namespace API.
+Structural builders without Aggregate's compiled metadata retain flat methods only.
+Shallow spread and `Object.assign` copies of built/plugin-decorated Aggregate
+definitions retain that compiled snapshot and their root aliases.
+Types expose aliases only for statically known semantic names.
+
+Aliases use the existing method collision checks. Duplicate aliases or collisions
+with root/flat methods, lifecycle/reserved names or inherited prototype members
+throw `Legacy method collision: <name>` during bridge creation, never overwrite.
+For example, a root `registerIdentifier` command collides with the list alias.
+Subclass members declared after bridge creation follow ordinary JavaScript
+overriding rules, just as existing flat bridge methods do.

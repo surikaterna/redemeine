@@ -18,6 +18,26 @@ function compile(entry: string, source: string, options: ts.CompilerOptions, ext
   return { program, emitted };
 }
 
+test.each(['aliases.mts', 'spread.mts'].flatMap(fixture => ['source', 'mts', 'cts'].map(mode => [fixture, mode])))(
+  '%s %s static list aliases preserve exact flat signatures and exclusions', (fixture, mode) => {
+    const directory = join(__dirname, 'typefixtures');
+    const entry = join(directory, `checked-aliases.${mode === 'source' ? 'ts' : mode}`);
+    let source = readFileSync(join(directory, fixture), 'utf8');
+    if (mode === 'source') source = source.replaceAll("from '@redemeine/demeine-interop'", "from '../../src'");
+    const { program } = compile(entry, source, {
+      strict: true, exactOptionalPropertyTypes: true, skipLibCheck: false, noEmit: true,
+      target: ts.ScriptTarget.ES2022, types: mode === 'source' ? ['node'] : [],
+      module: mode === 'source' ? ts.ModuleKind.ESNext : ts.ModuleKind.NodeNext,
+      moduleResolution: mode === 'source' ? ts.ModuleResolutionKind.Bundler : ts.ModuleResolutionKind.NodeNext,
+    });
+    if (mode !== 'source') {
+      const suffix = mode === 'mts' ? 'd.ts' : 'd.cts';
+      expect(program.getSourceFiles().some(file => file.fileName.endsWith(`/demeine-interop/dist/index.${suffix}`))).toBe(true);
+      expect(program.getSourceFiles().some(file => file.fileName.includes('/demeine-interop/src/'))).toBe(false);
+    }
+  }
+);
+
 test.each(['source', 'mts', 'cts'])('%s shortcut correlation survives admission and declaration emission', mode => {
   const directory = join(__dirname, 'typefixtures');
   const entry = join(directory, `emitted-shortcuts.${mode === 'source' ? 'ts' : mode}`);

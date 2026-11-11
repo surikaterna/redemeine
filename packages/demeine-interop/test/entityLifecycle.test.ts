@@ -25,10 +25,12 @@ test('real bridge packed registration and amendment match native decisions and r
   for (const value of ['one', 'one', 'two']) {
     const events = host.process(native, host.commandCreators.identifiersRegister('d', 'a', value));
     for (const event of events) native = host.apply(native, event);
-    await bridge.identifiersRegister('d', 'a', value);
+    await bridge.registerIdentifier('d', 'a', value);
     expect(bridge._state).toEqual(native);
   }
   expect(bridge.getVersion()).toBe(2);
+  expect(bridge.registerIdentifier).toBe(bridge.identifiersRegister);
+  await expect(bridge.registerIdentifier('', 'a', 'bad')).rejects.toThrow('Invalid domain');
   await expect(bridge.identifiersRegister('', 'a', 'bad')).rejects.toThrow('Invalid domain');
   expect(bridge._state).toEqual(native);
   expect(host.initialState.identifiers).toEqual([]);
