@@ -21,17 +21,23 @@ try {
   const runtimeDirectory = join(repoRoot, 'packages/projection-runtime-core');
   pack(projectionDirectory);
   pack(runtimeDirectory);
+  const aggregateDirectory = join(repoRoot, 'packages/aggregate');
+  const kernelDirectory = join(repoRoot, 'packages/kernel');
+  pack(aggregateDirectory);
+  pack(kernelDirectory);
 
   const tarballs = readdirSync(temporaryDirectory)
     .filter((name) => name.endsWith('.tgz'))
     .map((name) => join(temporaryDirectory, name));
   const immerDirectory = realpathSync(join(runtimeDirectory, 'node_modules/immer'));
+  const zodDirectory = realpathSync(join(kernelDirectory, 'node_modules/zod'));
+  // Establish the consumer root before npm can discover the enclosing workspace.
+  writeFileSync(join(temporaryDirectory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   run('npm', [
     'install', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false',
-    ...tarballs, immerDirectory
+    ...tarballs, immerDirectory, zodDirectory
   ], { cwd: temporaryDirectory });
 
-  writeFileSync(join(temporaryDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
   writeFileSync(join(temporaryDirectory, 'tsconfig.json'), JSON.stringify({
     compilerOptions: {
       strict: true,
