@@ -5,9 +5,9 @@ import { StandaloneAggregate } from './StandaloneAggregate';
 import type { Command, CommandHandler, CommandSink, EventHandler, ObjectCommandHandler } from './lifecycleTypes';
 import type { BridgeableAggregate, BridgeConstructor, BridgeOptions, CommandCreators } from './types';
 
-export function createDemeineBridge<S extends object, C extends CommandCreators>(
-  builder: BridgeableAggregate<S, C>, options: BridgeOptions<S> = {},
-): BridgeConstructor<S, C> {
+export function createDemeineBridge<S extends object, C extends CommandCreators, Registry = {}>(
+  builder: BridgeableAggregate<S, C, Registry>, options: BridgeOptions<S> = {},
+): BridgeConstructor<S, C, Registry> {
   const aggregateType = builder.aggregateType;
   if (typeof aggregateType !== 'string' || !aggregateType.trim()) {
     throw new TypeError('aggregateType must be a nonempty string');
@@ -33,7 +33,7 @@ export function createDemeineBridge<S extends object, C extends CommandCreators>
   }
   installMethods(Bridge.prototype, builder, dispatch);
   // Generated methods are installed and collision-checked above, not visible to TS.
-  return Bridge as BridgeConstructor<S, C>;
+  return Bridge as BridgeConstructor<S, C, Registry>;
 }
 
 function synchronousHandler<S extends object>(handler: EventHandler<S>): EventHandler<S> {

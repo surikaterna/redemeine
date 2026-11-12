@@ -10,8 +10,8 @@ export type CommandMetadata = Readonly<{
   targets: readonly Omit<EntityCommandTarget, 'initialState'>[];
 }>;
 
-// ESM and CJS definitions can meet in one host. A non-enumerable carrier survives
-// only explicit library decoration, not arbitrary spreads of a built definition.
+// Share compiled structural snapshots across ESM/CJS and shallow definition copies.
+// Symbol enumerability preserves spread/assign without exposing keys to JSON.
 const registrations = Symbol.for('@redemeine/aggregate/compiled-command-metadata/v1');
 type Registered = { readonly [registrations]: Readonly<Record<string, CommandMetadata>> };
 
@@ -20,8 +20,9 @@ function registered(host: object): host is Registered {
 }
 
 /**
- * Query an actual built aggregate (including supported plugin decorations).
- * Unknown local keys and arbitrary object clones have no registration.
+ * Query a built aggregate, supported plugin decoration, or shallow copy of either.
+ * Unknown local keys and objects without the compiled snapshot have no registration.
+ * The snapshot describes compilation, not the authenticity of later definition edits.
  * Targets are deeply readonly, detached structural data; no executable definitions escape.
  */
 export function commandMetadata(aggregate: object, commandKey: string): CommandMetadata | undefined {
@@ -30,9 +31,11 @@ export function commandMetadata(aggregate: object, commandKey: string): CommandM
 }
 
 export function attachCommandMetadata(host: object, records: ReadonlyMap<string, CommandMetadata>): void {
-  Object.defineProperty(host, registrations, { value: Object.freeze(Object.fromEntries(records)) });
+  Object.defineProperty(host, registrations, { value: Object.freeze(Object.fromEntries(records)), enumerable: true });
 }
 
 export function copyCommandMetadata(source: object, destination: object): void {
-  if (registered(source)) Object.defineProperty(destination, registrations, { value: source[registrations] });
+  if (registered(source)) Object.defineProperty(destination, registrations, {
+    value: source[registrations], enumerable: true, writable: false, configurable: false
+  });
 }

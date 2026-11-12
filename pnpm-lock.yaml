@@ -126,6 +126,9 @@ importers:
 
   packages/demeine-interop:
     dependencies:
+      '@redemeine/aggregate':
+        specifier: workspace:*
+        version: link:../aggregate
       '@redemeine/kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -142,9 +145,6 @@ importers:
         specifier: 9.0.1
         version: 9.0.1
     devDependencies:
-      '@redemeine/aggregate':
-        specifier: workspace:*
-        version: link:../aggregate
       '@types/uuid':
         specifier: 9.0.8
         version: 9.0.8
