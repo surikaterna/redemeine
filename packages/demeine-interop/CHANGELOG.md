@@ -1,5 +1,16 @@
 # @redemeine/demeine-interop
 
+## 1.0.0-pre.7
+
+### Minor Changes
+
+- [#170](https://github.com/surikaterna/redemeine/pull/170) [`11bd583`](https://github.com/surikaterna/redemeine/commit/11bd583132e108de049972aa3d45c306917d67eb) Thanks [@spralle](https://github.com/spralle)! - Add metadata-driven root aliases for static and non-static direct entity-list commands, preserving the same explicit arguments, flat methods and dispatch.
+
+### Patch Changes
+
+- Updated dependencies [[`11bd583`](https://github.com/surikaterna/redemeine/commit/11bd583132e108de049972aa3d45c306917d67eb)]:
+  - @redemeine/aggregate@1.0.0-pre.10
+
 ## 1.0.0-pre.6
 
 ### Patch Changes
