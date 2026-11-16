@@ -1,6 +1,6 @@
 import type { ProjectionDeduplicationStrategy } from './deduplication';
-import { resolveEventHandlers } from './resolvedEventHandlers';
-import { defaultIdentity, inherit, isInheritEntry, isInheritExtended } from './inherit';
+import { defaultIdentity, isInheritEntry, isInheritExtended } from './inherit';
+import { mirrorEventHandlers } from './mirrorEventHandlers';
 import type {
   AggregateStateOf,
   InheritableHandlersForAggregate,
@@ -18,6 +18,7 @@ import type {
   ProjectionHooks,
   ProjectionStreamDefinition
 } from './projectionTypes';
+import { resolveEventHandlers } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
 export type { InheritExtended, InheritToken } from './inherit';
@@ -99,6 +100,11 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     }
   }
 
+  private _inheritedHandler<THandlerState>(aggregate: ProjectionAggregateSource): ProjectionHandler<THandlerState> {
+    this._assertMirrorable(aggregate);
+    return (draft, event) => aggregate.applyToDraft(draft, event);
+  }
+
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
     handlers: InheritableHandlersForAggregate<TState, TAggregate>
@@ -112,13 +118,15 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
   ): ProjectionBuilder<AggregateStateOf<TAggregate>> {
     const explicit: Record<string, unknown> = handlers ? { ...handlers } : {};
-    for (const key of Object.keys(aggregate.pure.eventProjectors)) {
-      if (!(key in explicit)) explicit[key] = inherit;
-    }
     const builder = this as ProjectionBuilderImpl<AggregateStateOf<TAggregate>>;
     builder._fromStream = {
       aggregate,
-      handlers: this._resolveHandlers<AggregateStateOf<TAggregate>>(aggregate, explicit)
+      handlers: mirrorEventHandlers(
+        aggregate,
+        explicit,
+        this._resolveHandlers<AggregateStateOf<TAggregate>>(aggregate, explicit),
+        this._inheritedHandler<AggregateStateOf<TAggregate>>(aggregate)
+      )
     };
     if (!builder._initialState) {
       builder._initialState = () => structuredClone(aggregate.initialState) as AggregateStateOf<TAggregate>;
