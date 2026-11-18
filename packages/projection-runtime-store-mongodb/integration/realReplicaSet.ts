@@ -217,7 +217,9 @@ const run = async (): Promise<void> => {
     'oversized',
     1,
     [
-      { targetDocumentId: 'rollback-first', expectedRevision: 1, finalDocument: { value: 2 } },
+      { targetDocumentId: 'rollback-first', expectedRevision: 1, finalDocument: { value: 2 },
+        statePatch: { kind: 'ordered', transitions: [{ eventIndex: 0, eventId: commit(1).events[0].eventId,
+          changeType: 'update', patch: [{ op: 'replace', path: '/value', value: 2 }] }] } },
       { targetDocumentId: 'rollback-second', expectedRevision: null, finalDocument: { value: 2 } },
       { targetDocumentId: 'rollback-oversized', expectedRevision: null, finalDocument: { padding: 'x'.repeat(oversizedPayloadBytes) } }
     ],

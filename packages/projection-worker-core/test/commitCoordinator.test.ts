@@ -482,9 +482,78 @@ describe('complete projection commit reducer', () => {
     );
     expect(result.status).toBe('planned');
     if (result.status !== 'planned') return;
-    expect(result.request.finalDocuments).toEqual([{
+    expect(result.request.finalDocuments).toMatchObject([{
       targetDocumentId: SOURCE_A, expectedRevision: 4, finalDocument: { count: 5, seen: ['Added', 'Added', 'Added'] }
     }]);
+    expect(result.request.finalDocuments[0]?.statePatch).toMatchObject({ kind: 'ordered', transitions: [
+      { eventIndex: 0, changeType: 'update' }, { eventIndex: 1, changeType: 'update' }, { eventIndex: 2, changeType: 'update' }
+    ] });
+    expect(result.request.additionalWrites).toBeUndefined();
+  });
+
+  test('disabled recording preserves nonportable mutable hook state without rerunning the handler', () => {
+    const stamp = new Date('2026-11-18T00:00:00Z');
+    let calls = 0;
+    const custom = createProjection('dated', () => ({ count: 0, stamp: null as Date | null }))
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { calls++; draft.count++; }
+      }).identity(() => SOURCE_A).hooks({ afterEach(state) { if (state.count === 2) state.stamp = stamp; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const result = reduceProjectionSourceCommit(custom, 'g1', commit(0, SOURCE_A, ['Added', 'Added']), {
+      targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: { count: 0, stamp: null }, sourceProgress: {} }],
+      links: [], ownRecordSequence: null
+    });
+    expect(result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
+      finalDocument: { count: 2, stamp }, statePatch: { kind: 'full', reason: 'nonportable-state' }
+    }] } });
+    expect(calls).toBe(2);
+  });
+
+  test('unchanged Immer results reuse root portability scans until a handler changes state', () => {
+    const initial = { scanProbe: true, count: 0, lines: Array.from({ length: 32 }, (_, id) => ({ id })) };
+    const custom = createProjection('scans', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Noop() {}, Added(draft) { draft.count++; }
+      }).identity(() => SOURCE_A).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const run = (count: number) => {
+      const noops = Array<string>(count).fill('Noop');
+      const entries = jest.spyOn(Object, 'entries');
+      try {
+        const result = reduceProjectionSourceCommit(custom, 'g1', commit(0, SOURCE_A, [...noops, 'Added', ...noops]), {
+          targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+          links: [], ownRecordSequence: null
+        });
+        return { result, scans: entries.mock.calls.filter(([value]) => Object.hasOwn(value, 'scanProbe')).length };
+      } finally {
+        entries.mockRestore();
+      }
+    };
+    const short = run(1);
+    const long = run(32);
+    expect(short.scans).toBeGreaterThan(0);
+    expect(long.scans).toBe(short.scans);
+    expect(long.result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
+      finalDocument: { ...initial, count: 1 }, statePatch: { kind: 'ordered' }
+    }] } });
+    if (long.result.status !== 'planned') throw new Error('Expected a plan');
+    const hint = long.result.request.finalDocuments[0]?.statePatch;
+    if (hint?.kind !== 'ordered') throw new Error('Missing ordered hint');
+    expect(hint.transitions.filter(({ changeType }) => changeType !== 'noop'))
+      .toMatchObject([{ eventIndex: 32, changeType: 'update', patch: [{ op: 'replace', path: '/count', value: 1 }] }]);
+  });
+
+  test('disabled recording does not misclassify a signed-zero hook change as metadata only', () => {
+    const custom = createProjection('signed', () => ({ count: 0 }))
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, { Added() {} })
+      .identity(() => SOURCE_A).hooks({ afterEach(state) { state.count = -0; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const result = reduceProjectionSourceCommit(custom, 'g1', commit(0), {
+      targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: { count: 0 }, sourceProgress: {} }],
+      links: [], ownRecordSequence: null
+    });
+    expect(result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
+      finalDocument: { count: -0 }, statePatch: { kind: 'full', reason: 'unrepresentable-patch' }
+    }] } });
   });
 
   test('runs handlers with Immer draft semantics without mutating loaded state', () => {

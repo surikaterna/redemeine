@@ -9,7 +9,8 @@ import type {
 import {
   projectionChangesHistoryFailure,
   validateCommitProjectionSourceCommitRelationships,
-  validateProjectionChangesState
+  validateProjectionChangesState,
+  verifyProjectionSourceCommitStatePatches
 } from '@redemeine/projection-runtime-core';
 import type {
   MongoProjectionStoreOptions,
@@ -26,7 +27,7 @@ import {
   readSnapshotChangeReceipt,
   readSourceCommitChange
 } from './sourceCommitChanges';
-import { buildSourceCommitDelta } from './sourceCommitDelta';
+import { planSourceDocumentWrite } from './sourceCommitDelta';
 
 const scope = (name: string, generation: string): string => `${name}\u0000${generation}`;
 const linkId = (name: string, generation: string, type: string, id: string): string =>
@@ -157,10 +158,10 @@ const writeDocuments = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
   session: ClientSession,
-  snapshot: ProjectionSourceCommitSnapshot<TState>
+  snapshot: ProjectionSourceCommitSnapshot<TState>,
+  verified: ReturnType<typeof verifyProjectionSourceCommitStatePatches>
 ): Promise<Record<string, number>> => {
   const revisions = new Map<string, number>();
-  const changes = new Map(request.additionalWrites?.[0].targets.map((target) => [target.targetDocumentId, target]));
   const originals = new Map(snapshot.targets.map(({ targetDocumentId, state }) => [targetDocumentId, state]));
   const progress = request.progress.strategy === 'in_document'
     ? new Map(request.progress.targets.map((target) => [target.targetDocumentId, target.final]))
@@ -185,20 +186,25 @@ const writeDocuments = async <TState>(
       filter.updatedAt = 'updatedAt' in document.legacyOriginal ? document.legacyOriginal.updatedAt : { $exists: false };
       filter.checkpoint = 'checkpoint' in document.legacyOriginal ? document.legacyOriginal.checkpoint : { $exists: false };
     }
+    let transitions = verified.get(document.targetDocumentId);
     if (document.expectedRevision !== null) {
       const observed = await options.collection.findOne({ _id: document.targetDocumentId }, { session });
+      if (observed?.state === undefined) transitions = undefined;
       if (observed?.v2ObservedUpdatedAt !== undefined) {
         filter.updatedAt = observed.v2ObservedUpdatedAt;
         filter.checkpoint = observed.v2LegacyCheckpointPresent ? observed.v2LegacyCheckpoint : { $exists: false };
         $set.v2ObservedUpdatedAt = updatedAt;
       }
     }
-    const delta = document.expectedRevision !== null && $set.v2ObservedUpdatedAt === undefined
-      ? buildSourceCommitDelta(changes.get(document.targetDocumentId), originals.get(document.targetDocumentId), document.finalDocument, $set)
-      : undefined;
+    const { update, decision } = planSourceDocumentWrite(document, transitions, originals.get(document.targetDocumentId), $set);
+    try {
+      options.onSourceCommitPatchPlan?.({ ...decision, historyRecording: request.additionalWrites ? 'enabled' : 'disabled' });
+    } catch {
+      // Observability must not change the outcome of the source transaction.
+    }
     const result = await options.collection.updateOne(
       filter,
-      delta ?? { $set: { state: document.finalDocument, ...$set } },
+      update,
       { upsert: document.expectedRevision === null && !document.legacyOriginal, session }
     );
     if (!didWrite(result)) throw new Error(`${document.legacyOriginal || $set.v2ObservedUpdatedAt ? 'projection-v2-stale-legacy' : 'projection-v2-occ'}:document:${document.targetDocumentId}`);
@@ -287,9 +293,10 @@ async function persistSourceCommit<TState>(
   if (lacksLegacyOriginal(request, snapshot)) return terminal('Legacy document first touch requires original state CAS.');
   const failure = validateSnapshot(request, snapshot);
   if (failure) return failure.startsWith('legacy document changed') ? terminal(failure) : conflict(failure);
-  const invalidChange = validateProjectionChangesState(request, snapshot);
+  const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
+  const invalidChange = validateProjectionChangesState(request, snapshot, verified);
   if (invalidChange) return terminal(invalidChange);
-  const documentRevisions = await writeDocuments(request, options, session, snapshot);
+  const documentRevisions = await writeDocuments(request, options, session, snapshot, verified);
   const linkRevisions = await writeLinks(request, options, session);
   await writeOwnProgress(request, options, session);
   return appendSourceCommitChange(request, {

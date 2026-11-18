@@ -178,6 +178,7 @@ export {
 } from './registry';
 export type {
   ProjectionSourceCommitDocument,
+  ProjectionSourceCommitStatePatch,
   ProjectionSourceCommitLink,
   ProjectionInDocumentTargetProgress,
   ProjectionInDocumentCommitProgress,
@@ -208,9 +209,10 @@ export type {
 } from './projectionChanges';
 export {
   buildProjectionChangesReceipt, matchProjectionChangesReceipt, MISSING_PROJECTION_CHANGES_HISTORY,
-  projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState
+  projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState,
+  verifyProjectionSourceCommitStatePatches, type VerifiedProjectionSourceCommitStatePatch
 } from './projectionChanges';
-export { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
+export { equalProjectionChangeJson, isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
 export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
 export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {

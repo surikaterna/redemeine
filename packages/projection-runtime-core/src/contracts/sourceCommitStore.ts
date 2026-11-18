@@ -6,13 +6,20 @@ import {
   type ProjectionChangesRecord,
   type ProjectionChangesReceiptStatus,
   type ProjectionChangesSourceIdentity,
+  type ProjectionChangeTransition,
   validateProjectionChangesAppend
 } from './projectionChanges';
+
+/** Advisory ordered state patches; older adapters can persist the authoritative final document. */
+export type ProjectionSourceCommitStatePatch =
+  | { readonly kind: 'ordered'; readonly transitions: readonly ProjectionChangeTransition[] }
+  | { readonly kind: 'full'; readonly reason: 'nonportable-state' | 'unrepresentable-patch' };
 
 export interface ProjectionSourceCommitDocument<TState = unknown> {
   targetDocumentId: string;
   expectedRevision: number | null;
   finalDocument: TState;
+  statePatch?: ProjectionSourceCommitStatePatch;
   /** Original legacy fields observed before the first v2 write; absence is significant. */
   legacyOriginal?: ProjectionLegacyDocumentOriginal<TState>;
 }

@@ -84,11 +84,10 @@ function eventPatch(
 export function createProjectionChangeTransition(
   event: ProjectionSourceEvent,
   before: ProjectionJsonValue | undefined,
-  after: unknown,
+  after: ProjectionJsonValue,
   creating: boolean,
   captured?: CapturedHandlerPatches
 ): ProjectionChangeTransition {
-  if (!isPortableProjectionChangeJson(after)) throw new Error('Projection changes require portable JSON document state.');
   const identity = { eventId: event.eventId, eventIndex: event.eventIndex };
   if (creating) return { ...identity, changeType: 'create', patch: [{ op: 'add', path: '', value: after }] };
   if (before === undefined) throw new Error('Missing projection change snapshot.');

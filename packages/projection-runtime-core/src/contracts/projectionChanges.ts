@@ -4,7 +4,8 @@ import { replayProjectionChangeTransition } from './projectionChangePatch';
 import type { ProjectionJsonValue } from './sourceCommit';
 import type {
   CommitProjectionSourceCommitRequest,
-  ProjectionSourceCommitSnapshot
+  ProjectionSourceCommitSnapshot,
+  ProjectionSourceCommitSnapshotTarget
 } from './sourceCommitStore';
 import { projectionUuidToBase64Url22 } from './uuidCodec';
 
@@ -191,32 +192,70 @@ function transitionsMatchEvents(
   return true;
 }
 
-export function validateProjectionChangesState<TState>(
+function validateStateTransitions(
+  original: ProjectionSourceCommitSnapshotTarget | undefined,
+  result: unknown,
+  transitions: readonly ProjectionChangeTransition[],
+  exact: boolean
+): string | null {
+  if (!original) return 'projection change target is missing from the snapshot';
+  const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
+  let state: ProjectionJsonValue | undefined;
+  if (exists) {
+    if (!isPortableProjectionChangeJson(original.state)) return 'projection change snapshot must be portable JSON';
+    state = original.state;
+  }
+  for (const transition of transitions) {
+    const next = replayProjectionChangeTransition(state, transition);
+    // Replay never mutates its input; unchanged values keep the preceding transition's proof.
+    if (next === undefined || (!Object.is(next, state) && !isPortableProjectionChangeJson(next))) {
+      return 'projection change patch cannot be applied as portable JSON to the snapshot';
+    }
+    state = next;
+  }
+  return state !== undefined && (Object.is(state, result)
+    || (isPortableProjectionChangeJson(result) && equalProjectionChangeJson(state, result, exact)))
+    ? null : 'projection change patch does not match the final document';
+}
+
+export type VerifiedProjectionSourceCommitStatePatch = { transitions: readonly ProjectionChangeTransition[]; unchanged: boolean };
+
+/** Advisory data only: a missing or unproven hint must not change legacy full-document semantics. */
+export function verifyProjectionSourceCommitStatePatches<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   snapshot: Pick<ProjectionSourceCommitSnapshot<TState>, 'targets'>
+): ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch> {
+  const originals = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
+  const verified = new Map<string, VerifiedProjectionSourceCommitStatePatch>();
+  for (const document of request.finalDocuments) {
+    const hint = document.statePatch;
+    const original = originals.get(document.targetDocumentId);
+    if (original && hint?.kind === 'ordered' && Array.isArray(hint.transitions) && hint.transitions.length
+      && transitionsMatchEvents(hint.transitions, request.commit.events)
+      && validateStateTransitions(original, document.finalDocument, hint.transitions, true) === null) {
+      const unchanged = hint.transitions[0]!.changeType !== 'create' && (
+        hint.transitions.every(({ changeType }) => changeType === 'noop') ||
+        equalProjectionChangeJson(original.state as ProjectionJsonValue, document.finalDocument as ProjectionJsonValue, true)
+      );
+      verified.set(document.targetDocumentId, { transitions: hint.transitions, unchanged });
+    }
+  }
+  return verified;
+}
+
+export function validateProjectionChangesState<TState>(
+  request: CommitProjectionSourceCommitRequest<TState>,
+  snapshot: Pick<ProjectionSourceCommitSnapshot<TState>, 'targets'>,
+  verified?: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch>
 ): string | null {
   const append = request.additionalWrites?.[0];
   if (!append) return null;
   const originals = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
   const results = new Map(request.finalDocuments.map((target) => [target.targetDocumentId, target.finalDocument]));
   for (const target of append.targets) {
-    const original = originals.get(target.targetDocumentId);
-    if (!original) return 'projection change target is missing from the snapshot';
-    const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
-    const from: unknown = original.state;
-    let state: ProjectionJsonValue | undefined;
-    if (exists) {
-      if (!isPortableProjectionChangeJson(from)) return 'projection change snapshot must be portable JSON';
-      state = from;
-    }
-    for (const transition of target.transitions) {
-      state = replayProjectionChangeTransition(state, transition);
-      if (!isPortableProjectionChangeJson(state)) return 'projection change patch cannot be applied as portable JSON to the snapshot';
-    }
-    const result = results.get(target.targetDocumentId);
-    if (state === undefined || !isPortableProjectionChangeJson(result) || !equalProjectionChangeJson(state, result)) {
-      return 'projection change patch does not match the final document';
-    }
+    if (verified?.get(target.targetDocumentId)?.transitions === target.transitions) continue;
+    const failure = validateStateTransitions(originals.get(target.targetDocumentId), results.get(target.targetDocumentId), target.transitions, false);
+    if (failure) return failure;
   }
   return null;
 }

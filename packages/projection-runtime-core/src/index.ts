@@ -174,6 +174,7 @@ export type {
   ProjectionQueueRegistryBindResult,
   ProjectionQueueRegistryBindingPort,
   ProjectionSourceCommitDocument,
+  ProjectionSourceCommitStatePatch,
   ProjectionSourceCommitLink,
   ProjectionInDocumentTargetProgress,
   ProjectionInDocumentCommitProgress,
@@ -229,11 +230,14 @@ export {
   parseProjectionChangePointer,
   replayProjectionChangeTransition,
   isPortableProjectionChangeJson,
+  isFrozenPortableProjectionChangeJson,
   matchProjectionChangesReceipt,
   MISSING_PROJECTION_CHANGES_HISTORY,
   projectionChangesHistoryFailure,
   projectionChangesIdentity,
   validateProjectionChangeIdentityMetadata,
   projectionChangesResumeToken,
-  validateProjectionChangesState
+  validateProjectionChangesState,
+  verifyProjectionSourceCommitStatePatches,
+  type VerifiedProjectionSourceCommitStatePatch
 } from './contracts';

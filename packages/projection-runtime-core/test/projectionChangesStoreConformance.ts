@@ -83,6 +83,40 @@ export function defineProjectionChangesStoreConformance(
       expect(result.documentRevisions._bsontype).toBe(1);
       expect(records()).toEqual([]);
     });
+
+    test.each([true, false])('runtime no-op advances revision and inline progress with recording=%s', async (recording) => {
+      const { store, records } = create();
+      const { additionalWrites: _ignored, ...first } = projectionChangesRequest();
+      expect((await store.commitProjectionSourceCommit(first)).status).toBe('committed'); // Older caller, no hint or feed.
+      const { additionalWrites, ...next } = projectionChangesRequest(1);
+      const target = additionalWrites![0].targets[0]!;
+      const transitions = [{ ...target.transitions[0]!, changeType: 'noop' as const, patch: [] }];
+      const request: Request = {
+        ...next,
+        finalDocuments: [{ ...first.finalDocuments[0]!, expectedRevision: 1, statePatch: { kind: 'ordered', transitions } }],
+        progress: { strategy: 'in_document', targets: [{ targetDocumentId: 'one', expected: {}, final: { [sourceKey]: 1 } }] },
+        ...(recording ? { additionalWrites: [{ ...additionalWrites![0], targets: [{ ...target, transitions }] }] } : {})
+      };
+      expect(await store.commitProjectionSourceCommit(request)).toMatchObject({ status: 'committed', documentRevisions: { one: 2 } });
+      expect(await store.loadProjectionSourceCommitSnapshot(changeSnapshotRequest)).toMatchObject({
+        targets: [{ state: { value: 1, kept: 'yes' }, revision: 2, sourceProgress: { [sourceKey]: 1 } }]
+      });
+      expect(records()).toHaveLength(Number(recording));
+    });
+
+    test('the runtime full-state hint preserves a nonportable value without enabling history', async () => {
+      const { store, records } = create();
+      const { additionalWrites: _ignored, ...request } = projectionChangesRequest();
+      const document = request.finalDocuments[0]!;
+      const finalDocument = { ...document.finalDocument, shippedAt: new Date('2026-11-18T00:00:00Z') };
+      expect(await store.commitProjectionSourceCommit({ ...request, finalDocuments: [{ ...document, finalDocument,
+        statePatch: { kind: 'full', reason: 'nonportable-state' }
+      }] })).toMatchObject({ status: 'committed' });
+      expect(await store.loadProjectionSourceCommitSnapshot(changeSnapshotRequest)).toMatchObject({
+        targets: [{ state: finalDocument, revision: 1 }]
+      });
+      expect(records()).toEqual([]);
+    });
     test('commits feed, result, document, link and inline progress together, grouped by source commit', async () => {
       const { store, records } = create();
       const first = projectionChangesRequest();

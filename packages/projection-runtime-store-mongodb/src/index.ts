@@ -23,6 +23,7 @@ export type {
   MongoCollectionLike,
   MongoProjectionStoreOptions,
   MongoPatchPlanTelemetryEvent,
+  MongoSourceCommitPatchPlanEvent,
   MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
   MongoProjectionDedupeWarning,

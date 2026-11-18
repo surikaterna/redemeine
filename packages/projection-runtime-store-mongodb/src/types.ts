@@ -82,7 +82,18 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   patchPlanCacheMaxEntries?: number;
   onDedupeWarning?: (warning: MongoProjectionDedupeWarning) => void;
   onSourceCommitReconciliation?: (event: MongoSourceCommitReconciliation) => void;
+  /** Native write decisions (including retries); excludes target IDs, paths, and values. */
+  onSourceCommitPatchPlan?: (event: MongoSourceCommitPatchPlanEvent) => void;
 }
+
+export type MongoSourceCommitPatchDecision =
+  | { mode: 'metadata-only' | 'delta' }
+  | { mode: 'full'; reason: 'creation' | 'legacy-fence' | 'missing-state-patch' | 'invalid-state-patch'
+      | 'nonportable-state' | 'unrepresentable-patch' | 'unsafe-delta' | 'modifier-capacity' };
+
+export type MongoSourceCommitPatchPlanEvent = MongoSourceCommitPatchDecision & {
+  historyRecording: 'enabled' | 'disabled';
+};
 
 export interface MongoSourceCommitReconciliation {
   strategy: 'in_document' | 'own_record' | 'none';

@@ -1,8 +1,11 @@
-import { parseProjectionChangePointer, type ProjectionChangePatchOperation, type ProjectionChangeTarget } from '@redemeine/projection-runtime-core';
-import { patch6902ToMongoUpdatePlan } from '../patch6902ToMongoUpdatePlan';
-import type { MongoPatchCompiledUpdateDocumentPlan } from '../patch-planner/types';
+import {
+  parseProjectionChangePointer, type ProjectionChangePatchOperation, type ProjectionChangeTransition,
+  type ProjectionSourceCommitDocument, type VerifiedProjectionSourceCommitStatePatch
+} from '@redemeine/projection-runtime-core';
+import { BSON } from 'mongodb';
+import type { MongoSourceCommitPatchDecision } from '../types';
 
-type Mutation = { kind: 'set' | 'unset' | 'push' | 'pop'; path: string };
+type Mutation = { kind: '$set' | '$unset' | '$push' | '$pop'; path: string; value: unknown; newMemberOf?: string };
 
 function indexOf(token: string): number | undefined {
   if (!/^(0|[1-9][0-9]*)$/u.test(token)) return undefined;
@@ -10,95 +13,161 @@ function indexOf(token: string): number | undefined {
   return Number.isSafeInteger(index) ? index : undefined;
 }
 
-function readOwnMember(parent: unknown, key: string): unknown {
-  if (Array.isArray(parent)) {
-    const index = indexOf(key);
-    return index === undefined || index >= parent.length ? undefined : parent[index];
-  }
-  if (!parent || typeof parent !== 'object' || !isField(key) || !Object.hasOwn(parent, key)) return undefined;
-  return (parent as Record<string, unknown>)[key];
-}
-
 function isField(key: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/u.test(key);
 }
 
-function safeMutation(op: ProjectionChangePatchOperation, original: unknown): Mutation | undefined {
-  const tokens = parseProjectionChangePointer(op.path);
-  if (!tokens?.length) return undefined;
+function readOwnMember(parent: unknown, key: string): unknown {
+  if (!parent || typeof parent !== 'object' || !Object.hasOwn(parent, key)) return undefined;
+  if (Array.isArray(parent) ? indexOf(key) === undefined : !isField(key)) return undefined;
+  return (parent as Record<string, unknown>)[key];
+}
+
+function safeMutation(op: ProjectionChangePatchOperation, tokens: string[], original: unknown, single: boolean): Mutation | undefined {
+  if (!tokens.length) return undefined;
   const ancestors = tokens.slice(0, -1);
   const leaf = tokens[tokens.length - 1]!;
   const parent = ancestors.reduce<unknown>(readOwnMember, original);
   if (!parent || typeof parent !== 'object') return undefined;
+  const path = tokens.join('.');
   if (!Array.isArray(parent)) {
-    return isField(leaf) ? { kind: op.op === 'remove' ? 'unset' : 'set', path: tokens.join('.') } : undefined;
+    if (!isField(leaf)) return undefined;
+    if (op.op === 'remove') return { kind: '$unset', path, value: '' };
+    return { kind: '$set', path, value: op.value, ...(!Object.hasOwn(parent, leaf) ? { newMemberOf: ancestors.join('.') } : {}) };
   }
   const index = indexOf(leaf);
-  if (op.op === 'replace' && index !== undefined && index < parent.length) return { kind: 'set', path: tokens.join('.') };
-  if (!ancestors.length) return undefined;
-  const path = ancestors.join('.');
-  if (op.op === 'add' && (leaf === '-' || index === parent.length)) return { kind: 'push', path };
-  if (op.op === 'remove' && parent.length > 0 && (index === 0 || index === parent.length - 1)) return { kind: 'pop', path };
+  if (op.op === 'replace' && index !== undefined && index < parent.length) return { kind: '$set', path, value: op.value };
+  if (!single || !ancestors.length) return undefined;
+  return boundaryArrayMutation(op, ancestors.join('.'), leaf, index, parent.length);
+}
+
+function boundaryArrayMutation(
+  op: ProjectionChangePatchOperation, path: string, leaf: string, index: number | undefined, length: number
+): Mutation | undefined {
+  if (op.op === 'add' && (leaf === '-' || index === length)) return { kind: '$push', path, value: { $each: [op.value] } };
+  if (op.op === 'remove' && length > 0 && (index === 0 || index === length - 1)) {
+    return { kind: '$pop', path, value: index === 0 ? -1 : 1 };
+  }
   return undefined;
 }
 
-function safeMutations(patch: readonly ProjectionChangePatchOperation[], original: unknown): Mutation[] | undefined {
-  const mutations: Mutation[] = [];
-  for (const op of patch) {
-    const mutation = safeMutation(op, original);
-    if (!mutation || (patch.length > 1 && (mutation.kind === 'push' || mutation.kind === 'pop'))) return undefined;
-    mutations.push(mutation);
+/** Collapse a shift to the outermost array on that branch, so numeric paths after the shift need no separate proof. */
+function shiftArray(tokens: string[], original: unknown): string[] | undefined {
+  let firstArray: string[] | undefined;
+  let parent = original;
+  for (let i = 0; i < tokens.length; i++) {
+    if (Array.isArray(parent)) firstArray ??= tokens.slice(0, i);
+    if (i === tokens.length - 1) return Array.isArray(parent) && firstArray?.length ? firstArray : undefined;
+    parent = readOwnMember(parent, tokens[i]!);
   }
-  const sorted = mutations.map(({ path }) => path).sort((a, b) => a.split('.').length - b.split('.').length);
-  const unique = new Set<string>();
-  for (const path of sorted) {
-    const parts = path.split('.');
-    if (parts.some((_part, index) => unique.has(parts.slice(0, index + 1).join('.')))) return undefined;
-    unique.add(path);
+  return undefined;
+}
+
+function* operations(transitions: readonly ProjectionChangeTransition[]) {
+  for (const transition of transitions) yield* transition.patch;
+}
+
+function collapsedArrays(transitions: readonly ProjectionChangeTransition[], original: unknown, finalDocument: unknown, single: boolean) {
+  const arrays = new Map<string, Mutation>();
+  for (const op of operations(transitions)) {
+    if (op.op === 'replace') continue;
+    const tokens = parseProjectionChangePointer(op.path)!;
+    if (single && safeMutation(op, tokens, original, true)) continue;
+    const path = shiftArray(tokens, original);
+    if (!path) continue;
+    const finalArray = path.reduce<unknown>(readOwnMember, finalDocument);
+    if (Array.isArray(finalArray)) arrays.set(path.join('.'), { kind: '$set', path: path.join('.'), value: finalArray });
   }
-  return mutations;
+  return arrays;
 }
 
-function planMatches(plan: MongoPatchCompiledUpdateDocumentPlan, mutations: readonly Mutation[]): boolean {
-  const paths = { set: Object.keys(plan.set), unset: plan.unset, push: Object.keys(plan.push), pop: Object.keys(plan.pop) };
-  return Object.values(paths).reduce((sum, group) => sum + group.length, 0) === mutations.length
-    && mutations.every(({ kind, path }) => paths[kind].includes(path));
+function coveredByArray(tokens: string[], arrays: ReadonlyMap<string, Mutation>): boolean {
+  let prefix = '';
+  for (const token of tokens.slice(0, -1)) {
+    if (!isField(token)) return false;
+    prefix += prefix ? `.${token}` : token;
+    if (arrays.has(prefix)) return true;
+  }
+  return false;
 }
 
-function isProvenArraySet(plan: MongoPatchCompiledUpdateDocumentPlan, original: unknown): boolean {
-  if (!plan.orderedArraySet) return false;
-  const { path, originalLength } = plan.orderedArraySet;
-  const array = path.split('.').reduce<unknown>(readOwnMember, original);
-  return Array.isArray(array) && array.length === originalLength && planMatches(plan, [{ kind: 'set', path }]);
+function hasAncestor(path: string, mutations: ReadonlyMap<string, Mutation>): boolean {
+  for (let dot = path.indexOf('.'); dot >= 0; dot = path.indexOf('.', dot + 1)) {
+    if (mutations.has(path.slice(0, dot))) return true;
+  }
+  return false;
 }
 
-function underState(entries: Iterable<readonly [string, unknown]>): Record<string, unknown> {
-  return Object.fromEntries([...entries].map(([path, value]) => [`state.${path}`, value]));
+function formatUpdate(mutations: ReadonlyMap<string, Mutation>, metadata: Record<string, unknown>): Record<string, unknown> {
+  const update: Record<string, Record<string, unknown>> = { $set: metadata };
+  for (const { kind, path, value } of mutations.values()) {
+    (update[kind] ??= {})[`state.${path}`] = value;
+  }
+  return update;
 }
 
-/** Called only after the patch has been replayed against the transaction's revision-checked snapshot. */
-export function buildSourceCommitDelta<TState>(
-  change: ProjectionChangeTarget | undefined,
+/** Requires successful ordered replay against the revision-checked snapshot before using any modifier. */
+function buildSourceCommitDelta(
+  transitions: readonly ProjectionChangeTransition[],
   original: unknown,
-  finalDocument: TState,
+  finalDocument: unknown,
   metadata: Record<string, unknown>
 ): Record<string, unknown> | undefined {
-  const [transition] = change?.transitions ?? [];
-  if (change?.transitions.length !== 1 || transition?.changeType !== 'update') return undefined;
-  const patch = transition.patch;
-  const plan = patch6902ToMongoUpdatePlan(patch, finalDocument, { coalesceGuardedArrayEdits: true });
-  if (plan.mode !== 'compiled-update-document') return undefined;
-  if (!isProvenArraySet(plan, original)) {
-    const mutations = safeMutations(patch, original);
-    if (!mutations?.length || !planMatches(plan, mutations)) return undefined;
+  const single = transitions.reduce((count, { patch }) => count + patch.length, 0) === 1;
+  const arrays = collapsedArrays(transitions, original, finalDocument, single);
+  const mutations = new Map(arrays);
+  const parentsWithNewMembers = new Set<string>();
+  for (const op of operations(transitions)) {
+    const tokens = parseProjectionChangePointer(op.path)!;
+    if (coveredByArray(tokens, arrays)) continue;
+    const mutation = safeMutation(op, tokens, original, single);
+    if (!mutation || mutations.has(mutation.path)) return undefined;
+    // Mongo can add sibling fields in modifier sort order, not patch order.
+    const parent = mutation.newMemberOf;
+    if (parent !== undefined && parentsWithNewMembers.has(parent)) return undefined;
+    if (parent !== undefined) parentsWithNewMembers.add(parent);
+    mutations.set(mutation.path, mutation);
   }
-  // The revision-checked snapshot proves parents and indices; avoid dotted query semantics through arrays.
-  const push = Object.entries(plan.push);
-  const pop = Object.entries(plan.pop);
+  for (const path of mutations.keys()) if (hasAncestor(path, mutations)) return undefined;
+  return formatUpdate(mutations, { ...metadata });
+}
+
+function fullWriteReason(
+  document: ProjectionSourceCommitDocument,
+  legacyFence: boolean,
+  patch: VerifiedProjectionSourceCommitStatePatch | undefined
+): Extract<MongoSourceCommitPatchDecision, { mode: 'full' }>['reason'] | undefined {
+  if (legacyFence) return 'legacy-fence';
+  if (document.expectedRevision === null) return 'creation';
+  if (patch) return undefined;
+  const hint = document.statePatch;
+  if (!hint) return 'missing-state-patch';
+  if (hint.kind === 'full' && (hint.reason === 'nonportable-state' || hint.reason === 'unrepresentable-patch')) return hint.reason;
+  return 'invalid-state-patch';
+}
+
+export function planSourceDocumentWrite(
+  document: ProjectionSourceCommitDocument,
+  patch: VerifiedProjectionSourceCommitStatePatch | undefined,
+  original: unknown,
+  metadata: Record<string, unknown>
+): { update: Record<string, unknown>; decision: MongoSourceCommitPatchDecision } {
+  const reason = fullWriteReason(document, metadata.v2ObservedUpdatedAt !== undefined, patch);
+  const full = { $set: { ...metadata, state: document.finalDocument } };
+  if (!reason && patch) {
+    if (patch.unchanged) {
+      return { update: { $set: metadata }, decision: { mode: 'metadata-only' } };
+    }
+    const update = buildSourceCommitDelta(patch.transitions, original, document.finalDocument, metadata);
+    if (update) {
+      // Repeated dotted prefixes can make the modifier document larger than full-state persistence.
+      return BSON.calculateObjectSize(update) <= 16 * 1024 * 1024
+        ? { update, decision: { mode: 'delta' } }
+        : { update: full, decision: { mode: 'full', reason: 'modifier-capacity' } };
+    }
+  }
   return {
-    $set: { ...metadata, ...underState(Object.entries(plan.set)) },
-    ...(plan.unset.length ? { $unset: underState(plan.unset.map((path) => [path, ''])) } : {}),
-    ...(push.length ? { $push: underState(push.map(([path, value]) => [path, { $each: [value] }])) } : {}),
-    ...(pop.length ? { $pop: underState(pop) } : {})
+    update: full,
+    decision: { mode: 'full', reason: reason ?? 'unsafe-delta' }
   };
 }

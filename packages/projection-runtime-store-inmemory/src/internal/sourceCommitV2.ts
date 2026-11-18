@@ -15,7 +15,8 @@ import {
   projectionChangesIdentity,
   projectionChangesResumeToken,
   validateCommitProjectionSourceCommitRelationships,
-  validateProjectionChangesState
+  validateProjectionChangesState,
+  verifyProjectionSourceCommitStatePatches
 } from '@redemeine/projection-runtime-core';
 import type { StoredDocument } from './storedDocument';
 
@@ -169,7 +170,8 @@ const cloneV2State = (current: V2State): V2State => ({
 const applyDocuments = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
-  state: V2State
+  state: V2State,
+  verified: ReturnType<typeof verifyProjectionSourceCommitStatePatches> | undefined
 ): { documents: Map<string, StoredDocument<TState>>; revisions: Record<string, number> } => {
   const nextDocuments = new Map(documents);
   const revisions = new Map<string, number>();
@@ -180,9 +182,11 @@ const applyDocuments = <TState>(
     const revision = (document.expectedRevision ?? 0) + 1;
     const key = documentKey(request.projectionName, request.projectionGeneration, document.targetDocumentId);
     const sourceProgress = progress.get(document.targetDocumentId) ?? state.documentMetadata.get(key)?.sourceProgress ?? {};
-    const checkpoint = documents.get(document.targetDocumentId)?.checkpoint;
+    const stored = documents.get(document.targetDocumentId);
+    const checkpoint = stored?.checkpoint;
+    const unchanged = verified?.get(document.targetDocumentId)?.unchanged;
     nextDocuments.set(document.targetDocumentId, {
-      state: structuredClone(document.finalDocument),
+      state: unchanged && stored?.state !== undefined ? stored.state : structuredClone(document.finalDocument),
       ...(checkpoint === undefined ? {} : { checkpoint }),
       updatedAt: new Date().toISOString()
     });
@@ -218,7 +222,7 @@ function validateChangeSnapshot<TState>(
   documents: Map<string, StoredDocument<TState>>,
   state: V2State,
   checkState: boolean
-): string | null {
+): { failure?: string; verified?: ReturnType<typeof verifyProjectionSourceCommitStatePatches> } {
   const snapshot = loadV2Snapshot({
     projectionName: request.projectionName, projectionGeneration: request.projectionGeneration,
     targetDocumentIds: request.finalDocuments.map((document) => document.targetDocumentId), links: [],
@@ -226,11 +230,15 @@ function validateChangeSnapshot<TState>(
     ...(request.progress.strategy === 'own_record' ? { sourceId: request.commit.streamId } : {})
   }, documents, state);
   const historyFailure = projectionChangesHistoryFailure(request, snapshot);
-  if (historyFailure || !checkState) return historyFailure;
-  if (request.finalDocuments.some((document, index) => !isDeepStrictEqual(document.legacyOriginal, snapshot.targets[index]?.legacyOriginal))) {
-    return 'Legacy document first touch requires matching original state CAS.';
+  if (historyFailure) return { failure: historyFailure };
+  if (!checkState) return {};
+  if (request.additionalWrites && request.finalDocuments.some((document, index) =>
+    !isDeepStrictEqual(document.legacyOriginal, snapshot.targets[index]?.legacyOriginal))) {
+    return { failure: 'Legacy document first touch requires matching original state CAS.' };
   }
-  return validateProjectionChangesState(request, snapshot);
+  const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
+  const failure = validateProjectionChangesState(request, snapshot, verified);
+  return failure ? { failure } : { verified };
 }
 
 export const commitV2 = <TState>(
@@ -250,11 +258,12 @@ export const commitV2 = <TState>(
     }
   }
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
-  const invalidChange = request.additionalWrites ? validateChangeSnapshot(request, documents, current, failure === null) : null;
-  if (invalidChange) return { result: rejectMalformed(invalidChange) };
+  const patchCheck = request.additionalWrites || request.finalDocuments.some(({ statePatch }) => statePatch?.kind === 'ordered')
+    ? validateChangeSnapshot(request, documents, current, failure === null) : {};
+  if (patchCheck.failure) return { result: rejectMalformed(patchCheck.failure) };
   if (failure) return { result: reject(failure) };
   const state = cloneV2State(current);
-  const appliedDocuments = applyDocuments(request, documents, state);
+  const appliedDocuments = applyDocuments(request, documents, state, patchCheck.verified);
   const linkRevisions = applyLinks(request, state);
   applyProgress(request, state);
   const applicationId = identity && request.progress.strategy === 'none' ? randomUUID() : undefined;

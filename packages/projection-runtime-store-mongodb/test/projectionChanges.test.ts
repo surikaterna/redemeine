@@ -47,6 +47,9 @@ test('a late append failure rolls back a compiled delta, links and own-record pr
   type Request = typeof second;
   const next: Request = {
     ...second,
+    finalDocuments: [{ ...second.finalDocuments[0]!, statePatch: {
+      kind: 'ordered', transitions: second.additionalWrites![0].targets[0]!.transitions
+    } }],
     stagedLinks: [{ ...first.stagedLinks[0]!, operation: 'unsubscribe', expectedRevision: 1 }],
     progress: { strategy: 'own_record', source: { sourceId: second.commit.streamId, expectedSequence: null, finalSequence: 1 } }
   };
@@ -69,7 +72,7 @@ test('a late append failure rolls back a compiled delta, links and own-record pr
   for (const written of [collection, linkCollection, dedupeCollection]) expect(written.sessionLog.at(-1)?.session).toBe(session);
 });
 
-test('a multi-event patch uses a revision-checked full write, not a flattened delta', async () => {
+test('overlapping event patches use a revision-checked full write without rewriting history', async () => {
   const { store, collection, records } = fixtures();
   expect((await store.commitProjectionSourceCommit(projectionChangesRequest())).status).toBe('committed');
   const second = projectionChangesRequest(1);
@@ -77,14 +80,15 @@ test('a multi-event patch uses a revision-checked full write, not a flattened de
   const [target] = append.targets;
   const previousEvent = second.commit.events[0];
   const lastEvent = { ...previousEvent, eventIndex: 1, streamVersion: 2, eventId: 'last' };
+  const transitions = [...target!.transitions, {
+    changeType: 'update' as const, eventId: lastEvent.eventId, eventIndex: 1,
+    patch: [{ op: 'replace' as const, path: '/value', value: 3 }, { op: 'remove' as const, path: '/kept' }]
+  }];
   const request: CommitProjectionSourceCommitRequest<{ value: number; kept?: string }> = {
     ...second,
     commit: { ...second.commit, events: [previousEvent, lastEvent] },
-    finalDocuments: [{ ...second.finalDocuments[0]!, finalDocument: { value: 3 } }],
-    additionalWrites: [{ ...append, targets: [{ ...target!, transitions: [...target!.transitions, {
-      changeType: 'update', eventId: lastEvent.eventId, eventIndex: 1,
-      patch: [{ op: 'replace', path: '/value', value: 3 }, { op: 'remove', path: '/kept' }]
-    }] }] }]
+    finalDocuments: [{ ...second.finalDocuments[0]!, finalDocument: { value: 3 }, statePatch: { kind: 'ordered', transitions } }],
+    additionalWrites: [{ ...append, targets: [{ ...target!, transitions }] }]
   };
   expect((await store.commitProjectionSourceCommit(request)).status).toBe('committed');
   expect(collection.operationLog.filter(({ op }) => op === 'updateOne').at(-1)?.detail).toMatchObject({
