@@ -88,6 +88,8 @@ jobs:
           APPROVED_VERSIONS: ${{ inputs.approved_versions }}
           RELEASE_TAG: ${{ inputs.tag }}
       - run: pnpm -r build
+      - if: github.event_name == 'pull_request'
+        run: pnpm run check:projection-contract-consumer
       - run: pnpm run lint && pnpm run typecheck && pnpm test && pnpm run test:release:simple
       - name: Pack and check approved source versions
         id: pack
