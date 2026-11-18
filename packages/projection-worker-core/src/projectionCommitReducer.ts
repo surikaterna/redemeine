@@ -13,7 +13,7 @@ import type {
 import { isPortableProjectionChangeJson, MISSING_PROJECTION_CHANGES_HISTORY, projectionUuidToBase64Url22 } from '@redemeine/projection-runtime-core';
 import { enablePatches, produce, produceWithPatches, type Draft, type Patch } from 'immer';
 import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState } from './projectionCommitRouting';
-import { createProjectionChangeTransition } from './projectionChangeTransition';
+import { createProjectionChangeTransition, type CapturedHandlerPatches } from './projectionChangeTransition';
 
 let patchesEnabled = false;
 
@@ -170,7 +170,7 @@ function applyHandler<TState>(
   routed: RoutedEvent<TState>,
   targetId: string,
   capture: boolean
-): readonly Patch[] | undefined {
+): CapturedHandlerPatches | undefined {
   const recipe = (draft: Draft<TState>): void => {
     routed.handler(draft, routed.event, createContext(reduction, targetId));
   };
@@ -184,13 +184,14 @@ function applyHandler<TState>(
   } else {
     document.state = produce(document.state, recipe);
   }
+  const beforeHook = document.state;
   if (definition.hooks?.afterEach) {
-    const state = clone(document.state);
+    const state = clone(beforeHook);
     definition.hooks.afterEach(state, routed.event);
     document.state = state;
   }
   reduction.touched.add(targetId);
-  return patches;
+  return patches && { patches, ...(definition.hooks?.afterEach ? { beforeHook: { state: beforeHook } } : {}) };
 }
 
 function applyTargetEvent<TState>(
@@ -210,7 +211,7 @@ function applyTargetEvent<TState>(
     before = document.state;
   }
   const patches = applyHandler(definition, reduction, document, routed, targetId,
-    recorded !== undefined && !creating && !definition.hooks?.afterEach);
+    recorded !== undefined && !creating);
   if (!recorded) return;
   const transition = clone(createProjectionChangeTransition(sourceEvent, before, document.state, creating, patches));
   if (transitions) transitions.push(transition);

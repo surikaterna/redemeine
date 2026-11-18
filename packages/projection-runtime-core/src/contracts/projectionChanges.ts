@@ -1,5 +1,6 @@
-import { equalProjectionChangeJson, isPortableProjectionChangeKey, isPortableProjectionChangeJson } from './projectionChangeJson';
+import { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
 import { validateProjectionChangeIdentityMetadata, validateProjectionChangeWriteMetadata } from './projectionChangeMetadata';
+import { replayProjectionChangeTransition } from './projectionChangePatch';
 import type { ProjectionJsonValue } from './sourceCommit';
 import type {
   CommitProjectionSourceCommitRequest,
@@ -7,7 +8,7 @@ import type {
 } from './sourceCommitStore';
 import { projectionUuidToBase64Url22 } from './uuidCodec';
 
-/** The commit-native producer emits this deterministic subset of RFC 6902. */
+/** Ordered RFC 6902 operations over portable JSON, including object members and array elements. */
 export type ProjectionChangePatchOperation =
   | { readonly op: 'add' | 'replace'; readonly path: string; readonly value: ProjectionJsonValue }
   | { readonly op: 'remove'; readonly path: string };
@@ -190,51 +191,6 @@ function transitionsMatchEvents(
   return true;
 }
 
-function isObject(value: ProjectionJsonValue | undefined): value is Record<string, ProjectionJsonValue> {
-  return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function applyMember(
-  document: Record<string, ProjectionJsonValue>,
-  operation: ProjectionChangePatchOperation
-): boolean {
-  if (!/^\/(?:[^/~]|~[01])*$/.test(operation.path)) return false;
-  const key = operation.path.slice(1).replaceAll('~1', '/').replaceAll('~0', '~');
-  if (!isPortableProjectionChangeKey(key)) return false;
-  const exists = Object.hasOwn(document, key);
-  if (operation.op === 'remove') return exists && delete document[key];
-  if (operation.op !== 'add' && operation.op !== 'replace') return false;
-  if (!isPortableProjectionChangeJson(operation.value) || (operation.op === 'replace' && !exists)) return false;
-  Object.defineProperty(document, key, { value: operation.value, configurable: true, enumerable: true, writable: true });
-  return true;
-}
-
-function applyTransition(
-  state: ProjectionJsonValue | undefined,
-  transition: ProjectionChangeTransition
-): ProjectionJsonValue | undefined {
-  const [first] = transition.patch;
-  if (transition.patch.length === 0) return transition.changeType === 'noop' ? state : undefined;
-  if (!first || !validOperationShape(first)) return undefined;
-  if (first.path === '') {
-    const creating = state === undefined;
-    return transition.patch.length === 1 && transition.changeType === (creating ? 'create' : 'update')
-      && first.op === (creating ? 'add' : 'replace') && 'value' in first && isPortableProjectionChangeJson(first.value)
-      ? first.value : undefined;
-  }
-  if (!isObject(state) || transition.changeType !== 'update') return undefined;
-  const next = { ...state };
-  for (const operation of transition.patch) {
-    if (!validOperationShape(operation) || !applyMember(next, operation)) return undefined;
-  }
-  return next;
-}
-
-function validOperationShape(operation: ProjectionChangePatchOperation): boolean {
-  return Boolean(operation) && typeof operation.path === 'string'
-    && Object.keys(operation).every((key) => key === 'op' || key === 'path' || (key === 'value' && operation.op !== 'remove'));
-}
-
 export function validateProjectionChangesState<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   snapshot: Pick<ProjectionSourceCommitSnapshot<TState>, 'targets'>
@@ -254,7 +210,7 @@ export function validateProjectionChangesState<TState>(
       state = from;
     }
     for (const transition of target.transitions) {
-      state = applyTransition(state, transition);
+      state = replayProjectionChangeTransition(state, transition);
       if (!isPortableProjectionChangeJson(state)) return 'projection change patch cannot be applied as portable JSON to the snapshot';
     }
     const result = results.get(target.targetDocumentId);

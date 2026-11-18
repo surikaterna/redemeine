@@ -102,7 +102,30 @@ const getByPath = (doc: AnyRecord, path: string): unknown => {
   return current;
 };
 
-const setByPath = (doc: AnyRecord, path: string, value: unknown): void => {
+function strictPath(doc: AnyRecord, path: string): [AnyRecord, string] {
+  const parts = path.split('.');
+  const leaf = parts.pop()!;
+  let current = doc;
+  for (const part of parts) {
+    if (!Object.hasOwn(current, part) || (Array.isArray(current) && !/^(0|[1-9][0-9]*)$/.test(part))) {
+      throw new Error(`Unsupported fake Mongo path: ${path}`);
+    }
+    const next = current[part];
+    if (!next || typeof next !== 'object') throw new Error(`Unsupported fake Mongo parent: ${path}`);
+    current = next as AnyRecord;
+  }
+  if (Array.isArray(current) && (!/^(0|[1-9][0-9]*)$/.test(leaf) || !Object.hasOwn(current, leaf))) {
+    throw new Error(`Unsupported fake Mongo array slot: ${path}`);
+  }
+  return [current, leaf];
+}
+
+const setByPath = (doc: AnyRecord, path: string, value: unknown, strict = false): void => {
+  if (strict) {
+    const [parent, key] = strictPath(doc, path);
+    Object.defineProperty(parent, key, { value, configurable: true, enumerable: true, writable: true });
+    return;
+  }
   if (!path.includes('.')) {
     doc[path] = value;
     return;
@@ -123,7 +146,13 @@ const setByPath = (doc: AnyRecord, path: string, value: unknown): void => {
   current[leaf] = value;
 };
 
-const unsetByPath = (doc: AnyRecord, path: string): void => {
+const unsetByPath = (doc: AnyRecord, path: string, strict = false): void => {
+  if (strict) {
+    const [parent, key] = strictPath(doc, path);
+    if (Array.isArray(parent)) throw new Error(`Unsupported fake Mongo array unset: ${path}`);
+    delete parent[key];
+    return;
+  }
   if (!path.includes('.')) {
     delete doc[path];
     return;
@@ -196,6 +225,12 @@ const evaluateExpression = (expression: unknown, root: AnyRecord): unknown => {
   if ('$size' in expression) {
     const value = evaluateExpression(expression.$size, root);
     return Array.isArray(value) ? value.length : 0;
+  }
+
+  if ('$cond' in expression) {
+    const args = expression.$cond;
+    if (!Array.isArray(args) || args.length !== 3) throw new Error('Unsupported fake Mongo condition.');
+    return evaluateExpression(evaluateExpression(args[0], root) === true ? args[1] : args[2], root);
   }
 
   if ('$subtract' in expression) {
@@ -341,7 +376,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
   readonly sessionLog: Array<{ method: string; session: unknown }> = [];
   private updateFailure: { id: string; error: Error } | undefined;
 
-  constructor() {
+  constructor(private readonly strictUpdates = false) {
     InMemoryMongoCollection.allCollections.add(this as unknown as InMemoryMongoCollection<{ _id: string }>);
   }
 
@@ -409,6 +444,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     const next = cloneValue(base) as AnyRecord;
 
     if (Array.isArray(update)) {
+      if (this.strictUpdates) throw new Error('Pipeline updates are not supported by strict fake Mongo.');
       for (const stage of update) {
         const set = (stage.$set as Record<string, unknown> | undefined) ?? {};
         for (const [path, value] of Object.entries(set)) {
@@ -416,6 +452,9 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
         }
       }
     } else {
+      if (this.strictUpdates && Object.keys(update).some((key) => !['$set', '$unset', '$push', '$pop', '$setOnInsert'].includes(key))) {
+        throw new Error('Unsupported modifier in strict fake Mongo.');
+      }
       const set = (update.$set as Record<string, unknown> | undefined) ?? {};
       const unset = (update.$unset as Record<string, unknown> | undefined) ?? {};
       const push = (update.$push as Record<string, unknown> | undefined) ?? {};
@@ -426,12 +465,17 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
       Object.assign(next, setOnInsert);
 
       for (const [path, value] of Object.entries(set)) {
-        setByPath(next, path, value);
+        setByPath(next, path, value, this.strictUpdates);
       }
 
       for (const [path, value] of Object.entries(push)) {
         const currentValue = getByPath(next, path);
-        if (Array.isArray(currentValue)) {
+        if (this.strictUpdates) {
+          if (!Array.isArray(currentValue) || !isRecord(value) || !Array.isArray(value.$each) || Object.keys(value).length !== 1) {
+            throw new Error(`Unsupported fake Mongo push: ${path}`);
+          }
+          currentValue.push(...value.$each);
+        } else if (Array.isArray(currentValue)) {
           currentValue.push(value);
         } else {
           setByPath(next, path, [value]);
@@ -440,6 +484,9 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
 
       for (const [path, value] of Object.entries(pop)) {
         const currentValue = getByPath(next, path);
+        if (this.strictUpdates && (!Array.isArray(currentValue) || currentValue.length === 0 || (value !== -1 && value !== 1))) {
+          throw new Error(`Unsupported fake Mongo pop: ${path}`);
+        }
         if (!Array.isArray(currentValue) || currentValue.length === 0) {
           continue;
         }
@@ -455,7 +502,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
       }
 
       for (const path of Object.keys(unset)) {
-        unsetByPath(next, path);
+        unsetByPath(next, path, this.strictUpdates);
       }
     }
 
@@ -475,6 +522,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     this.operationLog.push({ op: 'bulkWrite', detail: { count: operations.length } });
     this.sessionLog.push({ method: 'bulkWrite', session: options?.session });
 
+    let matchedCount = 0;
     let modifiedCount = 0;
     let upsertedCount = 0;
     let deletedCount = 0;
@@ -487,7 +535,8 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
           {
             upsert: operation.updateOne.upsert
           }
-        )) as { modifiedCount?: number; upsertedCount?: number };
+        )) as { matchedCount?: number; modifiedCount?: number; upsertedCount?: number };
+        matchedCount += result.matchedCount ?? 0;
         modifiedCount += result.modifiedCount ?? 0;
         upsertedCount += result.upsertedCount ?? 0;
         continue;
@@ -505,6 +554,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     }
 
     return {
+      matchedCount,
       modifiedCount,
       upsertedCount,
       deletedCount

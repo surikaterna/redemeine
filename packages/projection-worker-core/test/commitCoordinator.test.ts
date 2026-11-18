@@ -110,14 +110,16 @@ describe('commit-native projection changes', () => {
     if (result.status !== 'planned') throw new Error(`Unexpected ${result.status}`);
     const transitions = result.request.additionalWrites?.[0].targets[0]?.transitions;
     expect(transitions?.[0]?.patch).toEqual([
-      { op: 'replace', path: '/0', value: 'new' },
-      { op: 'replace', path: '/a~0~1b', value: [1, 4, 5, 3] }
+      { op: 'replace', path: '/a~0~1b/1', value: 4 },
+      { op: 'replace', path: '/a~0~1b/2', value: 5 },
+      { op: 'add', path: '/a~0~1b/3', value: 3 },
+      { op: 'replace', path: '/0', value: 'new' }
     ]);
     expect(transitions?.[1]).toMatchObject({ changeType: 'noop', patch: [] });
     expect(validateProjectionChangesState(result.request, snapshot)).toBeNull();
   });
 
-  test('normalizes root array edits to an RFC 6902 root replacement', () => {
+  test('keeps numeric Immer paths for edits to a root array', () => {
     const initial = [1, 2];
     const definition = createProjection('orders', () => initial)
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
@@ -128,7 +130,9 @@ describe('commit-native projection changes', () => {
     const result = reduceProjectionSourceCommit(definition, 'g1', commit(0), snapshot, undefined, 'order_views');
     if (result.status !== 'planned') throw new Error(`Unexpected ${result.status}`);
     expect(result.request.additionalWrites?.[0].targets[0]?.transitions[0]?.patch).toEqual([
-      { op: 'replace', path: '', value: [0, 1, 2] }
+      { op: 'replace', path: '/0', value: 0 },
+      { op: 'replace', path: '/1', value: 1 },
+      { op: 'add', path: '/2', value: 2 }
     ]);
     expect(validateProjectionChangesState(result.request, snapshot)).toBeNull();
   });
@@ -152,7 +156,7 @@ describe('commit-native projection changes', () => {
       count: 0, seen: [], 'a~/b': 'initial', defaults: { ready: true }
     })).from(aggregate, {
       Added: (draft) => { draft.count += 1; },
-      Hook: () => {},
+      Hook: (draft) => { draft.seen.push('handler'); },
       NoOp: (draft) => { draft.count += 1; }
     }).identity(() => ['two', 'one', 'two']).hooks({
       afterEach: (state, event) => {
@@ -178,13 +182,15 @@ describe('commit-native projection changes', () => {
         { eventIndex: 0, eventId: source.events[0].eventId, changeType: 'create', patch: [{ op: 'add', path: '',
           value: { count: 1, seen: [], 'a~/b': 'initial', defaults: { ready: true } } }] },
         { eventIndex: 2, eventId: source.events[2]?.eventId, changeType: 'update', patch: [
-          { op: 'replace', path: '/a~0~1b', value: 'updated' }, { op: 'replace', path: '/seen', value: ['hook'] }
+          { op: 'add', path: '/seen/0', value: 'handler' },
+          { op: 'replace', path: '/a~0~1b', value: 'updated' },
+          { op: 'add', path: '/seen/1', value: 'hook' }
         ] },
         { eventIndex: 3, eventId: source.events[3]?.eventId, changeType: 'noop', patch: [] }
       ]);
     }
     expect(result.request.finalDocuments.map(({ finalDocument }) => finalDocument)).toEqual(Array(2).fill(
-      { count: 1, seen: ['hook'], 'a~/b': 'updated', defaults: { ready: true } }
+      { count: 1, seen: ['handler', 'hook'], 'a~/b': 'updated', defaults: { ready: true } }
     ));
   });
 

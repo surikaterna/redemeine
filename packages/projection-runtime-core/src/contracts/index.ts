@@ -211,6 +211,7 @@ export {
   projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState
 } from './projectionChanges';
 export { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
+export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
 export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {
   evaluateCutoverReadiness,

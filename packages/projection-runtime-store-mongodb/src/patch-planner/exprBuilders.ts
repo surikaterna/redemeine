@@ -46,6 +46,12 @@ export const buildTypeGuardExpr = (
   $eq: [{ $type: buildFieldRef(safeTokens) }, expected]
 });
 
+export function buildArrayLengthGuardExpr(tokens: readonly string[], length: number): Record<string, unknown> {
+  const ancestry = tokens.map((_token, index) => buildTypeGuardExpr(tokens.slice(0, index), 'object'));
+  return { $cond: [{ $and: [...ancestry, buildTypeGuardExpr(tokens, 'array')] },
+    { $eq: [{ $size: buildFieldRef(tokens) }, length] }, false] };
+}
+
 export const buildStrictEqualityExpr = (safeTokens: readonly string[], value: unknown): Record<string, unknown> => {
   const fieldRef = buildFieldRef(safeTokens);
   const expectedType = mongoTypeForValue(value);

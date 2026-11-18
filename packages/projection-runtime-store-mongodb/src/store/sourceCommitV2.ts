@@ -156,10 +156,12 @@ const validateSnapshot = <TState>(
 const writeDocuments = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
-  session: ClientSession
+  session: ClientSession,
+  snapshot: ProjectionSourceCommitSnapshot<TState>
 ): Promise<Record<string, number>> => {
   const revisions = new Map<string, number>();
   const changes = new Map(request.additionalWrites?.[0].targets.map((target) => [target.targetDocumentId, target]));
+  const originals = new Map(snapshot.targets.map(({ targetDocumentId, state }) => [targetDocumentId, state]));
   const progress = request.progress.strategy === 'in_document'
     ? new Map(request.progress.targets.map((target) => [target.targetDocumentId, target.final]))
     : new Map<string, Readonly<Record<ProjectionUuidBase64Url22, number>>>();
@@ -192,7 +194,7 @@ const writeDocuments = async <TState>(
       }
     }
     const delta = document.expectedRevision !== null && $set.v2ObservedUpdatedAt === undefined
-      ? buildSourceCommitDelta(changes.get(document.targetDocumentId), document.finalDocument, $set)
+      ? buildSourceCommitDelta(changes.get(document.targetDocumentId), originals.get(document.targetDocumentId), document.finalDocument, $set)
       : undefined;
     const result = await options.collection.updateOne(
       filter,
@@ -287,7 +289,7 @@ async function persistSourceCommit<TState>(
   if (failure) return failure.startsWith('legacy document changed') ? terminal(failure) : conflict(failure);
   const invalidChange = validateProjectionChangesState(request, snapshot);
   if (invalidChange) return terminal(invalidChange);
-  const documentRevisions = await writeDocuments(request, options, session);
+  const documentRevisions = await writeDocuments(request, options, session, snapshot);
   const linkRevisions = await writeLinks(request, options, session);
   await writeOwnProgress(request, options, session);
   return appendSourceCommitChange(request, {
