@@ -1,5 +1,9 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
-import type { ProjectionUuidBase64Url22 } from '@redemeine/projection-runtime-core';
+import type {
+  CommitProjectionSourceCommitCommitted,
+  ProjectionChangesReceipt,
+  ProjectionUuidBase64Url22
+} from '@redemeine/projection-runtime-core';
 import type { Checkpoint } from './contracts';
 
 export interface ProjectionDocumentRecord<TState = unknown> {
@@ -34,6 +38,18 @@ export interface ProjectionDedupeRecord {
   acceptedBaselineSequence?: number;
 }
 
+type RevisionEntry = readonly [key: string, revision: number];
+type LegacyRevisionMaps = Pick<CommitProjectionSourceCommitCommitted, 'documentRevisions' | 'linkRevisions'>;
+
+export type MongoProjectionChangesRecord = ProjectionChangesReceipt & {
+  _id: string;
+  outcome: Pick<CommitProjectionSourceCommitCommitted, 'progress'> & ({
+    /** IDs are values here so BSON cannot reinterpret them as field names. */
+    documentRevisionEntries: readonly RevisionEntry[];
+    linkRevisionEntries: readonly RevisionEntry[];
+  } | LegacyRevisionMaps);
+};
+
 export interface MongoCollectionLike<TDocument extends Document = Document> {
   findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
   updateOne(
@@ -57,6 +73,8 @@ export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
   linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
   dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
+  /** Dedicated projection_changes collection on the same transactional deployment. */
+  changeCollection?: Pick<MongoCollectionLike<MongoProjectionChangesRecord>, 'findOne' | 'updateOne'>;
   mongoClient: MongoClientLike;
   transactionOptions?: TransactionOptions;
   now?: () => string;

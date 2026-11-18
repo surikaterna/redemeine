@@ -11,6 +11,7 @@ import {
   type ProjectionDocumentRecord,
   type ProjectionLinkRecord
 } from '../src';
+import { checkRealProjectionChanges } from './realProjectionChanges';
 
 const uri = process.env.REDEMEINE_MONGO_URI;
 if (!uri) throw new Error('REDEMEINE_MONGO_URI is required');
@@ -287,6 +288,7 @@ const run = async (): Promise<void> => {
   assert(JSON.stringify(await dedupe.findOne({ projectionName: 'oversized-own' })) === JSON.stringify(baselineOwn), 'own rollback advanced scalar progress');
 
   const buildInfo = await db.admin().command({ buildInfo: 1 });
+  await checkRealProjectionChanges(db, client);
   const receipt = {
     databaseName,
     mongoVersion: buildInfo.version,
@@ -301,6 +303,7 @@ const run = async (): Promise<void> => {
     driverUnknownCommitRetries: commitTransactionFailures,
     storeReconciliations,
     noneDedupeOperations,
+    projectionChangesAtomicity: 'passed',
     cleanup: 'pending'
   };
   await db.dropDatabase();

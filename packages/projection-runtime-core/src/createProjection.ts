@@ -188,6 +188,8 @@ export interface ProjectionDefinition<TState = unknown> {
 export interface ProjectionCommitDefinition<TState = unknown>
   extends Omit<ProjectionDefinition<TState>, 'deduplication'> {
   deduplication: ProjectionDeduplicationStrategy;
+  /** Logical document collection for the commit-native change feed. */
+  projectionChanges?: string;
 }
 
 /**
@@ -241,6 +243,7 @@ export interface ProjectionBuilder<TState> {
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
 
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+  recordChanges(collection: string): ProjectionBuilder<TState>;
   
   /**
    * Build the final projection definition
@@ -250,13 +253,14 @@ export interface ProjectionBuilder<TState> {
 
 export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+  recordChanges(collection: string): ProjectionCommitBuilder<TState>;
   buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }
 
 /**
  * Internal builder implementation
  */
-class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
+class ProjectionBuilderImpl<TState> implements ProjectionCommitBuilder<TState> {
   private _name: string;
   private _initialState: (id: string) => TState;
   private _identity: (event: BaseProjectionEvent) => string | readonly string[];
@@ -265,6 +269,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _reverseSubscribeStreams: ReverseSubscribeStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
+  private _projectionChanges: string | undefined;
 
   constructor(name: string, initialState: (id: string) => TState) {
     this._name = name;
@@ -359,12 +364,22 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  recordChanges(collection: string): this {
+    if (!collection.trim()) throw new Error('Projection changes require a logical collection name.');
+    this._projectionChanges = collection;
+    return this;
+  }
+
   buildCommitDefinition(): ProjectionCommitDefinition<TState> {
     const definition = this.build();
     if (!definition.deduplication) {
       throw new Error(`Projection '${this._name}' requires an explicit deduplication strategy.`);
     }
-    return definition as ProjectionCommitDefinition<TState>;
+    return {
+      ...definition,
+      deduplication: definition.deduplication,
+      ...(this._projectionChanges !== undefined ? { projectionChanges: this._projectionChanges } : {})
+    };
   }
 
   build(): ProjectionDefinition<TState> {

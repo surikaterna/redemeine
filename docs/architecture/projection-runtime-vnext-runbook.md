@@ -67,6 +67,7 @@ The following boundaries are mandatory for incident triage and recovery:
 | Hydration/rebuild status | `_projection.status` metadata (`hydrating`, `ready`, `rebuilding`, `failed`) and generation references | In-progress hydration buffers and local rebuild executors | Status must remain externally observable across crashes and resumes |
 | OCC + cache policy | OCC preconditions and failure category (`conflict`/`transient`/`terminal`) persisted in write outcomes | Worker state cache entries and queue-local retry bookkeeping | Retryable failures evict affected cache and requeue; terminal failures do not loop |
 | Global micro-batch (`all`) | Atomic/bulk commit outcome and watermark progression | Batch assembly window and local grouping queue | Crash before commit may replay whole window; crash after commit must not double-apply |
+| Commit-native projection changes | [Opt-in `projection_changes` records](./projection-changes.md) | Event-level patch planning during reduction | A change record is durable only with the same source commit's document, link, and progress writes |
 
 ## Runtime modes and operator playbooks
 

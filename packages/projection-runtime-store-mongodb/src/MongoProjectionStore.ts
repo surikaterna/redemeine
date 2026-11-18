@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
@@ -11,6 +12,7 @@ import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, Pro
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
+import { isUnknownSourceCommitOutcome, readSourceCommitChange } from './store/sourceCommitChanges';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
 import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
@@ -37,6 +39,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     this.now = options.now ?? defaultNow;
     this.patchPlanTelemetry = options.patchPlanTelemetry;
     this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
+  }
+
+  get projectionChangesCapability(): 'atomic-turn-receipts-v1' | undefined {
+    return this.options.changeCollection ? 'atomic-turn-receipts-v1' : undefined;
   }
 
   async load(documentId: string): Promise<TState | null> {
@@ -86,6 +92,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
     await this.initializeProjectionSourceCommitStore();
+    if (request.changeIdentity && this.options.changeCollection) {
+      return this.createTransactionExecutor()((session) => loadMongoV2Snapshot(request, this.options, session));
+    }
     return loadMongoV2Snapshot(request, this.options);
   }
 
@@ -95,13 +104,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
-    const malformed = validateCommitProjectionSourceCommitRelationships(request);
+    const malformed = validateCommitProjectionSourceCommitRelationships(request)
+      ?? (request.additionalWrites && !this.options.changeCollection ? 'projection_changes collection is not configured' : null);
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
     }
+    const applicationId = request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined;
     try {
       await this.initializeProjectionSourceCommitStore();
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor());
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), applicationId);
       if (result.status === 'committed') {
         try {
           await this.reportDedupeWarnings(request);
@@ -111,8 +122,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       }
       return result;
     } catch (error) {
-      if (!this.isUnknownCommitOutcome(error)) throw error;
-      return this.reconcileUnknownCommit(request);
+      if (!isUnknownSourceCommitOutcome(error)) throw error;
+      return this.reconcileUnknownCommit(request, applicationId);
     }
   }
 
@@ -158,13 +169,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
   }
 
-  private isUnknownCommitOutcome(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const labelled = error as Error & { hasErrorLabel?: (label: string) => boolean };
-    return labelled.hasErrorLabel?.('UnknownTransactionCommitResult') === true;
-  }
-
-  private async reconcileUnknownCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
+  private async reconcileUnknownCommit(
+    request: CommitProjectionSourceCommitRequest<TState>, applicationId?: string
+  ): Promise<CommitProjectionSourceCommitResult> {
+    if (request.additionalWrites) {
+      const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId });
+      this.reportReconciliation(request, receipt?.status === 'committed' ? 'committed' : 'ambiguous');
+      if (receipt && (applicationId === undefined || receipt.status === 'committed')) return receipt;
+      return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
+    }
     if (request.progress.strategy === 'none') {
       this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };

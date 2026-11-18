@@ -140,6 +140,8 @@ export interface ProjectionDefinition<TState = unknown> {
 
 export interface ProjectionCommitDefinition<TState = unknown> extends Omit<ProjectionDefinition<TState>, 'deduplication'> {
   deduplication: ProjectionDeduplicationStrategy;
+  /** Logical document collection for the commit-native change feed. */
+  projectionChanges?: string;
 }
 
 export interface ProjectionBuilder<TState> {
@@ -159,10 +161,12 @@ export interface ProjectionBuilder<TState> {
   ): ProjectionBuilder<AggregateStateOf<TAggregate>>;
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+  recordChanges(collection: string): ProjectionBuilder<TState>;
   build(): ProjectionDefinition<TState>;
 }
 
 export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+  recordChanges(collection: string): ProjectionCommitBuilder<TState>;
   buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }

@@ -192,6 +192,23 @@ export type {
   ProjectionSourceCommitStorePort
 } from './sourceCommitStore';
 export { validateCommitProjectionSourceCommitRelationships } from './sourceCommitStore';
+export type {
+  ProjectionChangePatchOperation,
+  ProjectionChangeTransition,
+  ProjectionChangeTarget,
+  ProjectionChangesAppend,
+  ProjectionChangesRecord,
+  ProjectionChangesEmptyReceipt,
+  ProjectionChangesReceipt,
+  ProjectionChangesReceiptStatus,
+  ProjectionChangesSourceIdentity
+} from './projectionChanges';
+export {
+  buildProjectionChangesReceipt, matchProjectionChangesReceipt, MISSING_PROJECTION_CHANGES_HISTORY,
+  projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState
+} from './projectionChanges';
+export { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
+export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {
   evaluateCutoverReadiness,
   transitionToCutover,

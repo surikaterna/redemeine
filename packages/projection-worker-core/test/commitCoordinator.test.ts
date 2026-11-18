@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from '@jest/globals';
+import { createProjection } from '@redemeine/projection';
 import type {
   CommitProjectionSourceCommitRequest,
   ProjectionCommitDefinition,
@@ -15,6 +16,8 @@ import {
   createProjectionLaneScheduler,
   reduceProjectionSourceCommit
 } from '../src';
+import { executeProjectionDefinition } from '../src/projectionDefinitionExecutor';
+import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
 
 const SOURCE_A = '00000000-0000-4000-8000-000000000001';
 const SOURCE_B = '00000000-0000-4000-8000-000000000002';
@@ -63,6 +66,169 @@ function definition(
   };
 }
 
+describe('commit-native projection changes', () => {
+  test('groups fanout by target and preserves creation defaults, hook-only changes, escaped paths and event order', () => {
+    type FeedState = State & { 'a~/b': string; defaults: { ready: boolean } };
+    const aggregate = { aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } };
+    const builder = createProjection<FeedState>('orders', () => ({
+      count: 0, seen: [], 'a~/b': 'initial', defaults: { ready: true }
+    })).from(aggregate, {
+      Added: (draft) => { draft.count += 1; },
+      Hook: () => {},
+      NoOp: () => {}
+    }).identity(() => ['two', 'one', 'two']).hooks({
+      afterEach: (state, event) => {
+        if (event.type !== 'Hook') return;
+        state['a~/b'] = 'updated';
+        state.seen.push('hook');
+      }
+    }).deduplication({ strategy: 'own_record' }).recordChanges('order_views');
+    expect(builder.build()).not.toHaveProperty('projectionChanges');
+    const source = commit(0, SOURCE_A, ['Added', 'Ignored', 'Hook', 'NoOp']);
+    const result = reduceProjectionSourceCommit(builder.buildCommitDefinition(), 'g1', source, {
+      ...snapshot(),
+      targets: ['one', 'two'].map((targetDocumentId) =>
+        ({ targetDocumentId, state: null, revision: null, sourceProgress: {} }))
+    });
+    expect(result.status).toBe('planned');
+    if (result.status !== 'planned') return;
+    const append = result.request.additionalWrites?.[0];
+    expect(append).toMatchObject({ kind: 'projection_changes', collection: 'order_views' });
+    expect(append?.targets.map(({ targetDocumentId }) => targetDocumentId)).toEqual(['one', 'two']);
+    for (const target of append?.targets ?? []) {
+      expect(target.transitions).toEqual([
+        { eventIndex: 0, eventId: source.events[0].eventId, changeType: 'create', patch: [{ op: 'add', path: '',
+          value: { count: 1, seen: [], 'a~/b': 'initial', defaults: { ready: true } } }] },
+        { eventIndex: 2, eventId: source.events[2]?.eventId, changeType: 'update', patch: [
+          { op: 'replace', path: '/a~0~1b', value: 'updated' }, { op: 'replace', path: '/seen', value: ['hook'] }
+        ] },
+        { eventIndex: 3, eventId: source.events[3]?.eventId, changeType: 'noop', patch: [] }
+      ]);
+    }
+    expect(result.request.finalDocuments.map(({ finalDocument }) => finalDocument)).toEqual(Array(2).fill(
+      { count: 1, seen: ['hook'], 'a~/b': 'updated', defaults: { ready: true } }
+    ));
+  });
+
+  test('a hook failure after an earlier transition does not produce any append plan', () => {
+    const optedIn = {
+      ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views',
+      hooks: { afterEach: (state: State) => { if (state.count === 2) throw new Error('hook rejected'); } }
+    };
+    const result = reduceProjectionSourceCommit(optedIn, 'g1', commit(0, SOURCE_A, ['Added', 'Added']), snapshot({
+      targets: [{ targetDocumentId: SOURCE_A, state: null, revision: null, sourceProgress: {} }]
+    }));
+    expect(result).toEqual({ status: 'terminal', reason: 'hook rejected' });
+  });
+
+  test('an adapter without explicit capability is rejected before it can drop an append or advance progress', async () => {
+    const store = new InMemoryProjectionStore<State>();
+    const commitSource = jest.fn(async (request: CommitProjectionSourceCommitRequest<State>) => {
+      const { additionalWrites, ...stripped } = request;
+      return store.commitProjectionSourceCommit(stripped);
+    });
+    const result = await executeProjectionDefinition({
+      definition: { ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views' },
+      generation: 'g1', store: {
+        loadProjectionSourceCommitSnapshot: store.loadProjectionSourceCommitSnapshot.bind(store),
+        commitProjectionSourceCommit: commitSource
+      }, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0
+    }, commit(0));
+    expect(result).toMatchObject({ status: 'terminal', reason: 'Store does not support atomic projection_changes turn receipts.' });
+    expect(commitSource).not.toHaveBeenCalled();
+  });
+
+  const strategies = [
+    { strategy: 'own_record' },
+    { strategy: 'in_document' }
+  ] satisfies ProjectionCommitDefinition<State>['deduplication'][];
+
+  test.each(strategies)('$strategy verifies original receipt identity even after later turns', async (strategy) => {
+    const store = new InMemoryProjectionStore<State>();
+    const reducer = { ...definition('orders', strategy), projectionChanges: 'order_views' };
+    const runtime = coordinator([reducer], store);
+    const source = commit(0);
+    expect((await runtime.process(source)).status).toBe('completed');
+    expect((await runtime.process(commit(1))).status).toBe('completed');
+    expect(await runtime.process(source)).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'deduplicated' } }] });
+    expect(await runtime.process({ ...source, commitId: '10000000-0000-4000-8000-000000000040' })).toMatchObject({
+      status: 'terminal', reason: 'projection change source commit or collection identity mismatch'
+    });
+    expect(store.getProjectionChanges()).toHaveLength(2);
+  });
+
+  test.each(strategies)('$strategy cannot deduplicate a second attempt after a claimed-capable adapter strips the append', async (strategy) => {
+    const native = new InMemoryProjectionStore<State>();
+    const store: ProjectionSourceCommitStorePort<State> = {
+      projectionChangesCapability: native.projectionChangesCapability,
+      loadProjectionSourceCommitSnapshot: native.loadProjectionSourceCommitSnapshot.bind(native),
+      async commitProjectionSourceCommit(request) {
+        const { additionalWrites, ...stripped } = request;
+        return native.commitProjectionSourceCommit(stripped);
+      }
+    };
+    const runtime = coordinator([{ ...definition('orders', strategy), projectionChanges: 'order_views' }], store);
+    expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: 'Store did not return a matching projection_changes receipt.' });
+    expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
+    expect(native.getProjectionChanges()).toEqual([]);
+    expect(await native.load(SOURCE_A)).toMatchObject({ count: 1 });
+  });
+
+  test.each(strategies)('$strategy proves no-target coverage and rejects a missing receipt for covered history', async (strategy) => {
+    const store = new InMemoryProjectionStore<State>();
+    const runtime = coordinator([{ ...definition('orders', strategy), projectionChanges: 'order_views' }], store);
+    const ignored = commit(0, SOURCE_A, ['Ignored']);
+    expect((await runtime.process(ignored)).status).toBe('completed');
+    expect((await runtime.process(commit(1))).status).toBe('completed');
+    expect(await runtime.process(ignored)).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'deduplicated' } }] });
+    expect(await runtime.processPolled(ignored)).toMatchObject({ status: 'completed', processedSequences: [] });
+    expect(store.getProjectionChanges()).toHaveLength(1);
+    store.clear();
+    expect(await runtime.process(ignored)).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
+    expect(await runtime.processPolled(ignored)).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
+    expect(store.getProjectionChanges()).toEqual([]);
+  });
+
+  test('accepted reliable baseline skips do not require a durable turn receipt', async () => {
+    const store = new InMemoryProjectionStore<State>();
+    const runtime = coordinator(
+      [{ ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views' }],
+      store, orderPort(), rangeReader(), { [SOURCE_A]: 5 }
+    );
+    expect(await runtime.process(commit(2))).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'deduplicated' } }] });
+    expect(store.getProjectionChanges()).toEqual([]);
+  });
+
+  test.each([0, 1])('none applies direct deliveries again with anchor %d', async (anchor) => {
+    const store = new InMemoryProjectionStore<State>();
+    const source = commit(0);
+    const reducer = { ...definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' }),
+      projectionChanges: 'order_views' };
+    const order = orderPort();
+    const runtime = coordinator([reducer], store, order, rangeReader(), { [SOURCE_A]: anchor });
+    expect((await runtime.process(source)).status).toBe('completed');
+    expect(await runtime.process(source)).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'committed' } }] });
+    if (anchor === 0) expect(await runtime.processPolled(source)).toMatchObject({ status: 'completed', processedSequences: [] });
+    expect(order.advances).toEqual(anchor === 0 ? [0] : []);
+    expect(await store.load(SOURCE_A)).toMatchObject({ count: 2 });
+    expect(store.getProjectionChanges().map((entry) => entry.targets[0]?.revision)).toEqual([1, 2]);
+  });
+
+  test('none redelivery can reapply after a committed projection write and uncertain coverage', async () => {
+    const store = new InMemoryProjectionStore<State>();
+    const reducer = { ...definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' }),
+      projectionChanges: 'order_views' };
+    const order = orderPort();
+    const advance = order.advanceCoverage.bind(order);
+    order.advanceCoverage = jest.fn<typeof advance>().mockRejectedValueOnce(new Error('coverage outcome unknown')).mockImplementation(advance);
+    const runtime = coordinator([reducer], store, order);
+    expect((await runtime.process(commit(0))).status).toBe('retryable');
+    expect((await runtime.process(commit(0))).status).toBe('completed');
+    expect(await store.load(SOURCE_A)).toMatchObject({ count: 2 });
+    expect(store.getProjectionChanges()).toHaveLength(2);
+  });
+});
+
 function snapshot(overrides: Partial<ProjectionSourceCommitSnapshot<State>> = {}): ProjectionSourceCommitSnapshot<State> {
   return { targets: [], links: [], ownRecordSequence: null, ...overrides };
 }
@@ -98,7 +264,9 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
   readonly own = new Map<string, number>();
   conflicts = 0;
 
-  async loadProjectionSourceCommitSnapshot(request: Parameters<ProjectionSourceCommitStorePort<State>['loadProjectionSourceCommitSnapshot']>[0]) {
+  async loadProjectionSourceCommitSnapshot(
+    request: Parameters<ProjectionSourceCommitStorePort<State>['loadProjectionSourceCommitSnapshot']>[0]
+  ): Promise<ProjectionSourceCommitSnapshot<State>> {
     this.loads.push({ targets: request.targetDocumentIds, strategy: request.progressStrategy });
     return snapshot({
       targets: request.targetDocumentIds.map((targetDocumentId) => ({

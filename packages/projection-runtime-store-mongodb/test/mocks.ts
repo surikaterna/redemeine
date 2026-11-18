@@ -311,6 +311,10 @@ const matches = <TDocument extends AnyRecord>(
       if ((getByPath(doc, key) !== undefined) !== expected.$exists) return false;
       continue;
     }
+    if (isRecord(expected) && '$eq' in expected) {
+      if (!deepEqual(getByPath(doc, key), expected.$eq)) return false;
+      continue;
+    }
     if (getByPath(doc, key) !== expected) {
       if (!deepEqual(getByPath(doc, key), expected)) {
         return false;
@@ -402,7 +406,7 @@ export class InMemoryMongoCollection<TDocument extends { _id: string }>
     }
 
     const base = current ?? (({ _id: filter._id }) as TDocument);
-    const next = { ...base } as AnyRecord;
+    const next = cloneValue(base) as AnyRecord;
 
     if (Array.isArray(update)) {
       for (const stage of update) {

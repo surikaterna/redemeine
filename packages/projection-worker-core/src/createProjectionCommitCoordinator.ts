@@ -96,15 +96,21 @@ type GapResult =
   | { status: 'recovered'; commits: readonly ProjectionSourceCommit[] }
   | { status: 'failed'; outcome: ProjectionCommitCoordinatorOutcome };
 
-async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: ProjectionSourceCommit,
-  startAnchor = 0,
-  strategyScope?: readonly { stableSingleTarget: boolean }[]): Promise<{
+interface DispatchScope {
+  startAnchor: number;
+  strategyScope?: readonly { stableSingleTarget: boolean }[] | undefined;
+  alreadyCovered?: boolean;
+  verifyCoveredPoll?: boolean;
+}
+
+async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: ProjectionSourceCommit, scope: DispatchScope): Promise<{
   outcome: ProjectionCommitCoordinatorOutcome;
   complete: boolean;
 }> {
   const results: ProjectionDefinitionCommitResult[] = [];
   for (const [index, entry] of runtime.definitions.entries()) {
-    if (commit.commitSequence < startAnchor && entry.definition.deduplication.strategy !== 'none') {
+    if (scope.verifyCoveredPoll && (entry.definition.projectionChanges === undefined || entry.definition.deduplication.strategy === 'none')) continue;
+    if (commit.commitSequence < scope.startAnchor && entry.definition.deduplication.strategy !== 'none') {
       results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation,
         outcome: { status: 'deduplicated', attempts: 0 } });
       continue;
@@ -112,8 +118,9 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
     const outcome = await executeProjectionDefinition({
       definition: entry.definition, generation: entry.generation, store: runtime.options.store,
       lanes: runtime.targetLanes, maxConflictRetries: runtime.maxConflictRetries,
-      stableSingleTarget: strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
-      ...(strategyScope ? { baselineSequence: startAnchor - 1 } : {}),
+      stableSingleTarget: scope.strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
+      alreadyCovered: scope.alreadyCovered === true,
+      ...(scope.strategyScope ? { baselineSequence: scope.startAnchor - 1 } : {}),
     }, commit);
     results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation, outcome });
     if (outcome.status === 'committed' || outcome.status === 'deduplicated') continue;
@@ -192,7 +199,9 @@ async function processCandidates<TState>(
   const allResults: ProjectionDefinitionCommitResult[] = [];
   let expectedCoverage = initialCoverage;
   for (const candidate of candidates) {
-    const dispatched = await dispatch(runtime, candidate, startAnchor, strategyScope);
+    const dispatched = await dispatch(runtime, candidate, {
+      startAnchor, strategyScope, alreadyCovered: candidate.commitSequence <= (expectedCoverage ?? -1)
+    });
     allResults.push(...dispatched.outcome.definitions);
     if (!dispatched.complete) return { ...dispatched.outcome, processedSequences: processed, definitions: allResults };
     processed.push(candidate.commitSequence);
@@ -234,14 +243,17 @@ async function processInSourceLane<TState>(
     return failureOutcome('Missing or mismatched immutable source start anchor.', [], [], true);
   }
   if (commit.commitSequence < startAnchor) {
-    const dispatched = await dispatch(runtime, commit, startAnchor, admission.strategyScope);
+    const dispatched = await dispatch(runtime, commit, { startAnchor, strategyScope: admission.strategyScope });
     return dispatched.complete
       ? { status: 'completed', processedSequences: [], definitions: dispatched.outcome.definitions }
       : dispatched.outcome;
   }
   const after = coverage ?? (startAnchor === 0 ? null : startAnchor - 1);
   if (pollOnly && commit.commitSequence <= (after ?? -1)) {
-    return { status: 'completed', processedSequences: [], definitions: [] };
+    const checked = await dispatch(runtime, commit, {
+      startAnchor, strategyScope: admission.strategyScope, alreadyCovered: true, verifyCoveredPoll: true
+    });
+    return checked.outcome;
   }
   if (commit.commitSequence <= (after ?? -1) + 1) return processCandidates(runtime, commit, [commit], coverage, startAnchor, admission.strategyScope);
   const recovered = await readGap(runtime, commit, after);

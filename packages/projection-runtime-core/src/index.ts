@@ -187,7 +187,16 @@ export type {
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitSnapshotTarget,
   ProjectionSourceCommitSnapshotLink,
-  ProjectionSourceCommitStorePort
+  ProjectionSourceCommitStorePort,
+  ProjectionChangePatchOperation,
+  ProjectionChangeTransition,
+  ProjectionChangeTarget,
+  ProjectionChangesAppend,
+  ProjectionChangesRecord,
+  ProjectionChangesEmptyReceipt,
+  ProjectionChangesReceipt,
+  ProjectionChangesReceiptStatus,
+  ProjectionChangesSourceIdentity
 } from './contracts';
 export {
   DEFAULT_PROJECTION_POISON_CLASSIFICATION_MODEL,
@@ -210,5 +219,15 @@ export {
   hasMatchingProjectionRegistryIdentity,
   isProjectionSha256Digest,
   validateProjectionQueueRegistryManifest,
-  validateCommitProjectionSourceCommitRelationships
+  validateCommitProjectionSourceCommitRelationships,
+  buildProjectionChangesReceipt,
+  equalProjectionChangeJson,
+  isPortableProjectionChangeJson,
+  matchProjectionChangesReceipt,
+  MISSING_PROJECTION_CHANGES_HISTORY,
+  projectionChangesHistoryFailure,
+  projectionChangesIdentity,
+  validateProjectionChangeIdentityMetadata,
+  projectionChangesResumeToken,
+  validateProjectionChangesState
 } from './contracts';

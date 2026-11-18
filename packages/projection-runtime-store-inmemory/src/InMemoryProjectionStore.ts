@@ -5,6 +5,7 @@ import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
   LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionChangesRecord,
   ProjectionSourceCommitSnapshot,
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest
@@ -14,10 +15,10 @@ import type { StoredDocument } from './internal/storedDocument';
 import {
   collectWarnings,
   commitV2,
+  createV2State,
   deleteV2TargetMetadata,
   loadV2Snapshot,
-  type ProjectionDedupeWarning,
-  type V2State
+  type ProjectionDedupeWarning
 } from './internal/sourceCommitV2';
 
 /**
@@ -25,10 +26,11 @@ import {
  * Data is not persisted between process restarts.
  */
 export class InMemoryProjectionStore<TState = unknown> implements IProjectionStore<TState> {
+  readonly projectionChangesCapability = 'atomic-turn-receipts-v1' as const;
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
-  private v2: V2State = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map() };
+  private v2 = createV2State();
   private readonly emittedWarnings = new Set<string>();
 
   constructor(private readonly options: { onDedupeWarning?: (warning: ProjectionDedupeWarning) => void } = {}) {}
@@ -110,12 +112,17 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     this.documents.clear();
     this.links.clear();
     this.dedupe.clear();
-    this.v2 = { documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map() };
+    this.v2 = createV2State();
     this.emittedWarnings.clear();
   }
 
   getAll(): Map<string, StoredDocument<TState>> {
     return new Map(this.documents);
+  }
+
+  /** Diagnostic snapshot for local tests; not a feed delivery API. */
+  getProjectionChanges(): readonly ProjectionChangesRecord[] {
+    return [...this.v2.changes.values()].flatMap((result) => structuredClone(result.additionalWrites ?? []));
   }
 
   private applyLinks(links: ProjectionAtomicWrite<TState>['links']): void {
