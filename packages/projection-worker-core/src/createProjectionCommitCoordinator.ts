@@ -1,10 +1,12 @@
 import {
   isCompleteCommitRangeCapability,
+  matchesProjectionChangeRecordingScope,
+  ProjectionChangeRecordingPolicyMismatchError,
   validateCompleteCommitRange,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionChangeRecordingScope, ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
   ProjectionCommitCoordinatorOptions,
@@ -37,6 +39,9 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     const manifest = options.manifest.definitions[index];
     if (!manifest || manifest.projectionName !== entry.definition.name || manifest.generation !== entry.generation) {
       throw new Error('Runtime registry order and scopes must exactly match the immutable manifest.');
+    }
+    if (manifest.projectionChanges !== entry.projectionChanges) {
+      throw new Error('Projection change configuration must match the immutable manifest for its generation.');
     }
     const joined = (entry.definition.joinStreams?.length ?? 0) > 0 || (entry.definition.reverseSubscribeStreams?.length ?? 0) > 0;
     if (joined !== (manifest.joined === true)) throw new Error('Joined definition must be declared in the immutable manifest.');
@@ -85,6 +90,7 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>
 interface CoordinatorRuntime<TState> {
   options: ProjectionCommitCoordinatorOptions<TState>;
   definitions: readonly ProjectionCommitRegistryDefinition<TState>[];
+  changeRecordingScope: readonly ProjectionChangeRecordingScope[];
   sourceStartAnchors: Readonly<Record<string, number>>;
   sourceLanes: ProjectionLaneScheduler;
   targetLanes: ProjectionLaneScheduler;
@@ -109,7 +115,7 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
 }> {
   const results: ProjectionDefinitionCommitResult[] = [];
   for (const [index, entry] of runtime.definitions.entries()) {
-    if (scope.verifyCoveredPoll && (entry.definition.projectionChanges === undefined || entry.definition.deduplication.strategy === 'none')) continue;
+    if (scope.verifyCoveredPoll && (entry.projectionChanges === undefined || entry.definition.deduplication.strategy === 'none')) continue;
     if (commit.commitSequence < scope.startAnchor && entry.definition.deduplication.strategy !== 'none') {
       results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation,
         outcome: { status: 'deduplicated', attempts: 0 } });
@@ -120,6 +126,7 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
       lanes: runtime.targetLanes, maxConflictRetries: runtime.maxConflictRetries,
       stableSingleTarget: scope.strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
       alreadyCovered: scope.alreadyCovered === true,
+      ...(entry.projectionChanges !== undefined ? { projectionChanges: entry.projectionChanges } : {}),
       ...(scope.strategyScope ? { baselineSequence: scope.startAnchor - 1 } : {}),
     }, commit);
     results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation, outcome });
@@ -220,9 +227,13 @@ async function processInSourceLane<TState>(
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   let admission;
   try {
-    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.options.queueBindingId);
+    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.options.queueBindingId, runtime.changeRecordingScope);
   } catch (error) {
-    return failureOutcome(error instanceof Error ? error.message : 'Source admission unavailable.', [], []);
+    return failureOutcome(error instanceof Error ? error.message : 'Source admission unavailable.', [], [],
+      error instanceof ProjectionChangeRecordingPolicyMismatchError);
+  }
+  if (!matchesProjectionChangeRecordingScope(runtime.changeRecordingScope, admission.boundChangeRecordingScope)) {
+    return failureOutcome(new ProjectionChangeRecordingPolicyMismatchError().message, [], [], true);
   }
   if (admission.coverage.sourceId !== commit.streamId
     || admission.coverage.queueBindingId !== runtime.options.queueBindingId) {
@@ -264,11 +275,15 @@ async function processInSourceLane<TState>(
 function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TState>): CoordinatorRuntime<TState> {
   const definitions = options.definitions.map((entry) => Object.freeze({
     generation: entry.generation,
-    definition: freezeDefinition(entry.definition)
+    definition: freezeDefinition(entry.definition),
+    ...(entry.projectionChanges !== undefined ? { projectionChanges: entry.projectionChanges } : {})
   }));
   return {
     options,
     definitions: Object.freeze(definitions),
+    changeRecordingScope: Object.freeze(definitions.map(({ definition, generation, projectionChanges }) => Object.freeze({
+      projectionName: definition.name, generation, ...(projectionChanges === undefined ? {} : { projectionChanges })
+    }))),
     sourceStartAnchors: Object.freeze({ ...options.manifest.sourceStartAnchors }),
     sourceLanes: createProjectionLaneScheduler(),
     targetLanes: createProjectionLaneScheduler(),

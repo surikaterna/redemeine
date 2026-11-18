@@ -14,20 +14,21 @@ function noneCoordinator(store: MongoProjectionStore<State>, commit: ProjectionS
       Changed(state) { state.value += 1; }
     })
     .identity(() => 'one').deduplication({ strategy: 'none', duplicateEffects: 'acknowledged', reason: 'integration' })
-    .recordChanges('none_views').buildCommitDefinition();
+    .buildCommitDefinition();
   let coverage: number | null = null;
   const advances: number[] = [];
   const coordinator = createProjectionCommitCoordinator({
-    definitions: [{ definition, generation: 'g1' }], queueBindingId: 'none', maxCommits: 2, maxBytes: 1024, store,
+    definitions: [{ definition, generation: 'g1', projectionChanges: 'none_views' }], queueBindingId: 'none', maxCommits: 2, maxBytes: 1024, store,
     manifest: {
       version: 1, manifestId: digest, queueId: 'none', registryGeneration: 'r1', definitions: [
-        { projectionName: definition.name, generation: 'g1', definitionHash: digest, sourceSelectors: ['Order'] }
+        { projectionName: definition.name, generation: 'g1', definitionHash: digest, sourceSelectors: ['Order'], projectionChanges: 'none_views' }
       ], identity: { version: 1, normalizedDefinitionRegistryDigest: digest, normalizedRuntimeConfigurationDigest: digest,
         executableCodeArtifactDigest: digest }, sourceStartAnchors: { [commit.streamId]: anchor }
     },
     sourceOrder: {
       async admitForDispatch(sourceCommit, queueBindingId) {
         return { dispatch: true, startAnchor: anchor, coverage: { sourceId: sourceCommit.streamId, queueBindingId, sequence: coverage },
+          boundChangeRecordingScope: [{ projectionName: definition.name, generation: 'g1', projectionChanges: 'none_views' }],
           strategyScope: [{ projectionName: definition.name, generation: 'g1', strategy: 'none', stableSingleTarget: true }] };
       },
       async advanceCoverage(request) {

@@ -143,6 +143,7 @@ export {
   projectionBase64Url22ToUuid
 } from './uuidCodec';
 export type {
+  ProjectionChangeRecordingScope,
   ProjectionSourceCoverage,
   ProjectionSourceDispatchAdmission,
   ProjectionCutoverStrategyScope,
@@ -158,7 +159,9 @@ export type {
   ProjectionCompleteCommitRangeReader,
   ProjectionCompleteCommitRangeValidation
 } from './sourceOrder';
-export { isCompleteCommitRangeCapability, validateCompleteCommitRange } from './sourceOrder';
+export {
+  isCompleteCommitRangeCapability, matchesProjectionChangeRecordingScope, ProjectionChangeRecordingPolicyMismatchError, validateCompleteCommitRange
+} from './sourceOrder';
 export type {
   ProjectionSha256Digest,
   ProjectionRegistryDefinitionManifest,

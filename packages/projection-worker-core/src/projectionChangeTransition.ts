@@ -7,14 +7,23 @@ import {
   type ProjectionJsonValue,
   type ProjectionSourceEvent
 } from '@redemeine/projection-runtime-core';
+import type { Patch } from 'immer';
 
 function isObject(value: ProjectionJsonValue): value is ProjectionJsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function diffObject(before: ProjectionJsonObject, after: ProjectionJsonObject): ProjectionChangePatchOperation[] {
+function memberPatch(
+  before: ProjectionJsonObject,
+  after: ProjectionJsonObject,
+  patches?: readonly Patch[]
+): ProjectionChangePatchOperation[] {
   const patch: ProjectionChangePatchOperation[] = [];
-  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+  // Only top-level members are part of the durable patch contract. A mutable hook or root edit can change any member.
+  const candidates = patches && patches.every(({ path }) => path.length > 0)
+    ? patches.map(({ path }) => String(path[0]))
+    : [...Object.keys(before), ...Object.keys(after)];
+  const keys = [...new Set(candidates)].sort();
   for (const key of keys) {
     const path = `/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`;
     const value = Object.hasOwn(after, key) ? after[key] : undefined;
@@ -27,16 +36,17 @@ function diffObject(before: ProjectionJsonObject, after: ProjectionJsonObject): 
 
 export function createProjectionChangeTransition(
   event: ProjectionSourceEvent,
-  before: unknown,
+  before: ProjectionJsonValue | undefined,
   after: unknown,
-  creating: boolean
+  creating: boolean,
+  patches?: readonly Patch[]
 ): ProjectionChangeTransition {
   if (!isPortableProjectionChangeJson(after)) throw new Error('Projection changes require portable JSON document state.');
   const identity = { eventId: event.eventId, eventIndex: event.eventIndex };
   if (creating) return { ...identity, changeType: 'create', patch: [{ op: 'add', path: '', value: after }] };
-  if (!isPortableProjectionChangeJson(before)) throw new Error('Projection change snapshot must be portable JSON.');
+  if (before === undefined) throw new Error('Missing projection change snapshot.');
   const patch: ProjectionChangePatchOperation[] = isObject(before) && isObject(after)
-    ? diffObject(before, after)
+    ? memberPatch(before, after, patches)
     : equalProjectionChangeJson(before, after) ? [] : [{ op: 'replace', path: '', value: after }];
   return { ...identity, changeType: patch.length ? 'update' : 'noop', patch };
 }

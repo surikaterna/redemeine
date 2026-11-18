@@ -2,7 +2,7 @@ import { projectionUuidToBase64Url22, type CommitProjectionSourceCommitRequest }
 
 type Request = CommitProjectionSourceCommitRequest;
 
-function withTarget<T>(request: CommitProjectionSourceCommitRequest<T>, targetDocumentId: string): CommitProjectionSourceCommitRequest<T> {
+export function withTarget<T>(request: CommitProjectionSourceCommitRequest<T>, targetDocumentId: string): CommitProjectionSourceCommitRequest<T> {
   const append = request.additionalWrites![0];
   return {
     ...request,
@@ -14,8 +14,10 @@ function withTarget<T>(request: CommitProjectionSourceCommitRequest<T>, targetDo
 
 export const serializerLikeTargetIds = ['_bsontype', 'toBSON', '__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty'] as const;
 
-export function withSerializerLikeTargetIds<T>(request: CommitProjectionSourceCommitRequest<T>): CommitProjectionSourceCommitRequest<T> {
-  const variants = serializerLikeTargetIds.map((targetId) => withTarget(request, targetId));
+export function withSerializerLikeTargetIds<T>(
+  request: CommitProjectionSourceCommitRequest<T>, ids: readonly string[] = serializerLikeTargetIds
+): CommitProjectionSourceCommitRequest<T> {
+  const variants = ids.map((targetId) => withTarget(request, targetId));
   const { streamId, commitSequence } = request.commit;
   return {
     ...request, projectionGeneration: 'serializer-keys',

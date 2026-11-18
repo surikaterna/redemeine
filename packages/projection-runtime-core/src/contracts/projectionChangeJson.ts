@@ -14,7 +14,8 @@ export function isPortableProjectionChangeJson(value: unknown): value is Project
     const current = pending.pop();
     if (typeof current === 'string' && unpairedSurrogate.test(current)) return false;
     if (!current || typeof current !== 'object') continue;
-    if (!Array.isArray(current) && (current._bsontype != null
+    // Immer does not capture every edit of an own __proto__ member.
+    if (!Array.isArray(current) && (Object.hasOwn(current, '__proto__') || current._bsontype != null
       || (typeof current.$ref === 'string' && current.$id != null))) return false;
     for (const [key, child] of Object.entries(current)) {
       if (!isPortableProjectionChangeKey(key)) return false;

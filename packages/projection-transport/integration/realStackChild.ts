@@ -89,8 +89,8 @@ class ObservedSourceOrder implements ProjectionSourceOrderPort {
     private readonly client: MongoClient
   ) {}
 
-  admitForDispatch(commit: Parameters<ProjectionSourceOrderPort['admitForDispatch']>[0], queueBindingId: string) {
-    return this.delegate.admitForDispatch(commit, queueBindingId);
+  admitForDispatch(...args: Parameters<ProjectionSourceOrderPort['admitForDispatch']>) {
+    return this.delegate.admitForDispatch(...args);
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance) {

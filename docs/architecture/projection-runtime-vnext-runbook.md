@@ -67,7 +67,15 @@ The following boundaries are mandatory for incident triage and recovery:
 | Hydration/rebuild status | `_projection.status` metadata (`hydrating`, `ready`, `rebuilding`, `failed`) and generation references | In-progress hydration buffers and local rebuild executors | Status must remain externally observable across crashes and resumes |
 | OCC + cache policy | OCC preconditions and failure category (`conflict`/`transient`/`terminal`) persisted in write outcomes | Worker state cache entries and queue-local retry bookkeeping | Retryable failures evict affected cache and requeue; terminal failures do not loop |
 | Global micro-batch (`all`) | Atomic/bulk commit outcome and watermark progression | Batch assembly window and local grouping queue | Crash before commit may replay whole window; crash after commit must not double-apply |
-| Commit-native projection changes | [Opt-in `projection_changes` records](./projection-changes.md) | Event-level patch planning during reduction | A change record is durable only with the same source commit's document, link, and progress writes |
+| Commit-native projection changes | Opt-in `projection_changes` records | Event-level patch planning during reduction | Receipts commit with the same document, link, and progress writes |
+
+### Recording projection changes
+
+Set `projectionChanges: 'order_views'` on the coordinator registration `{ definition, generation, projectionChanges }` and the matching entry in the bound queue manifest. Mongo verifies the persisted policy before admission; omission means disabled. `order_views` is the logical target, not the physical feed. Supply a dedicated Mongo `changeCollection` on the same transactional deployment. Recording does not backfill history.
+
+Each record groups a source application’s target revisions and ordered per-event RFC 6902 patches. Creation includes defaults and hook effects; unchanged events have empty patches. Immer captures handler paths, which are coalesced to escaped top-level JSON Pointers or root operations. Hooks still receive a plain mutable clone. Nested values and arrays are replaced as units so the store’s patch contract and delta-write limits stay unchanged.
+
+Reliable strategies verify the canonical receipt on replay; accepted baseline skips produce no receipt. A turn with no targets writes a `projection_changes_empty` receipt. With `none`, redelivery may reapply; only the current invocation’s receipt can resolve an unknown outcome. Feed-enabled JSON state cannot contain an own `__proto__` field; opaque target IDs are unaffected. Keep receipts while replay is possible. No delivery API or MQ publisher is included.
 
 ## Runtime modes and operator playbooks
 

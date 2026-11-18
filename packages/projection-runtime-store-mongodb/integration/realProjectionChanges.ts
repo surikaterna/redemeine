@@ -46,17 +46,18 @@ async function checkPortableState(store: MongoProjectionStore<State>): Promise<v
   const first = changeRequest(0);
   const append = first.additionalWrites![0];
   const target = append.targets[0]!;
-  const finalDocument = { value: 1, kept: true, reference: { $ref: 'links', $id: 'id' } };
-  const result = await store.commitProjectionSourceCommit({
-    ...first, finalDocuments: [{ ...first.finalDocuments[0]!, finalDocument }],
-    additionalWrites: [{ ...append, targets: [{ ...target, transitions: [{
-      ...target.transitions[0]!, patch: [{ op: 'add', path: '', value: finalDocument }]
-    }] }] }]
-  });
-  assert.equal(result.status, 'rejected');
-  if (result.status !== 'rejected') throw new Error('expected non-portable JSON rejection');
-  assert.equal(result.category, 'terminal');
-  assert.match(result.reason, /portable JSON/);
+  for (const reference of [{ $ref: 'links', $id: 'id' }, { _bsontype: 'ObjectId' }, { ['key\0']: 1 }, { surrogate: '\ud800' }]) {
+    const finalDocument = { value: 1, kept: true, reference };
+    const result = await store.commitProjectionSourceCommit({
+      ...first, finalDocuments: [{ ...first.finalDocuments[0]!, finalDocument }],
+      additionalWrites: [{ ...append, targets: [{ ...target, transitions: [{
+        ...target.transitions[0]!, patch: [{ op: 'add', path: '', value: finalDocument }]
+      }] }] }]
+    });
+    if (result.status !== 'rejected') throw new Error('expected non-portable JSON rejection');
+    assert.equal(result.category, 'terminal');
+    assert.match(result.reason, /portable JSON/);
+  }
   assert.equal(await store.load('one'), null);
 }
 
@@ -115,8 +116,8 @@ async function checkWorkerRejection(store: MongoProjectionStore<State>): Promise
     .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
       Changed: (state) => { state.value = 99; }
     })
-    .identity(() => 'one').deduplication({ strategy: 'own_record' }).recordChanges('feed_views').buildCommitDefinition();
-  const options = { definition, generation: 'g1', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 1 };
+    .identity(() => 'one').deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+  const options = { definition, generation: 'g1', projectionChanges: 'feed_views', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 1 };
   const { commit } = changeRequest(2);
   for (const _attempt of [1, 2]) {
     const result = await executeProjectionDefinition(options, commit);

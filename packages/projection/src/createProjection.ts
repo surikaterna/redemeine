@@ -41,14 +41,13 @@ export type {
   ProjectionStreamDefinition
 } from './projectionTypes';
 
-class ProjectionBuilderImpl<TState> implements ProjectionCommitBuilder<TState> {
+class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _initialState: ((id: string) => TState) | undefined;
   private _identity: (event: BaseProjectionEvent) => string | readonly string[] = defaultIdentity;
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
-  private _projectionChanges: string | undefined;
 
   constructor(
     private _name: string,
@@ -152,22 +151,12 @@ class ProjectionBuilderImpl<TState> implements ProjectionCommitBuilder<TState> {
     return this;
   }
 
-  recordChanges(collection: string): this {
-    if (!collection.trim()) throw new Error('Projection changes require a logical collection name.');
-    this._projectionChanges = collection;
-    return this;
-  }
-
   buildCommitDefinition(): ProjectionCommitDefinition<TState> {
     const definition = this.build();
     if (!definition.deduplication) {
       throw new Error(`Projection '${this._name}' requires an explicit deduplication strategy.`);
     }
-    return {
-      ...definition,
-      deduplication: definition.deduplication,
-      ...(this._projectionChanges !== undefined ? { projectionChanges: this._projectionChanges } : {})
-    };
+    return definition as ProjectionCommitDefinition<TState>;
   }
 
   build(): ProjectionDefinition<TState> {

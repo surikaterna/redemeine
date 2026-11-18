@@ -10,6 +10,8 @@ import type {
 export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly generation: string;
   readonly definition: ProjectionCommitDefinition<TState>;
+  /** Enables history for this generation and names its logical target collection. */
+  readonly projectionChanges?: string;
 }
 
 export type ProjectionDefinitionCommitOutcome =

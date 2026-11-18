@@ -1,4 +1,5 @@
 import { isCanonicalProjectionUuid } from './sourceCommit';
+import { isPortableProjectionChangeKey } from './projectionChangeJson';
 
 export type ProjectionSha256Digest = `sha256:${string}`;
 
@@ -9,6 +10,8 @@ export interface ProjectionRegistryDefinitionManifest {
   readonly sourceSelectors: readonly string[];
   /** Required for joined definitions; bound as part of the immutable manifest. */
   readonly joined?: true;
+  /** Logical target collection when change recording is enabled for this generation. */
+  readonly projectionChanges?: string;
 }
 
 export interface ProjectionRegistryManifestIdentity {
@@ -132,6 +135,11 @@ export function validateProjectionQueueRegistryManifest(candidate: unknown): rea
     if (!isNonempty(definition.generation)) issues.push(`definitions[${index}].generation`);
     if (!isProjectionSha256Digest(definition.definitionHash)) issues.push(`definitions[${index}].definitionHash`);
     if (definition.joined !== undefined && definition.joined !== true) issues.push(`definitions[${index}].joined`);
+    const changes = definition.projectionChanges;
+    if (changes !== undefined && ![changes, definition.projectionName, definition.generation]
+      .every((value) => isNonempty(value) && isPortableProjectionChangeKey(value))) {
+      issues.push(`definitions[${index}].projectionChanges`);
+    }
     issues.push(...validateSourceSelectors(definition.sourceSelectors, index));
     const scope = `${String(definition.projectionName)}\u0000${String(definition.generation)}`;
     if (definitionScopes.has(scope)) issues.push(`definitions[${index}].duplicate`);

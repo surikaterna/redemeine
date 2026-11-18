@@ -10,12 +10,13 @@ import type {
   ProjectionSourceCommitStorePort,
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
-import { projectionUuidToBase64Url22 } from '@redemeine/projection-runtime-core';
+import { projectionUuidToBase64Url22, validateProjectionChangesState } from '@redemeine/projection-runtime-core';
 import {
   createProjectionCommitCoordinator,
   createProjectionLaneScheduler,
   reduceProjectionSourceCommit
 } from '../src';
+import type { ProjectionCommitCoordinatorOptions } from '../src';
 import { executeProjectionDefinition } from '../src/projectionDefinitionExecutor';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
 
@@ -67,6 +68,83 @@ function definition(
 }
 
 describe('commit-native projection changes', () => {
+  test('scopes registration to the manifest and keeps the collection stable through conflicts', async () => {
+    const store = new InMemoryProjectionStore<State>();
+    const reducer = definition('orders', { strategy: 'own_record' });
+    const options = coordinatorOptions([reducer], store);
+    const registration = { definition: reducer, generation: 'g1', projectionChanges: 'orders-view' };
+    const manifestEntries = options.manifest.definitions.map((entry) => ({ ...entry, projectionChanges: 'orders-view' }));
+    const config = { ...options, definitions: [registration], manifest: { ...options.manifest, definitions: manifestEntries } };
+    expect(() => createProjectionCommitCoordinator({ ...options, definitions: [registration] })).toThrow(/immutable manifest/);
+    expect(() => createProjectionCommitCoordinator({ ...config, definitions: [{ ...registration, projectionChanges: 'other' }] }))
+      .toThrow(/immutable manifest/);
+    expect(() => createProjectionCommitCoordinator({ ...config, definitions: [{ ...registration, generation: 'g2' }] })).toThrow(/scopes/);
+    manifestEntries[0]!.projectionChanges = 'bad\0name';
+    expect(() => createProjectionCommitCoordinator(config)).toThrow(/definitions\[0\]\.projectionChanges/);
+    manifestEntries[0]!.projectionChanges = 'orders-view';
+
+    const runtime = createProjectionCommitCoordinator(config);
+    const commitSource = store.commitProjectionSourceCommit.bind(store);
+    jest.spyOn(store, 'commitProjectionSourceCommit').mockImplementationOnce(async () => {
+      registration.projectionChanges = 'different-view';
+      return { version: 1, status: 'rejected', category: 'conflict', retryable: true, reason: 'injected' };
+    }).mockImplementation(commitSource);
+    expect(await runtime.process(commit(0))).toMatchObject({ status: 'completed', definitions: [{ outcome: { attempts: 2 } }] });
+    expect(store.getProjectionChanges()).toEqual([expect.objectContaining({ collection: 'orders-view', projectionGeneration: 'g1' })]);
+    expect(reducer).not.toHaveProperty('projectionChanges');
+  });
+
+  test('normalizes Immer paths for array edits, numeric keys and escaped member names', () => {
+    const initial = { '0': 'old', 'a~/b': [1, 2, 3] };
+    const definition = createProjection('orders', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) {
+          draft['a~/b'].splice(1, 1, 4, 5);
+          draft['0'] = 'new';
+        },
+        Same(draft) { draft['a~/b'] = draft['a~/b'].slice(); }
+      }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const snapshot = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    const result = reduceProjectionSourceCommit(definition, 'g1', commit(0, SOURCE_A, ['Added', 'Same']), snapshot, undefined, 'order_views');
+    if (result.status !== 'planned') throw new Error(`Unexpected ${result.status}`);
+    const transitions = result.request.additionalWrites?.[0].targets[0]?.transitions;
+    expect(transitions?.[0]?.patch).toEqual([
+      { op: 'replace', path: '/0', value: 'new' },
+      { op: 'replace', path: '/a~0~1b', value: [1, 4, 5, 3] }
+    ]);
+    expect(transitions?.[1]).toMatchObject({ changeType: 'noop', patch: [] });
+    expect(validateProjectionChangesState(result.request, snapshot)).toBeNull();
+  });
+
+  test('normalizes root array edits to an RFC 6902 root replacement', () => {
+    const initial = [1, 2];
+    const definition = createProjection('orders', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { draft.unshift(0); }
+      }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const snapshot = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    const result = reduceProjectionSourceCommit(definition, 'g1', commit(0), snapshot, undefined, 'order_views');
+    if (result.status !== 'planned') throw new Error(`Unexpected ${result.status}`);
+    expect(result.request.additionalWrites?.[0].targets[0]?.transitions[0]?.patch).toEqual([
+      { op: 'replace', path: '', value: [0, 1, 2] }
+    ]);
+    expect(validateProjectionChangesState(result.request, snapshot)).toBeNull();
+  });
+
+  test('rejects a snapshot with a nested own __proto__ even if the handler removes it', () => {
+    const initial = { nested: JSON.parse('{"__proto__":1}') as Record<string, number> };
+    const definition = createProjection('orders', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { delete draft.nested.__proto__; }
+      }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const snapshot = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    expect(reduceProjectionSourceCommit(definition, 'g1', commit(0), snapshot, undefined, 'order_views'))
+      .toMatchObject({ status: 'terminal', reason: expect.stringContaining('portable JSON') });
+  });
+
   test('groups fanout by target and preserves creation defaults, hook-only changes, escaped paths and event order', () => {
     type FeedState = State & { 'a~/b': string; defaults: { ready: boolean } };
     const aggregate = { aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } };
@@ -75,21 +153,21 @@ describe('commit-native projection changes', () => {
     })).from(aggregate, {
       Added: (draft) => { draft.count += 1; },
       Hook: () => {},
-      NoOp: () => {}
+      NoOp: (draft) => { draft.count += 1; }
     }).identity(() => ['two', 'one', 'two']).hooks({
       afterEach: (state, event) => {
+        if (event.type === 'NoOp') state.count -= 1;
         if (event.type !== 'Hook') return;
         state['a~/b'] = 'updated';
-        state.seen.push('hook');
+        state.seen = structuredClone(state.seen).concat('hook');
       }
-    }).deduplication({ strategy: 'own_record' }).recordChanges('order_views');
-    expect(builder.build()).not.toHaveProperty('projectionChanges');
+    }).deduplication({ strategy: 'own_record' });
     const source = commit(0, SOURCE_A, ['Added', 'Ignored', 'Hook', 'NoOp']);
     const result = reduceProjectionSourceCommit(builder.buildCommitDefinition(), 'g1', source, {
       ...snapshot(),
       targets: ['one', 'two'].map((targetDocumentId) =>
         ({ targetDocumentId, state: null, revision: null, sourceProgress: {} }))
-    });
+    }, undefined, 'order_views');
     expect(result.status).toBe('planned');
     if (result.status !== 'planned') return;
     const append = result.request.additionalWrites?.[0];
@@ -112,12 +190,12 @@ describe('commit-native projection changes', () => {
 
   test('a hook failure after an earlier transition does not produce any append plan', () => {
     const optedIn = {
-      ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views',
+      ...definition('orders', { strategy: 'own_record' }),
       hooks: { afterEach: (state: State) => { if (state.count === 2) throw new Error('hook rejected'); } }
     };
     const result = reduceProjectionSourceCommit(optedIn, 'g1', commit(0, SOURCE_A, ['Added', 'Added']), snapshot({
       targets: [{ targetDocumentId: SOURCE_A, state: null, revision: null, sourceProgress: {} }]
-    }));
+    }), undefined, 'order_views');
     expect(result).toEqual({ status: 'terminal', reason: 'hook rejected' });
   });
 
@@ -128,7 +206,7 @@ describe('commit-native projection changes', () => {
       return store.commitProjectionSourceCommit(stripped);
     });
     const result = await executeProjectionDefinition({
-      definition: { ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views' },
+      definition: definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views',
       generation: 'g1', store: {
         loadProjectionSourceCommitSnapshot: store.loadProjectionSourceCommitSnapshot.bind(store),
         commitProjectionSourceCommit: commitSource
@@ -145,8 +223,7 @@ describe('commit-native projection changes', () => {
 
   test.each(strategies)('$strategy verifies original receipt identity even after later turns', async (strategy) => {
     const store = new InMemoryProjectionStore<State>();
-    const reducer = { ...definition('orders', strategy), projectionChanges: 'order_views' };
-    const runtime = coordinator([reducer], store);
+    const runtime = changeCoordinator(definition('orders', strategy), store);
     const source = commit(0);
     expect((await runtime.process(source)).status).toBe('completed');
     expect((await runtime.process(commit(1))).status).toBe('completed');
@@ -167,7 +244,7 @@ describe('commit-native projection changes', () => {
         return native.commitProjectionSourceCommit(stripped);
       }
     };
-    const runtime = coordinator([{ ...definition('orders', strategy), projectionChanges: 'order_views' }], store);
+    const runtime = changeCoordinator(definition('orders', strategy), store);
     expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: 'Store did not return a matching projection_changes receipt.' });
     expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
     expect(native.getProjectionChanges()).toEqual([]);
@@ -176,7 +253,7 @@ describe('commit-native projection changes', () => {
 
   test.each(strategies)('$strategy proves no-target coverage and rejects a missing receipt for covered history', async (strategy) => {
     const store = new InMemoryProjectionStore<State>();
-    const runtime = coordinator([{ ...definition('orders', strategy), projectionChanges: 'order_views' }], store);
+    const runtime = changeCoordinator(definition('orders', strategy), store);
     const ignored = commit(0, SOURCE_A, ['Ignored']);
     expect((await runtime.process(ignored)).status).toBe('completed');
     expect((await runtime.process(commit(1))).status).toBe('completed');
@@ -191,9 +268,8 @@ describe('commit-native projection changes', () => {
 
   test('accepted reliable baseline skips do not require a durable turn receipt', async () => {
     const store = new InMemoryProjectionStore<State>();
-    const runtime = coordinator(
-      [{ ...definition('orders', { strategy: 'own_record' }), projectionChanges: 'order_views' }],
-      store, orderPort(), rangeReader(), { [SOURCE_A]: 5 }
+    const runtime = changeCoordinator(
+      definition('orders', { strategy: 'own_record' }), store, orderPort(), { [SOURCE_A]: 5 }
     );
     expect(await runtime.process(commit(2))).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'deduplicated' } }] });
     expect(store.getProjectionChanges()).toEqual([]);
@@ -202,10 +278,9 @@ describe('commit-native projection changes', () => {
   test.each([0, 1])('none applies direct deliveries again with anchor %d', async (anchor) => {
     const store = new InMemoryProjectionStore<State>();
     const source = commit(0);
-    const reducer = { ...definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' }),
-      projectionChanges: 'order_views' };
+    const reducer = definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' });
     const order = orderPort();
-    const runtime = coordinator([reducer], store, order, rangeReader(), { [SOURCE_A]: anchor });
+    const runtime = changeCoordinator(reducer, store, order, { [SOURCE_A]: anchor });
     expect((await runtime.process(source)).status).toBe('completed');
     expect(await runtime.process(source)).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'committed' } }] });
     if (anchor === 0) expect(await runtime.processPolled(source)).toMatchObject({ status: 'completed', processedSequences: [] });
@@ -216,12 +291,11 @@ describe('commit-native projection changes', () => {
 
   test('none redelivery can reapply after a committed projection write and uncertain coverage', async () => {
     const store = new InMemoryProjectionStore<State>();
-    const reducer = { ...definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' }),
-      projectionChanges: 'order_views' };
+    const reducer = definition('orders', { strategy: 'none', duplicateEffects: 'acknowledged', reason: 'test' });
     const order = orderPort();
     const advance = order.advanceCoverage.bind(order);
     order.advanceCoverage = jest.fn<typeof advance>().mockRejectedValueOnce(new Error('coverage outcome unknown')).mockImplementation(advance);
-    const runtime = coordinator([reducer], store, order);
+    const runtime = changeCoordinator(reducer, store, order);
     expect((await runtime.process(commit(0))).status).toBe('retryable');
     expect((await runtime.process(commit(0))).status).toBe('completed');
     expect(await store.load(SOURCE_A)).toMatchObject({ count: 2 });
@@ -350,25 +424,45 @@ function rangeReader(commits: readonly ProjectionSourceCommit[] = []): Projectio
   };
 }
 
-function coordinator(
+function coordinatorOptions(
   definitions: readonly ProjectionCommitDefinition<State>[],
   store: ProjectionSourceCommitStorePort<State>,
   order = orderPort(),
   reader = rangeReader(),
   anchors: Readonly<Record<string, number>> = {}
-) {
-  return createProjectionCommitCoordinator({
+): ProjectionCommitCoordinatorOptions<State> {
+  return {
     queueBindingId: 'orders', manifest: manifest(definitions.map((item) => item.name), anchors),
     definitions: definitions.map((item) => ({ generation: 'g1', definition: item })),
     store, sourceOrder: {
       ...order,
-      async admitForDispatch(sourceCommit, queueId) {
-        const admission = await order.admitForDispatch(sourceCommit, queueId);
+      async admitForDispatch(sourceCommit, queueId, expectedChangeRecordingScope) {
+        const admission = await order.admitForDispatch(sourceCommit, queueId, expectedChangeRecordingScope);
         return { ...admission, startAnchor: anchors[sourceCommit.streamId] ?? admission.startAnchor,
+          ...(expectedChangeRecordingScope ? { boundChangeRecordingScope: expectedChangeRecordingScope } : {}),
           strategyScope: definitions.map((entry) => ({ projectionName: entry.name, generation: 'g1',
             strategy: entry.deduplication.strategy, stableSingleTarget: true })) };
       }
     }, rangeReader: reader, maxCommits: 2, maxBytes: 1_000, maxConflictRetries: 2
+  };
+}
+
+function coordinator(...args: Parameters<typeof coordinatorOptions>) {
+  return createProjectionCommitCoordinator(coordinatorOptions(...args));
+}
+
+function changeCoordinator(
+  definition: ProjectionCommitDefinition<State>,
+  store: ProjectionSourceCommitStorePort<State>,
+  order = orderPort(),
+  anchors: Readonly<Record<string, number>> = {}
+) {
+  const options = coordinatorOptions([definition], store, order, rangeReader(), anchors);
+  return createProjectionCommitCoordinator({
+    ...options,
+    definitions: options.definitions.map((entry) => ({ ...entry, projectionChanges: 'order_views' })),
+    manifest: { ...options.manifest,
+      definitions: options.manifest.definitions.map((entry) => ({ ...entry, projectionChanges: 'order_views' })) }
   });
 }
 
