@@ -12,7 +12,7 @@ import type {
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import {
-  equalProjectionChangeJson, isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson,
+  equalProjectionChangeJson, isCertifiedProjectionSnapshotJson, isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson,
   MISSING_PROJECTION_CHANGES_HISTORY, projectionUuidToBase64Url22
 } from '@redemeine/projection-runtime-core';
 import { enablePatches, produce, produceWithPatches, type Draft, type Patch } from 'immer';
@@ -79,12 +79,14 @@ function getDocument<TState>(
   }
   const absent = target.state === null && target.revision === null && target.legacyOriginal === undefined;
   const initialize = reduction.changeFeed !== undefined ? absent : target.state === null;
+  const frozen = !initialize && isCertifiedProjectionSnapshotJson(target.state) ? target.state : undefined;
   const document: ReducedDocument<TState> = {
     // A stored JSON null is a document in the commit-native feed.
-    state: initialize ? definition.initialState(targetId) : clone(target.state as TState),
+    state: initialize ? definition.initialState(targetId) : frozen !== undefined ? frozen as TState : clone(target.state as TState),
     revision: target.revision,
     absent,
     transitions: [],
+    ...(frozen !== undefined ? { frozenPortableState: frozen } : {}),
     ...(initialize && !absent ? { patchFallback: 'unrepresentable-patch' } : {}),
     ...(target.legacyOriginal ? { legacyOriginal: target.legacyOriginal } : {})
   };

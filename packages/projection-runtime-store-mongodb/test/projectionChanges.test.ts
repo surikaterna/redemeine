@@ -127,7 +127,12 @@ test('unknown empty turn is reconciled with its receipt, not mistaken for a feed
 test('an unknown outcome without a visible receipt remains transient even if own progress matches', async () => {
   const { store, changeCollection } = fixtures(createFakeMongoClient({ unknownAfterCommitOnTransaction: 2 }));
   const find = changeCollection.findOne.bind(changeCollection);
-  changeCollection.findOne = (query, options) => options?.session ? find(query, options) : Promise.resolve(null);
+  let hidden = false;
+  changeCollection.findOne = (query, options) => {
+    if (hidden || options?.readConcern !== 'majority') return find(query, options);
+    hidden = true;
+    return Promise.resolve(null);
+  };
   const first = projectionChangesRequest();
   const request: typeof first = { ...first, progress: {
     strategy: 'own_record', source: { sourceId: first.commit.streamId, expectedSequence: null, finalSequence: 0 }

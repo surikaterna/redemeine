@@ -87,6 +87,8 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
 export interface CommitProjectionSourceCommitCommitted {
   version: 1;
   status: 'committed';
+  /** Native prepared turns may resolve a retry to its already committed canonical receipt. */
+  replayed?: true;
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;
   linkRevisions: Readonly<Record<string, number>>;
@@ -111,11 +113,14 @@ export type CommitProjectionSourceCommitResult =
 export interface ProjectionSourceCommitStorePort<TState = unknown> {
   /** Explicit opt-in; adapters must preserve receipt checks and atomic writes, including empty turns. */
   readonly projectionChangesCapability?: 'atomic-turn-receipts-v1' | undefined;
+  /** Native loaders may defer fresh receipt checks to the commit CAS. */
+  readonly sourceCommitSnapshotCapability?: 'revision-cas-v1' | undefined;
   loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>>;
   commitProjectionSourceCommit(
-    request: CommitProjectionSourceCommitRequest<TState>
+    request: CommitProjectionSourceCommitRequest<TState>,
+    snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult>;
 }
 
@@ -172,6 +177,8 @@ export interface LoadProjectionSourceCommitSnapshotRequest {
   sourceId?: string;
   /** Canonical receipt lookup for reliable dedupe strategies, independent of scalar progress. */
   changeIdentity?: ProjectionChangesSourceIdentity;
+  /** Only set when the store advertises revision-cas-v1. Exact replays still require receipt verification. */
+  prepareSourceCommit?: boolean;
 }
 
 export interface ProjectionSourceCommitSnapshot<TState = unknown> {

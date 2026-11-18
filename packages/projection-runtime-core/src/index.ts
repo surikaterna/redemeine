@@ -231,6 +231,8 @@ export {
   replayProjectionChangeTransition,
   isPortableProjectionChangeJson,
   isFrozenPortableProjectionChangeJson,
+  freezePortableProjectionChangeJson,
+  isCertifiedProjectionSnapshotJson,
   matchProjectionChangesReceipt,
   MISSING_PROJECTION_CHANGES_HISTORY,
   projectionChangesHistoryFailure,

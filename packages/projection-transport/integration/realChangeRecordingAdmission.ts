@@ -3,7 +3,7 @@ import { createProjection, type ProjectionQueueRegistryManifest, type Projection
 import { MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDedupeRecord,
   type ProjectionDocumentRecord, type ProjectionLinkRecord } from '@redemeine/projection-runtime-store-mongodb';
 import { createProjectionCommitCoordinator } from '@redemeine/projection-worker-core';
-import type { Db, MongoClient } from 'mongodb';
+import type { CommandStartedEvent, Db, MongoClient } from 'mongodb';
 import { MongoProjectionTransportStore, type ProjectionTransportDocument } from '../src/mongoTransportStore';
 import { normalizeProjectionRegistryDefinitions, projectionDefinitionHash, projectionDefinitionRegistryDigest,
   projectionQueueRegistryDigest, projectionRuntimeConfigurationDigest } from '../src/registryIdentity';
@@ -32,7 +32,8 @@ function register(queueId: string, sourceId: string, collection: string | undefi
 
 export async function checkRealChangeRecordingAdmission(
   client: MongoClient, db: Db, reader: TapewormMongoRangeReader, commit: ProjectionSourceCommit
-): Promise<void> {
+) {
+  const traces = [];
   for (const [queueId, boundCollection, localCollection] of [
     ['bound_disabled', undefined, 'views'],
     ['bound_enabled', 'views', undefined],
@@ -61,7 +62,16 @@ export async function checkRealChangeRecordingAdmission(
     const worker = createProjectionCommitCoordinator({ ...local, queueBindingId: queueId, sourceOrder, store, rangeReader: reader,
       maxCommits: 1, maxBytes: 100_000 });
     const before = await rows.find({}).sort({ _id: 1 }).toArray();
-    const result = await worker.process(commit);
+    const trace: Array<{ op: string; collection?: string; startsTransaction: boolean; writes: number }> = [];
+    const monitor = ({ databaseName, commandName, command }: CommandStartedEvent) => {
+      if (databaseName !== db.databaseName && !['commitTransaction', 'abortTransaction'].includes(commandName)) return;
+      const name = command[commandName];
+      trace.push({ op: commandName, ...(typeof name === 'string' ? { collection: name } : {}),
+        startsTransaction: command.startTransaction === true,
+        writes: Array.isArray(command.updates) ? command.updates.length : Array.isArray(command.documents) ? command.documents.length : 0 });
+    };
+    client.on('commandStarted', monitor);
+    const result = await worker.process(commit).finally(() => client.off('commandStarted', monitor));
     const matches = boundCollection === localCollection;
     assert.equal(result.status, matches ? 'completed' : 'terminal', queueId);
     assert.deepEqual(await store.load('one'), matches ? { count: commit.events.length } : null, queueId);
@@ -70,5 +80,12 @@ export async function checkRealChangeRecordingAdmission(
       matches && boundCollection !== undefined ? [boundCollection] : [], queueId);
     assert.equal(await sourceOrder.loadCoveredThrough(queueId, commit.streamId), matches ? 0 : null, queueId);
     if (!matches) assert.deepEqual(await rows.find({}).sort({ _id: 1 }).toArray(), before, queueId);
+    const documentWrite = trace.findIndex(({ op, collection: name }) => op === 'update' && name === collection.collectionName);
+    assert.equal(documentWrite >= 0, matches);
+    if (matches) assert(trace.slice(documentWrite + 1).some(({ op, collection: name }) =>
+      op === 'update' && name === rows.collectionName), 'coverage must follow the projection write');
+    assert.equal(trace.filter(({ op, collection: name }) => op === 'find' && name === changeCollection.collectionName).length, 0);
+    traces.push({ queueId, matches, trace });
   }
+  return traces;
 }

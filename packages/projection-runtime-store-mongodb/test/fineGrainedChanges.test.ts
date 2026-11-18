@@ -126,7 +126,7 @@ test('a later write failure rolls back a disabled turn after its delta was appli
       { targetDocumentId: 'fails', expectedRevision: null, finalDocument: baselineOrder }]
   })).toMatchObject({ status: 'rejected', category: 'terminal' });
   expect(collection.operationLog.filter(({ op }) => op === 'updateOne').some(({ detail }) =>
-    Object.hasOwn((detail as { update: { $set: object } }).update.$set, 'state.lines.1.quantity'))).toBe(true);
+    Object.hasOwn((detail as { update: { $set?: object } }).update.$set ?? {}, 'state.lines.1.quantity'))).toBe(true);
   expect(await snapshot()).toMatchObject({ targets: [{ state: baselineOrder, revision: 1 }], ownRecordSequence: 0 });
 });
 

@@ -212,7 +212,10 @@ export {
   projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState,
   verifyProjectionSourceCommitStatePatches, type VerifiedProjectionSourceCommitStatePatch
 } from './projectionChanges';
-export { equalProjectionChangeJson, isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
+export {
+  equalProjectionChangeJson, freezePortableProjectionChangeJson, isCertifiedProjectionSnapshotJson,
+  isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson
+} from './projectionChangeJson';
 export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
 export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {

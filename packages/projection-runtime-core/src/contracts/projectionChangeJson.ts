@@ -1,6 +1,8 @@
+import { types } from 'node:util';
 import { isProjectionJsonValue, type ProjectionJsonValue } from './sourceCommit';
 
 const unpairedSurrogate = /[\uD800-\uDFFF]/u;
+const frozenPortableRoots = new WeakSet<object>();
 
 export function isPortableProjectionChangeKey(key: string): boolean {
   return !key.includes('\0') && !unpairedSurrogate.test(key);
@@ -16,7 +18,30 @@ export function isFrozenPortableProjectionChangeJson(value: unknown): value is P
   return Object.isFrozen(value) && isPortableJson(value, true);
 }
 
+export function isCertifiedProjectionSnapshotJson(value: unknown): value is ProjectionJsonValue {
+  return value !== null && typeof value === 'object' && frozenPortableRoots.has(value);
+}
+
+/** For adapter-owned, detached data only. Validation is reusable while the same immutable root lives. */
+export function freezePortableProjectionChangeJson(value: unknown): value is ProjectionJsonValue {
+  if (!isPortableProjectionChangeJson(value)) return false;
+  if (!value || typeof value !== 'object' || isCertifiedProjectionSnapshotJson(value)) return true;
+  const pending: ProjectionJsonValue[] = [value];
+  const seen = new WeakSet<object>();
+  while (pending.length) {
+    const next = pending.pop();
+    if (!next || typeof next !== 'object' || seen.has(next)) continue;
+    if (types.isProxy(next)) return false;
+    seen.add(next);
+    for (const child of Object.values(next)) pending.push(child);
+    Object.freeze(next);
+  }
+  frozenPortableRoots.add(value);
+  return true;
+}
+
 function isPortableJson(value: unknown, frozen: boolean): value is ProjectionJsonValue {
+  if (isCertifiedProjectionSnapshotJson(value)) return true;
   if (!isProjectionJsonValue(value)) return false;
   const pending: ProjectionJsonValue[] = [value];
   while (pending.length) {

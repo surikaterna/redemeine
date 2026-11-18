@@ -14,7 +14,8 @@ import { buildDocumentWriteOperation } from './store/documentWriteOperationBuild
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { isUnknownSourceCommitOutcome, readSourceCommitChange } from './store/sourceCommitChanges';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
-import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
+import { commitMongoV2 } from './store/sourceCommitV2';
+import { matchesSourceSnapshot, protectSourceSnapshot, readMongoSourceSnapshot, type NativeSourceSnapshot } from './store/sourceCommitSnapshot';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
@@ -33,6 +34,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
   >();
   private sourceCommitReadiness: Promise<void> | undefined;
+  private readonly sourceSnapshots = new WeakMap<ProjectionSourceCommitSnapshot<TState>, NativeSourceSnapshot<TState>>();
   private readonly emittedDedupeWarnings = new Set<string>();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
@@ -44,6 +46,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   get projectionChangesCapability(): 'atomic-turn-receipts-v1' | undefined {
     return this.options.changeCollection ? 'atomic-turn-receipts-v1' : undefined;
   }
+
+  readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
 
   async load(documentId: string): Promise<TState | null> {
     const row = await this.options.collection.findOne({ _id: documentId });
@@ -92,10 +96,19 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
     await this.initializeProjectionSourceCommitStore();
-    if (request.changeIdentity && this.options.changeCollection) {
-      return this.createTransactionExecutor()((session) => loadMongoV2Snapshot(request, this.options, session));
+    if (request.prepareSourceCommit) {
+      const loaded = await readMongoSourceSnapshot(request, this.options);
+      const proof = protectSourceSnapshot(loaded, request);
+      if (proof) this.sourceSnapshots.set(loaded.snapshot, proof);
+      return loaded.snapshot;
     }
-    return loadMongoV2Snapshot(request, this.options);
+    if (request.changeIdentity && this.options.changeCollection) {
+      if (!request.targetDocumentIds.length && !request.links.length && request.progressStrategy === 'none') {
+        return (await readMongoSourceSnapshot(request, this.options)).snapshot;
+      }
+      return this.createTransactionExecutor()(async (session) => (await readMongoSourceSnapshot(request, this.options, session)).snapshot);
+    }
+    return (await readMongoSourceSnapshot(request, this.options)).snapshot;
   }
 
   async initializeProjectionSourceCommitStore(): Promise<void> {
@@ -103,7 +116,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return this.sourceCommitReadiness;
   }
 
-  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
+  async commitProjectionSourceCommit(
+    request: CommitProjectionSourceCommitRequest<TState>, snapshot?: ProjectionSourceCommitSnapshot<TState>
+  ): Promise<CommitProjectionSourceCommitResult> {
     const malformed = validateCommitProjectionSourceCommitRelationships(request)
       ?? (request.additionalWrites && !this.options.changeCollection ? 'projection_changes collection is not configured' : null);
     if (malformed) {
@@ -112,8 +127,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     const applicationId = request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined;
     try {
       await this.initializeProjectionSourceCommitStore();
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), applicationId);
-      if (result.status === 'committed') {
+      const candidate = snapshot && this.sourceSnapshots.get(snapshot);
+      const proof = candidate && matchesSourceSnapshot(request, candidate) ? candidate : undefined;
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), proof, applicationId, snapshot !== undefined);
+      if (result.status === 'committed' && !result.replayed) {
         try {
           await this.reportDedupeWarnings(request);
         } catch {
@@ -233,14 +250,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async reportDedupeWarnings(request: CommitProjectionSourceCommitRequest<TState>): Promise<void> {
-    if (request.progress.strategy !== 'in_document' || !request.progress.warnings) return;
+    if (request.progress.strategy !== 'in_document' || !request.progress.warnings || !this.options.onDedupeWarning) return;
     for (const target of request.progress.targets) {
-      const row = await this.options.collection.findOne({ _id: target.targetDocumentId });
-      if (!row) continue;
       const sourceCount = Object.keys(target.final).length;
-      const metadataBytes = BSON.calculateObjectSize(row);
       this.emitWarning(request, target.targetDocumentId, 'source_count', sourceCount, request.progress.warnings.warnAtSourceCount);
-      this.emitWarning(request, target.targetDocumentId, 'metadata_bytes', metadataBytes, request.progress.warnings.warnAtMetadataBytes);
+      if (request.progress.warnings.warnAtMetadataBytes !== undefined) {
+        const row = await this.options.collection.findOne({ _id: target.targetDocumentId });
+        if (row) this.emitWarning(request, target.targetDocumentId, 'metadata_bytes', BSON.calculateObjectSize(row),
+          request.progress.warnings.warnAtMetadataBytes);
+      }
     }
   }
 

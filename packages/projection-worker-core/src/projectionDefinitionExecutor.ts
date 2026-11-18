@@ -59,16 +59,19 @@ async function loadSnapshot<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
   targets: readonly string[],
-  links: readonly { aggregateType: string; aggregateId: string }[]
+  links: readonly { aggregateType: string; aggregateId: string }[],
+  mode: 'legacy' | 'turn' | 'discovery' | 'receipt' = 'legacy'
 ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+  const strategy = mode === 'discovery' || mode === 'receipt' ? 'none' : options.definition.deduplication.strategy;
   return options.store.loadProjectionSourceCommitSnapshot({
     projectionName: options.definition.name,
     projectionGeneration: options.generation,
     targetDocumentIds: targets,
     links,
-    progressStrategy: options.definition.deduplication.strategy,
-    ...(options.definition.deduplication.strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
-    ...(options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
+    progressStrategy: strategy,
+    ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
+    ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),
+    ...(mode !== 'discovery' && options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
       ? { changeIdentity: { sourceId: commit.streamId, commitId: commit.commitId, commitSequence: commit.commitSequence,
           collection: options.projectionChanges } } : {})
   });
@@ -78,7 +81,8 @@ function replayOutcome<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
-  attempts: number
+  attempts: number,
+  deferred = false
 ): ProjectionDefinitionCommitOutcome | undefined {
   const strategy = options.definition.deduplication.strategy;
   const ownIncludesTurn = strategy === 'own_record' && snapshot.ownRecordSequence !== null && commit.commitSequence <= snapshot.ownRecordSequence;
@@ -90,9 +94,25 @@ function replayOutcome<TState>(
   }
   if (snapshot.changeReceipt === 'committed') return { status: 'deduplicated', attempts };
   if (commit.commitSequence <= (options.baselineSequence ?? -1)) return { status: 'deduplicated', attempts };
+  if (snapshot.changeReceipt === undefined && deferred && !ownIncludesTurn && !options.alreadyCovered) return undefined;
   if (snapshot.changeReceipt !== 'missing') return failed('terminal', 'Store did not perform the projection_changes receipt lookup.', attempts);
   if (ownIncludesTurn || options.alreadyCovered) return failed('terminal', MISSING_PROJECTION_CHANGES_HISTORY, attempts);
   return undefined;
+}
+
+function hasNativeSnapshots<TState>(options: ProjectionDefinitionExecutorOptions<TState>): boolean {
+  return options.store.sourceCommitSnapshotCapability === 'revision-cas-v1';
+}
+
+async function checkDeferredReceipt<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit, attempts: number
+): Promise<ProjectionDefinitionCommitOutcome | undefined> {
+  if (!hasNativeSnapshots(options) || options.projectionChanges === undefined || options.definition.deduplication.strategy === 'none') return;
+  try {
+    return replayOutcome(options, commit, await loadSnapshot(options, commit, [], [], 'receipt'), attempts);
+  } catch (error) {
+    return failed('ambiguous', error instanceof Error ? error.message : 'receipt lookup failed', attempts);
+  }
 }
 
 function mergeLinks(
@@ -113,10 +133,12 @@ async function commitReduction<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
   reduction: Extract<ProjectionReductionResult<TState>, { status: 'planned' }>,
-  attempt: number
+  attempt: number,
+  snapshot?: ProjectionSourceCommitSnapshot<TState>
 ): Promise<AttemptResult<TState>> {
   try {
-    const result = await options.store.commitProjectionSourceCommit(reduction.request);
+    const result = snapshot ? await options.store.commitProjectionSourceCommit(reduction.request, snapshot)
+      : await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
       const append = reduction.request.additionalWrites?.[0];
       const identity = projectionChangesIdentity(reduction.request);
@@ -128,7 +150,7 @@ async function commitReduction<TState>(
         return { kind: 'done', outcome: failed('terminal', 'Store did not return a matching projection_changes receipt.', attempt) };
       }
       const outcome = result.commitSequence === commit.commitSequence
-        ? { status: 'committed' as const, attempts: attempt }
+        ? { status: result.replayed ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
         : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
       return { kind: 'done', outcome };
     }
@@ -151,28 +173,34 @@ async function executeAttempt<TState>(
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
+    const native = hasNativeSnapshots(options);
     let snapshot: ProjectionSourceCommitSnapshot<TState>;
     try {
-      snapshot = await loadSnapshot(options, commit, [...targets].sort(), links);
+      snapshot = await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'snapshot load failed';
-      return { kind: 'done', outcome: failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
+      return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
+        ?? failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
     }
-    const replay = replayOutcome(options, commit, snapshot, attempt);
+    const replay = replayOutcome(options, commit, snapshot, attempt, native);
     if (replay) return { kind: 'done', outcome: replay };
     const reduction = reduceProjectionSourceCommit(
       options.definition, options.generation, commit, snapshot, options.baselineSequence, options.projectionChanges
     );
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
-    if (reduction.status === 'terminal') return { kind: 'done', outcome: failed('terminal', reduction.reason, attempt) };
+    if (reduction.status === 'terminal') {
+      const receipt = snapshot.changeReceipt === undefined ? await checkDeferredReceipt(options, commit, attempt) : undefined;
+      return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
+    }
     if (reduction.status === 'deduplicated') {
       return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
     }
     if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
       || reduction.request.stagedLinks.length > 0)) {
-      return { kind: 'done', outcome: failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
+      return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
+        ?? failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
     }
-    return commitReduction(options, commit, reduction, attempt);
+    return commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
   });
 }
 
@@ -192,19 +220,25 @@ export async function executeProjectionDefinition<TState>(
     if (invalid) return failed('terminal', invalid, 0);
   }
   let links = routingLinkRequests(options.definition, commit.events);
-  let initial: ProjectionSourceCommitSnapshot<TState>;
+  const native = hasNativeSnapshots(options);
+  const lookupEarly = options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
+    && (options.alreadyCovered || commit.commitSequence <= (options.baselineSequence ?? -1));
+  let initial: ProjectionSourceCommitSnapshot<TState> = { targets: [], links: [], ownRecordSequence: null };
   try {
-    initial = await loadSnapshot(options, commit, [], links);
+    if (!native) initial = await loadSnapshot(options, commit, [], links);
+    else if (lookupEarly) initial = await loadSnapshot(options, commit, [], [], 'receipt');
+    else if (links.length) initial = await loadSnapshot(options, commit, [], links, 'discovery');
   } catch (error) {
     return failed('ambiguous', error instanceof Error ? error.message : 'snapshot load failed', 0);
   }
-  const replay = replayOutcome(options, commit, initial, 0);
+  const replay = replayOutcome(options, commit, initial, 0, native && !lookupEarly);
   if (replay) return replay;
   let routedTargets: readonly string[];
   try {
     routedTargets = provisionalTargets(options.definition, commit, initial);
   } catch (error) {
-    return failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
+    return await checkDeferredReceipt(options, commit, 0)
+      ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
   }
   const targets = new Set(routedTargets);
   const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2;
