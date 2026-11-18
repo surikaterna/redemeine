@@ -298,6 +298,16 @@ test('workflow binds same-run artifact/hash and isolates manual main OIDC after 
   );
 });
 
+test('PR qualification checks installed projection contracts once after build', async () => {
+  const { workflow: w } = await releaseWorkflow();
+  const qualify = w.jobs.qualify.steps;
+  const consumers = qualify.filter((s) => s.run === 'pnpm run check:projection-contract-consumer');
+  assert.equal(consumers.length, 1);
+  assert.equal(consumers[0].if, "github.event_name == 'pull_request'");
+  const buildIndex = qualify.findIndex((s) => s.run === 'pnpm -r build');
+  assert.ok(buildIndex >= 0 && buildIndex < qualify.indexOf(consumers[0]));
+});
+
 test('both hosts enforce npm11.21/Node24.20; Changesets version job remains normal CLI2 path', async () => {
   const { workflow: w } = await releaseWorkflow();
   for (const name of ['qualify', 'publish']) {

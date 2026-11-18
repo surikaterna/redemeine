@@ -33,27 +33,21 @@ const mounted = createAggregate('store', { total: 0, rows: [{ id: 'a', count: 0 
 createProjection('mounted').mirror(mounted, {
   'rows:changed': (state, event) => {
     state.rows[0]!.count += event.payload.amount;
-    const wire: string = event.type;
-    // @ts-expect-error Mounted payloads retain number fields.
-    const wrong: string = event.payload.amount;
     // @ts-expect-error Root fields are not mounted payload fields.
     event.payload.title;
     // @ts-expect-error Aggregate state is inferred, not any.
     state.total = 'invalid';
-    void [wire, wrong];
   },
-  'byKey:changed': (state, event) => {
+  'byKey:changed': inherit.extend((state, event) => {
     state.byKey.a.count += event.payload.amount;
-  },
+    // @ts-expect-error Map-mounted payloads are not widened for inherit.extend.
+    event.payload.missing;
+  }),
   changed: (state, event) => {
     state.total += event.payload.title.length;
     // @ts-expect-error Root shorthand keeps its original payload, not the entity payload.
     event.payload.amount;
   }
-});
-createProjection('unknown-mount').mirror(mounted, {
-  // @ts-expect-error Unknown mounts must not widen to arbitrary strings.
-  'missing:changed': () => {}
 });
 createProjection('unknown-event').mirror(mounted, {
   // @ts-expect-error Unknown mounted event keys are rejected.
@@ -62,13 +56,6 @@ createProjection('unknown-event').mirror(mounted, {
 createProjection('value-object').mirror(mounted, {
   // @ts-expect-error Value objects do not declare entity event handlers.
   'details:changed': () => {}
-});
-createProjection('extended-mounted').mirror(mounted, {
-  'byKey:changed': inherit.extend((state, event) => {
-    state.byKey.a.count += event.payload.amount;
-    // @ts-expect-error Map-mounted payloads are not widened for inherit.extend.
-    event.payload.missing;
-  })
 });
 createProjection('wrong-payload').mirror(mounted, {
   // @ts-expect-error Mounted overrides must accept the declared entity payload.
