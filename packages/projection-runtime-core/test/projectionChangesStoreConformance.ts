@@ -263,6 +263,29 @@ export function defineProjectionChangesStoreConformance(
       expect(records()).toEqual([]);
     });
 
+    test.each([false, true])('rejects negative zero in recorded state, already stored=%s', async (alreadyStored) => {
+      const { store, records } = create();
+      const { additionalWrites: _seedAppend, ...seed } = projectionChangesRequest();
+      const initial = { value: alreadyStored ? -0 : +0 };
+      expect(await store.commitProjectionSourceCommit({
+        ...seed, finalDocuments: [{ ...seed.finalDocuments[0]!, finalDocument: initial }],
+        progress: { strategy: 'own_record', source: { sourceId, expectedSequence: null, finalSequence: 0 } }
+      })).toMatchObject({ status: 'committed' });
+      const next = projectionChangesRequest(1);
+      const append = next.additionalWrites![0];
+      const target = append.targets[0]!;
+      const transitions = [{ ...target.transitions[0]!, changeType: 'noop' as const, patch: [] }];
+      const before = await store.loadProjectionSourceCommitSnapshot(changeSnapshotRequest);
+      expect(await store.commitProjectionSourceCommit({
+        ...next, finalDocuments: [{ ...next.finalDocuments[0]!, finalDocument: { value: -0 },
+          statePatch: { kind: 'ordered', transitions } }],
+        progress: { strategy: 'own_record', source: { sourceId, expectedSequence: 0, finalSequence: 1 } },
+        additionalWrites: [{ ...append, targets: [{ ...target, transitions }] }]
+      })).toMatchObject({ status: 'rejected', category: 'terminal', reason: expect.stringContaining('projection change') });
+      expect(await store.loadProjectionSourceCommitSnapshot(changeSnapshotRequest)).toEqual(before);
+      expect(records()).toEqual([]);
+    });
+
     test('rejects an opted-in turn whose own-record marker exists but whose receipt does not', async () => {
       const { store, records } = create();
       const first = projectionChangesRequest();

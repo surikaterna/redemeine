@@ -17,7 +17,7 @@ import {
 } from '@redemeine/projection-runtime-core';
 import { enablePatches, produce, produceWithPatches, type Draft, type Patch } from 'immer';
 import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState } from './projectionCommitRouting';
-import { createProjectionChangeTransition, type CapturedHandlerPatches } from './projectionChangeTransition';
+import { createProjectionChangeTransition } from './projectionChangeTransition';
 
 let patchesEnabled = false;
 
@@ -181,9 +181,14 @@ function applyHandler<TState>(
   routed: RoutedEvent<TState>,
   targetId: string,
   capture: boolean
-): CapturedHandlerPatches | undefined {
+): readonly Patch[] | undefined {
   const recipe = (draft: Draft<TState>): void => {
     routed.handler(draft, routed.event, createContext(reduction, targetId));
+    const hookResult: unknown = definition.hooks?.afterEach?.(draft, routed.event);
+    if (hookResult && typeof (hookResult as PromiseLike<unknown>).then === 'function') {
+      void Promise.resolve(hookResult).catch(() => undefined);
+      throw new Error('Projection afterEach must be synchronous.');
+    }
   };
   let patches: readonly Patch[] | undefined;
   if (capture) {
@@ -195,14 +200,8 @@ function applyHandler<TState>(
   } else {
     document.state = produce(document.state, recipe);
   }
-  const beforeHook = document.state;
-  if (definition.hooks?.afterEach) {
-    const state = clone(beforeHook);
-    definition.hooks.afterEach(state, routed.event);
-    document.state = state;
-  }
   reduction.touched.add(targetId);
-  return patches && { patches, ...(definition.hooks?.afterEach ? { beforeHook: { state: beforeHook } } : {}) };
+  return patches;
 }
 
 function canTrackState(state: unknown, recording: boolean, frozen = false): state is ProjectionJsonValue {
@@ -215,13 +214,13 @@ function canTrackState(state: unknown, recording: boolean, frozen = false): stat
 }
 
 function trackResult<TState>(
-  document: ReducedDocument<TState>, before: ProjectionJsonValue | undefined, recording: boolean, mutableHook: boolean
+  document: ReducedDocument<TState>, before: ProjectionJsonValue | undefined, recording: boolean
 ): ProjectionJsonValue | undefined {
   const { state, frozenPortableState } = document;
-  if (!mutableHook && frozenPortableState !== undefined && Object.is(frozenPortableState, state)) return frozenPortableState;
+  if (frozenPortableState !== undefined && Object.is(frozenPortableState, state)) return frozenPortableState;
   delete document.frozenPortableState;
-  // Reuse only after an unchanged Immer result has been proven deeply frozen, never across a mutable hook.
-  if (!mutableHook && Object.is(before, state) && canTrackState(state, recording, true)) {
+  // Both handler and hook have finalized; reuse only after proving the unchanged result deeply frozen.
+  if (Object.is(before, state) && canTrackState(state, recording, true)) {
     document.frozenPortableState = state;
     return state;
   }
@@ -248,7 +247,7 @@ function applyTargetEvent<TState>(
   }
   const patches = applyHandler(definition, reduction, document, routed, targetId, !document.patchFallback && !creating);
   if (document.patchFallback) return;
-  const after = trackResult(document, before, recording, definition.hooks?.afterEach !== undefined);
+  const after = trackResult(document, before, recording);
   if (after === undefined) {
     if (recording) throw new Error('Projection changes require portable JSON document state.');
     document.patchFallback = 'nonportable-state';

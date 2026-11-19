@@ -190,6 +190,10 @@ importers:
         version: 5.9.3
 
   packages/projection:
+    dependencies:
+      immer:
+        specifier: ^10.2.0
+        version: 10.2.0
     devDependencies:
       '@redemeine/aggregate':
         specifier: workspace:*

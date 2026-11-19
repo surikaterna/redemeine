@@ -10,7 +10,9 @@ import type {
   ProjectionSourceCommitStorePort,
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
-import { projectionUuidToBase64Url22, validateProjectionChangesState } from '@redemeine/projection-runtime-core';
+import {
+  freezePortableProjectionChangeJson, projectionUuidToBase64Url22, validateProjectionChangesState, verifyProjectionSourceCommitStatePatches
+} from '@redemeine/projection-runtime-core';
 import {
   createProjectionCommitCoordinator,
   createProjectionLaneScheduler,
@@ -151,19 +153,23 @@ describe('commit-native projection changes', () => {
 
   test('groups fanout by target and preserves creation defaults, hook-only changes, escaped paths and event order', () => {
     type FeedState = State & { 'a~/b': string; defaults: { ready: boolean } };
+    let handlerDraft: FeedState | undefined;
     const aggregate = { aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } };
     const builder = createProjection<FeedState>('orders', () => ({
       count: 0, seen: [], 'a~/b': 'initial', defaults: { ready: true }
     })).from(aggregate, {
       Added: (draft) => { draft.count += 1; },
-      Hook: (draft) => { draft.seen.push('handler'); },
+      Hook: (draft) => { handlerDraft = draft; draft.seen.push('handler'); },
       NoOp: (draft) => { draft.count += 1; }
     }).identity(() => ['two', 'one', 'two']).hooks({
       afterEach: (state, event) => {
+        if (event.type === 'Added') state.seen.push('created');
         if (event.type === 'NoOp') state.count -= 1;
         if (event.type !== 'Hook') return;
+        expect(state).toBe(handlerDraft);
+        handlerDraft = undefined;
         state['a~/b'] = 'updated';
-        state.seen = structuredClone(state.seen).concat('hook');
+        state.seen.push('hook');
       }
     }).deduplication({ strategy: 'own_record' });
     const source = commit(0, SOURCE_A, ['Added', 'Ignored', 'Hook', 'NoOp']);
@@ -180,29 +186,47 @@ describe('commit-native projection changes', () => {
     for (const target of append?.targets ?? []) {
       expect(target.transitions).toEqual([
         { eventIndex: 0, eventId: source.events[0].eventId, changeType: 'create', patch: [{ op: 'add', path: '',
-          value: { count: 1, seen: [], 'a~/b': 'initial', defaults: { ready: true } } }] },
+          value: { count: 1, seen: ['created'], 'a~/b': 'initial', defaults: { ready: true } } }] },
         { eventIndex: 2, eventId: source.events[2]?.eventId, changeType: 'update', patch: [
-          { op: 'add', path: '/seen/0', value: 'handler' },
-          { op: 'replace', path: '/a~0~1b', value: 'updated' },
-          { op: 'add', path: '/seen/1', value: 'hook' }
+          { op: 'add', path: '/seen/1', value: 'handler' },
+          { op: 'add', path: '/seen/2', value: 'hook' },
+          { op: 'replace', path: '/a~0~1b', value: 'updated' }
         ] },
         { eventIndex: 3, eventId: source.events[3]?.eventId, changeType: 'noop', patch: [] }
       ]);
     }
     expect(result.request.finalDocuments.map(({ finalDocument }) => finalDocument)).toEqual(Array(2).fill(
-      { count: 1, seen: ['handler', 'hook'], 'a~/b': 'updated', defaults: { ready: true } }
+      { count: 1, seen: ['created', 'handler', 'hook'], 'a~/b': 'updated', defaults: { ready: true } }
     ));
+    expect(validateProjectionChangesState(result.request, { targets: ['one', 'two'].map((targetDocumentId) =>
+      ({ targetDocumentId, state: null, revision: null, sourceProgress: {} }))
+    })).toBeNull();
   });
 
-  test('a hook failure after an earlier transition does not produce any append plan', () => {
-    const optedIn = {
+  test.each([true, false])('a hook failure prevents all writes, recording=%s', async (recording) => {
+    const hooked = {
       ...definition('orders', { strategy: 'own_record' }),
       hooks: { afterEach: (state: State) => { if (state.count === 2) throw new Error('hook rejected'); } }
     };
-    const result = reduceProjectionSourceCommit(optedIn, 'g1', commit(0, SOURCE_A, ['Added', 'Added']), snapshot({
+    const store = new InMemoryProjectionStore<State>();
+    const write = jest.spyOn(store, 'commitProjectionSourceCommit');
+    const result = await executeProjectionDefinition({
+      definition: hooked, generation: 'g1', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0,
+      ...(recording ? { projectionChanges: 'order_views' } : {})
+    }, commit(0, SOURCE_A, ['Added', 'Added']));
+    expect(result).toMatchObject({ status: 'terminal', reason: 'hook rejected' });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  test('rejects a promise-returning hook before persistence', () => {
+    const hooked = {
+      ...definition('orders', { strategy: 'own_record' }),
+      hooks: { afterEach: async (state: State) => { await Promise.resolve(); state.count++; } }
+    };
+    const result = reduceProjectionSourceCommit(hooked, 'g1', commit(0), snapshot({
       targets: [{ targetDocumentId: SOURCE_A, state: null, revision: null, sourceProgress: {} }]
-    }), undefined, 'order_views');
-    expect(result).toEqual({ status: 'terminal', reason: 'hook rejected' });
+    }));
+    expect(result).toEqual({ status: 'terminal', reason: 'Projection afterEach must be synchronous.' });
   });
 
   test('an adapter without explicit capability is rejected before it can drop an append or advance progress', async () => {
@@ -491,7 +515,7 @@ describe('complete projection commit reducer', () => {
     expect(result.request.additionalWrites).toBeUndefined();
   });
 
-  test('disabled recording preserves nonportable mutable hook state without rerunning the handler', () => {
+  test('disabled recording preserves nonportable draft state without rerunning the handler', () => {
     const stamp = new Date('2026-11-18T00:00:00Z');
     let calls = 0;
     const custom = createProjection('dated', () => ({ count: 0, stamp: null as Date | null }))
@@ -509,12 +533,81 @@ describe('complete projection commit reducer', () => {
     expect(calls).toBe(2);
   });
 
+  test.each(['Map', 'Set'])('a hook cannot mutate a %s in the draft even with recording off', async (kind) => {
+    const initial = { counters: new Map([['orders', 3]]), tags: new Set(['before']) };
+    const hook = jest.fn((draft: typeof initial) => {
+      if (kind === 'Map') draft.counters.set('orders', 4);
+      else draft.tags.add('after');
+    });
+    const hooked = createProjection('collections', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, { Added() {} })
+      .identity(() => SOURCE_A).hooks({ afterEach: hook }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const store = new InMemoryProjectionStore<typeof initial>();
+    const write = jest.spyOn(store, 'commitProjectionSourceCommit');
+    const result = await executeProjectionDefinition({
+      definition: hooked, generation: 'g1', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0
+    }, commit(0));
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: 'terminal', reason: expect.stringContaining('MapSet') });
+    expect(write).not.toHaveBeenCalled();
+    expect(await store.load(SOURCE_A)).toBeNull();
+    expect(initial).toEqual({ counters: new Map([['orders', 3]]), tags: new Set(['before']) });
+  });
+
+  test.each(['Map', 'Set'])('a newly assigned %s is not a collection draft and cannot be recorded', (kind) => {
+    const initial = { items: null as Map<string, number> | Set<string> | null };
+    const hooked = createProjection('collections', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { draft.items = kind === 'Map' ? new Map() : new Set(); }
+      }).identity(() => SOURCE_A).hooks({ afterEach(draft) {
+        if (draft.items instanceof Map) draft.items.set('orders', 4);
+        else draft.items?.add('orders');
+      } }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const before = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    expect(reduceProjectionSourceCommit(hooked, 'g1', commit(0), before, undefined, 'views'))
+      .toMatchObject({ status: 'terminal', reason: expect.stringContaining('portable JSON') });
+    const disabled = reduceProjectionSourceCommit(hooked, 'g1', commit(0), before);
+    expect(disabled).toMatchObject({ status: 'planned', request: { finalDocuments: [{
+      finalDocument: { items: kind === 'Map' ? new Map([['orders', 4]]) : new Set(['orders']) },
+      statePatch: { kind: 'full', reason: 'nonportable-state' }
+    }] } });
+  });
+
+  test.each([true, false])('a timestamp hook shares untouched lines with the frozen snapshot, recording=%s', (recording) => {
+    const initial = { count: 0, lastUpdated: '', lines: Array.from({ length: 1_000 }, (_, id) => ({ id })) };
+    expect(freezePortableProjectionChangeJson(initial)).toBe(true);
+    const order = createProjection('orders', () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { draft.count++; }
+      }).identity(() => SOURCE_A).hooks({ afterEach(draft, event) { draft.lastUpdated = event.timestamp; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const source = commit(0, SOURCE_A, Array<string>(32).fill('Added'));
+    const from = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    const result = reduceProjectionSourceCommit(order, 'g1', source, from, undefined, recording ? 'order_views' : undefined);
+    if (result.status !== 'planned') throw new Error('Expected a plan');
+    const document = result.request.finalDocuments[0]!;
+    expect(document.finalDocument.lines).toBe(initial.lines);
+    expect(document.finalDocument).toMatchObject({ count: 32, lastUpdated: source.events[0].timestamp });
+    expect(initial).toMatchObject({ count: 0, lastUpdated: '' });
+    expect(document.statePatch).toMatchObject({ kind: 'ordered', transitions: [
+      { patch: [{ op: 'replace', path: '/count', value: 1 },
+        { op: 'replace', path: '/lastUpdated', value: source.events[0].timestamp }] },
+      ...Array.from({ length: 31 }, (_, i) => ({ patch: [{ op: 'replace', path: '/count', value: i + 2 }] }))
+    ] });
+    expect(Boolean(result.request.additionalWrites)).toBe(recording);
+    expect(verifyProjectionSourceCommitStatePatches(result.request, from).get(SOURCE_A)?.unchanged).toBe(false);
+    expect(validateProjectionChangesState(result.request, from)).toBeNull();
+  });
+
   test('unchanged Immer results reuse root portability scans until a handler changes state', () => {
     const initial = { scanProbe: true, count: 0, lines: Array.from({ length: 32 }, (_, id) => ({ id })) };
     const custom = createProjection('scans', () => initial)
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
         Noop() {}, Added(draft) { draft.count++; }
-      }).identity(() => SOURCE_A).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+      }).identity(() => SOURCE_A).hooks({ afterEach(draft) { void draft.count; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
     const run = (count: number) => {
       const noops = Array<string>(count).fill('Noop');
       const entries = jest.spyOn(Object, 'entries');
@@ -542,9 +635,28 @@ describe('complete projection commit reducer', () => {
       .toMatchObject([{ eventIndex: 32, changeType: 'update', patch: [{ op: 'replace', path: '/count', value: 1 }] }]);
   });
 
-  test('disabled recording does not misclassify a signed-zero hook change as metadata only', () => {
+  test.each([true, false])('direct +0 to -0 assignment retains +0 and verifies as a noop, recording=%s', (recording) => {
     const custom = createProjection('signed', () => ({ count: 0 }))
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, { Added() {} })
+      .identity(() => SOURCE_A).hooks({ afterEach(draft) { draft.count = -0; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const before = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: { count: 0 }, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    const result = reduceProjectionSourceCommit(custom, 'g1', commit(0), before, undefined, recording ? 'order_views' : undefined);
+    if (result.status !== 'planned') throw new Error(`Expected a plan, got ${result.status}`);
+    const [document] = result.request.finalDocuments;
+    expect(Object.is(document?.finalDocument.count, +0)).toBe(true);
+    expect(document?.statePatch).toMatchObject({ kind: 'ordered', transitions: [{ changeType: 'noop', patch: [] }] });
+    expect(verifyProjectionSourceCommitStatePatches(result.request, before).get(SOURCE_A)?.unchanged).toBe(true);
+    expect(Boolean(result.request.additionalWrites)).toBe(recording);
+    expect(validateProjectionChangesState(result.request, before)).toBeNull();
+  });
+
+  test('disabled recording falls back when an actual signed-zero result cannot be represented by the patches', () => {
+    const custom = createProjection('signed', () => ({ count: 0 }))
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { draft.count = 1; }
+      })
       .identity(() => SOURCE_A).hooks({ afterEach(state) { state.count = -0; } })
       .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
     const result = reduceProjectionSourceCommit(custom, 'g1', commit(0), {
@@ -552,7 +664,7 @@ describe('complete projection commit reducer', () => {
       links: [], ownRecordSequence: null
     });
     expect(result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
-      finalDocument: { count: -0 }, statePatch: { kind: 'full', reason: 'unrepresentable-patch' }
+      finalDocument: { count: -0 }, statePatch: { kind: 'full', reason: 'nonportable-state' }
     }] } });
   });
 

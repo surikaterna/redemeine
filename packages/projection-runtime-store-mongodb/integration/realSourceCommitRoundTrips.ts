@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { createProjection, projectionUuidToBase64Url22, type ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import {
+  createProjection, projectionUuidToBase64Url22, replayProjectionChangeTransition, type ProjectionSourceCommit
+} from '@redemeine/projection-runtime-core';
 import type { CommandStartedEvent, Db, MongoClient } from 'mongodb';
 import { executeProjectionDefinition } from '../../projection-worker-core/src/projectionDefinitionExecutor';
 import { createProjectionLaneScheduler } from '../../projection-worker-core/src/targetLaneScheduler';
 import { MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDedupeRecord,
   type ProjectionDocumentRecord, type ProjectionLinkRecord } from '../src';
 
-type State = { quantity: number };
+type State = { quantity: number; lastUpdated?: string; nested?: { quantity: number }; items?: Map<string, number> | Set<string> | null };
 const sourceId = '00000000-0000-4000-8000-000000000001';
 const sourceKey = projectionUuidToBase64Url22(sourceId);
 const progressKey = (name: string) => `${name}\0g1\0${sourceId}`;
@@ -63,9 +65,10 @@ async function checkRoundtrip(
     ...(strategy === 'in_document' ? { sourceProgress: { [sourceKey]: 0 } } : {}) })));
   if (strategy === 'own_record') await dedupeCollection.insertOne({ _id: progressKey(name), checkpoint: { sequence: 0 },
     projectionName: name, projectionGeneration: 'g1', sourceId, commitSequence: 0, updatedAt: 'seed' });
-  const definition = createProjection(name, () => ({ quantity: 0 }))
+  const definition = createProjection<State>(name, () => ({ quantity: 0 }))
     .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, { Change(draft) { draft.quantity++; } })
-    .identity(() => targets).deduplication({ strategy }).buildCommitDefinition();
+    .identity(() => targets).hooks({ afterEach(draft, event) { draft.lastUpdated = event.timestamp; } })
+    .deduplication({ strategy }).buildCommitDefinition();
   const run = (commit: ProjectionSourceCommit, alreadyCovered = false) => executeProjectionDefinition({
     definition, generation: 'g1', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0, alreadyCovered,
     ...(recording ? { projectionChanges: 'views' } : {})
@@ -83,7 +86,7 @@ async function checkRoundtrip(
   ];
   assert.deepEqual(observed, { order: expected, transactions: Number(cold) + Number(!single),
     writes: targets.length + Number(strategy === 'own_record') + Number(recording), singleMajority: single });
-  for (const id of targets) assert.deepEqual(await store.load(id), { quantity: 1 });
+  for (const id of targets) assert.deepEqual(await store.load(id), { quantity: 1, lastUpdated: source(1).events[0].timestamp });
   if (recording) {
     trace.begin();
     assert.equal((await run(source(1), true)).status, 'deduplicated');
@@ -168,8 +171,80 @@ async function checkOwnProgressRace(ctx: ReturnType<typeof roundtripStore>, trac
   assert.deepEqual(race.order, ['update:rt_docs', 'update:rt_progress', 'abortTransaction']);
   assert.equal(raced.status, 'rejected');
   assert.equal(raced.category, 'conflict');
-  assert.deepEqual(await store.load(id), { quantity: 1 });
+  assert.deepEqual(await store.load(id), { quantity: 1, lastUpdated: source(1).events[0].timestamp });
   return race;
+}
+
+async function checkSignedZero(
+  ctx: ReturnType<typeof roundtripStore>, trace: ReturnType<typeof commandTrace>, recording: boolean, intermediate = false
+) {
+  const { store, collection, changeCollection } = ctx;
+  const id = intermediate ? 'signed-zero-final-negative' : recording ? 'signed-zero-on' : 'signed-zero-off';
+  const initial = { quantity: +0 };
+  await collection.insertOne({ _id: id, state: initial, updatedAt: 'seed', v2Revision: 1,
+    v2WriteId: source(0).commitId, sourceProgress: { [sourceKey]: 0 } });
+  const definition = createProjection<State>(id, () => initial)
+    .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+      Change(draft) { if (intermediate) draft.quantity = 1; }
+    })
+    .identity(() => id).hooks({ afterEach(draft) { draft.quantity = -0; } })
+    .deduplication({ strategy: 'in_document' }).buildCommitDefinition();
+  trace.begin();
+  const result = await executeProjectionDefinition({ definition, generation: 'g1', store,
+    lanes: createProjectionLaneScheduler(), maxConflictRetries: 0, ...(recording ? { projectionChanges: 'views' } : {})
+  }, source(1));
+  assert.equal(result.status, 'committed');
+  assert.deepEqual(trace.end().order, ['find:rt_docs', 'update:rt_docs', ...(recording ? ['update:rt_feed', 'commitTransaction'] : [])]);
+  const row = await collection.findOne({ _id: id });
+  assert.ok(row);
+  assert.deepEqual(row.state, { quantity: intermediate ? -0 : +0 }); // Strict equality distinguishes the zero signs.
+  assert.equal(row.v2Revision, 2);
+  assert.equal(row.sourceProgress?.[sourceKey], 1);
+  const receipt = await changeCollection.findOne({ projectionName: id });
+  if (recording) {
+    assert.equal(receipt?.kind, 'projection_changes');
+    const [transition] = receipt.targets[0]!.transitions;
+    assert.equal(transition?.changeType, 'noop');
+    assert.deepEqual(transition.patch, []);
+    assert.deepEqual(replayProjectionChangeTransition(initial, transition), row.state);
+  } else assert.equal(receipt, null);
+  return 'passed';
+}
+
+async function checkRecordedStateBoundary(
+  ctx: ReturnType<typeof roundtripStore>, trace: ReturnType<typeof commandTrace>
+) {
+  const { store, collection, changeCollection } = ctx;
+  for (const kind of ['scalar-zero', 'replacement-zero', 'Map', 'Set']) {
+    const id = `recorded-boundary-${kind}`;
+    const initial = { quantity: 0, nested: { quantity: 0 }, items: null };
+    const seed = { _id: id, state: initial, updatedAt: 'seed', v2Revision: 1,
+      v2WriteId: source(0).commitId, sourceProgress: { [sourceKey]: 0 } };
+    await collection.insertOne(seed);
+    const definition = createProjection<State>(id, () => initial)
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Change(draft) {
+          if (kind === 'scalar-zero') draft.quantity = 1;
+          if (kind === 'replacement-zero') draft.nested = { quantity: 0 };
+          if (kind === 'Map') draft.items = new Map();
+          if (kind === 'Set') draft.items = new Set();
+        }
+      }).identity(() => id).hooks({ afterEach(draft) {
+        if (kind === 'scalar-zero') draft.quantity = -0;
+        if (kind === 'replacement-zero') draft.nested!.quantity = -0;
+        if (draft.items instanceof Map) draft.items.set('orders', 4);
+        if (draft.items instanceof Set) draft.items.add('orders');
+      } }).deduplication({ strategy: 'in_document' }).buildCommitDefinition();
+    trace.begin();
+    const result = await executeProjectionDefinition({ definition, generation: 'g1', store, projectionChanges: 'views',
+      lanes: createProjectionLaneScheduler(), maxConflictRetries: 0 }, source(1));
+    assert.equal(result.status, 'terminal', kind);
+    assert.match(result.reason, /portable JSON/, kind);
+    assert.equal(trace.end().writes, 0, kind);
+    assert.deepEqual(await collection.findOne({ _id: id }), seed, kind);
+    assert.equal(await changeCollection.findOne({ projectionName: id }), null, kind);
+  }
+  return 'passed';
 }
 
 export async function checkRealSourceCommitRoundTrips(db: Db, mongoClient: MongoClient) {
@@ -186,7 +261,13 @@ export async function checkRealSourceCommitRoundTrips(db: Db, mongoClient: Mongo
     const storeOnly = await checkPreparedRace(ctx, trace);
     const duplicateEmpty = await checkEmptyReceipt(ctx, trace);
     const ownProgressRace = await checkOwnProgressRace(ctx, trace);
-    return { inline, warmInline, olderInline, ownOff, ownOn, fanout, storeOnly, duplicateEmpty, ownProgressRace };
+    const signedZero = {
+      on: await checkSignedZero(ctx, trace, true),
+      off: await checkSignedZero(ctx, trace, false),
+      finalizedNegativeOff: await checkSignedZero(ctx, trace, false, true)
+    };
+    const recordedStateBoundary = await checkRecordedStateBoundary(ctx, trace);
+    return { inline, warmInline, olderInline, ownOff, ownOn, fanout, storeOnly, duplicateEmpty, ownProgressRace, signedZero, recordedStateBoundary };
   } finally {
     trace.close();
   }

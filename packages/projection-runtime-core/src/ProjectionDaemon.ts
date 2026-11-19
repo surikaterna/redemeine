@@ -311,7 +311,7 @@ export class ProjectionDaemon<TState = unknown> {
               handler(draft, event, context);
             }
             if (projection.hooks?.afterEach) {
-              projection.hooks.afterEach(draft as TState, event);
+              projection.hooks.afterEach(draft, event);
             }
           });
 

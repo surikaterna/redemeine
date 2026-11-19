@@ -47,6 +47,8 @@ function isPortableJson(value: unknown, frozen: boolean): value is ProjectionJso
   while (pending.length) {
     const current = pending.pop();
     if (typeof current === 'string' && unpairedSurrogate.test(current)) return false;
+    // JSON serialization and draft patch capture do not reliably preserve the sign of zero.
+    if (typeof current === 'number' && Object.is(current, -0)) return false;
     if (!current || typeof current !== 'object') continue;
     if (frozen && !Object.isFrozen(current)) return false;
     // Immer does not capture every edit of an own __proto__ member.
