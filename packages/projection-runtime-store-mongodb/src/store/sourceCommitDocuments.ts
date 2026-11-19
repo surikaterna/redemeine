@@ -70,6 +70,7 @@ export function planSourceDocumentWrites<TState>(
     const filter = insertOnly ? { _id: id } : revisionFilter(id, document.expectedRevision);
     const legacy = applyLegacyFence(document, row, filter, metadata, request.additionalWrites !== undefined);
     if (trusted && row) {
+      // Native writers advance revision/write ID; timestamp and checkpoint also fence known legacy writers.
       filter.checkpoint = { $exists: false };
       filter.updatedAt = row.updatedAt;
       filter.v2WriteId = row.v2WriteId ?? { $exists: false };

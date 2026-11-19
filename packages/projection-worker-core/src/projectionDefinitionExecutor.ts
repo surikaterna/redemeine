@@ -1,4 +1,7 @@
 import type {
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRequest,
+  ProjectionChangesReceipt,
   ProjectionCommitDefinition,
   ProjectionSourceCommit,
   ProjectionSourceCommitSnapshot,
@@ -130,6 +133,44 @@ type AttemptResult<TState> =
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
   | { kind: 'conflict'; reason: string };
 
+function matchesReceiptTargets(
+  receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest, replayed: boolean
+): boolean {
+  const documents = request.finalDocuments;
+  if (receipt.kind === 'projection_changes_empty') return !('targets' in receipt) && (replayed || documents.length === 0);
+  if (!replayed && receipt.targets.length !== documents.length) return false;
+  const expected = replayed ? undefined : new Set(documents.map(({ targetDocumentId }) => targetDocumentId));
+  const seen = new Set<string>();
+  for (const target of receipt.targets) {
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return false;
+    const { targetDocumentId: id, transitions, previousRevision, revision } = target;
+    if (typeof id !== 'string' || !id.length || seen.has(id) || (expected && !expected.has(id))
+      || !Array.isArray(transitions) || !transitions.length
+      || (previousRevision !== null && (!Number.isSafeInteger(previousRevision) || previousRevision < 0))
+      || !Number.isSafeInteger(revision) || revision !== (previousRevision ?? 0) + 1) return false;
+    seen.add(id);
+  }
+  return true;
+}
+
+function hasMatchingCommitReceipt(request: CommitProjectionSourceCommitRequest, result: CommitProjectionSourceCommitCommitted): boolean {
+  const identity = projectionChangesIdentity(request);
+  if (!identity) return true;
+  const writes = result.additionalWrites;
+  const empty = result.emptyChangeReceipt;
+  if (writes !== undefined && (empty !== undefined || !Array.isArray(writes)
+    || writes.length !== 1 || writes[0]?.kind !== 'projection_changes')) return false;
+  if (empty !== undefined && empty?.kind !== 'projection_changes_empty') return false;
+  const receipt = writes?.[0] ?? empty;
+  if (!receipt) return false;
+  const reliable = request.progress.strategy !== 'none';
+  const applicationId = reliable ? undefined : receipt.applicationId;
+  if (!reliable && !isCanonicalProjectionUuid(applicationId)) return false;
+  // A canonical replay can describe an earlier plan, not the losing attempt's target set.
+  return matchProjectionChangesReceipt(identity, receipt, applicationId) === 'committed'
+    && matchesReceiptTargets(receipt, request, result.replayed === true);
+}
+
 async function commitReduction<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
@@ -141,17 +182,15 @@ async function commitReduction<TState>(
     const result = snapshot ? await options.store.commitProjectionSourceCommit(reduction.request, snapshot)
       : await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
-      const append = reduction.request.additionalWrites?.[0];
-      const identity = projectionChangesIdentity(reduction.request);
-      const receipt = result.additionalWrites?.[0] ?? result.emptyChangeReceipt;
-      const applicationId = reduction.request.progress.strategy === 'none' ? receipt?.applicationId : undefined;
-      if (identity && (!receipt || (reduction.request.progress.strategy === 'none' && !isCanonicalProjectionUuid(applicationId))
-        || matchProjectionChangesReceipt(identity, receipt, applicationId) === 'mismatch'
-        || (append?.targets.length && receipt.kind !== 'projection_changes'))) {
+      if ((result.replayed !== undefined && typeof result.replayed !== 'boolean')
+        || (result.replayed === true && reduction.request.progress.strategy === 'none')) {
+        return { kind: 'done', outcome: failed('terminal', 'Store returned an invalid commit replay flag.', attempt) };
+      }
+      if (!hasMatchingCommitReceipt(reduction.request, result)) {
         return { kind: 'done', outcome: failed('terminal', 'Store did not return a matching projection_changes receipt.', attempt) };
       }
       const outcome = result.commitSequence === commit.commitSequence
-        ? { status: result.replayed ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
+        ? { status: result.replayed === true ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
         : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
       return { kind: 'done', outcome };
     }

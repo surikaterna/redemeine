@@ -131,6 +131,22 @@ test('raw transactional fallback still honors a same-store observed write identi
   expect(await store.load('one')).toEqual({ value: 7 });
 });
 
+test.each([
+  ['revision', { v2Revision: 20 }],
+  ['write identity', { v2WriteId: '00000000-0000-4000-8000-000000000099' }],
+  ['timestamp', { updatedAt: 'new-legacy-timestamp' }],
+  ['checkpoint absence', { checkpoint: { sequence: 99 } }]
+] as const)('a prepared native delta is fenced by %s', async (_name, changedFence) => {
+  const { store, collection, get, request, key } = await inlineFixture();
+  const snapshot = await get();
+  const captured = capturedInline(request.commit, snapshot);
+  await collection.updateOne({ _id: 'one' }, { $set: { ...changedFence, state: { value: 7 } } });
+  expect(await store.commitProjectionSourceCommit(captured, snapshot)).toMatchObject({ status: 'rejected', category: 'conflict' });
+  expect(collection.operationLog.filter(({ op }) => op === 'updateOne').at(-1)?.detail)
+    .toMatchObject({ update: { $set: { 'state.value': 2 } } });
+  expect(collection.snapshot()[0]).toMatchObject({ ...changedFence, state: { value: 7 }, sourceProgress: { [key]: 0 } });
+});
+
 test('changed BSON-specific values are handled as atomic values, not keyed objects', () => {
   const after = new Date(1000);
   expect(authoritativeMongoEdits({ stamp: new Date(0) }, { stamp: after }))

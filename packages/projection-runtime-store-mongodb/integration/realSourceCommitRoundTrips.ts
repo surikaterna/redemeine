@@ -131,6 +131,15 @@ async function checkPreparedRace(ctx: ReturnType<typeof roundtripStore>, trace: 
     v2WriteId: '00000000-0000-4000-8000-000000000006', sourceProgress: { [sourceKey]: 0 } });
   assert.equal((await store.commitProjectionSourceCommit(request, snapshot)).status, 'rejected');
   assert.deepEqual(await store.load(id), { quantity: 7 });
+
+  const beforeLegacyWrite = await get();
+  const prepared = captureQuantity(id, beforeLegacyWrite, source(1), 'in_document', 9);
+  await store.save(id, { quantity: 8 }, { sequence: 99 });
+  const afterLegacyWrite = await store.commitProjectionSourceCommit(prepared, beforeLegacyWrite);
+  assert.equal(afterLegacyWrite.status, 'rejected');
+  assert.equal(afterLegacyWrite.category, 'conflict');
+  assert.deepEqual(await store.load(id), { quantity: 8 });
+  assert.deepEqual(await store.getCheckpoint(id), { sequence: 99 });
   return commitOnly;
 }
 
