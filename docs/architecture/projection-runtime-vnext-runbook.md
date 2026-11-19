@@ -8,6 +8,7 @@ Related references:
 
 - [Projection Runtime v3 Contracts and Invariants](/docs/architecture/projection-runtime-v3-contracts-and-invariants)
 - [Projection Runtime v3 Crash/Chaos Safety Matrix](/docs/architecture/projection-runtime-v3-crash-chaos-safety-matrix)
+- [Real MongoDB 6 and 8 qualification](./projection-p1-qualification.md#real-mongodb-compatibility-matrix)
 
 ## Scope and non-goals
 

@@ -11,6 +11,10 @@ const evidencePath = required('REDEMEINE_EVIDENCE_PATH');
 const receiptPath = required('REDEMEINE_RECEIPT_PATH');
 const container = required('REDEMEINE_MONGO_CONTAINER');
 const evidence = JSON.parse(await readFile(evidencePath, 'utf8')) as Record<string, unknown>;
+const expectedMongoVersion = required('REDEMEINE_EXPECTED_MONGO_VERSION');
+if (evidence.mongoVersion !== expectedMongoVersion) {
+  throw new Error(`Expected MongoDB ${expectedMongoVersion}; replica set reported ${evidence.mongoVersion}.`);
+}
 const listed = execFileSync('docker', ['ps', '-a', '--format', '{{.Names}}'], { encoding: 'utf8' });
 if (listed.split('\n').includes(container)) throw new Error('Mongo container cleanup was not completed.');
 const receipt = {

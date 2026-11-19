@@ -10,9 +10,26 @@ This qualification applies only to the single-coordinator, all-target atomic P1 
 | `.2` reducer/coordinator | Multi-event reduction, target/no-target, P/N/Q mixed strategies, lane overlap, atomic request construction, links and conflicts | projection runtime/worker package tests; workspace tests |
 | `.3` stores | Shared in-memory/Mongo conformance, snapshot/majority transactions, none zero dedupe operations, inline warning/capacity rejection, unknown outcomes | `pnpm run test:projection-mongo-real` |
 | `.4` ordering/transport | Indexed complete-commit Tapeworm reader, gaps and redelivery dispatch, four SIGKILL windows, direct Rabbit ACK/retry/DLQ, immutable registry | `pnpm run test:projection-real-stack` |
-| `.5` accepted baseline | Explicit operator B and risk acceptance, retained indexed tail, legacy first-touch CAS, and 23 combined original/accepted scenarios (11 original incl. unknown UUID, 12 accepted) | `pnpm run test:projection-real-stack`; `pnpm run test:projection-mongo-real` |
+| `.5` accepted baseline | Explicit operator B and risk acceptance, retained indexed tail, legacy first-touch CAS, and 24 combined original/accepted scenarios (11 original incl. unknown UUID, 13 accepted) | `pnpm run test:projection-real-stack`; `pnpm run test:projection-mongo-real` |
 
 The scripts above finalize immutable JSON receipts only after logical resources, databases, and containers owned by the scenario have been cleaned up. Each receipt records the exact Git SHA and pinned service versions or image digests. A receipt from an earlier SHA does not qualify a later commit. The accepted-baseline procedure makes no claim of verified pre-cutover completeness, stopped old-writer credentials or future publisher availability; see [accepted-baseline cutover](./projection-accepted-baseline-cutover.md). A future rebuild is separately tracked as `redemeine-awq1`.
+
+## Real MongoDB compatibility matrix
+
+Run from the repository root on Linux with Docker available (the disposable replica set uses host networking and listens on loopback). Use a clean checkout for qualification evidence:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm exec turbo run build --filter=@redemeine/projection-runtime-store-mongodb... --filter=@redemeine/projection-transport...
+for major in 6 8; do
+  REDEMEINE_MONGO_MAJOR="$major" pnpm run test:projection-mongo-real || exit
+  REDEMEINE_MONGO_MAJOR="$major" pnpm run test:projection-real-stack || exit
+done
+```
+
+`REDEMEINE_MONGO_MAJOR=6` selects MongoDB 6.0.27; `8` (the default) selects 8.0.14. The transport runs the original and accepted-baseline scenarios against the same replica set and RabbitMQ 4.1.4. A receipt is not issued unless the replica-set suite or both transport suites, respectively, report the exact pinned MongoDB version through `buildInfo`. The receipts also identify the Docker image digests. This matrix is for the two real suites above, not the separate benchmark or joined-cutover runner.
+
+Default receipt names under `${TMPDIR:-/tmp}` include the Git SHA and MongoDB version. Receipts are never overwritten; to repeat the same SHA/version, use a fresh `TMPDIR` or distinct paths via `REDEMEINE_ZYFY3_RECEIPT_PATH` (replica set) and `REDEMEINE_ZYFY4_RECEIPT_PATH` (transport). The GitHub Actions workflow `projection-mongo-qualification.yml` runs the same commands per version and uploads the receipts.
 
 ## Source-progress benchmark
 

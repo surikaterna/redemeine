@@ -1,0 +1,55 @@
+name: Projection MongoDB qualification
+
+on:
+  pull_request:
+    paths:
+      - 'packages/projection*/**'
+      - 'packages/**/package.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'scripts/projection-mongo-version.sh'
+      - '.github/workflows/projection-mongo-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Projection suites (MongoDB ${{ matrix.mongo }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mongo: ['6', '8']
+    env:
+      REDEMEINE_MONGO_MAJOR: ${{ matrix.mongo }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run build --filter=@redemeine/projection-runtime-store-mongodb... --filter=@redemeine/projection-transport...
+      - name: Run real MongoDB replica-set suite
+        env:
+          REDEMEINE_ZYFY3_RECEIPT_PATH: ${{ runner.temp }}/replica-set.json
+        run: pnpm run test:projection-mongo-real
+      - name: Run real MongoDB and RabbitMQ transport suites
+        env:
+          REDEMEINE_ZYFY4_RECEIPT_PATH: ${{ runner.temp }}/transport.json
+        run: pnpm run test:projection-real-stack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: projection-mongo-${{ matrix.mongo }}-receipts
+          path: |
+            ${{ runner.temp }}/replica-set.json
+            ${{ runner.temp }}/transport.json
+          if-no-files-found: error
