@@ -225,6 +225,10 @@ export {
   validateProjectionQueueRegistryManifest,
   validateCommitProjectionSourceCommitRelationships,
   buildProjectionChangesReceipt,
+  captureProjectionSourceEvent,
+  isOwnedProjectionState,
+  ownProjectionState,
+  sealProjectionCaptureRequest,
   equalProjectionChangeJson,
   formatProjectionChangePointer,
   parseProjectionChangePointer,
@@ -241,5 +245,6 @@ export {
   projectionChangesResumeToken,
   validateProjectionChangesState,
   verifyProjectionSourceCommitStatePatches,
+  checkProjectionSourceCommitState,
   type VerifiedProjectionSourceCommitStatePatch
 } from './contracts';

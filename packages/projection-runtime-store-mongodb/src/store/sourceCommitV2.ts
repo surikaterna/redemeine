@@ -10,8 +10,7 @@ import type {
 import {
   projectionChangesHistoryFailure,
   validateCommitProjectionSourceCommitRelationships,
-  validateProjectionChangesState,
-  verifyProjectionSourceCommitStatePatches
+  checkProjectionSourceCommitState
 } from '@redemeine/projection-runtime-core';
 import type {
   MongoProjectionStoreOptions,
@@ -165,8 +164,7 @@ function prepareSourceCommit<TState>(
   if (lacksLegacyOriginal(request, snapshot)) return terminal('Legacy document first touch requires original state CAS.');
   const failure = validateSnapshot(request, snapshot);
   if (failure) return failure.startsWith('legacy document changed') ? terminal(failure) : conflict(failure);
-  const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
-  const invalidChange = validateProjectionChangesState(request, snapshot, verified);
+  const { verified, failure: invalidChange } = checkProjectionSourceCommitState(request, snapshot, trusted);
   if (invalidChange) return terminal(invalidChange);
   return { writes: planSourceDocumentWrites(request, loaded, verified, writeId, trusted, options.now ?? (() => new Date().toISOString())) };
 }

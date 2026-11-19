@@ -210,13 +210,14 @@ export type {
 export {
   buildProjectionChangesReceipt, matchProjectionChangesReceipt, MISSING_PROJECTION_CHANGES_HISTORY,
   projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState,
-  verifyProjectionSourceCommitStatePatches, type VerifiedProjectionSourceCommitStatePatch
+  verifyProjectionSourceCommitStatePatches, checkProjectionSourceCommitState, type VerifiedProjectionSourceCommitStatePatch
 } from './projectionChanges';
 export {
   equalProjectionChangeJson, freezePortableProjectionChangeJson, isCertifiedProjectionSnapshotJson,
   isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson
 } from './projectionChangeJson';
 export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
+export { captureProjectionSourceEvent, isOwnedProjectionState, ownProjectionState, sealProjectionCaptureRequest } from './projectionChangeCapture';
 export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {
   evaluateCutoverReadiness,

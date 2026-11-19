@@ -1,4 +1,5 @@
 import { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
+import { isSealedProjectionCaptureRequest, matchesCapturedProjectionState } from './projectionChangeCapture';
 import { validateProjectionChangeIdentityMetadata, validateProjectionChangeWriteMetadata } from './projectionChangeMetadata';
 import { replayProjectionChangeTransition } from './projectionChangePatch';
 import type { ProjectionJsonValue } from './sourceCommit';
@@ -213,12 +214,44 @@ function validateStateTransitions(
     }
     state = next;
   }
-  return state !== undefined && (Object.is(state, result)
-    || (isPortableProjectionChangeJson(result) && equalProjectionChangeJson(state, result, exact)))
+  if (state !== undefined && Object.is(state, result)) return null;
+  if (!isPortableProjectionChangeJson(result)) return 'projection change final document must be portable JSON';
+  return state !== undefined && equalProjectionChangeJson(state, result, exact)
     ? null : 'projection change patch does not match the final document';
 }
 
-export type VerifiedProjectionSourceCommitStatePatch = { transitions: readonly ProjectionChangeTransition[]; unchanged: boolean };
+export type VerifiedProjectionSourceCommitStatePatch = {
+  transitions: readonly ProjectionChangeTransition[];
+  unchanged: boolean;
+  /** Genuine Immer capture against the baseline, not a replay or portability certification. */
+  captured?: true;
+};
+
+export function checkProjectionSourceCommitState<T>(
+  request: CommitProjectionSourceCommitRequest<T>, snapshot: Pick<ProjectionSourceCommitSnapshot<T>, 'targets'>, allowCapture: boolean
+): { failure: string | null; verified: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch> } {
+  if (allowCapture && !request.validateStateChanges && isSealedProjectionCaptureRequest(request)) {
+    const originals = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
+    const verified = new Map<string, VerifiedProjectionSourceCommitStatePatch>();
+    for (const document of request.finalDocuments) {
+      const original = originals.get(document.targetDocumentId);
+      const hint = document.statePatch;
+      if (!original || hint?.kind !== 'ordered' || !transitionsMatchEvents(hint.transitions, request.commit.events)) continue;
+      const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
+      if (matchesCapturedProjectionState(original.state, exists, document.finalDocument, hint.transitions)) {
+        verified.set(document.targetDocumentId, { transitions: hint.transitions, captured: true,
+          unchanged: exists && Object.is(original.state, document.finalDocument) });
+      }
+    }
+    if (!request.additionalWrites?.[0].targets.some((target) => verified.get(target.targetDocumentId)?.transitions !== target.transitions)) {
+      return { failure: null, verified };
+    }
+  }
+  const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
+  const failure = validateProjectionChangesState(request, snapshot, verified)
+    ?? (request.validateStateChanges && verified.size !== request.finalDocuments.length ? 'Invalid projection state change hint.' : null);
+  return { failure, verified };
+}
 
 /** Advisory data only: a missing or unproven hint must not change legacy full-document semantics. */
 export function verifyProjectionSourceCommitStatePatches<TState>(

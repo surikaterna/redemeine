@@ -215,7 +215,7 @@ async function checkRecordedStateBoundary(
   ctx: ReturnType<typeof roundtripStore>, trace: ReturnType<typeof commandTrace>
 ) {
   const { store, collection, changeCollection } = ctx;
-  for (const kind of ['scalar-zero', 'replacement-zero', 'Map', 'Set']) {
+  for (const kind of ['scalar-zero', 'replacement-zero', 'Map', 'Set', 'strict-opt-out']) {
     const id = `recorded-boundary-${kind}`;
     const initial = { quantity: 0, nested: { quantity: 0 }, items: null };
     const seed = { _id: id, state: initial, updatedAt: 'seed', v2Revision: 1,
@@ -224,19 +224,20 @@ async function checkRecordedStateBoundary(
     const definition = createProjection<State>(id, () => initial)
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
         Change(draft) {
-          if (kind === 'scalar-zero') draft.quantity = 1;
+          if (kind === 'scalar-zero' || kind === 'strict-opt-out') draft.quantity = 1;
           if (kind === 'replacement-zero') draft.nested = { quantity: 0 };
           if (kind === 'Map') draft.items = new Map();
           if (kind === 'Set') draft.items = new Set();
         }
       }).identity(() => id).hooks({ afterEach(draft) {
-        if (kind === 'scalar-zero') draft.quantity = -0;
+        if (kind === 'scalar-zero' || kind === 'strict-opt-out') draft.quantity = -0;
         if (kind === 'replacement-zero') draft.nested!.quantity = -0;
         if (draft.items instanceof Map) draft.items.set('orders', 4);
         if (draft.items instanceof Set) draft.items.add('orders');
       } }).deduplication({ strategy: 'in_document' }).buildCommitDefinition();
     trace.begin();
-    const result = await executeProjectionDefinition({ definition, generation: 'g1', store, projectionChanges: 'views',
+    const result = await executeProjectionDefinition({ definition, generation: 'g1', store, stateValidation: { changes: true },
+      ...(kind === 'strict-opt-out' ? {} : { projectionChanges: 'views' }),
       lanes: createProjectionLaneScheduler(), maxConflictRetries: 0 }, source(1));
     assert.equal(result.status, 'terminal', kind);
     assert.match(result.reason, /portable JSON/, kind);

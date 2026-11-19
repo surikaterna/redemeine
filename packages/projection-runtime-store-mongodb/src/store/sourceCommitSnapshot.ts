@@ -1,5 +1,5 @@
 import {
-  freezePortableProjectionChangeJson, isCanonicalProjectionUuid, projectionUuidToBase64Url22,
+  ownProjectionState, isCanonicalProjectionUuid, projectionUuidToBase64Url22,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest,
   type ProjectionSourceCommitSnapshot
 } from '@redemeine/projection-runtime-core';
@@ -82,14 +82,14 @@ export async function readMongoSourceSnapshot<TState>(
 function canFence<TState>(row: ProjectionDocumentRecord<TState> | null): boolean {
   return row === null || (Number.isSafeInteger(row.v2Revision) && row.v2ObservedUpdatedAt === undefined
     && isCanonicalProjectionUuid(row.v2WriteId) && !Object.hasOwn(row, 'checkpoint')
-    && typeof row.updatedAt === 'string' && freezePortableProjectionChangeJson(row.state));
+    && typeof row.updatedAt === 'string' && row.state !== undefined && ownProjectionState(row.state));
 }
 
 export interface NativeSourceSnapshot<TState> extends LoadedSourceSnapshot<TState> {
   request: LoadProjectionSourceCommitSnapshotRequest;
 }
 
-/** Captures private metadata; only immutable JSON state may be shared with the reducer. */
+/** Captures private metadata and seals owned state without a JSON diagnostics pass. */
 export function protectSourceSnapshot<TState>(
   loaded: LoadedSourceSnapshot<TState>, request: LoadProjectionSourceCommitSnapshotRequest
 ): NativeSourceSnapshot<TState> | undefined {

@@ -15,8 +15,8 @@ import {
   projectionChangesIdentity,
   projectionChangesResumeToken,
   validateCommitProjectionSourceCommitRelationships,
-  validateProjectionChangesState,
-  verifyProjectionSourceCommitStatePatches
+  checkProjectionSourceCommitState,
+  ownProjectionState
 } from '@redemeine/projection-runtime-core';
 import type { StoredDocument } from './storedDocument';
 
@@ -127,12 +127,13 @@ export const loadV2Snapshot = <TState>(
     targets: request.targetDocumentIds.map((targetDocumentId) => {
       const metadata = state.documentMetadata.get(documentKey(request.projectionName, request.projectionGeneration, targetDocumentId));
       const document = documents.get(targetDocumentId);
-      const storedState = structuredClone(document?.state) ?? null;
+      const storedState = request.prepareSourceCommit && metadata && document && ownProjectionState(document.state)
+        ? document.state ?? null : structuredClone(document?.state) ?? null;
       return {
         targetDocumentId,
         revision: metadata?.revision ?? null,
         state: storedState,
-        sourceProgress: metadata?.sourceProgress ?? {},
+        sourceProgress: { ...metadata?.sourceProgress },
         ...(!metadata && document ? { legacyOriginal: {
           state: structuredClone(document.state),
           ...(document.updatedAt === undefined ? {} : { updatedAt: document.updatedAt }),
@@ -171,7 +172,7 @@ const applyDocuments = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
   state: V2State,
-  verified: ReturnType<typeof verifyProjectionSourceCommitStatePatches> | undefined
+  verified: ReturnType<typeof checkProjectionSourceCommitState>['verified'] | undefined
 ): { documents: Map<string, StoredDocument<TState>>; revisions: Record<string, number> } => {
   const nextDocuments = new Map(documents);
   const revisions = new Map<string, number>();
@@ -184,9 +185,10 @@ const applyDocuments = <TState>(
     const sourceProgress = progress.get(document.targetDocumentId) ?? state.documentMetadata.get(key)?.sourceProgress ?? {};
     const stored = documents.get(document.targetDocumentId);
     const checkpoint = stored?.checkpoint;
-    const unchanged = verified?.get(document.targetDocumentId)?.unchanged;
+    const proof = verified?.get(document.targetDocumentId);
     nextDocuments.set(document.targetDocumentId, {
-      state: unchanged && stored?.state !== undefined ? stored.state : structuredClone(document.finalDocument),
+      state: proof?.unchanged && stored?.state !== undefined ? stored.state
+        : proof?.captured ? document.finalDocument : structuredClone(document.finalDocument),
       ...(checkpoint === undefined ? {} : { checkpoint }),
       updatedAt: new Date().toISOString()
     });
@@ -221,12 +223,14 @@ function validateChangeSnapshot<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
   state: V2State,
-  checkState: boolean
-): { failure?: string; verified?: ReturnType<typeof verifyProjectionSourceCommitStatePatches> } {
+  checkState: boolean,
+  allowCapture: boolean
+): { failure?: string; verified?: ReturnType<typeof checkProjectionSourceCommitState>['verified'] } {
   const snapshot = loadV2Snapshot({
     projectionName: request.projectionName, projectionGeneration: request.projectionGeneration,
     targetDocumentIds: request.finalDocuments.map((document) => document.targetDocumentId), links: [],
     progressStrategy: request.progress.strategy,
+    ...(allowCapture ? { prepareSourceCommit: true } : {}),
     ...(request.progress.strategy === 'own_record' ? { sourceId: request.commit.streamId } : {})
   }, documents, state);
   const historyFailure = projectionChangesHistoryFailure(request, snapshot);
@@ -236,15 +240,15 @@ function validateChangeSnapshot<TState>(
     !isDeepStrictEqual(document.legacyOriginal, snapshot.targets[index]?.legacyOriginal))) {
     return { failure: 'Legacy document first touch requires matching original state CAS.' };
   }
-  const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
-  const failure = validateProjectionChangesState(request, snapshot, verified);
+  const { verified, failure } = checkProjectionSourceCommitState(request, snapshot, allowCapture);
   return failure ? { failure } : { verified };
 }
 
 export const commitV2 = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
-  current: V2State
+  current: V2State,
+  allowCapture = false
 ): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
   const malformed = validateCommitProjectionSourceCommitRelationships(request);
   if (malformed) return { result: rejectMalformed(malformed) };
@@ -258,8 +262,8 @@ export const commitV2 = <TState>(
     }
   }
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
-  const patchCheck = request.additionalWrites || request.finalDocuments.some(({ statePatch }) => statePatch?.kind === 'ordered')
-    ? validateChangeSnapshot(request, documents, current, failure === null) : {};
+  const patchCheck = request.validateStateChanges || request.additionalWrites || request.finalDocuments.some(({ statePatch }) => statePatch?.kind === 'ordered')
+    ? validateChangeSnapshot(request, documents, current, failure === null, allowCapture) : {};
   if (patchCheck.failure) return { result: rejectMalformed(patchCheck.failure) };
   if (failure) return { result: reject(failure) };
   const state = cloneV2State(current);

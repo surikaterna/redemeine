@@ -6,6 +6,7 @@ import type {
   ProjectionSourceCommitStorePort,
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
+import type { ProjectionStateValidation } from './projectionCommitReducer';
 
 export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly generation: string;
@@ -45,6 +46,8 @@ export interface ProjectionCommitCoordinatorOptions<TState = unknown> {
   readonly maxBytes: number;
   readonly maxGapPages?: number;
   readonly maxConflictRetries?: number;
+  /** Opt-in diagnostics, independent of whether the generation records history. */
+  readonly stateValidation?: ProjectionStateValidation;
 }
 
 export interface ProjectionCommitCoordinator {

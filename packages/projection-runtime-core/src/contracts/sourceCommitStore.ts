@@ -82,6 +82,8 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   stagedLinks: readonly ProjectionSourceCommitLink[];
   progress: ProjectionSourceCommitProgress;
   additionalWrites?: readonly [ProjectionChangesAppend];
+  /** Enables strict state diagnostics even for an internally captured request. */
+  validateStateChanges?: true;
 }
 
 export interface CommitProjectionSourceCommitCommitted {
@@ -127,8 +129,9 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
 export function validateCommitProjectionSourceCommitRelationships<TState>(
   request: CommitProjectionSourceCommitRequest<TState>
 ): string | null {
-  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites'];
+  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges'];
   if (Object.keys(request).some((key) => !allowed.includes(key))) return 'unsupported source commit request fields';
+  if (request.validateStateChanges !== undefined && request.validateStateChanges !== true) return 'invalid state validation flag';
   const malformedAppend = validateProjectionChangesAppend(request);
   if (malformedAppend) return malformedAppend;
   if (request.progress.strategy === 'own_record' && request.progress.source.baselineSequence !== undefined) {

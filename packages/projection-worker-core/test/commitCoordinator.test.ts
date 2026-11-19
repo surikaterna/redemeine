@@ -117,7 +117,7 @@ describe('commit-native projection changes', () => {
       { op: 'add', path: '/a~0~1b/3', value: 3 },
       { op: 'replace', path: '/0', value: 'new' }
     ]);
-    expect(transitions?.[1]).toMatchObject({ changeType: 'noop', patch: [] });
+    expect(transitions?.[1]).toMatchObject({ changeType: 'update', patch: [{ op: 'replace', path: '/a~0~1b', value: [1, 4, 5, 3] }] });
     expect(validateProjectionChangesState(result.request, snapshot)).toBeNull();
   });
 
@@ -147,7 +147,7 @@ describe('commit-native projection changes', () => {
       }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
     const snapshot = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: initial, sourceProgress: {} }],
       links: [], ownRecordSequence: null };
-    expect(reduceProjectionSourceCommit(definition, 'g1', commit(0), snapshot, undefined, 'order_views'))
+    expect(reduceProjectionSourceCommit(definition, 'g1', commit(0), snapshot, undefined, 'order_views', { load: true }))
       .toMatchObject({ status: 'terminal', reason: expect.stringContaining('portable JSON') });
   });
 
@@ -601,7 +601,7 @@ describe('complete projection commit reducer', () => {
     expect(validateProjectionChangesState(result.request, from)).toBeNull();
   });
 
-  test('unchanged Immer results reuse root portability scans until a handler changes state', () => {
+  test('default Immer capture does not run root portability scans', () => {
     const initial = { scanProbe: true, count: 0, lines: Array.from({ length: 32 }, (_, id) => ({ id })) };
     const custom = createProjection('scans', () => initial)
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
@@ -623,8 +623,8 @@ describe('complete projection commit reducer', () => {
     };
     const short = run(1);
     const long = run(32);
-    expect(short.scans).toBeGreaterThan(0);
-    expect(long.scans).toBe(short.scans);
+    expect(short.scans).toBe(0);
+    expect(long.scans).toBe(0);
     expect(long.result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
       finalDocument: { ...initial, count: 1 }, statePatch: { kind: 'ordered' }
     }] } });
@@ -652,7 +652,7 @@ describe('complete projection commit reducer', () => {
     expect(validateProjectionChangesState(result.request, before)).toBeNull();
   });
 
-  test('disabled recording falls back when an actual signed-zero result cannot be represented by the patches', () => {
+  test('disabled recording keeps an actual signed-zero result authoritative even with an empty capture', () => {
     const custom = createProjection('signed', () => ({ count: 0 }))
       .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
         Added(draft) { draft.count = 1; }
@@ -664,8 +664,26 @@ describe('complete projection commit reducer', () => {
       links: [], ownRecordSequence: null
     });
     expect(result).toMatchObject({ status: 'planned', request: { finalDocuments: [{
-      finalDocument: { count: -0 }, statePatch: { kind: 'full', reason: 'nonportable-state' }
+      finalDocument: { count: -0 }, statePatch: { kind: 'ordered', transitions: [{ changeType: 'noop', patch: [] }] }
     }] } });
+  });
+
+  test.each([undefined, 'order_views'])('strict checks catch a finalized nonportable intermediate even when the final state is portable (%s)', (feed) => {
+    const custom = createProjection('signed', () => ({ count: 0 }))
+      .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+        Added(draft) { draft.count = 1; },
+        Changed(draft) { draft.count = 2; }
+      })
+      .identity(() => SOURCE_A).hooks({ afterEach(draft, event) { if (event.type === 'Added') draft.count = -0; } })
+      .deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+    const before = { targets: [{ targetDocumentId: SOURCE_A, revision: 1, state: { count: 0 }, sourceProgress: {} }],
+      links: [], ownRecordSequence: null };
+    const source = commit(0, SOURCE_A, ['Added', 'Changed']);
+    expect(reduceProjectionSourceCommit(custom, 'g1', source, before, undefined, feed)).toMatchObject({
+      status: 'planned', request: { finalDocuments: [{ finalDocument: { count: 2 } }] }
+    });
+    expect(reduceProjectionSourceCommit(custom, 'g1', source, before, undefined, feed, { changes: true }))
+      .toMatchObject({ status: 'terminal', reason: expect.stringContaining('portable JSON') });
   });
 
   test('runs handlers with Immer draft semantics without mutating loaded state', () => {

@@ -13,13 +13,14 @@ import {
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
-import { reduceProjectionSourceCommit, type ProjectionReductionResult } from './projectionCommitReducer';
+import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
   definition: ProjectionCommitDefinition<TState>;
   generation: string;
   projectionChanges?: string;
+  stateValidation?: ProjectionStateValidation;
   store: ProjectionSourceCommitStorePort<TState>;
   lanes: ProjectionLaneScheduler;
   maxConflictRetries: number;
@@ -185,7 +186,7 @@ async function executeAttempt<TState>(
     const replay = replayOutcome(options, commit, snapshot, attempt, native);
     if (replay) return { kind: 'done', outcome: replay };
     const reduction = reduceProjectionSourceCommit(
-      options.definition, options.generation, commit, snapshot, options.baselineSequence, options.projectionChanges
+      options.definition, options.generation, commit, snapshot, options.baselineSequence, options.projectionChanges, options.stateValidation
     );
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
     if (reduction.status === 'terminal') {

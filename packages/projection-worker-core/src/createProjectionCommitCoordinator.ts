@@ -127,6 +127,7 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
       stableSingleTarget: scope.strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
       alreadyCovered: scope.alreadyCovered === true,
       ...(entry.projectionChanges !== undefined ? { projectionChanges: entry.projectionChanges } : {}),
+      ...(runtime.options.stateValidation ? { stateValidation: runtime.options.stateValidation } : {}),
       ...(scope.strategyScope ? { baselineSequence: scope.startAnchor - 1 } : {}),
     }, commit);
     results.push({ projectionName: entry.definition.name, projectionGeneration: entry.generation, outcome });

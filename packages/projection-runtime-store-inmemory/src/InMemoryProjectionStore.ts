@@ -27,6 +27,7 @@ import {
  */
 export class InMemoryProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   readonly projectionChangesCapability = 'atomic-turn-receipts-v1' as const;
+  readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
@@ -77,9 +78,10 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   }
 
   async commitProjectionSourceCommit(
-    request: CommitProjectionSourceCommitRequest<TState>
+    request: CommitProjectionSourceCommitRequest<TState>,
+    snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
-    const execution = commitV2(request, this.documents, this.v2);
+    const execution = commitV2(request, this.documents, this.v2, snapshot !== undefined);
     if (!execution.documents || !execution.state) return execution.result;
     this.documents = execution.documents;
     this.v2 = execution.state;

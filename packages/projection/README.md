@@ -173,7 +173,7 @@ When using `.mirror()`, initial state is auto-cloned from the aggregate via `str
 
 For plain object and array state, mutate draft fields directly. The draft is a proxy, not a plain snapshot: `structuredClone(draft)` (including draft-valued children) does not work. Do not retain the draft or use it from asynchronous work. Handler and hook changes are finalized together.
 
-Commit-native hooks have the same Immer value semantics as handlers. Existing `Map` and `Set` values cannot be used as collection drafts without Immer’s MapSet plugin, which the worker does not enable. Collections newly assigned during the recipe are raw values, not collection drafts. Recording requires portable JSON state and rejects both collections and finalized `-0`. Do not rely on preserving the sign of zero in draft assignments. With recording off, nonportable results use the adapter’s full-state write path; collection storage is not guaranteed across adapters.
+Commit-native hooks have the same Immer value semantics as handlers. Existing `Map` and `Set` values cannot be used as collection drafts without Immer’s MapSet plugin, which the worker does not enable. Collections newly assigned during the recipe are raw values, not collection drafts. Portable JSON is the supported recording domain; collections and finalized `-0` are outside it. Enable runtime `stateValidation` for strict diagnostics. With recording off, collection storage is not guaranteed across adapters.
 
 ## Reusing Aggregate Projectors
 

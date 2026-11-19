@@ -4,6 +4,7 @@ import {
 } from '@redemeine/projection-runtime-core';
 import { BSON } from 'mongodb';
 import type { MongoSourceCommitPatchDecision } from '../types';
+import { authoritativeMongoEdits } from './sourceCommitStateDelta';
 
 type Mutation = { kind: '$set' | '$unset' | '$push' | '$pop'; path: string; value: unknown; newMemberOf?: string };
 
@@ -71,7 +72,8 @@ function collapsedArrays(transitions: readonly ProjectionChangeTransition[], ori
   const arrays = new Map<string, Mutation>();
   for (const op of operations(transitions)) {
     if (op.op === 'replace') continue;
-    const tokens = parseProjectionChangePointer(op.path)!;
+    const tokens = parseProjectionChangePointer(op.path);
+    if (!tokens) continue;
     if (single && safeMutation(op, tokens, original, true)) continue;
     const path = shiftArray(tokens, original);
     if (!path) continue;
@@ -106,7 +108,7 @@ function formatUpdate(mutations: ReadonlyMap<string, Mutation>, metadata: Record
   return update;
 }
 
-/** Requires successful ordered replay against the revision-checked snapshot before using any modifier. */
+/** Translate edits proven by replay or derived from revision-checked immutable state. */
 function buildSourceCommitDelta(
   transitions: readonly ProjectionChangeTransition[],
   original: unknown,
@@ -118,7 +120,8 @@ function buildSourceCommitDelta(
   const mutations = new Map(arrays);
   const parentsWithNewMembers = new Set<string>();
   for (const op of operations(transitions)) {
-    const tokens = parseProjectionChangePointer(op.path)!;
+    const tokens = parseProjectionChangePointer(op.path);
+    if (!tokens || (op.op !== 'remove' && op.value === undefined)) return undefined;
     if (coveredByArray(tokens, arrays)) continue;
     const mutation = safeMutation(op, tokens, original, single);
     if (!mutation || mutations.has(mutation.path)) return undefined;
@@ -158,7 +161,12 @@ export function planSourceDocumentWrite(
     if (patch.unchanged) {
       return { update: { $set: metadata }, decision: { mode: 'metadata-only' } };
     }
-    const update = buildSourceCommitDelta(patch.transitions, original, document.finalDocument, metadata);
+    const authoritative = patch.captured ? authoritativeMongoEdits(original, document.finalDocument) : undefined;
+    if (authoritative?.length === 0) return { update: { $set: metadata }, decision: { mode: 'metadata-only' } };
+    const transitions = authoritative
+      ? [{ eventId: '', eventIndex: 0, changeType: 'update' as const, patch: authoritative }]
+      : patch.transitions;
+    const update = buildSourceCommitDelta(transitions, original, document.finalDocument, metadata);
     if (update) {
       // Repeated dotted prefixes can make the modifier document larger than full-state persistence.
       return BSON.calculateObjectSize(update) <= 16 * 1024 * 1024
