@@ -17,6 +17,7 @@ export interface TestProjectionContext {
 }
 
 export interface TestProjectionDefinition<TState> {
+  readonly joinMembership?: 'set-v1';
   readonly fromStream: {
     readonly aggregate: { aggregateType: string };
     readonly handlers: Record<string, (state: Draft<TState>, event: TestProjectionEvent, ctx: TestProjectionContext) => void>;
@@ -128,6 +129,7 @@ function findHandler<TState>(
 }
 
 export function testProjection<TState>(projection: TestProjectionDefinition<TState>): TestProjectionFixture<TState> {
+  if (projection.joinMembership) throw new Error('.joinRight() requires the native source-commit coordinator.');
   let state = projection.initialState('test-projection');
 
   const fixture: TestProjectionFixture<TState> = {

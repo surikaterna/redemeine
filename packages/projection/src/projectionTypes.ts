@@ -106,6 +106,13 @@ type AggregateHandlerEvent<TAggregate, K extends AggregateEventKeys<TAggregate>>
   HandlerEventTypeByKey<TAggregate, K>
 >;
 
+export type ProjectionCandidateSelector<TEvent = BaseProjectionEvent> =
+  (event: Readonly<TEvent>) => string | readonly string[] | null | undefined;
+
+export type ProjectionCandidateSelectors<TAggregate> = {
+  [K in AggregateEventKeys<TAggregate>]?: ProjectionCandidateSelector<AggregateHandlerEvent<TAggregate, K>>;
+};
+
 export type ProjectionHandlersForAggregate<TState, TAggregate> = {
   [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>;
 };
@@ -125,12 +132,14 @@ export interface ProjectionStreamDefinition<TState> {
 export interface JoinStreamDefinition<TState> {
   aggregate: { aggregateType: string };
   handlers: Record<string, ProjectionHandler<TState>>;
+  candidateSelectors?: Readonly<Record<string, ProjectionCandidateSelector>>;
 }
 
 export interface ProjectionDefinition<TState = unknown> {
   name: string;
   fromStream: ProjectionStreamDefinition<TState>;
   joinStreams?: JoinStreamDefinition<TState>[];
+  joinMembership?: 'set-v1';
   initialState: (documentId: string) => TState;
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
@@ -153,6 +162,11 @@ export interface ProjectionBuilder<TState> {
   join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
+  ): ProjectionBuilder<TState>;
+  /** Opt in to native membership sets and select candidate targets for matching joined events. */
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
   ): ProjectionBuilder<TState>;
   mirror<TAggregate extends MirrorableAggregateConstraint>(
     aggregate: TAggregate,

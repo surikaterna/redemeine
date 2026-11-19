@@ -9,6 +9,7 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   projectionChangesHistoryFailure,
+  joinMembershipKey,
   validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState
 } from '@redemeine/projection-runtime-core';
@@ -26,9 +27,10 @@ import {
   readSourceCommitChange
 } from './sourceCommitChanges';
 import {
-  confirmSingleSourceWrite, didWrite, executeSourceDocumentWrites, planSourceDocumentWrites, revisionFilter
+  confirmSingleSourceWrite, didWrite, executeBatchedSourceDocuments, executeSourceDocumentWrites, planSourceDocumentWrites, revisionFilter
 } from './sourceCommitDocuments';
 import { linkId, ownId, readMongoSourceSnapshot, type LoadedSourceSnapshot, type NativeSourceSnapshot } from './sourceCommitSnapshot';
+import { writeMongoMemberships } from './sourceCommitMembership';
 
 const recordsEqual = (left: Readonly<Record<string, number>>, right: Readonly<Record<string, number>>): boolean => {
   const keys = Object.keys(left);
@@ -65,6 +67,11 @@ const validateSnapshot = <TState>(
   const links = new Map(snapshot.links.map((link) => [key(link.aggregateType, link.aggregateId), link.revision]));
   for (const link of request.stagedLinks) {
     if (links.get(key(link.aggregateType, link.aggregateId)) !== link.expectedRevision) return 'link revision conflict';
+  }
+  const memberships = new Map(snapshot.joinMemberships?.map((row) =>
+    [joinMembershipKey(row.aggregateType, row.aggregateId), row.revision]));
+  for (const row of request.joinMembershipFences ?? []) {
+    if (memberships.get(joinMembershipKey(row.aggregateType, row.aggregateId)) !== row.expectedRevision) return 'join membership revision conflict';
   }
   if (request.progress.strategy === 'own_record') {
     return snapshot.ownRecordSequence === request.progress.source.expectedSequence ? null : 'own-record sequence conflict';
@@ -136,7 +143,8 @@ const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitRequest<
   projectionName: request.projectionName,
   projectionGeneration: request.projectionGeneration,
   targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
-  links: request.stagedLinks.map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
+  links: (request.joinMembershipFences ?? request.stagedLinks).map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
+  ...(request.joinMembershipFences ? { joinMembership: 'set-v1' } : {}),
   progressStrategy: request.progress.strategy,
   ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
 });
@@ -184,14 +192,17 @@ async function persistSourceCommit<TState>(
   request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>, session: ClientSession,
   prepared: Prepared, applicationId?: string
 ): Promise<CommitProjectionSourceCommitResult> {
-  const documentRevisions = await executeSourceDocumentWrites(prepared.writes, options, Boolean(request.additionalWrites), session);
-  const linkRevisions = await writeLinks(request, options, session);
+  const setMode = request.joinMembershipFences !== undefined;
+  const documentRevisions = setMode ? await executeBatchedSourceDocuments(prepared.writes, options, Boolean(request.additionalWrites), session)
+    : await executeSourceDocumentWrites(prepared.writes, options, Boolean(request.additionalWrites), session);
+  const linkRevisions = setMode ? await writeMongoMemberships(request, options, session) : await writeLinks(request, options, session);
   await writeOwnProgress(request, options, session);
   return appendSourceCommitChange(request, committed(request, documentRevisions, linkRevisions), options.changeCollection, session, applicationId);
 }
 
 function canWriteSingle<TState>(request: CommitProjectionSourceCommitRequest<TState>, proof: NativeSourceSnapshot<TState>): boolean {
-  return request.progress.strategy === 'in_document' && !request.additionalWrites && request.finalDocuments.length === 1
+  return request.joinMembershipFences === undefined && request.progress.strategy === 'in_document'
+    && !request.additionalWrites && request.finalDocuments.length === 1
     && request.finalDocuments[0]?.expectedRevision !== null && request.stagedLinks.length === 0 && proof.request.links.length === 0;
 }
 
@@ -251,6 +262,8 @@ function classifyCommitError(request: CommitProjectionSourceCommitRequest, error
   if (error instanceof MongoChangeAppendValidationError) return terminal(error.message);
   if (error instanceof Error && error.message.startsWith('Detected legacy writer after first touch:')) return terminal(error.message);
   if (error instanceof Error && error.message === 'projection-v2-occ:projection_changes') return conflict(error.message);
+  if (request.joinMembershipFences && error instanceof Error && (error.message.startsWith('projection-v2-occ:')
+    || ('code' in error && error.code === 11000))) return conflict(error.message);
   if (request.finalDocuments.some((document) => document.legacyOriginal) && error instanceof Error) {
     return terminal(`First-touch transaction outcome requires operator inspection: ${error.message}`);
   }

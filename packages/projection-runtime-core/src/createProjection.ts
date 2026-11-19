@@ -2,6 +2,9 @@ import type { Draft } from 'immer';
 import { resolveEventHandlers, type ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 import type { ProjectionDeduplicationStrategy } from './projectionDeduplication';
+import { JoinRightBuilder, type ProjectionCandidateSelector, type ProjectionCandidateSelectors } from './joinRightBuilder';
+
+export type { ProjectionCandidateSelector, ProjectionCandidateSelectors } from './joinRightBuilder';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
@@ -149,6 +152,7 @@ export interface JoinStreamDefinition<TState> {
   aggregate: { aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
+  candidateSelectors?: Readonly<Record<string, ProjectionCandidateSelector>>;
 }
 
 /**
@@ -171,6 +175,7 @@ export interface ProjectionDefinition<TState = unknown> {
   fromStream: ProjectionStreamDefinition<TState>;
   /** Additional streams to join (.join) */
   joinStreams?: JoinStreamDefinition<TState>[];
+  joinMembership?: 'set-v1';
   /** Additional reverse-subscribe streams (.reverseSubscribe) */
   reverseSubscribeStreams?: ReverseSubscribeStreamDefinition<TState>[];
   /** Initial state factory function */
@@ -227,6 +232,11 @@ export interface ProjectionBuilder<TState> {
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): ProjectionBuilder<TState>;
 
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): ProjectionBuilder<TState>;
+
   /**
    * Add a reverse-subscribe stream declaration.
    */
@@ -262,6 +272,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _identity: (event: BaseProjectionEvent) => string | readonly string[];
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
+  private _joinRight = new JoinRightBuilder<TState>();
   private _reverseSubscribeStreams: ReverseSubscribeStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
@@ -346,6 +357,14 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): ProjectionBuilder<TState> {
+    this._joinRight.add<TAggregate>(aggregate, selectors);
+    return this;
+  }
+
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState> {
     this._hooks = { ...this._hooks, ...hooks };
     return this;
@@ -375,7 +394,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return {
       name: this._name,
       fromStream: this._fromStream,
-      joinStreams: this._joinStreams,
+      joinStreams: this._joinRight.build(this._name, this._fromStream.aggregate.aggregateType, this._joinStreams),
+      ...(this._joinRight.enabled ? { joinMembership: 'set-v1' } : {}),
       reverseSubscribeStreams: this._reverseSubscribeStreams,
       initialState: this._initialState,
       identity: this._identity,

@@ -9,6 +9,7 @@ export interface ProjectionStreamConfiguration {
   readonly aggregatePureKeys: readonly string[];
   readonly aggregateEventProjectorKeys: readonly string[];
   readonly handlerKeys: readonly string[];
+  readonly candidateSelectorKeys?: readonly string[];
 }
 
 export interface ProjectionDeploymentDefinition {
@@ -22,6 +23,7 @@ export interface ProjectionDeploymentDefinition {
   readonly hookKeys: readonly string[];
   readonly identityConfiguration: unknown;
   readonly projectionChanges?: string;
+  readonly joinMembership?: 'set-v1';
 }
 
 export function projectionDefinitionRegistryDigest(definitions: readonly ProjectionRegistryDefinitionManifest[]): `sha256:${string}` {
@@ -42,14 +44,16 @@ export function projectionRuntimeConfigurationDigest(configurations: readonly Pr
   return projectionRegistryDigest(configurations, 'redemeine:migration:runtime-configuration:v2');
 }
 
-function normalizeStream(value: { aggregate: { aggregateType: string }; handlers: Record<string, unknown> }): ProjectionStreamConfiguration {
+function normalizeStream(value: { aggregate: { aggregateType: string }; handlers: Record<string, unknown>;
+  candidateSelectors?: Readonly<Record<string, unknown>> }): ProjectionStreamConfiguration {
   const aggregate = value.aggregate as { aggregateType: string; pure?: unknown };
   const pure = typeof aggregate.pure === 'object' && aggregate.pure !== null ? aggregate.pure as Record<string, unknown> : {};
   const projectors = typeof pure.eventProjectors === 'object' && pure.eventProjectors !== null
     ? pure.eventProjectors as Record<string, unknown> : {};
   return { aggregateType: aggregate.aggregateType, aggregateKeys: Object.keys(aggregate).sort(),
     aggregatePureKeys: Object.keys(pure).sort(), aggregateEventProjectorKeys: Object.keys(projectors).sort(),
-    handlerKeys: Object.keys(value.handlers).sort() };
+    handlerKeys: Object.keys(value.handlers).sort(),
+    ...(value.candidateSelectors ? { candidateSelectorKeys: Object.keys(value.candidateSelectors).sort() } : {}) };
 }
 
 export function normalizeProjectionRegistryDefinitions<TState>(values: readonly ProjectionCommitRegistryDefinition<TState>[],
@@ -62,6 +66,7 @@ export function normalizeProjectionRegistryDefinitions<TState>(values: readonly 
     subscriptions: definition.subscriptions.map((entry) => ({ aggregateType: entry.aggregate.aggregateType, aggregateId: entry.aggregateId })),
     deduplication: definition.deduplication, hookKeys: Object.keys(definition.hooks ?? {}).sort(),
     identityConfiguration: identityConfigurations[index],
-    ...(projectionChanges !== undefined ? { projectionChanges } : {})
+    ...(projectionChanges !== undefined ? { projectionChanges } : {}),
+    ...(definition.joinMembership ? { joinMembership: definition.joinMembership } : {})
   }));
 }

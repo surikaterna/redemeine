@@ -6,15 +6,20 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   isCanonicalProjectionUuid,
+  JoinTurnBudget,
+  joinMembershipKey,
   matchProjectionChangesReceipt,
   MISSING_PROJECTION_CHANGES_HISTORY,
   projectionChangesIdentity,
   validateProjectionChangeIdentityMetadata
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
-import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
+import { linksByKey, planSetRouting, routeEvent, routingLinkRequests, type SetRoutingEntry } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
+import { collectSetTargets, observedMemberships } from './joinMembershipReduction';
+
+type SetPlan<T> = readonly (SetRoutingEntry<T> | null)[];
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
   definition: ProjectionCommitDefinition<TState>;
@@ -56,6 +61,11 @@ function failed(
     : { status, retryable: true, reason, attempts };
 }
 
+function loadFailure(reason: string, attempts: number): ProjectionDefinitionCommitOutcome {
+  return failed(reason.startsWith('Detected legacy writer') || reason === 'Joined turn routing exceeds capacity.'
+    ? 'terminal' : 'ambiguous', reason, attempts);
+}
+
 async function loadSnapshot<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
@@ -69,6 +79,7 @@ async function loadSnapshot<TState>(
     projectionGeneration: options.generation,
     targetDocumentIds: targets,
     links,
+    ...(options.definition.joinMembership && mode !== 'receipt' ? { joinMembership: options.definition.joinMembership } : {}),
     progressStrategy: strategy,
     ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
     ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),
@@ -118,11 +129,25 @@ async function checkDeferredReceipt<TState>(
 
 function mergeLinks(
   current: readonly { aggregateType: string; aggregateId: string }[],
-  additions: readonly { aggregateType: string; aggregateId: string }[]
+  additions: readonly { aggregateType: string; aggregateId: string }[],
+  setMode: boolean
 ): readonly { aggregateType: string; aggregateId: string }[] {
-  const links = new Map(current.map((link) => [`${link.aggregateType}\u0000${link.aggregateId}`, link]));
-  for (const link of additions) links.set(`${link.aggregateType}\u0000${link.aggregateId}`, link);
+  const key = ({ aggregateType, aggregateId }: typeof current[number]) => setMode
+    ? joinMembershipKey(aggregateType, aggregateId) : `${aggregateType}\u0000${aggregateId}`;
+  const links = new Map(current.map((link) => [key(link), link]));
+  for (const link of additions) links.set(key(link), link);
   return [...links.values()];
+}
+
+function setMemberships<TState>(snapshot: ProjectionSourceCommitSnapshot<TState>,
+  links: readonly { aggregateType: string; aggregateId: string }[]) {
+  if (snapshot.links.length) throw new Error('Mixed scalar and set membership snapshot.');
+  return observedMemberships(snapshot.joinMemberships, links);
+}
+
+function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[]) {
+  const budget = new JoinTurnBudget();
+  for (const link of links) budget.add(joinMembershipKey(link.aggregateType, link.aggregateId));
 }
 
 type AttemptResult<TState> =
@@ -170,7 +195,8 @@ async function executeAttempt<TState>(
   commit: ProjectionSourceCommit,
   targets: ReadonlySet<string>,
   links: readonly { aggregateType: string; aggregateId: string }[],
-  attempt: number
+  attempt: number,
+  setPlan?: SetPlan<TState>
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
@@ -181,13 +207,23 @@ async function executeAttempt<TState>(
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'snapshot load failed';
       return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
-        ?? failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
+        ?? loadFailure(reason, attempt) };
     }
     const replay = replayOutcome(options, commit, snapshot, attempt, native);
     if (replay) return { kind: 'done', outcome: replay };
-    const reduction = reduceProjectionSourceCommit(
-      options.definition, options.generation, commit, snapshot, options.baselineSequence, options.projectionChanges, options.stateValidation
-    );
+    let reduction: ProjectionReductionResult<TState>;
+    try {
+      const memberships = setPlan ? setMemberships(snapshot, links) : undefined;
+      if (setPlan && memberships) {
+        const fullTargetSet = collectSetTargets(setPlan, targets, memberships);
+        const missing = [...fullTargetSet].filter((id) => !targets.has(id));
+        if (missing.length) return { kind: 'expand', reduction: { status: 'needs_snapshot', targetIds: missing, links: [] } };
+      }
+      reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence,
+        options.projectionChanges, options.stateValidation, setPlan && memberships ? { events: setPlan, memberships } : undefined);
+    } catch (error) {
+      return { kind: 'done', outcome: failed('terminal', error instanceof Error ? error.message : 'Invalid membership snapshot.', attempt) };
+    }
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
     if (reduction.status === 'terminal') {
       const receipt = snapshot.changeReceipt === undefined ? await checkDeferredReceipt(options, commit, attempt) : undefined;
@@ -212,6 +248,10 @@ export async function executeProjectionDefinition<TState>(
   if (options.projectionChanges !== undefined && options.store.projectionChangesCapability !== 'atomic-turn-receipts-v1') {
     return failed('terminal', 'Store does not support atomic projection_changes turn receipts.', 0);
   }
+  const setMode = options.definition.joinMembership === 'set-v1';
+  if (setMode && (options.store.joinMembershipCapability !== 'set-v1' || options.definition.deduplication.strategy === 'in_document')) {
+    return failed('terminal', 'Join membership sets require a capable store and own_record or none.', 0);
+  }
   if (options.projectionChanges !== undefined) {
     const invalid = validateProjectionChangeIdentityMetadata({
       projectionName: options.definition.name, projectionGeneration: options.generation,
@@ -220,36 +260,51 @@ export async function executeProjectionDefinition<TState>(
     });
     if (invalid) return failed('terminal', invalid, 0);
   }
-  let links = routingLinkRequests(options.definition, commit.events);
+  const links = routingLinkRequests(options.definition, commit.events);
   const native = hasNativeSnapshots(options);
   const lookupEarly = options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
     && (options.alreadyCovered || commit.commitSequence <= (options.baselineSequence ?? -1));
   let initial: ProjectionSourceCommitSnapshot<TState> = { targets: [], links: [], ownRecordSequence: null };
+  try { if (setMode) checkLinkBudget(links); } catch (error) {
+    return failed('terminal', (error as Error).message, 0);
+  }
   try {
     if (!native) initial = await loadSnapshot(options, commit, [], links);
     else if (lookupEarly) initial = await loadSnapshot(options, commit, [], [], 'receipt');
+    else if (setMode) initial = await loadSnapshot(options, commit, [], links, 'turn');
     else if (links.length) initial = await loadSnapshot(options, commit, [], links, 'discovery');
   } catch (error) {
-    return failed('ambiguous', error instanceof Error ? error.message : 'snapshot load failed', 0);
+    return loadFailure(error instanceof Error ? error.message : 'snapshot load failed', 0);
   }
   const replay = replayOutcome(options, commit, initial, 0, native && !lookupEarly);
   if (replay) return replay;
-  let routedTargets: readonly string[];
+  let setPlan: SetPlan<TState> | undefined;
+  let targets: Set<string>;
   try {
-    routedTargets = provisionalTargets(options.definition, commit, initial);
+    setPlan = setMode ? planSetRouting(options.definition, commit.events) : undefined;
+    targets = setPlan ? collectSetTargets(setPlan, [], setMemberships(initial, links))
+      : new Set(provisionalTargets(options.definition, commit, initial));
   } catch (error) {
     return await checkDeferredReceipt(options, commit, 0)
       ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
   }
-  const targets = new Set(routedTargets);
+  return executeWithRetries(options, commit, targets, links, setPlan);
+}
+
+async function executeWithRetries<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
+  targets: Set<string>, initialLinks: ReturnType<typeof routingLinkRequests>, setPlan?: SetPlan<TState>): Promise<ProjectionDefinitionCommitOutcome> {
+  let links = initialLinks;
   const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2;
   let conflicts = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const outcome = await executeAttempt(options, commit, targets, links, attempt);
+    const outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan);
     if (outcome.kind === 'done') return outcome.outcome;
     if (outcome.kind === 'expand') {
       for (const target of outcome.reduction.targetIds) targets.add(target);
-      links = mergeLinks(links, outcome.reduction.links);
+      links = mergeLinks(links, outcome.reduction.links, Boolean(setPlan));
+      try { if (setPlan) checkLinkBudget(links); } catch (error) {
+        return failed('terminal', (error as Error).message, attempt);
+      }
       continue;
     }
     conflicts += 1;

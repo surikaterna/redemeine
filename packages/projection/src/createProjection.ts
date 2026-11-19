@@ -9,6 +9,8 @@ import type {
   MirrorableAggregateSource,
   ProjectionAggregateSource,
   ProjectionBuilder,
+  ProjectionCandidateSelector,
+  ProjectionCandidateSelectors,
   ProjectionCommitBuilder,
   ProjectionCommitDefinition,
   ProjectionContext,
@@ -34,6 +36,8 @@ export type {
   ProjectionCommitBuilder,
   ProjectionCommitDefinition,
   ProjectionContext,
+  ProjectionCandidateSelector,
+  ProjectionCandidateSelectors,
   ProjectionDefinition,
   ProjectionHandler,
   ProjectionHandlers,
@@ -46,6 +50,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _identity: (event: BaseProjectionEvent) => string | readonly string[] = defaultIdentity;
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
+  private _joinRight = new Map<string, Readonly<Record<string, ProjectionCandidateSelector>>>();
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
 
@@ -143,6 +148,31 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): ProjectionBuilder<TState> {
+    if (this._joinRight.has(aggregate.aggregateType)) throw new Error('Duplicate .joinRight() aggregate.');
+    this._joinRight.set(aggregate.aggregateType,
+      Object.freeze(resolveEventHandlers(aggregate, { ...selectors } as unknown as Record<string, ProjectionCandidateSelector>)));
+    return this;
+  }
+
+  private _buildJoins(): JoinStreamDefinition<TState>[] {
+    for (const [type, selectors] of this._joinRight) {
+      const joins = this._joinStreams.filter(({ aggregate }) => aggregate.aggregateType === type);
+      if (type === this._fromStream?.aggregate.aggregateType || joins.length !== 1
+        || Object.entries(selectors).some(([key, selector]) => typeof selector !== 'function' || !Object.hasOwn(joins[0]!.handlers, key))) {
+        throw new Error(`Projection '${this._name}': .joinRight(${type}) requires one .join() with matching handlers.`);
+      }
+    }
+    if (!this._joinRight.size) return this._joinStreams;
+    return this._joinStreams.map((stream) => {
+      const candidateSelectors = this._joinRight.get(stream.aggregate.aggregateType);
+      return candidateSelectors ? { ...stream, candidateSelectors } : stream;
+    });
+  }
+
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState> {
     if (strategy.strategy === 'none' && strategy.reason.trim().length === 0) {
       throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
@@ -169,7 +199,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return {
       name: this._name,
       fromStream: this._fromStream,
-      joinStreams: this._joinStreams,
+      joinStreams: this._buildJoins(),
+      ...(this._joinRight.size ? { joinMembership: 'set-v1' } : {}),
       initialState: this._initialState,
       identity: this._identity,
       subscriptions: [],

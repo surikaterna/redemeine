@@ -40,6 +40,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   private readonly emittedDedupeWarnings = new Set<string>();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
+    const membership = options.joinMembershipCollection;
+    if (membership && [options.collection, options.linkCollection, options.dedupeCollection, options.changeCollection]
+      .some((other) => other && (Object.is(other, membership) || ('namespace' in other && other.namespace === membership.namespace)))) {
+      throw new Error('Join membership sets require a dedicated Mongo collection.');
+    }
     this.now = options.now ?? defaultNow;
     this.patchPlanTelemetry = options.patchPlanTelemetry;
     this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
@@ -50,6 +55,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
+
+  get joinMembershipCapability(): 'set-v1' | undefined {
+    return this.options.joinMembershipCollection && this.options.collection.find ? 'set-v1' : undefined;
+  }
 
   async load(documentId: string): Promise<TState | null> {
     const row = await this.options.collection.findOne({ _id: documentId });
@@ -97,9 +106,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
+    if (request.joinMembership && !this.joinMembershipCapability) throw new Error('Join membership sets are not configured.');
     await this.initializeProjectionSourceCommitStore();
+    // Negative candidate reads and membership rows must describe the same database instant.
+    // Keep the scalar/direct snapshot path untouched.
+    const read = () => request.joinMembership
+      ? this.createTransactionExecutor()((session) => readMongoSourceSnapshot(request, this.options, session))
+      : readMongoSourceSnapshot(request, this.options);
     if (request.prepareSourceCommit) {
-      const loaded = await readMongoSourceSnapshot(request, this.options);
+      const loaded = await read();
       const proof = protectSourceSnapshot(loaded, request);
       if (proof) {
         this.sourceSnapshots.set(loaded.snapshot, proof);
@@ -107,6 +122,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       }
       return loaded.snapshot;
     }
+    if (request.joinMembership) return (await read()).snapshot;
     if (request.changeIdentity && this.options.changeCollection) {
       if (!request.targetDocumentIds.length && !request.links.length && request.progressStrategy === 'none') {
         return (await readMongoSourceSnapshot(request, this.options)).snapshot;
@@ -125,6 +141,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     request: CommitProjectionSourceCommitRequest<TState>, snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
     const malformed = validateCommitProjectionSourceCommitRelationships(request)
+      ?? (request.joinMembershipFences && !this.joinMembershipCapability ? 'Join membership sets are not configured.' : null)
       ?? (request.additionalWrites && !this.options.changeCollection ? 'projection_changes collection is not configured' : null);
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
