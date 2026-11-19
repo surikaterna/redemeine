@@ -50,6 +50,9 @@ import {
   inherit,
   type InheritExtended,
   type MirrorableAggregateSource,
+  type ProjectionBuilder as PublicBuilder,
+  type ProjectionCommitBuilder,
+  type ProjectionCommitDefinition as PublicCommitDefinition,
   type ProjectionContext,
   type ProjectionEvent
 } from '@redemeine/projection';
@@ -58,6 +61,8 @@ import {
   projectionUuidToBase64Url22,
   validateProjectionQueueRegistryManifest,
   type ProjectionNoCommitProgress,
+  type ProjectionBuilder as RuntimeBuilder,
+  type ProjectionCommitDefinition as RuntimeCommitDefinition,
   type ProjectionCompleteCommitRangeRequest,
   type ProjectionQueueRegistryManifest,
   type ProjectionSourceCheckpoint,
@@ -74,9 +79,31 @@ createRuntimeProjection('core-hook', initialView).hooks({
   afterEach(draft, event) { draft.metadata.timestamps.push(event.timestamp); }
 });
 const definition = createProjection('sample', () => ({}))
-  .from(aggregate, {})
   .deduplication({ strategy: 'own_record' })
-  .buildCommitDefinition();
+  .from(aggregate, {})
+  .hooks({})
+  .initialState(() => ({}))
+  .identity((event) => event.aggregateId)
+  .build() satisfies PublicCommitDefinition<{}>;
+const joinSource = { ...aggregate, aggregateType: 'joined' };
+const runtimeBuilder = createRuntimeProjection('sample', () => ({}))
+  .deduplication({ strategy: 'own_record' })
+  .from(aggregate, {})
+  .join(joinSource, { changed: () => {} })
+  .joinRight(joinSource, { changed: (event) => event.aggregateId })
+  .reverseSubscribe({ ...aggregate, aggregateType: 'other' }, {})
+  .initialState(() => ({}))
+  .hooks({})
+  .identity((event) => event.aggregateId);
+const runtimeDefinition = runtimeBuilder.build() satisfies RuntimeCommitDefinition<{}>;
+const alias = runtimeBuilder.buildCommitDefinition() satisfies RuntimeCommitDefinition<{}>;
+const coreAsBuilder: RuntimeBuilder<{}> = runtimeBuilder;
+// @ts-expect-error A public build without explicit deduplication is not commit-native.
+const legacyPublic: PublicCommitDefinition<{}> = createProjection('legacy', () => ({})).from(aggregate, {}).build();
+// @ts-expect-error The runtime builder has the same distinction.
+const legacyRuntime: RuntimeCommitDefinition<{}> = createRuntimeProjection('legacy', () => ({})).from(aggregate, {}).build();
+// @ts-expect-error The compatibility alias is only typed on the explicit-dedupe stage.
+createProjection('legacy', () => ({})).from(aggregate, {}).buildCommitDefinition();
 type MirrorState = { count: number };
 type NarrowState = { count: 0 };
 type ChangedEvent = Omit<ProjectionEvent, 'payload' | 'type'> & {
@@ -108,6 +135,14 @@ const changedEvent: ChangedEvent = {
 mirrorSource.applyToDraft(mirrorSource.initialState, changedEvent);
 const unparameterizedMirror: MirrorableAggregateSource = mirrorSource;
 const mirrored = createProjection('mirror').mirror(mirrorSource, { changed: extended }).build();
+const commitMirrorBuilder: ProjectionCommitBuilder<MirrorState> = createProjection('mirror')
+  .deduplication({ strategy: 'own_record' })
+  .mirror(mirrorSource)
+  .join(joinSource, { changed: (state) => { state.count++; } })
+  .joinRight(joinSource, { changed: (event) => [event.aggregateId] });
+const commitMirror = commitMirrorBuilder.build() satisfies PublicCommitDefinition<MirrorState>;
+const commitMirrorAlias = commitMirrorBuilder.buildCommitDefinition() satisfies PublicCommitDefinition<MirrorState>;
+const publicAsBuilder: PublicBuilder<MirrorState> = commitMirrorBuilder;
 const checkpoint: ProjectionSourceCheckpoint | null = { sequence: 0 };
 const sourceKey = projectionUuidToBase64Url22('00112233-4455-6677-8899-aabbccddeeff');
 const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
@@ -134,7 +169,8 @@ const manifest: ProjectionQueueRegistryManifest = {
 };
 validateProjectionQueueRegistryManifest(manifest);
 declare const store: ProjectionSourceCommitStorePort;
-void [definition, defaultExtended, stateExtended, supertypeStateExtended, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
+void [definition, runtimeDefinition, alias, legacyPublic, legacyRuntime, commitMirror, commitMirrorAlias, coreAsBuilder, publicAsBuilder,
+  defaultExtended, stateExtended, supertypeStateExtended, unparameterizedMirror, mirrored, checkpoint, sourceKey, rangeRequest, manifest, store];
 
 declare const context: ProjectionContext;
 declare const defaultOnly: InheritExtended;

@@ -17,11 +17,12 @@ describe.each(['public', 'core'] as const)('%s builder', (builder) => {
     const options = fixtureOptions(new InMemoryProjectionStore<State>());
     const selectors = { add: (e: { payload: { target: string } }) => e.payload.target };
     const make = builder === 'public' ? createProjection<State> : coreProjection<State>;
-    const projection = make('boards', (id) => ({ id, visits: [] })).from(root, {}).joinRight(order, selectors)
+    const projection = make('boards', (id) => ({ id, visits: [] })).deduplication({ strategy: 'own_record' })
+      .from(root, {}).joinRight(order, selectors)
       .join(order, { add(draft, e, ctx) {
         if (e.payload.target !== draft.id) return;
         ctx.subscribeTo(order, e.aggregateId);
-      } }).deduplication({ strategy: 'own_record' }).buildCommitDefinition();
+      } }).build();
     selectors.add = () => 'changed';
     expect(Object.isFrozen(projection.joinStreams?.[0]?.candidateSelectors)).toBe(true);
     const runtime = coordinator({ ...options, definitions: [{ ...options.definitions[0]!, definition: projection }] });
@@ -36,6 +37,15 @@ describe.each(['public', 'core'] as const)('%s builder', (builder) => {
     expect(() => make('boards', (id) => ({ id, visits: [] })).from(root, {})
       .joinRight(order, { add: () => 'A' }).join(order, {}).build()).toThrow(/matching handlers/);
   });
+});
+
+test('a legacy build is valid but untyped registration still requires explicit deduplication', () => {
+  const options = fixtureOptions(new InMemoryProjectionStore<State>());
+  const legacy = createProjection('boards', (id): State => ({ id, visits: [] })).from(root, {}).build();
+  expect(legacy).not.toHaveProperty('deduplication');
+  // @ts-expect-error Exercise the runtime guard through an untyped caller.
+  expect(() => coordinator({ ...options, definitions: [{ ...options.definitions[0]!, definition: legacy }] }))
+    .toThrow(/requires an explicit deduplication strategy/);
 });
 
 test('shared routing validates candidate values and isolates the handler event', () => {

@@ -205,16 +205,19 @@ function defaultIdentity(event: BaseProjectionEvent): string {
 /**
  * Builder interface for creating projections fluently
  */
-export interface ProjectionBuilder<TState> {
+type FluentProjectionBuilder<TState, TCommit extends boolean> =
+  TCommit extends true ? ProjectionCommitBuilder<TState> : ProjectionBuilder<TState>;
+
+export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
   /**
    * Override the initial state factory
    */
-  initialState(fn: (id: string) => TState): ProjectionBuilder<TState>;
+  initialState(fn: (id: string) => TState): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Override the default identity resolver
    */
-  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState>;
+  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Define the primary stream to project from
@@ -222,7 +225,7 @@ export interface ProjectionBuilder<TState> {
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Add a joined stream for correlating related aggregates
@@ -230,12 +233,12 @@ export interface ProjectionBuilder<TState> {
   join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
 
   joinRight<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
 
   /**
    * Add a reverse-subscribe stream declaration.
@@ -243,23 +246,23 @@ export interface ProjectionBuilder<TState> {
   reverseSubscribe<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
 
   /**
    * Register cross-cutting hooks that run around event handlers
    */
-  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
+  hooks(hooks: ProjectionHooks<TState>): FluentProjectionBuilder<TState, TCommit>;
 
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
   
   /**
    * Build the final projection definition
    */
-  build(): ProjectionDefinition<TState>;
+  build(): TCommit extends true ? ProjectionCommitDefinition<TState> : ProjectionDefinition<TState>;
 }
 
-export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
-  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState, true> {
+  /** Compatibility alias for build() after configuring deduplication. */
   buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }
 
@@ -375,7 +378,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
     }
     this._deduplication = strategy;
-    return this;
+    // Fluent methods retain this builder and never clear the configured strategy.
+    return this as unknown as ProjectionCommitBuilder<TState>;
   }
 
   buildCommitDefinition(): ProjectionCommitDefinition<TState> {

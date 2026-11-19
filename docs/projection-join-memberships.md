@@ -21,7 +21,7 @@ const boards = createProjection('boards', (id) => ({ id, updates: 0 }))
     moved: (event) => event.payload.newBoardId
   })
   .deduplication({ strategy: 'own_record' })
-  .buildCommitDefinition();
+  .build();
 ```
 
 A selector is a pure synchronous function of the event. Return a target document ID, an array of IDs, or `null`/`undefined` for no candidates. Do not do I/O or depend on mutable external state. There is no draft or context in this phase. An empty selector map opts in without adding candidates. The opt-in applies to all joins and context link operations for that definition; primary routing still uses `identity`, defaulting to `aggregateId`.
@@ -35,6 +35,8 @@ For a missing candidate-only target, the handler and `afterEach` run against `in
 For a fresh turn, the coordinator evaluates the event-local selectors once and batches the distinct candidates and saved targets before reducing events in order. It acquires a fresh snapshot and starts at event zero after a conflict or discovery of additional keys. In a single worker, target lanes serialize overlapping local turns; they are not distributed locks. If independent MongoDB writers interleave, candidate presence and saved membership are observed in one snapshot transaction. Atomic writes still check touched document revisions and the observed membership revisions, including empty sets. Thus a turn cannot combine a missing candidate from before a concurrent create-and-unlink with the empty membership from after it. A declined missing candidate does not create a view record just to fence the read.
 
 Even without contention, a typical fresh set-mode MongoDB turn has two batched snapshot-read transactions (routing discovery, then the coherent turn read) and one write transaction. The original scalar/direct paths are unchanged. In addition to the per-event and per-row bounds below, set-mode routing is limited to 16,384 entries and 8 MiB of key bytes per discovery input (selector results, saved IDs, or snapshot key batches).
+
+After an unknown MongoDB commit result, a recorded turn can be confirmed by its durable change receipt. With recording off and `own_record`, the store confirms a set-mode write only if a single snapshot matches the attempt's unique progress write ID, its written document revisions and write IDs, and every final membership set and revision. A rival advancing the same source sequence is not proof, even when it wrote the same membership. If the proof is missing, was superseded, or cannot be read, the result is retryable and ambiguous. With `none` and recording off there is no durable reconciliation proof.
 
 ## Forward-only Mongo cutover
 

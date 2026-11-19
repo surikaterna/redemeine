@@ -178,7 +178,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
     }
     this._deduplication = strategy;
-    return this;
+    // Fluent methods retain this builder and never clear the configured strategy.
+    return this as unknown as ProjectionCommitBuilder<TState>;
   }
 
   buildCommitDefinition(): ProjectionCommitDefinition<TState> {

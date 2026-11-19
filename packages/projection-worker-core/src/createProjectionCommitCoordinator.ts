@@ -36,6 +36,9 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   if (options.manifest.queueId !== options.queueBindingId) throw new Error('Registry manifest queue does not match queue binding.');
   if (options.manifest.definitions.length !== options.definitions.length) throw new Error('Runtime registry must exactly match the immutable manifest.');
   for (const [index, entry] of options.definitions.entries()) {
+    if (!entry.definition.deduplication) {
+      throw new Error(`Projection '${entry.definition.name}' requires an explicit deduplication strategy.`);
+    }
     const manifest = options.manifest.definitions[index];
     if (!manifest || manifest.projectionName !== entry.definition.name || manifest.generation !== entry.generation) {
       throw new Error('Runtime registry order and scopes must exactly match the immutable manifest.');
