@@ -1,11 +1,12 @@
 import {
-  isCanonicalProjectionUuid, projectionUuidToBase64Url22,
+  isCanonicalProjectionUuid, joinMembershipKey, projectionUuidToBase64Url22,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest,
   type ProjectionSourceCommitSnapshot
 } from '@redemeine/projection-runtime-core';
 import type { ClientSession, FindOptions } from 'mongodb';
 import type { MongoProjectionStoreOptions, ProjectionDocumentRecord } from '../types';
 import { readSnapshotChangeReceipt } from './sourceCommitChanges';
+import { checkedSourceCommitIds, readMongoMemberships, sourceCommitChunks } from './sourceCommitMembership';
 
 const scope = (name: string, generation: string): string => `${name}\u0000${generation}`;
 export const linkId = (name: string, generation: string, type: string, id: string): string =>
@@ -16,6 +17,7 @@ export const majorityPrimary = { readConcern: 'majority', readPreference: 'prima
 export interface LoadedSourceSnapshot<TState> {
   snapshot: ProjectionSourceCommitSnapshot<TState>;
   rows: ReadonlyMap<string, ProjectionDocumentRecord<TState> | null>;
+  ownWriteId?: string;
 }
 
 async function readRows<TInput, TRow>(
@@ -54,29 +56,43 @@ function needsReceipt(request: LoadProjectionSourceCommitSnapshotRequest, snapsh
   return snapshot.targets.some((target) => (target.sourceProgress[source] ?? -1) >= identity.commitSequence);
 }
 
+async function readSetDocuments<TState>(ids: readonly string[], options: MongoProjectionStoreOptions<TState>,
+  readOptions?: FindOptions): Promise<(readonly [string, ProjectionDocumentRecord<TState> | null])[]> {
+  const rows = new Map<string, ProjectionDocumentRecord<TState>>();
+  for (const chunk of sourceCommitChunks(checkedSourceCommitIds(ids, (id) => id))) {
+    if (!options.collection.find) throw new Error('Join membership sets require Mongo batched document reads.');
+    for (const row of await options.collection.find({ _id: { $in: chunk } }, readOptions).toArray()) rows.set(row._id, row);
+  }
+  return ids.map((id) => [id, rows.get(id) ?? null]);
+}
+
 export async function readMongoSourceSnapshot<TState>(
   request: LoadProjectionSourceCommitSnapshotRequest,
   options: MongoProjectionStoreOptions<TState>,
   session?: ClientSession
 ): Promise<LoadedSourceSnapshot<TState>> {
   const readOptions: FindOptions | undefined = session ? { session } : request.prepareSourceCommit ? majorityPrimary : undefined;
-  const documents = () => readRows(request.targetDocumentIds, async (id) => {
+  const documents = () => request.joinMembership ? readSetDocuments(request.targetDocumentIds, options, readOptions)
+    : readRows(request.targetDocumentIds, async (id) => {
     const row = await options.collection.findOne({ _id: id }, readOptions);
     return [id, row] as const;
   }, session);
-  const memberships = () => readRows(request.links, async ({ aggregateType, aggregateId }) => {
+  const memberships = () => readRows(request.joinMembership ? [] : request.links, async ({ aggregateType, aggregateId }) => {
     const _id = linkId(request.projectionName, request.projectionGeneration, aggregateType, aggregateId);
     const row = await options.linkCollection.findOne({ _id }, readOptions);
     return { aggregateType, aggregateId, targetDocumentId: row?.targetDocId ?? null, revision: row?.v2Revision ?? null };
   }, session);
   const [entries, links] = session ? [await documents(), await memberships()] : await Promise.all([documents(), memberships()]);
+  const joinMemberships = request.joinMembership ? await readMongoMemberships(request, options, readOptions) : undefined;
   const ownRecord = request.progressStrategy === 'own_record' && request.sourceId !== undefined
     ? await options.dedupeCollection.findOne({ _id: ownId(request.projectionName, request.projectionGeneration, request.sourceId) }, readOptions)
     : null;
   const targets = entries.map(([id, row]) => documentTarget(id, row));
-  const snapshot = { targets, links, ownRecordSequence: ownRecord?.commitSequence ?? null };
+  const snapshot = { targets, links, ownRecordSequence: ownRecord?.commitSequence ?? null,
+    ...(joinMemberships ? { joinMemberships } : {}) };
   const changeReceipt = needsReceipt(request, snapshot) ? await readSnapshotChangeReceipt(request, options.changeCollection, session) : undefined;
-  return { snapshot: { ...snapshot, ...(changeReceipt ? { changeReceipt } : {}) }, rows: new Map(entries) };
+  return { snapshot: { ...snapshot, ...(changeReceipt ? { changeReceipt } : {}) }, rows: new Map(entries),
+    ...(ownRecord?.v2WriteId !== undefined ? { ownWriteId: ownRecord.v2WriteId } : {}) };
 }
 
 function canFence<TState>(row: ProjectionDocumentRecord<TState> | null): boolean {
@@ -98,13 +114,16 @@ export function protectSourceSnapshot<TState>(
   return { rows, request: structuredClone(request), snapshot: {
     ...loaded.snapshot,
     targets: loaded.snapshot.targets.map((target) => ({ ...target, sourceProgress: { ...target.sourceProgress } })),
-    links: loaded.snapshot.links.map((link) => ({ ...link }))
+    links: loaded.snapshot.links.map((link) => ({ ...link })),
+    ...(loaded.snapshot.joinMemberships ? { joinMemberships: loaded.snapshot.joinMemberships.map((row) =>
+      ({ ...row, targetDocumentIds: [...row.targetDocumentIds] })) } : {})
   } };
 }
 
 export function matchesSourceSnapshot<TState>(request: CommitProjectionSourceCommitRequest<TState>, loaded: NativeSourceSnapshot<TState>): boolean {
   const scope = loaded.request;
   if (request.projectionName !== scope.projectionName || request.projectionGeneration !== scope.projectionGeneration
+    || Boolean(request.joinMembershipFences) !== Boolean(scope.joinMembership)
     || request.progress.strategy !== scope.progressStrategy
     || (request.progress.strategy === 'own_record' && request.progress.source.sourceId !== scope.sourceId)) return false;
   if (request.additionalWrites && request.progress.strategy !== 'none' && (
@@ -112,6 +131,10 @@ export function matchesSourceSnapshot<TState>(request: CommitProjectionSourceCom
     || scope.changeIdentity.commitSequence !== request.commit.commitSequence
     || scope.changeIdentity.collection !== request.additionalWrites[0].collection)) return false;
   const links = new Set(loaded.snapshot.links.map(({ aggregateType, aggregateId }) => linkId(scope.projectionName, scope.projectionGeneration, aggregateType, aggregateId)));
+  const memberships = new Map(loaded.snapshot.joinMemberships?.map((row) =>
+    [joinMembershipKey(row.aggregateType, row.aggregateId), row.revision]));
   return request.finalDocuments.every(({ targetDocumentId }) => loaded.rows.has(targetDocumentId))
-    && request.stagedLinks.every(({ aggregateType, aggregateId }) => links.has(linkId(scope.projectionName, scope.projectionGeneration, aggregateType, aggregateId)));
+    && request.stagedLinks.every(({ aggregateType, aggregateId }) => links.has(linkId(scope.projectionName, scope.projectionGeneration, aggregateType, aggregateId)))
+    && (request.joinMembershipFences ?? []).every((row) =>
+      memberships.get(joinMembershipKey(row.aggregateType, row.aggregateId)) === row.expectedRevision);
 }

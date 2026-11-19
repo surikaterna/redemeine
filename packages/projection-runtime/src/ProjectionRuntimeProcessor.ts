@@ -27,6 +27,7 @@ type RuntimeProjectionHandler<TState extends PlainObject> = (
 
 type RuntimeProjectionDefinition<TState extends PlainObject> = {
   name: string;
+  joinMembership?: 'set-v1';
   fromStream: {
     aggregate: { aggregateType: string };
     handlers: Record<string, RuntimeProjectionHandler<TState>>;
@@ -80,7 +81,9 @@ interface PendingDocument<TState extends PlainObject> {
 }
 
 export class ProjectionRuntimeProcessor<TState extends PlainObject> {
-  constructor(private readonly options: ProjectionRuntimeProcessorOptions<TState>) {}
+  constructor(private readonly options: ProjectionRuntimeProcessorOptions<TState>) {
+    if (options.projection.joinMembership) throw new Error('.joinRight() requires the native source-commit coordinator.');
+  }
 
   async processNextBatch(): Promise<ProjectionRuntimeBatchStats> {
     const startedAt = Date.now();

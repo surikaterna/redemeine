@@ -144,6 +144,8 @@ export function sealProjectionCaptureRequest<T>(request: CommitProjectionSourceC
     }))),
     progress: sealProgress(request.progress),
     stagedLinks: Object.freeze(request.stagedLinks.map((link) => Object.freeze({ ...link }))),
+    ...(request.joinMembershipFences ? { joinMembershipFences: Object.freeze(request.joinMembershipFences.map((fence) =>
+      Object.freeze({ ...fence, targetDocumentIds: Object.freeze([...fence.targetDocumentIds]) }))) } : {}),
     ...(append ? { additionalWrites: Object.freeze([Object.freeze({ ...append, targets: Object.freeze(append.targets.map((target) =>
       Object.freeze({ ...target, transitions: sequence(target.transitions) }))) })] as const) } : {})
   });

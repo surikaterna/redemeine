@@ -48,3 +48,38 @@ const broad = createAggregate('order', {}).events({ itemAdded: () => {} }).build
     const invented: 'order.itemAdded.event' = event.type;
     void [actual, invented];
   } });
+
+const joined = createAggregate('joined', { amount: 0 }).events({
+  moved: (state, event: { payload: { destination: string } }) => { state.amount += event.payload.destination.length; },
+  ignored: () => {}
+}).build();
+
+const publicRight = createProjection('right', () => ({}));
+publicRight.join(joined, { moved: () => {} }).joinRight(joined, {
+  moved: (event) => {
+    const destination: string = event.payload.destination;
+    // @ts-expect-error Payload narrows to the selected event.
+    void event.payload.typo;
+    return [destination];
+  }
+});
+// @ts-expect-error Selector keys are aggregate event keys, not arbitrary strings.
+publicRight.joinRight(joined, { mvoved: () => 'target' });
+// @ts-expect-error Selectors cannot return numbers.
+publicRight.joinRight(joined, { moved: () => [123] });
+// @ts-expect-error Selectors cannot receive a context.
+publicRight.joinRight(joined, { moved: (_event, ctx: object) => String(ctx) });
+
+const coreRight = createCoreProjection('right', () => ({}));
+coreRight.joinRight(override, {
+  itemAdded: (event) => {
+    const wireName: 'external.v2' = event.type;
+    const amount: number = event.payload.amount;
+    void [wireName, amount];
+    return null;
+  }
+});
+// @ts-expect-error Selectors use local keys, not overridden wire names.
+coreRight.joinRight(override, { 'external.v2': () => 'target' });
+// @ts-expect-error Asynchronous selectors are not supported.
+coreRight.joinRight(override, { itemAdded: async () => 'target' });

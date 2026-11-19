@@ -2,6 +2,9 @@ import type { Draft } from 'immer';
 import { resolveEventHandlers, type ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 import type { ProjectionDeduplicationStrategy } from './projectionDeduplication';
+import { JoinRightBuilder, type ProjectionCandidateSelector, type ProjectionCandidateSelectors } from './joinRightBuilder';
+
+export type { ProjectionCandidateSelector, ProjectionCandidateSelectors } from './joinRightBuilder';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
@@ -149,6 +152,7 @@ export interface JoinStreamDefinition<TState> {
   aggregate: { aggregateType: string };
   /** Event handlers keyed by event type */
   handlers: Record<string, ProjectionHandler<TState>>;
+  candidateSelectors?: Readonly<Record<string, ProjectionCandidateSelector>>;
 }
 
 /**
@@ -171,6 +175,7 @@ export interface ProjectionDefinition<TState = unknown> {
   fromStream: ProjectionStreamDefinition<TState>;
   /** Additional streams to join (.join) */
   joinStreams?: JoinStreamDefinition<TState>[];
+  joinMembership?: 'set-v1';
   /** Additional reverse-subscribe streams (.reverseSubscribe) */
   reverseSubscribeStreams?: ReverseSubscribeStreamDefinition<TState>[];
   /** Initial state factory function */
@@ -200,16 +205,19 @@ function defaultIdentity(event: BaseProjectionEvent): string {
 /**
  * Builder interface for creating projections fluently
  */
-export interface ProjectionBuilder<TState> {
+type FluentProjectionBuilder<TState, TCommit extends boolean> =
+  TCommit extends true ? ProjectionCommitBuilder<TState> : ProjectionBuilder<TState>;
+
+export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
   /**
    * Override the initial state factory
    */
-  initialState(fn: (id: string) => TState): ProjectionBuilder<TState>;
+  initialState(fn: (id: string) => TState): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Override the default identity resolver
    */
-  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState>;
+  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Define the primary stream to project from
@@ -217,7 +225,7 @@ export interface ProjectionBuilder<TState> {
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
   
   /**
    * Add a joined stream for correlating related aggregates
@@ -225,7 +233,12 @@ export interface ProjectionBuilder<TState> {
   join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
+
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): FluentProjectionBuilder<TState, TCommit>;
 
   /**
    * Add a reverse-subscribe stream declaration.
@@ -233,23 +246,23 @@ export interface ProjectionBuilder<TState> {
   reverseSubscribe<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
 
   /**
    * Register cross-cutting hooks that run around event handlers
    */
-  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
+  hooks(hooks: ProjectionHooks<TState>): FluentProjectionBuilder<TState, TCommit>;
 
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
   
   /**
    * Build the final projection definition
    */
-  build(): ProjectionDefinition<TState>;
+  build(): TCommit extends true ? ProjectionCommitDefinition<TState> : ProjectionDefinition<TState>;
 }
 
-export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
-  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState, true> {
+  /** Compatibility alias for build() after configuring deduplication. */
   buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }
 
@@ -262,6 +275,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _identity: (event: BaseProjectionEvent) => string | readonly string[];
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
+  private _joinRight = new JoinRightBuilder<TState>();
   private _reverseSubscribeStreams: ReverseSubscribeStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
@@ -346,6 +360,14 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): ProjectionBuilder<TState> {
+    this._joinRight.add<TAggregate>(aggregate, selectors);
+    return this;
+  }
+
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState> {
     this._hooks = { ...this._hooks, ...hooks };
     return this;
@@ -356,7 +378,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       throw new Error(`Projection '${this._name}': none deduplication requires a reason.`);
     }
     this._deduplication = strategy;
-    return this;
+    // Fluent methods retain this builder and never clear the configured strategy.
+    return this as unknown as ProjectionCommitBuilder<TState>;
   }
 
   buildCommitDefinition(): ProjectionCommitDefinition<TState> {
@@ -375,7 +398,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return {
       name: this._name,
       fromStream: this._fromStream,
-      joinStreams: this._joinStreams,
+      joinStreams: this._joinRight.build(this._name, this._fromStream.aggregate.aggregateType, this._joinStreams),
+      ...(this._joinRight.enabled ? { joinMembership: 'set-v1' } : {}),
       reverseSubscribeStreams: this._reverseSubscribeStreams,
       initialState: this._initialState,
       identity: this._identity,

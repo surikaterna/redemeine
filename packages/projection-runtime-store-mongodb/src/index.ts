@@ -31,7 +31,8 @@ export type {
   MongoProjectionChangesRecord,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
-  ProjectionLinkRecord
+  ProjectionLinkRecord,
+  ProjectionJoinMembershipRecord
 } from './types';
 export { OWN_PROGRESS_INDEX } from './store/sourceCommitReadiness';
 

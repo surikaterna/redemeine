@@ -36,6 +36,9 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   if (options.manifest.queueId !== options.queueBindingId) throw new Error('Registry manifest queue does not match queue binding.');
   if (options.manifest.definitions.length !== options.definitions.length) throw new Error('Runtime registry must exactly match the immutable manifest.');
   for (const [index, entry] of options.definitions.entries()) {
+    if (!entry.definition.deduplication) {
+      throw new Error(`Projection '${entry.definition.name}' requires an explicit deduplication strategy.`);
+    }
     const manifest = options.manifest.definitions[index];
     if (!manifest || manifest.projectionName !== entry.definition.name || manifest.generation !== entry.generation) {
       throw new Error('Runtime registry order and scopes must exactly match the immutable manifest.');
@@ -45,6 +48,13 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     }
     const joined = (entry.definition.joinStreams?.length ?? 0) > 0 || (entry.definition.reverseSubscribeStreams?.length ?? 0) > 0;
     if (joined !== (manifest.joined === true)) throw new Error('Joined definition must be declared in the immutable manifest.');
+    if (entry.definition.joinMembership !== manifest.joinMembership) {
+      throw new Error('Join membership format must match the immutable manifest.');
+    }
+    if (manifest.joinMembership && (options.store.joinMembershipCapability !== manifest.joinMembership
+      || entry.definition.deduplication.strategy === 'in_document')) {
+      throw new Error('Join membership sets require a capable store and own_record or none.');
+    }
   }
 }
 
@@ -58,8 +68,9 @@ function failureOutcome(
 }
 
 function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>): ProjectionCommitDefinition<TState> {
-  const copyStream = <T extends { aggregate: object; handlers: Record<string, unknown> }>(stream: T): T => {
-    const copy = { ...stream, aggregate: Object.freeze({ ...stream.aggregate }), handlers: { ...stream.handlers } };
+  const copyStream = <T extends { aggregate: object; handlers: Record<string, unknown>; candidateSelectors?: object }>(stream: T): T => {
+    const copy = { ...stream, aggregate: Object.freeze({ ...stream.aggregate }), handlers: { ...stream.handlers },
+      ...(stream.candidateSelectors ? { candidateSelectors: Object.freeze({ ...stream.candidateSelectors }) } : {}) };
     Object.freeze(copy.handlers);
     return Object.freeze(copy);
   };

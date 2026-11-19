@@ -18,6 +18,7 @@ export {
 export { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
 export { approvalDigest, type JoinedApproval, type ApprovedJoinedInventory, type JoinedInventory,
   type JoinedLinkTuple } from './joinedCutover';
+export { joinedMembershipSeedRow, type ApprovedJoinedSet, type ApprovedJoinedSetInventory } from './joinedSetCutover';
 export { SourceTailPoller, type SourceTailPollerOptions } from './sourceTailPoller';
 export {
   type ProjectionRabbitChannel,

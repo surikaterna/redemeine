@@ -20,6 +20,8 @@ export type {
   InheritExtended,
   MirrorableAggregateSource,
   ProjectionContext,
+  ProjectionCandidateSelector,
+  ProjectionCandidateSelectors,
   ProjectionHandler,
   ProjectionHandlers,
   ProjectionStreamDefinition,
