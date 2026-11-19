@@ -6,7 +6,9 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
-import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
+import {
+  matchNativeProjectionCaptures, registerNativeProjectionCaptureSnapshot, validateCommitProjectionSourceCommitRelationships
+} from '@redemeine/projection-runtime-core';
 import { BSON, type ClientSession, type TransactionOptions, type UpdateOptions } from 'mongodb';
 import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, ProjectionStoreCommitAtomicManyRequest } from './contracts';
 import { commitAtomicMany } from './store/commitAtomicMany';
@@ -99,7 +101,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     if (request.prepareSourceCommit) {
       const loaded = await readMongoSourceSnapshot(request, this.options);
       const proof = protectSourceSnapshot(loaded, request);
-      if (proof) this.sourceSnapshots.set(loaded.snapshot, proof);
+      if (proof) {
+        this.sourceSnapshots.set(loaded.snapshot, proof);
+        registerNativeProjectionCaptureSnapshot(loaded.snapshot);
+      }
       return loaded.snapshot;
     }
     if (request.changeIdentity && this.options.changeCollection) {
@@ -128,8 +133,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     try {
       await this.initializeProjectionSourceCommitStore();
       const candidate = snapshot && this.sourceSnapshots.get(snapshot);
-      const proof = candidate && matchesSourceSnapshot(request, candidate) ? candidate : undefined;
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), proof, applicationId, snapshot !== undefined);
+      const observed = snapshot && candidate && matchesSourceSnapshot(request, candidate)
+        ? { loaded: candidate, captures: matchNativeProjectionCaptures(request, candidate.snapshot, snapshot) } : undefined;
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), observed, applicationId, snapshot !== undefined);
       if (result.status === 'committed' && !result.replayed) {
         try {
           await this.reportDedupeWarnings(request);

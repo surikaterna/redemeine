@@ -227,25 +227,48 @@ export type VerifiedProjectionSourceCommitStatePatch = {
   captured?: true;
 };
 
+function capturedStatePatches<T>(
+  request: CommitProjectionSourceCommitRequest<T>, snapshot: Pick<ProjectionSourceCommitSnapshot<T>, 'targets'>,
+  origin?: ProjectionSourceCommitSnapshot
+): Map<string, VerifiedProjectionSourceCommitStatePatch> {
+  const verified = new Map<string, VerifiedProjectionSourceCommitStatePatch>();
+  if (!isSealedProjectionCaptureRequest(request)) return verified;
+  const originals = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
+  for (const document of request.finalDocuments) {
+    const original = originals.get(document.targetDocumentId);
+    const hint = document.statePatch;
+    if (!original || hint?.kind !== 'ordered' || !transitionsMatchEvents(hint.transitions, request.commit.events)) continue;
+    const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
+    if (matchesCapturedProjectionState(original.state, exists, document.finalDocument, hint.transitions,
+      origin ? { snapshot: origin, targetId: document.targetDocumentId } : undefined)) {
+      verified.set(document.targetDocumentId, { transitions: hint.transitions, captured: true,
+        unchanged: exists && Object.is(original.state, document.finalDocument) });
+    }
+  }
+  return verified;
+}
+
+function historyMatchesCaptures(request: CommitProjectionSourceCommitRequest, verified: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch>): boolean {
+  return !request.additionalWrites?.[0].targets.some((target) => verified.get(target.targetDocumentId)?.transitions !== target.transitions);
+}
+
+/** @internal Call only with the adapter's private metadata and locally registered origin. */
+export function matchNativeProjectionCaptures<T>(
+  request: CommitProjectionSourceCommitRequest<T>, snapshot: Pick<ProjectionSourceCommitSnapshot<T>, 'targets'>,
+  origin: ProjectionSourceCommitSnapshot
+): ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch> | undefined {
+  if (!request.finalDocuments.length) return undefined;
+  const verified = capturedStatePatches(request, snapshot, origin);
+  return verified.size === request.finalDocuments.length && historyMatchesCaptures(request, verified) ? verified : undefined;
+}
+
 export function checkProjectionSourceCommitState<T>(
-  request: CommitProjectionSourceCommitRequest<T>, snapshot: Pick<ProjectionSourceCommitSnapshot<T>, 'targets'>, allowCapture: boolean
+  request: CommitProjectionSourceCommitRequest<T>, snapshot: Pick<ProjectionSourceCommitSnapshot<T>, 'targets'>, allowCapture: boolean,
+  nativeCaptures?: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch>
 ): { failure: string | null; verified: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch> } {
   if (allowCapture && !request.validateStateChanges && isSealedProjectionCaptureRequest(request)) {
-    const originals = new Map(snapshot.targets.map((target) => [target.targetDocumentId, target]));
-    const verified = new Map<string, VerifiedProjectionSourceCommitStatePatch>();
-    for (const document of request.finalDocuments) {
-      const original = originals.get(document.targetDocumentId);
-      const hint = document.statePatch;
-      if (!original || hint?.kind !== 'ordered' || !transitionsMatchEvents(hint.transitions, request.commit.events)) continue;
-      const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
-      if (matchesCapturedProjectionState(original.state, exists, document.finalDocument, hint.transitions)) {
-        verified.set(document.targetDocumentId, { transitions: hint.transitions, captured: true,
-          unchanged: exists && Object.is(original.state, document.finalDocument) });
-      }
-    }
-    if (!request.additionalWrites?.[0].targets.some((target) => verified.get(target.targetDocumentId)?.transitions !== target.transitions)) {
-      return { failure: null, verified };
-    }
+    const verified = nativeCaptures ?? capturedStatePatches(request, snapshot);
+    if (historyMatchesCaptures(request, verified)) return { failure: null, verified };
   }
   const verified = verifyProjectionSourceCommitStatePatches(request, snapshot);
   const failure = validateProjectionChangesState(request, snapshot, verified)

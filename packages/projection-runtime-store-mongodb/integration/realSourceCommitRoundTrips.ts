@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {
-  createProjection, projectionUuidToBase64Url22, replayProjectionChangeTransition, type ProjectionSourceCommit
+  createProjection, projectionUuidToBase64Url22, replayProjectionChangeTransition, type ProjectionSourceCommit, type ProjectionSourceCommitSnapshot
 } from '@redemeine/projection-runtime-core';
 import type { CommandStartedEvent, Db, MongoClient } from 'mongodb';
 import { executeProjectionDefinition } from '../../projection-worker-core/src/projectionDefinitionExecutor';
+import { reduceProjectionSourceCommit } from '../../projection-worker-core/src/projectionCommitReducer';
 import { createProjectionLaneScheduler } from '../../projection-worker-core/src/targetLaneScheduler';
 import { MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDedupeRecord,
   type ProjectionDocumentRecord, type ProjectionLinkRecord } from '../src';
@@ -97,6 +98,18 @@ async function checkRoundtrip(
   return { strategy, recording, fanout: targets.length, cold, older, ...observed };
 }
 
+function captureQuantity(
+  id: string, snapshot: ProjectionSourceCommitSnapshot<State>, commit: ProjectionSourceCommit,
+  strategy: 'in_document' | 'own_record', quantity: number
+) {
+  const definition = createProjection<State>(id, () => ({ quantity: 0 }))
+    .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, { Change(draft) { draft.quantity = quantity; } })
+    .identity(() => id).deduplication({ strategy }).buildCommitDefinition();
+  const result = reduceProjectionSourceCommit(definition, 'g1', commit, snapshot);
+  assert.equal(result.status, 'planned');
+  return result.request;
+}
+
 async function checkPreparedRace(ctx: ReturnType<typeof roundtripStore>, trace: ReturnType<typeof commandTrace>) {
   const { store, collection } = ctx;
   const id = 'race';
@@ -106,14 +119,10 @@ async function checkPreparedRace(ctx: ReturnType<typeof roundtripStore>, trace: 
   await collection.insertOne({ _id: id, state: { quantity: 0 }, updatedAt: 'constant',
     v2Revision: 1, v2WriteId: marker, sourceProgress: { [sourceKey]: 0 } });
   const snapshot = await get();
-  const request = {
-    version: 1 as const, mode: 'atomic-all' as const, projectionName: id, projectionGeneration: 'g1', commit: source(1),
-    stagedLinks: [], finalDocuments: [{ targetDocumentId: id, expectedRevision: 1, finalDocument: { quantity: 4 } }],
-    progress: { strategy: 'in_document' as const, targets: [{ targetDocumentId: id, expected: { [sourceKey]: 0 }, final: { [sourceKey]: 1 } }] }
-  };
+  const request = captureQuantity(id, snapshot, source(1), 'in_document', 4);
   const fresh = await get();
   trace.begin();
-  assert.equal((await store.commitProjectionSourceCommit(request, fresh)).status, 'committed');
+  assert.equal((await store.commitProjectionSourceCommit(captureQuantity(id, fresh, source(1), 'in_document', 4), fresh)).status, 'committed');
   const commitOnly = trace.end();
   assert.deepEqual(commitOnly.order, ['update:rt_docs']);
   assert.equal(commitOnly.transactions, 0);
@@ -161,12 +170,10 @@ async function checkOwnProgressRace(ctx: ReturnType<typeof roundtripStore>, trac
   const scope = { projectionName: id, projectionGeneration: 'g1' };
   const snapshot = await store.loadProjectionSourceCommitSnapshot({ ...scope, prepareSourceCommit: true,
     targetDocumentIds: [id], links: [], progressStrategy: 'own_record', sourceId });
+  const request = captureQuantity(id, snapshot, source(2), 'own_record', 99);
   await dedupeCollection.updateOne({ _id: progressKey(id) }, { $set: { commitSequence: 2 } });
   trace.begin();
-  const raced = await store.commitProjectionSourceCommit({ ...scope, version: 1, mode: 'atomic-all', commit: source(2),
-    finalDocuments: [{ targetDocumentId: id, expectedRevision: 2, finalDocument: { quantity: 99 } }], stagedLinks: [],
-    progress: { strategy: 'own_record', source: { sourceId, expectedSequence: 1, finalSequence: 2 } }
-  }, snapshot);
+  const raced = await store.commitProjectionSourceCommit(request, snapshot);
   const race = trace.end();
   assert.deepEqual(race.order, ['update:rt_docs', 'update:rt_progress', 'abortTransaction']);
   assert.equal(raced.status, 'rejected');

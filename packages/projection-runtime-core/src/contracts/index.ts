@@ -210,14 +210,18 @@ export type {
 export {
   buildProjectionChangesReceipt, matchProjectionChangesReceipt, MISSING_PROJECTION_CHANGES_HISTORY,
   projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState,
-  verifyProjectionSourceCommitStatePatches, checkProjectionSourceCommitState, type VerifiedProjectionSourceCommitStatePatch
+  verifyProjectionSourceCommitStatePatches, checkProjectionSourceCommitState, matchNativeProjectionCaptures,
+  type VerifiedProjectionSourceCommitStatePatch
 } from './projectionChanges';
 export {
   equalProjectionChangeJson, freezePortableProjectionChangeJson, isCertifiedProjectionSnapshotJson,
   isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson
 } from './projectionChangeJson';
 export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
-export { captureProjectionSourceEvent, isOwnedProjectionState, ownProjectionState, sealProjectionCaptureRequest } from './projectionChangeCapture';
+export {
+  captureProjectionSourceEvent, isNativeProjectionCaptureSnapshot, isOwnedProjectionState,
+  ownProjectionState, registerNativeProjectionCaptureSnapshot, sealProjectionCaptureRequest
+} from './projectionChangeCapture';
 export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {
   evaluateCutoverReadiness,

@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       immer:
-        specifier: ^10.1.1
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
       type-fest:
         specifier: ^5.5.0
         version: 5.7.0
@@ -95,8 +95,8 @@ importers:
         specifier: workspace:*
         version: link:../kernel
       immer:
-        specifier: ^10.1.1
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       tsup:
         specifier: ^8.4.0
@@ -192,8 +192,8 @@ importers:
   packages/projection:
     dependencies:
       immer:
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       '@redemeine/aggregate':
         specifier: workspace:*
@@ -234,8 +234,8 @@ importers:
   packages/projection-runtime-core:
     dependencies:
       immer:
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       tsup:
         specifier: ^8.4.0
@@ -267,8 +267,8 @@ importers:
         version: 6.18.0
     devDependencies:
       immer:
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
       tsup:
         specifier: ^8.4.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.28)(tsx@4.22.4)(typescript@5.9.3)(yaml@2.9.0)
@@ -325,8 +325,8 @@ importers:
         specifier: workspace:*
         version: link:../projection-runtime-core
       immer:
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       tsup:
         specifier: ^8.4.0
@@ -350,8 +350,8 @@ importers:
         specifier: workspace:*
         version: link:../aggregate
       immer:
-        specifier: ^10.1.1
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       tsup:
         specifier: ^8.4.0
@@ -388,8 +388,8 @@ importers:
         specifier: workspace:*
         version: link:../saga
       immer:
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: 11.2.10
+        version: 11.2.10
     devDependencies:
       '@redemeine/projection-runtime-core':
         specifier: workspace:*
@@ -4712,8 +4712,8 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  immer@10.2.0:
-    resolution: {integrity: sha512-d/+XTN3zfODyjr89gM3mPq1WNX2B8pYsu7eORitdwyA2sBubnTl3laYlBk4sXY5FUa5qTZGBDPJICVbvqzjlbw==}
+  immer@11.2.10:
+    resolution: {integrity: sha512-pzANBj+0A9u+prdhBJ14DVi44vCvVUQzBa8DKt6I0AMCokPHtt722BK9IX5bFC70xUSU9TnzLRIJLTGqIzjEFw==}
 
   import-fresh@3.3.1:
     resolution: {integrity: sha512-TR3KfrTZTYLPB6jUjfx6MF9WcWrHL9su5TObK4ZkYgBdWKPOFoSoQIdEuTuR82pmtxH2spWG9h6etwfr1pLBqQ==}
@@ -13198,7 +13198,7 @@ snapshots:
 
   image-size@2.0.4: {}
 
-  immer@10.2.0: {}
+  immer@11.2.10: {}
 
   import-fresh@3.3.1:
     dependencies:

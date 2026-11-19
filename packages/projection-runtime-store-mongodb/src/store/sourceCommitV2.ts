@@ -5,7 +5,7 @@ import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
   LoadProjectionSourceCommitSnapshotRequest,
-  ProjectionSourceCommitSnapshot
+  ProjectionSourceCommitSnapshot, VerifiedProjectionSourceCommitStatePatch
 } from '@redemeine/projection-runtime-core';
 import {
   projectionChangesHistoryFailure,
@@ -150,12 +150,17 @@ type Prepared = {
   writes: ReturnType<typeof planSourceDocumentWrites>;
 };
 
+type ObservedSourceCommit<T> = {
+  loaded: NativeSourceSnapshot<T>;
+  captures: ReadonlyMap<string, VerifiedProjectionSourceCommitStatePatch> | undefined;
+};
+
 function prepareSourceCommit<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
   loaded: LoadedSourceSnapshot<TState>,
   writeId: string,
-  trusted: boolean
+  captures?: ObservedSourceCommit<TState>['captures']
 ): Prepared | CommitProjectionSourceCommitResult {
   const ids = new Set(request.finalDocuments.map(({ targetDocumentId }) => targetDocumentId));
   const snapshot = { ...loaded.snapshot, targets: loaded.snapshot.targets.filter(({ targetDocumentId }) => ids.has(targetDocumentId)) };
@@ -164,9 +169,9 @@ function prepareSourceCommit<TState>(
   if (lacksLegacyOriginal(request, snapshot)) return terminal('Legacy document first touch requires original state CAS.');
   const failure = validateSnapshot(request, snapshot);
   if (failure) return failure.startsWith('legacy document changed') ? terminal(failure) : conflict(failure);
-  const { verified, failure: invalidChange } = checkProjectionSourceCommitState(request, snapshot, trusted);
+  const { verified, failure: invalidChange } = checkProjectionSourceCommitState(request, snapshot, captures !== undefined, captures);
   if (invalidChange) return terminal(invalidChange);
-  return { writes: planSourceDocumentWrites(request, loaded, verified, writeId, trusted, options.now ?? (() => new Date().toISOString())) };
+  return { writes: planSourceDocumentWrites(request, loaded, verified, writeId, captures !== undefined, options.now ?? (() => new Date().toISOString())) };
 }
 
 function committed(
@@ -207,23 +212,33 @@ async function persistSingle<TState>(
   }
 }
 
+function matchesObservedFences<T>(fresh: LoadedSourceSnapshot<T>, observed: NativeSourceSnapshot<T>): boolean {
+  return [...fresh.rows].every(([id, row]) => {
+    const previous = observed.rows.get(id);
+    return row?.v2Revision === previous?.v2Revision && row?.v2WriteId === previous?.v2WriteId && row?.updatedAt === previous?.updatedAt
+      && row?.v2ObservedUpdatedAt === previous?.v2ObservedUpdatedAt
+      && (!row || !Object.hasOwn(row, 'checkpoint'));
+  });
+}
+
 async function runSourceCommit<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>,
-  proof: NativeSourceSnapshot<TState> | undefined,
+  observed: ObservedSourceCommit<TState> | undefined,
   applicationId: string | undefined
 ): Promise<CommitProjectionSourceCommitResult> {
   const writeId = randomUUID();
-  if (proof) {
-    const prepared = prepareSourceCommit(request, options, proof, writeId, true);
+  if (observed?.captures) {
+    const prepared = prepareSourceCommit(request, options, observed.loaded, writeId, observed.captures);
     if (!('writes' in prepared)) return prepared;
-    if (canWriteSingle(request, proof)) return persistSingle(request, options, prepared);
+    if (canWriteSingle(request, observed.loaded)) return persistSingle(request, options, prepared);
     return execute((session) => persistSourceCommit(request, options, session, prepared, applicationId));
   }
   return execute(async (session) => {
     const loaded = await readMongoSourceSnapshot(snapshotForCommit(request), options, session);
-    const prepared = prepareSourceCommit(request, options, loaded, writeId, false);
+    if (observed && !matchesObservedFences(loaded, observed.loaded)) return conflict('projection source snapshot changed');
+    const prepared = prepareSourceCommit(request, options, loaded, writeId);
     return 'writes' in prepared ? persistSourceCommit(request, options, session, prepared, applicationId) : prepared;
   });
 }
@@ -250,7 +265,7 @@ export async function commitMongoV2<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>,
-  proof?: NativeSourceSnapshot<TState>,
+  observed?: ObservedSourceCommit<TState>,
   applicationId?: string,
   preparedRequest = false
 ): Promise<CommitProjectionSourceCommitResult> {
@@ -258,7 +273,7 @@ export async function commitMongoV2<TState>(
   if (malformed) return terminal(malformed);
   let result: CommitProjectionSourceCommitResult;
   try {
-    result = await runSourceCommit(request, options, execute, proof, applicationId);
+    result = await runSourceCommit(request, options, execute, observed, applicationId);
   } catch (error) {
     result = classifyCommitError(request, error);
   }

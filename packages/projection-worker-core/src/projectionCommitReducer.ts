@@ -11,7 +11,7 @@ import type {
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import {
-  captureProjectionSourceEvent, isCertifiedProjectionSnapshotJson, isOwnedProjectionState, isPortableProjectionChangeJson,
+  captureProjectionSourceEvent, isCertifiedProjectionSnapshotJson, isNativeProjectionCaptureSnapshot, isOwnedProjectionState, isPortableProjectionChangeJson,
   MISSING_PROJECTION_CHANGES_HISTORY, projectionUuidToBase64Url22, sealProjectionCaptureRequest
 } from '@redemeine/projection-runtime-core';
 import { produce, type Draft } from 'immer';
@@ -36,6 +36,7 @@ interface ReductionState<TState> {
   documents: Map<string, ReducedDocument<TState>>;
   changeFeed?: string;
   validation?: ProjectionStateValidation;
+  nativeSnapshot?: ProjectionSourceCommitSnapshot<TState>;
   previouslyAppliedTarget?: boolean;
   touched: Set<string>;
   links: Map<string, RoutingLinkState>;
@@ -83,7 +84,7 @@ function getDocument<TState>(
   if (!absent && (reduction.validation?.load || reduction.validation?.changes) && !isPortableProjectionChangeJson(target.state)) {
     throw new Error('Projection change snapshot must be portable JSON.');
   }
-  const owned = isOwnedProjectionState(target.state) || isCertifiedProjectionSnapshotJson(target.state);
+  const owned = reduction.nativeSnapshot || isOwnedProjectionState(target.state) || isCertifiedProjectionSnapshotJson(target.state);
   const document: ReducedDocument<TState> = {
     // A stored JSON null is a document in the commit-native feed.
     state: initialize ? definition.initialState(targetId) : owned ? target.state as TState : clone(target.state as TState),
@@ -199,7 +200,8 @@ function applyHandler<TState>(
     document.state = produce(document.state, recipe);
     return undefined;
   }
-  const captured = captureProjectionSourceEvent(document.state, sourceEvent, recipe, creating);
+  const captured = captureProjectionSourceEvent(document.state, sourceEvent, recipe, creating,
+    reduction.nativeSnapshot ? { snapshot: reduction.nativeSnapshot, targetId } : undefined);
   document.state = captured.state;
   return captured.transition;
 }
@@ -320,6 +322,7 @@ export function reduceProjectionSourceCommit<TState>(
   const reduction: ReductionState<TState> = {
     documents: new Map(), touched: new Set(), links: linksByKey(snapshot.links), stagedLinks: new Map(),
     missingTargets: new Set(), missingLinks: new Map(),
+    ...(isNativeProjectionCaptureSnapshot(snapshot) ? { nativeSnapshot: snapshot } : {}),
     ...(validation ? { validation } : {}),
     ...(projectionChanges === undefined ? {} : { changeFeed: projectionChanges })
   };

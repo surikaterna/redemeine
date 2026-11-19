@@ -226,6 +226,8 @@ export {
   validateCommitProjectionSourceCommitRelationships,
   buildProjectionChangesReceipt,
   captureProjectionSourceEvent,
+  isNativeProjectionCaptureSnapshot,
+  registerNativeProjectionCaptureSnapshot,
   isOwnedProjectionState,
   ownProjectionState,
   sealProjectionCaptureRequest,
@@ -246,5 +248,6 @@ export {
   validateProjectionChangesState,
   verifyProjectionSourceCommitStatePatches,
   checkProjectionSourceCommitState,
+  matchNativeProjectionCaptures,
   type VerifiedProjectionSourceCommitStatePatch
 } from './contracts';

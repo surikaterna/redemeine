@@ -1,5 +1,7 @@
-import { original } from 'immer';
-import { captureProjectionSourceEvent, isOwnedProjectionState, ownProjectionState } from '../src/contracts/projectionChangeCapture';
+import { current, original } from 'immer';
+import {
+  captureProjectionSourceEvent, isOwnedProjectionState, ownProjectionState, registerNativeProjectionCaptureSnapshot
+} from '../src/contracts/projectionChangeCapture';
 
 const event = {
   eventId: 'event', eventIndex: 0, streamVersion: 0, type: 'Changed',
@@ -60,4 +62,25 @@ test('retains structural sharing and protects leaked originals and assigned valu
     expect(() => { external.value++; }).toThrow(TypeError);
   });
   expect(state.assigned.value).toBe(2);
+});
+
+test('native capture supports synchronous draft edits and read-only original/current, without freezing payloads', () => {
+  const before = { nested: { count: 1 }, assigned: { count: 0 } };
+  const external = { count: 2 };
+  const snapshot = { targets: [{ targetDocumentId: 'one', revision: 1, state: before, sourceProgress: {} }],
+    links: [], ownRecordSequence: null };
+  registerNativeProjectionCaptureSnapshot(snapshot);
+  const { state, transition } = captureProjectionSourceEvent(before, event, draft => {
+    expect(original(draft)?.nested.count).toBe(1);
+    draft.assigned = external;
+    draft.assigned.count++;
+    expect(current(draft).assigned.count).toBe(3);
+  }, false, { snapshot, targetId: 'one' });
+  expect(state.nested).toBe(before.nested);
+  expect(state.assigned).toBe(external);
+  expect(transition?.patch).toEqual([{ op: 'replace', path: '/assigned', value: { count: 3 } }]);
+  // Mutating these aliases outside the recipe is not supported; freezing is not the native guard.
+  expect(Object.isFrozen(before.nested)).toBe(false);
+  expect(Object.isFrozen(state.assigned)).toBe(false);
+  expect(Object.isFrozen(transition?.patch)).toBe(true);
 });

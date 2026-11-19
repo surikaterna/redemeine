@@ -1,7 +1,14 @@
+import { types } from 'node:util';
 import { formatProjectionChangePointer, type ProjectionChangePatchOperation, type ProjectionJsonValue } from '@redemeine/projection-runtime-core';
 
 type ObjectState = Record<string, unknown>;
 type Token = string | number;
+const plainPrototypes = new Set([Object.prototype, Object.getPrototypeOf(structuredClone({})), null]);
+
+function plainObject(value: unknown): value is ObjectState {
+  return value !== null && typeof value === 'object' && !types.isProxy(value)
+    && plainPrototypes.has(Object.getPrototypeOf(value));
+}
 
 function replace(path: readonly Token[], value: unknown): ProjectionChangePatchOperation {
   return { op: 'replace', path: formatProjectionChangePointer(path), value: value as ProjectionJsonValue };
@@ -45,17 +52,17 @@ function objectEdits(before: ObjectState, after: ObjectState, path: readonly Tok
 
 function collect(before: unknown, after: unknown, path: readonly Token[], result: ProjectionChangePatchOperation[]): void {
   if (Object.is(before, after)) return;
-  if (Array.isArray(before) && Array.isArray(after)
+  if (Array.isArray(before) && Array.isArray(after) && !types.isProxy(before) && !types.isProxy(after)
     && Object.keys(before).length === before.length && Object.keys(after).length === after.length) {
     arrayEdits(before, after, path, result);
-  } else if (before && after && typeof before === 'object' && typeof after === 'object' && !Array.isArray(before) && !Array.isArray(after)) {
-    objectEdits(before as ObjectState, after as ObjectState, path, result);
+  } else if (plainObject(before) && plainObject(after)) {
+    objectEdits(before, after, path, result);
   } else {
     result.push(replace(path, after));
   }
 }
 
-/** Mongo derives writes from actual immutable state, not from the completeness of diagnostic/history patches. */
+/** Derive writes from stable before/after values, not the completeness of diagnostic/history patches. */
 export function authoritativeMongoEdits(before: unknown, after: unknown): readonly ProjectionChangePatchOperation[] {
   const result: ProjectionChangePatchOperation[] = [];
   collect(before, after, [], result);

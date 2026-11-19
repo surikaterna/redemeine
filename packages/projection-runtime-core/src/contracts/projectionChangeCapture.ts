@@ -3,18 +3,33 @@ import { enablePatches, Immer, type Draft } from 'immer';
 import { formatProjectionChangePointer } from './projectionChangePatch';
 import type { ProjectionChangePatchOperation, ProjectionChangeTransition } from './projectionChanges';
 import type { ProjectionJsonValue, ProjectionSourceEvent } from './sourceCommit';
-import type { CommitProjectionSourceCommitRequest, ProjectionSourceCommitProgress } from './sourceCommitStore';
+import type { CommitProjectionSourceCommitRequest, ProjectionSourceCommitProgress, ProjectionSourceCommitSnapshot } from './sourceCommitStore';
 
 const owned = new WeakSet<object>();
-const captures = new WeakMap<ProjectionChangeTransition, { before: unknown; after: unknown; creating: boolean }>();
+const nativeSnapshots = new WeakSet<ProjectionSourceCommitSnapshot>();
+type NativeCaptureOrigin = { snapshot: ProjectionSourceCommitSnapshot; targetId: string };
+const captures = new WeakMap<ProjectionChangeTransition, {
+  before: unknown; after: unknown; creating: boolean; origin: NativeCaptureOrigin | undefined
+}>();
 const sealedRequests = new WeakSet<object>();
 const immer = new Immer({ autoFreeze: true });
+const nativeImmer = new Immer({ autoFreeze: false });
 const objectPrototypes = new Set([Object.prototype, Object.getPrototypeOf(structuredClone({})), null]);
 const arrayPrototypes = new Set([Array.prototype, Object.getPrototypeOf(structuredClone([]))]);
 let patchesEnabled = false;
 
 export function isOwnedProjectionState(value: unknown): boolean {
   return value !== null && typeof value === 'object' && owned.has(value);
+}
+
+/** @internal Reducer hint only; adapters still require private, same-store snapshot provenance. */
+export function registerNativeProjectionCaptureSnapshot(snapshot: ProjectionSourceCommitSnapshot): void {
+  nativeSnapshots.add(snapshot);
+}
+
+/** @internal */
+export function isNativeProjectionCaptureSnapshot(snapshot: ProjectionSourceCommitSnapshot): boolean {
+  return nativeSnapshots.has(snapshot);
 }
 
 function plainContainer(value: object): boolean {
@@ -56,38 +71,43 @@ export function ownProjectionState(root: unknown): boolean {
   return true;
 }
 
-/** Only this actual Immer execution can mint an immutable capture; callers cannot attest a supplied patch. */
+/** Only an actual Immer execution mints a capture. Native payloads follow the synchronous draft-only contract. */
 export function captureProjectionSourceEvent<T>(
-  before: T, event: ProjectionSourceEvent, recipe: (draft: Draft<T>) => void, creating: boolean
+  before: T, event: ProjectionSourceEvent, recipe: (draft: Draft<T>) => void, creating: boolean,
+  native?: NativeCaptureOrigin
 ): { state: T; transition?: ProjectionChangeTransition } {
   if (!patchesEnabled) {
     enablePatches();
     patchesEnabled = true;
   }
-  const stableBefore = ownProjectionState(before);
-  const [state, native] = creating ? [immer.produce(before, recipe), []] : immer.produceWithPatches(before, recipe);
-  if (!stableBefore || !ownProjectionState(state)) return { state };
+  const origin = native && nativeSnapshots.has(native.snapshot) ? { ...native } : undefined;
+  const engine = origin ? nativeImmer : immer;
+  const stableBefore = origin || ownProjectionState(before);
+  const [state, patches] = creating ? [engine.produce(before, recipe), []] : engine.produceWithPatches(before, recipe);
+  if (!stableBefore || (!origin && !ownProjectionState(state))) return { state };
   const patch: ProjectionChangePatchOperation[] = creating
     ? [{ op: 'add', path: '', value: state as ProjectionJsonValue }]
-    : native.map(({ op, path, value }) => op === 'remove' ? { op, path: formatProjectionChangePointer(path) }
+    : patches.map(({ op, path, value }) => op === 'remove' ? { op, path: formatProjectionChangePointer(path) }
       : { op, path: formatProjectionChangePointer(path), value: value as ProjectionJsonValue });
   for (const op of patch) {
-    if (op.op !== 'remove' && !ownProjectionState(op.value)) return { state };
+    if (!origin && op.op !== 'remove' && !ownProjectionState(op.value)) return { state };
     Object.freeze(op);
   }
   const transition = Object.freeze({ eventId: event.eventId, eventIndex: event.eventIndex,
     changeType: creating ? 'create' : patch.length ? 'update' : 'noop', patch: Object.freeze(patch) } as const);
-  captures.set(transition, { before, after: state, creating });
+  captures.set(transition, { before, after: state, creating, origin });
   return { state, transition };
 }
 
 export function matchesCapturedProjectionState(
-  before: unknown, exists: boolean, after: unknown, transitions: readonly ProjectionChangeTransition[]
+  before: unknown, exists: boolean, after: unknown, transitions: readonly ProjectionChangeTransition[],
+  origin?: NativeCaptureOrigin
 ): boolean {
   if (!transitions.length) return false;
   for (const transition of transitions) {
     const capture = captures.get(transition);
-    if (!capture || capture.creating === exists || (exists && !Object.is(capture.before, before))) return false;
+    if (!capture || capture.origin?.snapshot !== origin?.snapshot || capture.origin?.targetId !== origin?.targetId
+      || capture.creating === exists || (exists && !Object.is(capture.before, before))) return false;
     before = capture.after;
     exists = true;
   }
