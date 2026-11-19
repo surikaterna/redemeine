@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { joinMembershipKey, type CommitProjectionSourceCommitCommitted,
   type CommitProjectionSourceCommitRequest } from '@redemeine/projection-runtime-core';
 import type { LoadedSourceSnapshot } from './sourceCommitSnapshot';
@@ -26,7 +27,8 @@ export function reconcileSetSourceCommit<T>(request: CommitProjectionSourceCommi
     const row = rows.get(key);
     const revision = (fence.expectedRevision ?? 0) + 1;
     if (row?.revision !== revision || row.targetDocumentIds.length !== fence.targetDocumentIds.length
-      || !fence.targetDocumentIds.every((id, index) => id === row.targetDocumentIds[index])) return undefined;
+      || !fence.targetDocumentIds.every((id, index) => id === row.targetDocumentIds[index])
+      || !isDeepStrictEqual(row.seeds, fence.seeds)) return undefined;
     links.set(key, revision);
   }
 

@@ -1,6 +1,7 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, Collection, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
 import type {
   CommitProjectionSourceCommitCommitted,
+  JoinSeedEdge,
   ProjectionChangesReceipt,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
@@ -36,6 +37,7 @@ export interface ProjectionJoinMembershipRecord {
   aggregateId: string;
   targetDocumentIds: readonly string[];
   revision: number;
+  seeds?: readonly JoinSeedEdge[];
 }
 
 export interface ProjectionDedupeRecord {

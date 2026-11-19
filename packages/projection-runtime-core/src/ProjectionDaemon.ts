@@ -157,6 +157,7 @@ export class ProjectionDaemon<TState = unknown> {
   private readonly orchestrator: SubscriptionOrchestrator<TState>;
 
   constructor(private options: ProjectionDaemonOptions<TState>) {
+    if (options.projection.joinInitializers?.length) throw new Error('.onJoinInitialize() requires the native source-commit coordinator.');
     if (options.projection.joinMembership) throw new Error('.joinRight() requires the native source-commit coordinator.');
     if (options.subscription && options.subscriptions) {
       throw new Error('Projection daemon options are mutually exclusive: use either subscription or subscriptions');
@@ -541,6 +542,7 @@ export class ProjectionDaemon<TState = unknown> {
 
     return {
       subscribeTo(aggregate, aggregateId) {
+        if (!('aggregateType' in aggregate)) throw new Error('Join initialization requires the native source-commit coordinator.');
         subscriptions.push({ aggregate, aggregateId });
       },
       unsubscribeFrom(aggregate, aggregateId) {

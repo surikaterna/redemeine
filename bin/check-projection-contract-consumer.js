@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 
@@ -42,8 +42,10 @@ try {
       target: 'ES2022',
       skipLibCheck: false
     },
-    files: ['consumer.ts']
+    files: ['consumer.ts', 'join-initializer.ts']
   }));
+  writeFileSync(join(temporaryDirectory, 'join-initializer.ts'),
+    readFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.ts'), 'utf8'));
   writeFileSync(join(temporaryDirectory, 'consumer.ts'), `
 import {
   createProjection,

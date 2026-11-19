@@ -123,7 +123,7 @@ export function protectSourceSnapshot<TState>(
 export function matchesSourceSnapshot<TState>(request: CommitProjectionSourceCommitRequest<TState>, loaded: NativeSourceSnapshot<TState>): boolean {
   const scope = loaded.request;
   if (request.projectionName !== scope.projectionName || request.projectionGeneration !== scope.projectionGeneration
-    || Boolean(request.joinMembershipFences) !== Boolean(scope.joinMembership)
+    || Boolean(request.joinMembershipFences) !== Boolean(scope.joinMembership) || request.joinSeedVersion !== scope.joinSeedVersion
     || request.progress.strategy !== scope.progressStrategy
     || (request.progress.strategy === 'own_record' && request.progress.source.sourceId !== scope.sourceId)) return false;
   if (request.additionalWrites && request.progress.strategy !== 'none' && (

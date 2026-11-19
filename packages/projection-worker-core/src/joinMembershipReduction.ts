@@ -1,5 +1,5 @@
 import {
-  assertJoinRevision, JoinTurnBudget, joinMembershipKey, mergeJoinTargets, validateJoinTargetSet,
+  assertJoinRevision, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey, mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
 import type { RoutedEvent, SetRoutingEntry } from './projectionCommitRouting';
@@ -17,9 +17,11 @@ export function observedMemberships(
     if (!remaining.delete(key)) throw new Error('Unexpected joined membership snapshot key.');
     assertJoinRevision(revision);
     validateJoinTargetSet(targetDocumentIds);
+    validateJoinMembershipSeeds(row);
     for (const id of targetDocumentIds) budget.add(id);
     if (revision === null && targetDocumentIds.length) throw new Error('Absent membership cannot have targets.');
-    result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]) }));
+    result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]),
+      ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) }));
   }
   return result;
 }

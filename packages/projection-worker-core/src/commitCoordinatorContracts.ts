@@ -4,15 +4,27 @@ import type {
   ProjectionQueueRegistryManifest,
   ProjectionSourceCommit,
   ProjectionSourceCommitStorePort,
-  ProjectionSourceOrderPort
+  ProjectionSourceOrderPort,
+  ProjectionStreamDefinition
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionStateValidation } from './projectionCommitReducer';
+import type { JoinSeedReader } from './joinSeedReaders';
+
+type SourceAggregate = ProjectionStreamDefinition<unknown>['aggregate'];
+
+/** The coordinator routes by aggregate type; either DSL may supply the definition. */
+export type ProjectionCommitDefinitionInput<TState = unknown> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
+  fromStream: Omit<ProjectionStreamDefinition<TState>, 'aggregate'> & {
+    aggregate: Pick<SourceAggregate, 'aggregateType'> & Partial<SourceAggregate>;
+  };
+};
 
 export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly generation: string;
-  readonly definition: ProjectionCommitDefinition<TState>;
+  readonly definition: ProjectionCommitDefinitionInput<TState>;
   /** Enables history for this generation and names its logical target collection. */
   readonly projectionChanges?: string;
+  readonly joinSeedReaders?: readonly JoinSeedReader[];
 }
 
 export type ProjectionDefinitionCommitOutcome =

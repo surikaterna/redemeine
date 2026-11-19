@@ -1,5 +1,6 @@
 import { isCanonicalProjectionUuid } from './sourceCommit';
 import { isPortableProjectionChangeKey } from './projectionChangeJson';
+import { isJoinSeedDeployment, type JoinSeedDeployment } from './joinSeedProvenance';
 
 export type ProjectionSha256Digest = `sha256:${string}`;
 
@@ -11,6 +12,7 @@ export interface ProjectionRegistryDefinitionManifest {
   /** Required for joined definitions; bound as part of the immutable manifest. */
   readonly joined?: true;
   readonly joinMembership?: 'set-v1';
+  readonly joinSeeds?: readonly JoinSeedDeployment[];
   /** Logical target collection when change recording is enabled for this generation. */
   readonly projectionChanges?: string;
 }
@@ -139,6 +141,9 @@ export function validateProjectionQueueRegistryManifest(candidate: unknown): rea
     if (definition.joinMembership !== undefined && (definition.joinMembership !== 'set-v1' || definition.joined !== true)) {
       issues.push(`definitions[${index}].joinMembership`);
     }
+    if (definition.joinSeeds !== undefined && (definition.joinMembership !== 'set-v1' || !validJoinSeeds(definition.joinSeeds))) {
+      issues.push(`definitions[${index}].joinSeeds`);
+    }
     const changes = definition.projectionChanges;
     if (changes !== undefined && ![changes, definition.projectionName, definition.generation]
       .every((value) => isNonempty(value) && isPortableProjectionChangeKey(value))) {
@@ -151,6 +156,16 @@ export function validateProjectionQueueRegistryManifest(candidate: unknown): rea
   }
   issues.push(...validateSourceStartAnchors(candidate.sourceStartAnchors));
   return issues;
+}
+
+function validJoinSeeds(value: unknown): boolean {
+  if (!Array.isArray(value) || !value.length || value.length > 64) return false;
+  let previous = '';
+  for (const seed of value) {
+    if (!isJoinSeedDeployment(seed) || previous >= seed.aggregateType) return false;
+    previous = seed.aggregateType;
+  }
+  return true;
 }
 
 export function hasMatchingProjectionRegistryIdentity(

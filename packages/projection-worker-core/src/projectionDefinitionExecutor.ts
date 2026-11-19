@@ -1,5 +1,4 @@
 import type {
-  ProjectionCommitDefinition,
   ProjectionSourceCommit,
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort
@@ -13,16 +12,19 @@ import {
   projectionChangesIdentity,
   validateProjectionChangeIdentityMetadata
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
+import type { ProjectionCommitDefinitionInput, ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, planSetRouting, routeEvent, routingLinkRequests, type SetRoutingEntry } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
 import { collectSetTargets, observedMemberships } from './joinMembershipReduction';
+import type { JoinSeedInput } from './joinSeedReduction';
+import type { JoinSeedReader } from './joinSeedReaders';
+import { JoinSeedTurn, MAX_JOIN_SEED_READS } from './joinSeedTurn';
 
 type SetPlan<T> = readonly (SetRoutingEntry<T> | null)[];
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
-  definition: ProjectionCommitDefinition<TState>;
+  definition: ProjectionCommitDefinitionInput<TState>;
   generation: string;
   projectionChanges?: string;
   stateValidation?: ProjectionStateValidation;
@@ -32,6 +34,7 @@ export interface ProjectionDefinitionExecutorOptions<TState> {
   stableSingleTarget?: boolean;
   baselineSequence?: number;
   alreadyCovered?: boolean;
+  joinSeedReaders?: readonly JoinSeedReader[];
 }
 
 function laneKey(name: string, generation: string, targetId: string): string {
@@ -39,7 +42,7 @@ function laneKey(name: string, generation: string, targetId: string): string {
 }
 
 function provisionalTargets<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>
 ): readonly string[] {
@@ -80,6 +83,7 @@ async function loadSnapshot<TState>(
     targetDocumentIds: targets,
     links,
     ...(options.definition.joinMembership && mode !== 'receipt' ? { joinMembership: options.definition.joinMembership } : {}),
+    ...(options.definition.joinInitializers?.length && mode !== 'receipt' ? { joinSeedVersion: 1 } : {}),
     progressStrategy: strategy,
     ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
     ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),
@@ -153,6 +157,7 @@ function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: s
 type AttemptResult<TState> =
   | { kind: 'done'; outcome: ProjectionDefinitionCommitOutcome }
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
+  | { kind: 'read_seeds'; inputs: readonly JoinSeedInput[] }
   | { kind: 'conflict'; reason: string };
 
 async function commitReduction<TState>(
@@ -196,7 +201,8 @@ async function executeAttempt<TState>(
   targets: ReadonlySet<string>,
   links: readonly { aggregateType: string; aggregateId: string }[],
   attempt: number,
-  setPlan?: SetPlan<TState>
+  setPlan?: SetPlan<TState>,
+  seeds?: JoinSeedTurn
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
@@ -220,11 +226,13 @@ async function executeAttempt<TState>(
         if (missing.length) return { kind: 'expand', reduction: { status: 'needs_snapshot', targetIds: missing, links: [] } };
       }
       reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence,
-        options.projectionChanges, options.stateValidation, setPlan && memberships ? { events: setPlan, memberships } : undefined);
+        options.projectionChanges, options.stateValidation, setPlan && memberships
+          ? { events: setPlan, memberships, ...(seeds ? { seeds } : {}) } : undefined);
     } catch (error) {
       return { kind: 'done', outcome: failed('terminal', error instanceof Error ? error.message : 'Invalid membership snapshot.', attempt) };
     }
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
+    if (reduction.status === 'needs_join_seeds') return { kind: 'read_seeds', inputs: reduction.inputs };
     if (reduction.status === 'terminal') {
       const receipt = snapshot.changeReceipt === undefined ? await checkDeferredReceipt(options, commit, attempt) : undefined;
       return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
@@ -294,11 +302,17 @@ export async function executeProjectionDefinition<TState>(
 async function executeWithRetries<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
   targets: Set<string>, initialLinks: ReturnType<typeof routingLinkRequests>, setPlan?: SetPlan<TState>): Promise<ProjectionDefinitionCommitOutcome> {
   let links = initialLinks;
-  const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2;
+  const seeds = options.joinSeedReaders?.length ? new JoinSeedTurn(options.joinSeedReaders) : undefined;
+  const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2 + (seeds ? MAX_JOIN_SEED_READS : 0);
   let conflicts = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan);
+    const outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan, seeds);
     if (outcome.kind === 'done') return outcome.outcome;
+    if (outcome.kind === 'read_seeds') {
+      const problem = await seeds!.load(outcome.inputs);
+      if (problem) return failed(problem.status, problem.reason, attempt);
+      continue;
+    }
     if (outcome.kind === 'expand') {
       for (const target of outcome.reduction.targetIds) targets.add(target);
       links = mergeLinks(links, outcome.reduction.links, Boolean(setPlan));

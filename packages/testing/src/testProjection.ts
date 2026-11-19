@@ -1,4 +1,5 @@
 import { enablePatches, produceWithPatches, type Draft, type Patch } from 'immer';
+import type { ProjectionContext } from '@redemeine/projection';
 
 export interface TestProjectionEvent {
   readonly aggregateType: string;
@@ -10,14 +11,13 @@ export interface TestProjectionEvent {
   readonly metadata?: Record<string, unknown>;
 }
 
-export interface TestProjectionContext {
-  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
-  unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
+export interface TestProjectionContext extends ProjectionContext {
   getSubscriptions(): Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 }
 
 export interface TestProjectionDefinition<TState> {
   readonly joinMembership?: 'set-v1';
+  readonly joinInitializers?: readonly unknown[];
   readonly fromStream: {
     readonly aggregate: { aggregateType: string };
     readonly handlers: Record<string, (state: Draft<TState>, event: TestProjectionEvent, ctx: TestProjectionContext) => void>;
@@ -51,6 +51,7 @@ function createContext(): TestProjectionContext {
 
   return {
     subscribeTo(aggregate, aggregateId) {
+      if (!('aggregateType' in aggregate)) throw new Error('Join initialization requires the native source-commit coordinator.');
       subscriptions.push({ aggregate, aggregateId });
     },
     unsubscribeFrom(aggregate, aggregateId) {
@@ -129,6 +130,7 @@ function findHandler<TState>(
 }
 
 export function testProjection<TState>(projection: TestProjectionDefinition<TState>): TestProjectionFixture<TState> {
+  if (projection.joinInitializers?.length) throw new Error('.onJoinInitialize() requires the native source-commit coordinator.');
   if (projection.joinMembership) throw new Error('.joinRight() requires the native source-commit coordinator.');
   let state = projection.initialState('test-projection');
 

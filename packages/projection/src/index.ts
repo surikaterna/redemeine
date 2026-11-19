@@ -40,3 +40,5 @@ export type {
   ReverseSemanticsOperation,
   ReverseSemanticsContract
 } from './reverseSemanticsContract';
+export { joinInitializer } from './joinSeed';
+export type { JoinSeed, JoinSeedEventCoverage, JoinSeedInitializeInfo, JoinSeedPosition, JoinSeedProvenance } from './joinSeed';
