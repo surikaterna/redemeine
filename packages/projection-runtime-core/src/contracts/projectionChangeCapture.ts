@@ -25,27 +25,34 @@ function plainContainer(value: object): boolean {
 
 /** Seal detached data, not validate its JSON schema. Already owned branches are not visited. */
 export function ownProjectionState(root: unknown): boolean {
-  const pending = [{ value: root, exit: false }];
-  const active = new WeakSet<object>();
+  if (typeof root === 'function' || typeof root === 'symbol') return false;
+  if (!root || typeof root !== 'object' || owned.has(root)) return true;
+  const pending: (object | undefined)[] = [root];
+  const active = new Set<object>();
+  const checked = new Set<object>();
   while (pending.length) {
-    const { value, exit } = pending.pop()!;
-    if (typeof value === 'function' || typeof value === 'symbol') return false;
-    if (!value || typeof value !== 'object' || owned.has(value)) continue;
-    if (exit) {
-      Object.freeze(value);
-      owned.add(value);
-      active.delete(value);
+    const value = pending.pop();
+    if (value === undefined) {
+      const completed = pending.pop()!;
+      active.delete(completed);
+      checked.add(completed);
       continue;
     }
+    if (checked.has(value) || owned.has(value)) continue;
     if (active.has(value) || !plainContainer(value)) return false;
     active.add(value);
-    pending.push({ value, exit: true });
+    pending.push(value, undefined);
     for (const key of Reflect.ownKeys(value)) {
       const field = Object.getOwnPropertyDescriptor(value, key);
       if (!field || !('value' in field)) return false;
-      pending.push({ value: field.value, exit: false });
+      const child: unknown = field.value;
+      if (typeof child === 'function' || typeof child === 'symbol') return false;
+      if (child && typeof child === 'object') pending.push(child);
     }
   }
+  // Publish ownership only after the whole input has passed and every new node is frozen.
+  for (const value of checked) Object.freeze(value);
+  for (const value of checked) owned.add(value);
   return true;
 }
 
