@@ -16,7 +16,8 @@ import { buildDocumentWriteOperation } from './store/documentWriteOperationBuild
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { isUnknownSourceCommitOutcome, readSourceCommitChange } from './store/sourceCommitChanges';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
-import { commitMongoV2 } from './store/sourceCommitV2';
+import { reconcileSetSourceCommit } from './store/sourceCommitReconciliation';
+import { commitMongoV2, snapshotForCommit, type SourceCommitWriteIdentity } from './store/sourceCommitV2';
 import { matchesSourceSnapshot, protectSourceSnapshot, readMongoSourceSnapshot, type NativeSourceSnapshot } from './store/sourceCommitSnapshot';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
@@ -146,13 +147,14 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
     }
-    const applicationId = request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined;
+    const identity: SourceCommitWriteIdentity = { writeId: randomUUID(),
+      applicationId: request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined };
     try {
       await this.initializeProjectionSourceCommitStore();
       const candidate = snapshot && this.sourceSnapshots.get(snapshot);
       const observed = snapshot && candidate && matchesSourceSnapshot(request, candidate)
         ? { loaded: candidate, captures: matchNativeProjectionCaptures(request, candidate.snapshot, snapshot) } : undefined;
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), observed, applicationId, snapshot !== undefined);
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), identity, observed, snapshot !== undefined);
       if (result.status === 'committed' && !result.replayed) {
         try {
           await this.reportDedupeWarnings(request);
@@ -163,7 +165,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       return result;
     } catch (error) {
       if (!isUnknownSourceCommitOutcome(error)) throw error;
-      return this.reconcileUnknownCommit(request, applicationId);
+      return this.reconcileUnknownCommit(request, identity);
     }
   }
 
@@ -210,9 +212,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async reconcileUnknownCommit(
-    request: CommitProjectionSourceCommitRequest<TState>, applicationId?: string
+    request: CommitProjectionSourceCommitRequest<TState>, identity: SourceCommitWriteIdentity
   ): Promise<CommitProjectionSourceCommitResult> {
+    if (request.joinMembershipFences) return this.reconcileUnknownSetCommit(request, identity);
     if (request.additionalWrites) {
+      const { applicationId } = identity;
       const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId });
       this.reportReconciliation(request, receipt?.status === 'committed' ? 'committed' : 'ambiguous');
       if (receipt && (applicationId === undefined || receipt.status === 'committed')) return receipt;
@@ -240,6 +244,25 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     );
     this.reportReconciliation(request, 'committed');
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
+  }
+
+  private async reconcileUnknownSetCommit(request: CommitProjectionSourceCommitRequest<TState>,
+    { writeId, applicationId }: SourceCommitWriteIdentity): Promise<CommitProjectionSourceCommitResult> {
+    let result: CommitProjectionSourceCommitResult | undefined;
+    try {
+      if (request.additionalWrites) {
+        result = await readSourceCommitChange(request, this.options.changeCollection, { applicationId });
+      } else if (request.progress.strategy === 'own_record') {
+        // A set turn's own progress, membership and document witnesses must be observed together.
+        const loaded = await this.createTransactionExecutor()((session) =>
+          readMongoSourceSnapshot(snapshotForCommit(request), this.options, session));
+        result = reconcileSetSourceCommit(request, writeId, loaded);
+      }
+    } catch {
+      // A failed proof read cannot turn an unknown commit into an acknowledgement.
+    }
+    this.reportReconciliation(request, result?.status === 'committed' ? 'committed' : 'ambiguous');
+    return result ?? { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
   }
 
   private reconciliationSnapshotMatches(request: CommitProjectionSourceCommitRequest<TState>, snapshot: ProjectionSourceCommitSnapshot<TState>): boolean {

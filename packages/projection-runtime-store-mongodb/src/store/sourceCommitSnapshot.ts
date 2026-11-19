@@ -17,6 +17,7 @@ export const majorityPrimary = { readConcern: 'majority', readPreference: 'prima
 export interface LoadedSourceSnapshot<TState> {
   snapshot: ProjectionSourceCommitSnapshot<TState>;
   rows: ReadonlyMap<string, ProjectionDocumentRecord<TState> | null>;
+  ownWriteId?: string;
 }
 
 async function readRows<TInput, TRow>(
@@ -90,7 +91,8 @@ export async function readMongoSourceSnapshot<TState>(
   const snapshot = { targets, links, ownRecordSequence: ownRecord?.commitSequence ?? null,
     ...(joinMemberships ? { joinMemberships } : {}) };
   const changeReceipt = needsReceipt(request, snapshot) ? await readSnapshotChangeReceipt(request, options.changeCollection, session) : undefined;
-  return { snapshot: { ...snapshot, ...(changeReceipt ? { changeReceipt } : {}) }, rows: new Map(entries) };
+  return { snapshot: { ...snapshot, ...(changeReceipt ? { changeReceipt } : {}) }, rows: new Map(entries),
+    ...(ownRecord?.v2WriteId !== undefined ? { ownWriteId: ownRecord.v2WriteId } : {}) };
 }
 
 function canFence<TState>(row: ProjectionDocumentRecord<TState> | null): boolean {

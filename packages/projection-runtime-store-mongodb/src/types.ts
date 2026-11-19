@@ -47,6 +47,8 @@ export interface ProjectionDedupeRecord {
   sourceId?: string;
   commitSequence?: number;
   acceptedBaselineSequence?: number;
+  /** Identifies the atomic set turn, not just its source sequence. */
+  v2WriteId?: string;
 }
 
 type RevisionEntry = readonly [key: string, revision: number];

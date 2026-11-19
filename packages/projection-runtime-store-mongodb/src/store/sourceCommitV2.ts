@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { ClientSession } from 'mongodb';
 import type {
   CommitProjectionSourceCommitCommitted,
@@ -115,7 +114,8 @@ const writeLinks = async <TState>(
 const writeOwnProgress = async <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
-  session: ClientSession
+  session: ClientSession,
+  writeId: string
 ): Promise<void> => {
   if (request.progress.strategy !== 'own_record') return;
   const source = request.progress.source;
@@ -125,7 +125,8 @@ const writeOwnProgress = async <TState>(
     projectionGeneration: request.projectionGeneration,
     sourceId: source.sourceId,
     commitSequence: source.finalSequence,
-    updatedAt: options.now?.() ?? new Date().toISOString()
+    updatedAt: options.now?.() ?? new Date().toISOString(),
+    ...(request.joinMembershipFences ? { v2WriteId: writeId } : {})
   };
   if (source.expectedSequence === null) {
     const seed = source.baselineSequence === undefined ? {} : { acceptedBaselineSequence: source.baselineSequence };
@@ -139,7 +140,7 @@ const writeOwnProgress = async <TState>(
   }
 };
 
-const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitRequest<TState>): LoadProjectionSourceCommitSnapshotRequest => ({
+export const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitRequest<TState>): LoadProjectionSourceCommitSnapshotRequest => ({
   projectionName: request.projectionName,
   projectionGeneration: request.projectionGeneration,
   targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
@@ -190,14 +191,14 @@ function committed(
 
 async function persistSourceCommit<TState>(
   request: CommitProjectionSourceCommitRequest<TState>, options: MongoProjectionStoreOptions<TState>, session: ClientSession,
-  prepared: Prepared, applicationId?: string
+  prepared: Prepared, identity: SourceCommitWriteIdentity
 ): Promise<CommitProjectionSourceCommitResult> {
   const setMode = request.joinMembershipFences !== undefined;
   const documentRevisions = setMode ? await executeBatchedSourceDocuments(prepared.writes, options, Boolean(request.additionalWrites), session)
     : await executeSourceDocumentWrites(prepared.writes, options, Boolean(request.additionalWrites), session);
   const linkRevisions = setMode ? await writeMongoMemberships(request, options, session) : await writeLinks(request, options, session);
-  await writeOwnProgress(request, options, session);
-  return appendSourceCommitChange(request, committed(request, documentRevisions, linkRevisions), options.changeCollection, session, applicationId);
+  await writeOwnProgress(request, options, session, identity.writeId);
+  return appendSourceCommitChange(request, committed(request, documentRevisions, linkRevisions), options.changeCollection, session, identity.applicationId);
 }
 
 function canWriteSingle<TState>(request: CommitProjectionSourceCommitRequest<TState>, proof: NativeSourceSnapshot<TState>): boolean {
@@ -237,25 +238,25 @@ async function runSourceCommit<TState>(
   options: MongoProjectionStoreOptions<TState>,
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>,
   observed: ObservedSourceCommit<TState> | undefined,
-  applicationId: string | undefined
+  identity: SourceCommitWriteIdentity
 ): Promise<CommitProjectionSourceCommitResult> {
-  const writeId = randomUUID();
+  const { writeId } = identity;
   if (observed?.captures) {
     const prepared = prepareSourceCommit(request, options, observed.loaded, writeId, observed.captures);
     if (!('writes' in prepared)) return prepared;
     if (canWriteSingle(request, observed.loaded)) return persistSingle(request, options, prepared);
-    return execute((session) => persistSourceCommit(request, options, session, prepared, applicationId));
+    return execute((session) => persistSourceCommit(request, options, session, prepared, identity));
   }
   return execute(async (session) => {
     const loaded = await readMongoSourceSnapshot(snapshotForCommit(request), options, session);
     if (observed && !matchesObservedFences(loaded, observed.loaded)) return conflict('projection source snapshot changed');
     const prepared = prepareSourceCommit(request, options, loaded, writeId);
-    return 'writes' in prepared ? persistSourceCommit(request, options, session, prepared, applicationId) : prepared;
+    return 'writes' in prepared ? persistSourceCommit(request, options, session, prepared, identity) : prepared;
   });
 }
 
 function classifyCommitError(request: CommitProjectionSourceCommitRequest, error: unknown): CommitProjectionSourceCommitResult {
-  if (request.additionalWrites && isUnknownSourceCommitOutcome(error)) throw error;
+  if ((request.additionalWrites || request.joinMembershipFences) && isUnknownSourceCommitOutcome(error)) throw error;
   if (request.additionalWrites && isTransientSourceCommitError(error)) {
     return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'transient MongoDB source transaction failure' };
   }
@@ -274,23 +275,29 @@ function classifyCommitError(request: CommitProjectionSourceCommitRequest, error
   throw error;
 }
 
+export interface SourceCommitWriteIdentity {
+  writeId: string;
+  applicationId: string | undefined;
+}
+
 export async function commitMongoV2<TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   options: MongoProjectionStoreOptions<TState>,
   execute: <T>(work: (session: ClientSession) => Promise<T>) => Promise<T>,
+  identity: SourceCommitWriteIdentity,
   observed?: ObservedSourceCommit<TState>,
-  applicationId?: string,
   preparedRequest = false
 ): Promise<CommitProjectionSourceCommitResult> {
   const malformed = validateCommitProjectionSourceCommitRelationships(request);
   if (malformed) return terminal(malformed);
   let result: CommitProjectionSourceCommitResult;
   try {
-    result = await runSourceCommit(request, options, execute, observed, applicationId);
+    result = await runSourceCommit(request, options, execute, observed, identity);
   } catch (error) {
     result = classifyCommitError(request, error);
   }
   if (result.status === 'committed' || !request.additionalWrites) return result;
+  const { applicationId } = identity;
   const replay = await readSourceCommitChange(request, options.changeCollection, { applicationId });
   if (applicationId !== undefined) return replay?.status === 'committed' ? replay : result;
   return preparedRequest && replay?.status === 'committed' ? { ...replay, replayed: true } : replay ?? result;
