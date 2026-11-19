@@ -83,6 +83,7 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   stagedLinks: readonly ProjectionSourceCommitLink[];
   /** Set-v1 replaces scalar links; includes unchanged and absent observations. */
   joinMembershipFences?: readonly ProjectionJoinMembershipFence[];
+  joinSeedVersion?: 1;
   progress: ProjectionSourceCommitProgress;
   additionalWrites?: readonly [ProjectionChangesAppend];
   /** Enables strict state diagnostics even for an internally captured request. */
@@ -122,6 +123,7 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
   readonly sourceCommitSnapshotCapability?: 'revision-cas-v1' | undefined;
   /** Set snapshots must observe target presence and routing membership at one coherent read point. */
   readonly joinMembershipCapability?: 'set-v1' | undefined;
+  readonly joinSeedCapability?: 'atomic-join-seed-v1' | undefined;
   loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>>;
@@ -134,13 +136,18 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
 export function validateCommitProjectionSourceCommitRelationships<TState>(
   request: CommitProjectionSourceCommitRequest<TState>
 ): string | null {
-  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges', 'joinMembershipFences'];
+  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges', 'joinMembershipFences', 'joinSeedVersion'];
   if (Object.keys(request).some((key) => !allowed.includes(key))) return 'unsupported source commit request fields';
   if (request.validateStateChanges !== undefined && request.validateStateChanges !== true) return 'invalid state validation flag';
+  if (request.joinSeedVersion !== undefined && (request.joinSeedVersion !== 1 || !request.joinMembershipFences
+    || request.progress.strategy !== 'own_record')) return 'Join initialization requires own_record and membership fences.';
   if (request.joinMembershipFences !== undefined) {
     if (request.stagedLinks.length || request.progress.strategy === 'in_document') return 'Join membership sets cannot use scalar links or in_document.';
     const invalid = validateJoinMembershipFences(request.joinMembershipFences);
     if (invalid) return invalid;
+    if (!request.joinSeedVersion && request.joinMembershipFences.some((fence) => fence.seeds !== undefined)) {
+      return 'Join seed provenance requires the initialized membership capability.';
+    }
   }
   const malformedAppend = validateProjectionChangesAppend(request);
   if (malformedAppend) return malformedAppend;
@@ -187,6 +194,7 @@ export interface LoadProjectionSourceCommitSnapshotRequest {
   targetDocumentIds: readonly string[];
   links: readonly { aggregateType: string; aggregateId: string }[];
   joinMembership?: 'set-v1';
+  joinSeedVersion?: 1;
   progressStrategy: ProjectionSourceCommitProgress['strategy'];
   sourceId?: string;
   /** Canonical receipt lookup for reliable dedupe strategies, independent of scalar progress. */

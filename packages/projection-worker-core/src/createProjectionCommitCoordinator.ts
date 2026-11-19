@@ -6,16 +6,18 @@ import {
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionChangeRecordingScope, ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionChangeRecordingScope, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
   ProjectionCommitCoordinatorOptions,
   ProjectionCommitCoordinatorOutcome,
+  ProjectionCommitDefinitionInput,
   ProjectionCommitRegistryDefinition,
   ProjectionDefinitionCommitResult
 } from './commitCoordinatorContracts';
 import { executeProjectionDefinition } from './projectionDefinitionExecutor';
 import { createProjectionLaneScheduler, type ProjectionLaneScheduler } from './targetLaneScheduler';
+import { assertJoinSeedConfiguration } from './joinSeedReaders';
 
 const DEFAULT_MAX_GAP_PAGES = 1_000;
 const DEFAULT_MAX_CONFLICT_RETRIES = 3;
@@ -55,6 +57,8 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
       || entry.definition.deduplication.strategy === 'in_document')) {
       throw new Error('Join membership sets require a capable store and own_record or none.');
     }
+    assertJoinSeedConfiguration(entry.definition, entry.joinSeedReaders ?? [], manifest.joinSeeds,
+      options.store.joinSeedCapability === 'atomic-join-seed-v1');
   }
 }
 
@@ -67,7 +71,7 @@ function failureOutcome(
   return { status: terminal ? 'terminal' : 'retryable', reason, processedSequences, definitions };
 }
 
-function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>): ProjectionCommitDefinition<TState> {
+function freezeDefinition<TState>(definition: ProjectionCommitDefinitionInput<TState>): ProjectionCommitDefinitionInput<TState> {
   const copyStream = <T extends { aggregate: object; handlers: Record<string, unknown>; candidateSelectors?: object }>(stream: T): T => {
     const copy = { ...stream, aggregate: Object.freeze({ ...stream.aggregate }), handlers: { ...stream.handlers },
       ...(stream.candidateSelectors ? { candidateSelectors: Object.freeze({ ...stream.candidateSelectors }) } : {}) };
@@ -86,13 +90,15 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>
       ? { warnings: Object.freeze({ ...definition.deduplication.warnings }) }
       : {})
   };
-  const copy: ProjectionCommitDefinition<TState> = {
+  const copy: ProjectionCommitDefinitionInput<TState> = {
     ...definition,
     fromStream: copyStream(definition.fromStream),
     joinStreams,
     reverseSubscribeStreams,
     subscriptions,
     deduplication: Object.freeze(deduplication),
+    ...(definition.joinInitializers ? { joinInitializers: Object.freeze(definition.joinInitializers.map((value) =>
+      Object.freeze({ ...value }))) } : {}),
     ...(definition.hooks ? { hooks: Object.freeze({ ...definition.hooks }) } : {})
   };
   return Object.freeze(copy);
@@ -138,6 +144,7 @@ async function dispatch<TState>(runtime: CoordinatorRuntime<TState>, commit: Pro
       stableSingleTarget: scope.strategyScope?.[index]?.stableSingleTarget === true && entry.definition.deduplication.strategy === 'in_document',
       alreadyCovered: scope.alreadyCovered === true,
       ...(entry.projectionChanges !== undefined ? { projectionChanges: entry.projectionChanges } : {}),
+      ...(entry.joinSeedReaders ? { joinSeedReaders: entry.joinSeedReaders } : {}),
       ...(runtime.options.stateValidation ? { stateValidation: runtime.options.stateValidation } : {}),
       ...(scope.strategyScope ? { baselineSequence: scope.startAnchor - 1 } : {}),
     }, commit);
@@ -288,6 +295,7 @@ function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   const definitions = options.definitions.map((entry) => Object.freeze({
     generation: entry.generation,
     definition: freezeDefinition(entry.definition),
+    ...(entry.joinSeedReaders ? { joinSeedReaders: Object.freeze([...entry.joinSeedReaders]) } : {}),
     ...(entry.projectionChanges !== undefined ? { projectionChanges: entry.projectionChanges } : {})
   }));
   return {

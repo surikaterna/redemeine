@@ -61,6 +61,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return this.options.joinMembershipCollection && this.options.collection.find ? 'set-v1' : undefined;
   }
 
+  get joinSeedCapability(): 'atomic-join-seed-v1' | undefined {
+    return this.joinMembershipCapability ? 'atomic-join-seed-v1' : undefined;
+  }
+
   async load(documentId: string): Promise<TState | null> {
     const row = await this.options.collection.findOne({ _id: documentId });
     return row ? row.state : null;
@@ -108,6 +112,9 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
     if (request.joinMembership && !this.joinMembershipCapability) throw new Error('Join membership sets are not configured.');
+    if (request.joinSeedVersion !== undefined && (request.joinSeedVersion !== 1 || !request.joinMembership || !this.joinSeedCapability)) {
+      throw new Error('Join initialization is not configured.');
+    }
     await this.initializeProjectionSourceCommitStore();
     // Negative candidate reads and membership rows must describe the same database instant.
     // Keep the scalar/direct snapshot path untouched.

@@ -19,6 +19,7 @@
     "test": "pnpm exec jest --config ../../jest.config.js --roots packages/projection-transport/test",
     "test:real-stack": "bash integration/run-real-stack.sh",
     "test:real-join-memberships": "tsx integration/realJoinMembership.ts",
+    "test:join-initialization": "tsx integration/realJoinInitialization.ts",
     "bench:source-progress": "bash integration/run-source-progress-benchmark.sh",
     "lint": "tsc --noEmit"
   },

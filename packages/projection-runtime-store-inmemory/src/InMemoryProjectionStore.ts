@@ -29,6 +29,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   readonly projectionChangesCapability = 'atomic-turn-receipts-v1' as const;
   readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
   readonly joinMembershipCapability = 'set-v1' as const;
+  readonly joinSeedCapability = 'atomic-join-seed-v1' as const;
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
@@ -75,6 +76,9 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   async loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+    if (request.joinSeedVersion !== undefined && (request.joinSeedVersion !== 1 || !request.joinMembership)) {
+      throw new Error('Invalid join initialization snapshot request.');
+    }
     return loadV2Snapshot(request, this.documents, this.v2);
   }
 

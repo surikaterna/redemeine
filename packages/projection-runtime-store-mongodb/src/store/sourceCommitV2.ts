@@ -146,6 +146,7 @@ export const snapshotForCommit = <TState>(request: CommitProjectionSourceCommitR
   targetDocumentIds: request.finalDocuments.map((entry) => entry.targetDocumentId),
   links: (request.joinMembershipFences ?? request.stagedLinks).map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId })),
   ...(request.joinMembershipFences ? { joinMembership: 'set-v1' } : {}),
+  ...(request.joinSeedVersion ? { joinSeedVersion: request.joinSeedVersion } : {}),
   progressStrategy: request.progress.strategy,
   ...(request.progress.strategy === 'own_record' ? { sourceId: request.progress.source.sourceId } : {})
 });
