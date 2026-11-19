@@ -1,5 +1,27 @@
 import { isCanonicalProjectionUuid, validateProjectionSourceCommit } from './sourceCommit';
 import type { ProjectionSourceCommit } from './sourceCommit';
+import type { ProjectionRegistryDefinitionManifest } from './registry';
+
+export type ProjectionChangeRecordingScope = Pick<ProjectionRegistryDefinitionManifest,
+  'projectionName' | 'generation' | 'projectionChanges'>;
+
+export class ProjectionChangeRecordingPolicyMismatchError extends Error {
+  constructor() {
+    super('Projection change recording policy does not match the bound queue registry.');
+  }
+}
+
+export function matchesProjectionChangeRecordingScope(
+  expected: readonly ProjectionChangeRecordingScope[],
+  bound: readonly ProjectionChangeRecordingScope[] | undefined
+): boolean {
+  if (!bound) return expected.every((entry) => entry.projectionChanges === undefined);
+  return expected.length === bound.length && expected.every((entry, index) => {
+    const actual = bound[index];
+    return actual?.projectionName === entry.projectionName && actual.generation === entry.generation
+      && actual.projectionChanges === entry.projectionChanges;
+  });
+}
 
 export interface ProjectionSourceCoverage {
   queueBindingId: string;
@@ -15,6 +37,8 @@ export interface ProjectionSourceDispatchAdmission {
   /** Immutable accepted-state boundary shared by ordering and definition dispatch. */
   startAnchor: number;
   strategyScope: readonly ProjectionCutoverStrategyScope[];
+  /** Effective policy from the authoritative binding. Older ports may omit it for disabled workers. */
+  boundChangeRecordingScope?: readonly ProjectionChangeRecordingScope[];
 }
 
 export interface ProjectionCutoverStrategyScope {
@@ -33,7 +57,9 @@ export interface ProjectionSourceCoverageAdvance {
 }
 
 export interface ProjectionSourceOrderPort {
-  admitForDispatch(commit: ProjectionSourceCommit, queueBindingId: string): Promise<ProjectionSourceDispatchAdmission>;
+  admitForDispatch(
+    commit: ProjectionSourceCommit, queueBindingId: string, expectedChangeRecordingScope?: readonly ProjectionChangeRecordingScope[]
+  ): Promise<ProjectionSourceDispatchAdmission>;
   advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage>;
 }
 

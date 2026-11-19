@@ -8,6 +8,7 @@ Related references:
 
 - [Projection Runtime v3 Contracts and Invariants](/docs/architecture/projection-runtime-v3-contracts-and-invariants)
 - [Projection Runtime v3 Crash/Chaos Safety Matrix](/docs/architecture/projection-runtime-v3-crash-chaos-safety-matrix)
+- [Real MongoDB 6 and 8 qualification](./projection-p1-qualification.md#real-mongodb-compatibility-matrix)
 
 ## Scope and non-goals
 
@@ -67,6 +68,40 @@ The following boundaries are mandatory for incident triage and recovery:
 | Hydration/rebuild status | `_projection.status` metadata (`hydrating`, `ready`, `rebuilding`, `failed`) and generation references | In-progress hydration buffers and local rebuild executors | Status must remain externally observable across crashes and resumes |
 | OCC + cache policy | OCC preconditions and failure category (`conflict`/`transient`/`terminal`) persisted in write outcomes | Worker state cache entries and queue-local retry bookkeeping | Retryable failures evict affected cache and requeue; terminal failures do not loop |
 | Global micro-batch (`all`) | Atomic/bulk commit outcome and watermark progression | Batch assembly window and local grouping queue | Crash before commit may replay whole window; crash after commit must not double-apply |
+| Commit-native projection changes | Opt-in `projection_changes` records | Event-level patch planning during reduction | Receipts commit with the same document, link, and progress writes |
+
+### Recording projection changes
+
+Set `projectionChanges: 'order_views'` on the coordinator registration `{ definition, generation, projectionChanges }` and the matching entry in the bound queue manifest. Mongo verifies the persisted policy before admission; omission means disabled. `order_views` is the logical target, not the physical feed. Supply a dedicated Mongo `changeCollection` on the same transactional deployment. Recording does not backfill history.
+
+Each record groups a source application’s target revisions and ordered per-event RFC 6902 `add`, `remove`, and `replace` patches. Existing documents retain Immer’s nested and array paths, encoded as escaped JSON Pointers. The synchronous `afterEach` uses the same Immer draft as the handler; Immer captures their combined change, not a separate hook patch. Mutate plain object or array fields directly. A draft or draft-valued child cannot be passed to `structuredClone` or retained after the callback. Creation is one root `add` including defaults and hook effects. For an existing target, an empty Immer capture records a `noop`; assigning a fresh object with equal contents can legitimately record an `update` with a `replace` even if Mongo finds no state delta and writes only metadata. Root removal is not supported.
+
+Hooks follow the same draft and value semantics as handlers. Existing `Map` and `Set` values are not supported as Immer collection drafts (the worker does not enable MapSet). Collections newly assigned in the recipe are raw values and may be mutable, but are not portable JSON. **Portable JSON is the supported recording domain**, including when diagnostics are off. It excludes collections, negative zero, BSON-specific values and ambiguous keys/shapes such as own `__proto__` fields. With diagnostics off, unsupported inputs are not guaranteed to be detected or to replay exactly. Storage of values outside portable JSON is adapter-specific, even with recording off.
+
+Source commits send each target’s authoritative final document plus an optional `statePatch` hint, independently of recording. Adapters may ignore the hint and persist the final document. Mongo falls back to a full-state write when it lacks a proven, safe modifier plan, not merely because a value falls outside strict portable JSON. With recording and diagnostics off, for example, a trusted native write can persist a finalized `-0` with a dotted `$set`. This does not certify the value for recording or other adapters. Recording-disabled turns neither require nor access the feed collection.
+
+Diagnostics are runtime options on `createProjectionCommitCoordinator`, independent of the generation's `projectionChanges` setting:
+
+- `stateValidation: { load: true }` checks a loaded target before its first recipe in the turn.
+- `stateValidation: { changes: true }` checks the starting state and changed finalized event results, and requests strict adapter verification including ordered replay and patch-value portability, even if history is off. An unproven state hint rejects in this mode.
+
+Both default to off. The trusted Mongo path uses actual Immer captures bound to the exact same-store snapshot and target. It does not deep-freeze or scan fresh decoded state, finalized state, or patch payloads to defend against in-process alias misuse. Strict replay verifies the final document when change diagnostics are enabled or when a recorded request lacks trusted capture proof, including for older whole-member and root replacement records. Invalid history paths reject when checked; unproven write hints are not used for modifiers.
+
+Handlers and hooks in this path must edit only the draft, synchronously. Treat `original(draft)` and `current(draft)` as read-only. Do not retain or mutate draft, baseline, result, or patch references after handoff. Once you assign an external mutable object to the draft, transfer ownership: finish edits within the recipe and do not mutate it through another alias afterward. Trusted callers must leave snapshot and request payloads unchanged. Adversarial plugins are not supported. These are caller obligations, not properties enforced by freezing.
+
+Mongo plans native writes from actual before/after states, pruning identical branches. Fresh turns still read and BSON-decode the whole document. Pinned Immer 11.2.10 avoids the per-event walk of untouched line objects seen in Immer 10.2.0 when a recipe reads one array item and edits another. Array edits may still shallow-copy slots, and Mongo may inspect or serialize the changed array. Mongo does not replay recorded patches as a write proof in the default native path. Writes still fence revision and the observed native write identity, timestamp and absence of a legacy checkpoint. An unchanged target writes only revision, write identity, timestamp and progress metadata. Independent edits can use dotted updates such as `state.lines.1.quantity`; a splice followed by an edit of the moved line can write just `state.lines`. Standalone appends and tail removals can use `$push` or `$pop`. Unsafe paths, roots and oversized modifiers use full writes. Raw requests, foreign or copied snapshots, legacy rows and existing rows without a write identity use a fresh transactional snapshot; a prepare flag or caller hint alone cannot grant native proof. Mongo errors such as BSON size or a collection validator can still reject writes with diagnostics off; transactional writes and receipts are not published partially. Unknown acknowledgments still follow the existing reconciliation rules. `onSourceCommitPatchPlan` reports the attempted mode and bounded reason without target IDs, paths, or values.
+
+Typical **warm executor** Mongo command order (one existing target, no routing links; excludes registry admission, source reads, and coverage):
+
+| Strategy | History | Commands in order | Write operations / transactions |
+| --- | --- | --- | --- |
+| `in_document` | Off | find target → majority update target | 1 / 0 |
+| `own_record` | Off | find target → find progress → update target → update progress → commit | 2 / 1 |
+| `own_record` | On | find target → find progress → update target → update progress → conditionally insert receipt → commit | 3 / 1 |
+
+The prepared inline store commit alone is one update command. The two-command executor path is limited to an existing native target, no routing or staged links, and history off. A lost acknowledgment is reconciled by a majority read of the write identity; conflicting or inconclusive evidence is never acknowledged as that invocation. All multi-record writes stay transactional. The two-target `own_record`/history-on example adds one target find and one target update; writes are not batched. A cold store also creates/lists the readiness index and runs a read transaction. Routing-dependent turns still discover links, and retries/expansions reload snapshots. Registry verification, accepted-baseline admission and coverage CAS remain separate; optional metadata-byte warnings can perform a post-commit read. Do not edit native target state outside the revision-fenced writer protocol.
+
+Fresh recorded turns use a unique conditional receipt insert rather than a receipt pre-read. Reliable replays with known coverage or progress, receipt conflicts and uncertain outcomes verify the exact identity; a missing required receipt or mismatched identity cannot acknowledge a turn. Accepted baseline skips produce no receipt. A recorded turn with no targets writes a `projection_changes_empty` receipt. With `none`, redelivery may reapply; only the current invocation’s receipt can resolve an unknown outcome. Opaque target IDs are unaffected by state field restrictions. Keep receipts while replay is possible. No delivery API or MQ publisher is included.
 
 ## Runtime modes and operator playbooks
 

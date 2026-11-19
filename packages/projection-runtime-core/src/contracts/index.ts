@@ -143,6 +143,7 @@ export {
   projectionBase64Url22ToUuid
 } from './uuidCodec';
 export type {
+  ProjectionChangeRecordingScope,
   ProjectionSourceCoverage,
   ProjectionSourceDispatchAdmission,
   ProjectionCutoverStrategyScope,
@@ -158,7 +159,9 @@ export type {
   ProjectionCompleteCommitRangeReader,
   ProjectionCompleteCommitRangeValidation
 } from './sourceOrder';
-export { isCompleteCommitRangeCapability, validateCompleteCommitRange } from './sourceOrder';
+export {
+  isCompleteCommitRangeCapability, matchesProjectionChangeRecordingScope, ProjectionChangeRecordingPolicyMismatchError, validateCompleteCommitRange
+} from './sourceOrder';
 export type {
   ProjectionSha256Digest,
   ProjectionRegistryDefinitionManifest,
@@ -175,6 +178,7 @@ export {
 } from './registry';
 export type {
   ProjectionSourceCommitDocument,
+  ProjectionSourceCommitStatePatch,
   ProjectionSourceCommitLink,
   ProjectionInDocumentTargetProgress,
   ProjectionInDocumentCommitProgress,
@@ -192,6 +196,33 @@ export type {
   ProjectionSourceCommitStorePort
 } from './sourceCommitStore';
 export { validateCommitProjectionSourceCommitRelationships } from './sourceCommitStore';
+export type {
+  ProjectionChangePatchOperation,
+  ProjectionChangeTransition,
+  ProjectionChangeTarget,
+  ProjectionChangesAppend,
+  ProjectionChangesRecord,
+  ProjectionChangesEmptyReceipt,
+  ProjectionChangesReceipt,
+  ProjectionChangesReceiptStatus,
+  ProjectionChangesSourceIdentity
+} from './projectionChanges';
+export {
+  buildProjectionChangesReceipt, matchProjectionChangesReceipt, MISSING_PROJECTION_CHANGES_HISTORY,
+  projectionChangesHistoryFailure, projectionChangesIdentity, projectionChangesResumeToken, validateProjectionChangesState,
+  verifyProjectionSourceCommitStatePatches, checkProjectionSourceCommitState, matchNativeProjectionCaptures,
+  type VerifiedProjectionSourceCommitStatePatch
+} from './projectionChanges';
+export {
+  equalProjectionChangeJson, freezePortableProjectionChangeJson, isCertifiedProjectionSnapshotJson,
+  isFrozenPortableProjectionChangeJson, isPortableProjectionChangeJson
+} from './projectionChangeJson';
+export { formatProjectionChangePointer, parseProjectionChangePointer, replayProjectionChangeTransition } from './projectionChangePatch';
+export {
+  captureProjectionSourceEvent, isNativeProjectionCaptureSnapshot, isOwnedProjectionState,
+  ownProjectionState, registerNativeProjectionCaptureSnapshot, sealProjectionCaptureRequest
+} from './projectionChangeCapture';
+export { validateProjectionChangeIdentityMetadata } from './projectionChangeMetadata';
 export {
   evaluateCutoverReadiness,
   transitionToCutover,

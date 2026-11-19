@@ -1,22 +1,35 @@
 import type {
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRequest,
+  ProjectionChangesReceipt,
   ProjectionCommitDefinition,
   ProjectionSourceCommit,
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort
 } from '@redemeine/projection-runtime-core';
+import {
+  isCanonicalProjectionUuid,
+  matchProjectionChangesReceipt,
+  MISSING_PROJECTION_CHANGES_HISTORY,
+  projectionChangesIdentity,
+  validateProjectionChangeIdentityMetadata
+} from '@redemeine/projection-runtime-core';
 import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, routeEvent, routingLinkRequests } from './projectionCommitRouting';
-import { reduceProjectionSourceCommit, type ProjectionReductionResult } from './projectionCommitReducer';
+import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
 
 export interface ProjectionDefinitionExecutorOptions<TState> {
   definition: ProjectionCommitDefinition<TState>;
   generation: string;
+  projectionChanges?: string;
+  stateValidation?: ProjectionStateValidation;
   store: ProjectionSourceCommitStorePort<TState>;
   lanes: ProjectionLaneScheduler;
   maxConflictRetries: number;
   stableSingleTarget?: boolean;
   baselineSequence?: number;
+  alreadyCovered?: boolean;
 }
 
 function laneKey(name: string, generation: string, targetId: string): string {
@@ -46,35 +59,64 @@ function failed(
     : { status, retryable: true, reason, attempts };
 }
 
-async function loadInitial<TState>(
-  options: ProjectionDefinitionExecutorOptions<TState>,
-  commit: ProjectionSourceCommit,
-  links: readonly { aggregateType: string; aggregateId: string }[]
-): Promise<ProjectionSourceCommitSnapshot<TState>> {
-  return options.store.loadProjectionSourceCommitSnapshot({
-    projectionName: options.definition.name,
-    projectionGeneration: options.generation,
-    targetDocumentIds: [],
-    links,
-    progressStrategy: options.definition.deduplication.strategy,
-    ...(options.definition.deduplication.strategy === 'own_record' ? { sourceId: commit.streamId } : {})
-  });
-}
-
-async function loadAttempt<TState>(
+async function loadSnapshot<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
   targets: readonly string[],
-  links: readonly { aggregateType: string; aggregateId: string }[]
+  links: readonly { aggregateType: string; aggregateId: string }[],
+  mode: 'legacy' | 'turn' | 'discovery' | 'receipt' = 'legacy'
 ): Promise<ProjectionSourceCommitSnapshot<TState>> {
+  const strategy = mode === 'discovery' || mode === 'receipt' ? 'none' : options.definition.deduplication.strategy;
   return options.store.loadProjectionSourceCommitSnapshot({
     projectionName: options.definition.name,
     projectionGeneration: options.generation,
     targetDocumentIds: targets,
     links,
-    progressStrategy: options.definition.deduplication.strategy,
-    ...(options.definition.deduplication.strategy === 'own_record' ? { sourceId: commit.streamId } : {})
+    progressStrategy: strategy,
+    ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
+    ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),
+    ...(mode !== 'discovery' && options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
+      ? { changeIdentity: { sourceId: commit.streamId, commitId: commit.commitId, commitSequence: commit.commitSequence,
+          collection: options.projectionChanges } } : {})
   });
+}
+
+function replayOutcome<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>,
+  commit: ProjectionSourceCommit,
+  snapshot: ProjectionSourceCommitSnapshot<TState>,
+  attempts: number,
+  deferred = false
+): ProjectionDefinitionCommitOutcome | undefined {
+  const strategy = options.definition.deduplication.strategy;
+  const ownIncludesTurn = strategy === 'own_record' && snapshot.ownRecordSequence !== null && commit.commitSequence <= snapshot.ownRecordSequence;
+  if (options.projectionChanges === undefined || strategy === 'none') {
+    return ownIncludesTurn ? { status: 'deduplicated', attempts } : undefined;
+  }
+  if (snapshot.changeReceipt === 'mismatch') {
+    return failed('terminal', 'projection change source commit or collection identity mismatch', attempts);
+  }
+  if (snapshot.changeReceipt === 'committed') return { status: 'deduplicated', attempts };
+  if (commit.commitSequence <= (options.baselineSequence ?? -1)) return { status: 'deduplicated', attempts };
+  if (snapshot.changeReceipt === undefined && deferred && !ownIncludesTurn && !options.alreadyCovered) return undefined;
+  if (snapshot.changeReceipt !== 'missing') return failed('terminal', 'Store did not perform the projection_changes receipt lookup.', attempts);
+  if (ownIncludesTurn || options.alreadyCovered) return failed('terminal', MISSING_PROJECTION_CHANGES_HISTORY, attempts);
+  return undefined;
+}
+
+function hasNativeSnapshots<TState>(options: ProjectionDefinitionExecutorOptions<TState>): boolean {
+  return options.store.sourceCommitSnapshotCapability === 'revision-cas-v1';
+}
+
+async function checkDeferredReceipt<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit, attempts: number
+): Promise<ProjectionDefinitionCommitOutcome | undefined> {
+  if (!hasNativeSnapshots(options) || options.projectionChanges === undefined || options.definition.deduplication.strategy === 'none') return;
+  try {
+    return replayOutcome(options, commit, await loadSnapshot(options, commit, [], [], 'receipt'), attempts);
+  } catch (error) {
+    return failed('ambiguous', error instanceof Error ? error.message : 'receipt lookup failed', attempts);
+  }
 }
 
 function mergeLinks(
@@ -91,17 +133,64 @@ type AttemptResult<TState> =
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
   | { kind: 'conflict'; reason: string };
 
+function matchesReceiptTargets(
+  receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest, replayed: boolean
+): boolean {
+  const documents = request.finalDocuments;
+  if (receipt.kind === 'projection_changes_empty') return !('targets' in receipt) && (replayed || documents.length === 0);
+  if (!replayed && receipt.targets.length !== documents.length) return false;
+  const expected = replayed ? undefined : new Set(documents.map(({ targetDocumentId }) => targetDocumentId));
+  const seen = new Set<string>();
+  for (const target of receipt.targets) {
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return false;
+    const { targetDocumentId: id, transitions, previousRevision, revision } = target;
+    if (typeof id !== 'string' || !id.length || seen.has(id) || (expected && !expected.has(id))
+      || !Array.isArray(transitions) || !transitions.length
+      || (previousRevision !== null && (!Number.isSafeInteger(previousRevision) || previousRevision < 0))
+      || !Number.isSafeInteger(revision) || revision !== (previousRevision ?? 0) + 1) return false;
+    seen.add(id);
+  }
+  return true;
+}
+
+function hasMatchingCommitReceipt(request: CommitProjectionSourceCommitRequest, result: CommitProjectionSourceCommitCommitted): boolean {
+  const identity = projectionChangesIdentity(request);
+  if (!identity) return true;
+  const writes = result.additionalWrites;
+  const empty = result.emptyChangeReceipt;
+  if (writes !== undefined && (empty !== undefined || !Array.isArray(writes)
+    || writes.length !== 1 || writes[0]?.kind !== 'projection_changes')) return false;
+  if (empty !== undefined && empty?.kind !== 'projection_changes_empty') return false;
+  const receipt = writes?.[0] ?? empty;
+  if (!receipt) return false;
+  const reliable = request.progress.strategy !== 'none';
+  const applicationId = reliable ? undefined : receipt.applicationId;
+  if (!reliable && !isCanonicalProjectionUuid(applicationId)) return false;
+  // A canonical replay can describe an earlier plan, not the losing attempt's target set.
+  return matchProjectionChangesReceipt(identity, receipt, applicationId) === 'committed'
+    && matchesReceiptTargets(receipt, request, result.replayed === true);
+}
+
 async function commitReduction<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit,
   reduction: Extract<ProjectionReductionResult<TState>, { status: 'planned' }>,
-  attempt: number
+  attempt: number,
+  snapshot?: ProjectionSourceCommitSnapshot<TState>
 ): Promise<AttemptResult<TState>> {
   try {
-    const result = await options.store.commitProjectionSourceCommit(reduction.request);
+    const result = snapshot ? await options.store.commitProjectionSourceCommit(reduction.request, snapshot)
+      : await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
+      if ((result.replayed !== undefined && typeof result.replayed !== 'boolean')
+        || (result.replayed === true && reduction.request.progress.strategy === 'none')) {
+        return { kind: 'done', outcome: failed('terminal', 'Store returned an invalid commit replay flag.', attempt) };
+      }
+      if (!hasMatchingCommitReceipt(reduction.request, result)) {
+        return { kind: 'done', outcome: failed('terminal', 'Store did not return a matching projection_changes receipt.', attempt) };
+      }
       const outcome = result.commitSequence === commit.commitSequence
-        ? { status: 'committed' as const, attempts: attempt }
+        ? { status: result.replayed === true ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
         : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
       return { kind: 'done', outcome };
     }
@@ -124,24 +213,34 @@ async function executeAttempt<TState>(
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
+    const native = hasNativeSnapshots(options);
     let snapshot: ProjectionSourceCommitSnapshot<TState>;
     try {
-      snapshot = await loadAttempt(options, commit, [...targets].sort(), links);
+      snapshot = await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'snapshot load failed';
-      return { kind: 'done', outcome: failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
+      return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
+        ?? failed(reason.startsWith('Detected legacy writer') ? 'terminal' : 'ambiguous', reason, attempt) };
     }
-    const reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence);
+    const replay = replayOutcome(options, commit, snapshot, attempt, native);
+    if (replay) return { kind: 'done', outcome: replay };
+    const reduction = reduceProjectionSourceCommit(
+      options.definition, options.generation, commit, snapshot, options.baselineSequence, options.projectionChanges, options.stateValidation
+    );
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
-    if (reduction.status === 'terminal') return { kind: 'done', outcome: failed('terminal', reduction.reason, attempt) };
+    if (reduction.status === 'terminal') {
+      const receipt = snapshot.changeReceipt === undefined ? await checkDeferredReceipt(options, commit, attempt) : undefined;
+      return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
+    }
     if (reduction.status === 'deduplicated') {
       return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
     }
     if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
       || reduction.request.stagedLinks.length > 0)) {
-      return { kind: 'done', outcome: failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
+      return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
+        ?? failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
     }
-    return commitReduction(options, commit, reduction, attempt);
+    return commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
   });
 }
 
@@ -149,21 +248,37 @@ export async function executeProjectionDefinition<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
   commit: ProjectionSourceCommit
 ): Promise<ProjectionDefinitionCommitOutcome> {
+  if (options.projectionChanges !== undefined && options.store.projectionChangesCapability !== 'atomic-turn-receipts-v1') {
+    return failed('terminal', 'Store does not support atomic projection_changes turn receipts.', 0);
+  }
+  if (options.projectionChanges !== undefined) {
+    const invalid = validateProjectionChangeIdentityMetadata({
+      projectionName: options.definition.name, projectionGeneration: options.generation,
+      collection: options.projectionChanges, sourceId: commit.streamId,
+      commitId: commit.commitId, commitSequence: commit.commitSequence
+    });
+    if (invalid) return failed('terminal', invalid, 0);
+  }
   let links = routingLinkRequests(options.definition, commit.events);
-  let initial: ProjectionSourceCommitSnapshot<TState>;
+  const native = hasNativeSnapshots(options);
+  const lookupEarly = options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
+    && (options.alreadyCovered || commit.commitSequence <= (options.baselineSequence ?? -1));
+  let initial: ProjectionSourceCommitSnapshot<TState> = { targets: [], links: [], ownRecordSequence: null };
   try {
-    initial = await loadInitial(options, commit, links);
+    if (!native) initial = await loadSnapshot(options, commit, [], links);
+    else if (lookupEarly) initial = await loadSnapshot(options, commit, [], [], 'receipt');
+    else if (links.length) initial = await loadSnapshot(options, commit, [], links, 'discovery');
   } catch (error) {
     return failed('ambiguous', error instanceof Error ? error.message : 'snapshot load failed', 0);
   }
-  if (options.definition.deduplication.strategy === 'own_record'
-    && initial.ownRecordSequence !== null
-    && commit.commitSequence <= initial.ownRecordSequence) return { status: 'deduplicated', attempts: 0 };
+  const replay = replayOutcome(options, commit, initial, 0, native && !lookupEarly);
+  if (replay) return replay;
   let routedTargets: readonly string[];
   try {
     routedTargets = provisionalTargets(options.definition, commit, initial);
   } catch (error) {
-    return failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
+    return await checkDeferredReceipt(options, commit, 0)
+      ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
   }
   const targets = new Set(routedTargets);
   const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2;

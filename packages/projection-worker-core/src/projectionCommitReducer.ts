@@ -1,14 +1,20 @@
 import type {
   CommitProjectionSourceCommitRequest,
+  ProjectionChangeTransition,
   ProjectionCommitDefinition,
   ProjectionContext,
   ProjectionSourceCommit,
   ProjectionSourceCommitLink,
   ProjectionSourceCommitSnapshot,
+  ProjectionSourceCommitStatePatch,
+  ProjectionSourceEvent,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
-import { projectionUuidToBase64Url22 } from '@redemeine/projection-runtime-core';
-import { produce } from 'immer';
+import {
+  captureProjectionSourceEvent, isCertifiedProjectionSnapshotJson, isNativeProjectionCaptureSnapshot, isOwnedProjectionState, isPortableProjectionChangeJson,
+  MISSING_PROJECTION_CHANGES_HISTORY, projectionUuidToBase64Url22, sealProjectionCaptureRequest
+} from '@redemeine/projection-runtime-core';
+import { produce, type Draft } from 'immer';
 import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState } from './projectionCommitRouting';
 
 export type ProjectionReductionResult<TState> =
@@ -17,13 +23,31 @@ export type ProjectionReductionResult<TState> =
   | { status: 'needs_snapshot'; targetIds: readonly string[]; links: readonly { aggregateType: string; aggregateId: string }[] }
   | { status: 'terminal'; reason: string };
 
+interface ReducedDocument<TState> {
+  state: TState;
+  revision: number | null;
+  absent: boolean;
+  transitions: ProjectionChangeTransition[];
+  patchFallback?: Extract<ProjectionSourceCommitStatePatch, { kind: 'full' }>['reason'];
+  legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'];
+}
+
 interface ReductionState<TState> {
-  documents: Map<string, { state: TState; revision: number | null; legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'] }>;
+  documents: Map<string, ReducedDocument<TState>>;
+  changeFeed?: string;
+  validation?: ProjectionStateValidation;
+  nativeSnapshot?: ProjectionSourceCommitSnapshot<TState>;
+  previouslyAppliedTarget?: boolean;
   touched: Set<string>;
   links: Map<string, RoutingLinkState>;
   stagedLinks: Map<string, ProjectionSourceCommitLink>;
   missingTargets: Set<string>;
   missingLinks: Map<string, { aggregateType: string; aggregateId: string }>;
+}
+
+export interface ProjectionStateValidation {
+  readonly load?: boolean;
+  readonly changes?: boolean;
 }
 
 function clone<T>(value: T): T {
@@ -47,7 +71,7 @@ function getDocument<TState>(
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   reduction: ReductionState<TState>,
   targetId: string
-): { state: TState; revision: number | null; legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'] } | null {
+): ReducedDocument<TState> | null {
   const existing = reduction.documents.get(targetId);
   if (existing) return existing;
   const target = snapshot.targets.find((candidate) => candidate.targetDocumentId === targetId);
@@ -55,9 +79,19 @@ function getDocument<TState>(
     reduction.missingTargets.add(targetId);
     return null;
   }
-  const document = {
-    state: target.state === null ? definition.initialState(targetId) : clone(target.state),
+  const absent = target.state === null && target.revision === null && target.legacyOriginal === undefined;
+  const initialize = reduction.changeFeed !== undefined ? absent : target.state === null;
+  if (!absent && (reduction.validation?.load || reduction.validation?.changes) && !isPortableProjectionChangeJson(target.state)) {
+    throw new Error('Projection change snapshot must be portable JSON.');
+  }
+  const owned = reduction.nativeSnapshot || isOwnedProjectionState(target.state) || isCertifiedProjectionSnapshotJson(target.state);
+  const document: ReducedDocument<TState> = {
+    // A stored JSON null is a document in the commit-native feed.
+    state: initialize ? definition.initialState(targetId) : owned ? target.state as TState : clone(target.state as TState),
     revision: target.revision,
+    absent,
+    transitions: [],
+    ...(initialize && !absent ? { patchFallback: 'unrepresentable-patch' } : {}),
     ...(target.legacyOriginal ? { legacyOriginal: target.legacyOriginal } : {})
   };
   reduction.documents.set(targetId, document);
@@ -147,19 +181,52 @@ function needsSnapshot<TState>(reduction: ReductionState<TState>): ProjectionRed
 function applyHandler<TState>(
   definition: ProjectionCommitDefinition<TState>,
   reduction: ReductionState<TState>,
-  document: { state: TState },
+  document: ReducedDocument<TState>,
   routed: RoutedEvent<TState>,
-  targetId: string
-): void {
-  document.state = produce(document.state, (draft) => {
+  targetId: string,
+  sourceEvent: ProjectionSourceEvent,
+  creating: boolean
+): ProjectionChangeTransition | undefined {
+  const recipe = (draft: Draft<TState>): void => {
     routed.handler(draft, routed.event, createContext(reduction, targetId));
-  });
-  if (definition.hooks?.afterEach) {
-    const state = clone(document.state);
-    definition.hooks.afterEach(state, routed.event);
-    document.state = state;
-  }
+    const hookResult: unknown = definition.hooks?.afterEach?.(draft, routed.event);
+    if (hookResult && typeof (hookResult as PromiseLike<unknown>).then === 'function') {
+      void Promise.resolve(hookResult).catch(() => undefined);
+      throw new Error('Projection afterEach must be synchronous.');
+    }
+  };
   reduction.touched.add(targetId);
+  if (document.patchFallback) {
+    document.state = produce(document.state, recipe);
+    return undefined;
+  }
+  const captured = captureProjectionSourceEvent(document.state, sourceEvent, recipe, creating,
+    reduction.nativeSnapshot ? { snapshot: reduction.nativeSnapshot, targetId } : undefined);
+  document.state = captured.state;
+  return captured.transition;
+}
+
+function applyTargetEvent<TState>(
+  definition: ProjectionCommitDefinition<TState>,
+  reduction: ReductionState<TState>,
+  document: ReducedDocument<TState>,
+  routed: RoutedEvent<TState>,
+  targetId: string,
+  sourceEvent: ProjectionSourceEvent
+): void {
+  const creating = document.absent && !reduction.touched.has(targetId);
+  const before = document.state;
+  const transition = applyHandler(definition, reduction, document, routed, targetId, sourceEvent, creating);
+  if (reduction.validation?.changes && (creating || !Object.is(before, document.state))
+    && !isPortableProjectionChangeJson(document.state)) {
+    throw new Error('Projection change final document must be portable JSON.');
+  }
+  if (transition) document.transitions.push(transition);
+  else {
+    if (reduction.changeFeed !== undefined) throw new Error('Projection changes require immutable portable JSON state.');
+    document.patchFallback ??= 'nonportable-state';
+    document.transitions.length = 0;
+  }
 }
 
 function applyEvents<TState>(
@@ -173,9 +240,15 @@ function applyEvents<TState>(
     const routed = routeEvent(definition, sourceEvent, reduction.links);
     if (!routed) continue;
     for (const targetId of routed.targetIds) {
-      if (!canApplyToTarget(definition, snapshot, targetId, sourceKey, commit.commitSequence)) continue;
+      if (!canApplyToTarget(definition, snapshot, targetId, sourceKey, commit.commitSequence)) {
+        if (reduction.changeFeed !== undefined) {
+          reduction.previouslyAppliedTarget = true;
+          return;
+        }
+        continue;
+      }
       const document = getDocument(definition, snapshot, reduction, targetId);
-      if (document) applyHandler(definition, reduction, document, routed, targetId);
+      if (document) applyTargetEvent(definition, reduction, document, routed, targetId, sourceEvent);
     }
   }
 }
@@ -194,13 +267,23 @@ function createRequest<TState>(
     const document = reduction.documents.get(targetDocumentId);
     if (!document) throw new Error(`Missing reduced document ${targetDocumentId}.`);
     return { targetDocumentId, expectedRevision: document.revision, finalDocument: document.state,
+      statePatch: document.patchFallback ? { kind: 'full' as const, reason: document.patchFallback }
+        : { kind: 'ordered' as const, transitions: document.transitions },
       ...(document.legacyOriginal ? { legacyOriginal: document.legacyOriginal } : {}) };
   });
-  return {
+  return sealProjectionCaptureRequest({
     version: 1, mode: 'atomic-all', projectionName: definition.name, projectionGeneration: generation,
     commit, finalDocuments, stagedLinks: [...reduction.stagedLinks.values()],
-    progress: createProgress(definition, commit, snapshot, targetIds, sourceKey, baselineSequence)
-  };
+    progress: createProgress(definition, commit, snapshot, targetIds, sourceKey, baselineSequence),
+    ...(reduction.validation?.changes ? { validateStateChanges: true } : {}),
+    ...(reduction.changeFeed !== undefined ? { additionalWrites: [{
+      kind: 'projection_changes',
+      collection: reduction.changeFeed,
+      targets: finalDocuments.map(({ targetDocumentId, statePatch }) => ({
+        targetDocumentId, transitions: statePatch.kind === 'ordered' ? statePatch.transitions : []
+      }))
+    }] } : {})
+  });
 }
 
 function allResolvedTargetsDeduplicated<TState>(
@@ -218,15 +301,30 @@ export function reduceProjectionSourceCommit<TState>(
   generation: string,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
-  baselineSequence?: number
+  baselineSequence?: number,
+  projectionChanges?: string,
+  validation?: ProjectionStateValidation
 ): ProjectionReductionResult<TState> {
+  if (projectionChanges !== undefined && definition.deduplication.strategy !== 'none'
+    && snapshot.changeReceipt && snapshot.changeReceipt !== 'missing') {
+    return snapshot.changeReceipt === 'committed' ? { status: 'deduplicated' }
+      : { status: 'terminal', reason: 'projection change source commit or collection identity mismatch' };
+  }
+  if (projectionChanges !== undefined && definition.deduplication.strategy !== 'none'
+    && commit.commitSequence <= (baselineSequence ?? -1)) return { status: 'deduplicated' };
   if (definition.deduplication.strategy === 'own_record'
     && snapshot.ownRecordSequence !== null
-    && commit.commitSequence <= snapshot.ownRecordSequence) return { status: 'deduplicated' };
+    && commit.commitSequence <= snapshot.ownRecordSequence) {
+    return projectionChanges !== undefined
+      ? { status: 'terminal', reason: MISSING_PROJECTION_CHANGES_HISTORY } : { status: 'deduplicated' };
+  }
   const sourceKey = projectionUuidToBase64Url22(commit.streamId);
   const reduction: ReductionState<TState> = {
     documents: new Map(), touched: new Set(), links: linksByKey(snapshot.links), stagedLinks: new Map(),
-    missingTargets: new Set(), missingLinks: new Map()
+    missingTargets: new Set(), missingLinks: new Map(),
+    ...(isNativeProjectionCaptureSnapshot(snapshot) ? { nativeSnapshot: snapshot } : {}),
+    ...(validation ? { validation } : {}),
+    ...(projectionChanges === undefined ? {} : { changeFeed: projectionChanges })
   };
   try {
     applyEvents(definition, commit, snapshot, reduction, sourceKey);
@@ -234,6 +332,7 @@ export function reduceProjectionSourceCommit<TState>(
     const reason = error instanceof Error ? error.message : 'projection handler threw';
     return { status: 'terminal', reason };
   }
+  if (reduction.previouslyAppliedTarget) return { status: 'terminal', reason: MISSING_PROJECTION_CHANGES_HISTORY };
   const missing = needsSnapshot(reduction);
   if (missing) return missing;
   try {

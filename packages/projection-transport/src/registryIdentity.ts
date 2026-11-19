@@ -21,6 +21,7 @@ export interface ProjectionDeploymentDefinition {
   readonly deduplication: ProjectionDeduplicationStrategy;
   readonly hookKeys: readonly string[];
   readonly identityConfiguration: unknown;
+  readonly projectionChanges?: string;
 }
 
 export function projectionDefinitionRegistryDigest(definitions: readonly ProjectionRegistryDefinitionManifest[]): `sha256:${string}` {
@@ -54,12 +55,13 @@ function normalizeStream(value: { aggregate: { aggregateType: string }; handlers
 export function normalizeProjectionRegistryDefinitions<TState>(values: readonly ProjectionCommitRegistryDefinition<TState>[],
   identityConfigurations: readonly unknown[]): readonly ProjectionDeploymentDefinition[] {
   if (values.length !== identityConfigurations.length) throw new Error('Identity configuration coverage mismatch.');
-  return values.map(({ generation, definition }, index) => ({
+  return values.map(({ generation, definition, projectionChanges }, index) => ({
     projectionName: definition.name, generation, from: normalizeStream(definition.fromStream),
     joins: (definition.joinStreams ?? []).map(normalizeStream),
     reverseSubscriptions: (definition.reverseSubscribeStreams ?? []).map(normalizeStream),
     subscriptions: definition.subscriptions.map((entry) => ({ aggregateType: entry.aggregate.aggregateType, aggregateId: entry.aggregateId })),
     deduplication: definition.deduplication, hookKeys: Object.keys(definition.hooks ?? {}).sort(),
-    identityConfiguration: identityConfigurations[index]
+    identityConfiguration: identityConfigurations[index],
+    ...(projectionChanges !== undefined ? { projectionChanges } : {})
   }));
 }

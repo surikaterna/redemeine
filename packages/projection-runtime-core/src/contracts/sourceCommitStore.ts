@@ -1,10 +1,25 @@
 import type { ProjectionSourceCommit } from './sourceCommit';
 import type { ProjectionUuidBase64Url22 } from './uuidCodec';
+import {
+  type ProjectionChangesAppend,
+  type ProjectionChangesEmptyReceipt,
+  type ProjectionChangesRecord,
+  type ProjectionChangesReceiptStatus,
+  type ProjectionChangesSourceIdentity,
+  type ProjectionChangeTransition,
+  validateProjectionChangesAppend
+} from './projectionChanges';
+
+/** Advisory ordered state patches; older adapters can persist the authoritative final document. */
+export type ProjectionSourceCommitStatePatch =
+  | { readonly kind: 'ordered'; readonly transitions: readonly ProjectionChangeTransition[] }
+  | { readonly kind: 'full'; readonly reason: 'nonportable-state' | 'unrepresentable-patch' };
 
 export interface ProjectionSourceCommitDocument<TState = unknown> {
   targetDocumentId: string;
   expectedRevision: number | null;
   finalDocument: TState;
+  statePatch?: ProjectionSourceCommitStatePatch;
   /** Original legacy fields observed before the first v2 write; absence is significant. */
   legacyOriginal?: ProjectionLegacyDocumentOriginal<TState>;
 }
@@ -66,15 +81,23 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   finalDocuments: readonly ProjectionSourceCommitDocument<TState>[];
   stagedLinks: readonly ProjectionSourceCommitLink[];
   progress: ProjectionSourceCommitProgress;
+  additionalWrites?: readonly [ProjectionChangesAppend];
+  /** Enables strict state diagnostics even for an internally captured request. */
+  validateStateChanges?: true;
 }
 
 export interface CommitProjectionSourceCommitCommitted {
   version: 1;
   status: 'committed';
+  /** Native prepared turns may resolve a retry to its already committed canonical receipt. */
+  replayed?: true;
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;
   linkRevisions: Readonly<Record<string, number>>;
   progress: ProjectionSourceCommitProgress;
+  additionalWrites?: readonly [ProjectionChangesRecord];
+  /** Durable proof for a recording turn that produced no target transitions. */
+  emptyChangeReceipt?: ProjectionChangesEmptyReceipt;
 }
 
 export interface CommitProjectionSourceCommitRejected {
@@ -90,19 +113,27 @@ export type CommitProjectionSourceCommitResult =
   | CommitProjectionSourceCommitRejected;
 
 export interface ProjectionSourceCommitStorePort<TState = unknown> {
+  /** Explicit opt-in; adapters must preserve receipt checks and atomic writes, including empty turns. */
+  readonly projectionChangesCapability?: 'atomic-turn-receipts-v1' | undefined;
+  /** Native loaders may defer fresh receipt checks to the commit CAS. */
+  readonly sourceCommitSnapshotCapability?: 'revision-cas-v1' | undefined;
   loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>>;
   commitProjectionSourceCommit(
-    request: CommitProjectionSourceCommitRequest<TState>
+    request: CommitProjectionSourceCommitRequest<TState>,
+    snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult>;
 }
 
 export function validateCommitProjectionSourceCommitRelationships<TState>(
   request: CommitProjectionSourceCommitRequest<TState>
 ): string | null {
-  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress'];
+  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges'];
   if (Object.keys(request).some((key) => !allowed.includes(key))) return 'unsupported source commit request fields';
+  if (request.validateStateChanges !== undefined && request.validateStateChanges !== true) return 'invalid state validation flag';
+  const malformedAppend = validateProjectionChangesAppend(request);
+  if (malformedAppend) return malformedAppend;
   if (request.progress.strategy === 'own_record' && request.progress.source.baselineSequence !== undefined) {
     const source = request.progress.source;
     const baseline = source.baselineSequence;
@@ -147,10 +178,15 @@ export interface LoadProjectionSourceCommitSnapshotRequest {
   links: readonly { aggregateType: string; aggregateId: string }[];
   progressStrategy: ProjectionSourceCommitProgress['strategy'];
   sourceId?: string;
+  /** Canonical receipt lookup for reliable dedupe strategies, independent of scalar progress. */
+  changeIdentity?: ProjectionChangesSourceIdentity;
+  /** Only set when the store advertises revision-cas-v1. Exact replays still require receipt verification. */
+  prepareSourceCommit?: boolean;
 }
 
 export interface ProjectionSourceCommitSnapshot<TState = unknown> {
   targets: readonly ProjectionSourceCommitSnapshotTarget<TState>[];
   links: readonly ProjectionSourceCommitSnapshotLink[];
   ownRecordSequence: number | null;
+  changeReceipt?: ProjectionChangesReceiptStatus;
 }

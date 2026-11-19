@@ -5,8 +5,8 @@ import type { ProjectionDeduplicationStrategy } from './projectionDeduplication'
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
-  /** Runs after every event handler — receives mutable state and the raw event */
-  afterEach?: (state: TState, event: BaseProjectionEvent) => void;
+  /** Runs synchronously after the handler on the same draft. Do not retain the draft. */
+  afterEach?: (state: Draft<TState>, event: BaseProjectionEvent) => void;
 }
 
 /**

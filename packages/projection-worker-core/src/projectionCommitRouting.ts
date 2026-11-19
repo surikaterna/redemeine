@@ -74,7 +74,7 @@ export function routingLinkRequests<TState>(
   const fromType = definition.fromStream.aggregate.aggregateType;
   const keys = new Map<string, { aggregateType: string; aggregateId: string }>();
   for (const event of events) {
-    if (event.aggregateType === fromType) continue;
+    if (event.aggregateType === fromType || !findHandler(definition, sourceEventToProjectionEvent(event))) continue;
     const key = `${event.aggregateType}\u0000${event.aggregateId}`;
     keys.set(key, { aggregateType: event.aggregateType, aggregateId: event.aggregateId });
   }

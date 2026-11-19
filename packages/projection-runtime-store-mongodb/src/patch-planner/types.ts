@@ -16,6 +16,8 @@ export type MongoPatchCompiledUpdateDocumentPlan = MongoPatchBaseCompiledPlan & 
   unset: ReadonlyArray<MongoScalarPath>;
   push: Readonly<Record<MongoScalarPath, unknown>>;
   pop: Readonly<Record<MongoScalarPath, 1 | -1>>;
+  /** An ordered same-array edit compiled from the final array. */
+  orderedArraySet?: { path: MongoScalarPath; originalLength: number };
 };
 
 export type MongoPatchCompiledUpdatePipelinePlan = MongoPatchBaseCompiledPlan & {

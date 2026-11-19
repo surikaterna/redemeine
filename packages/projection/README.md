@@ -163,13 +163,19 @@ When using `.mirror()`, initial state is auto-cloned from the aggregate via `str
 
 ### Hooks
 
-`afterEach` runs after every handler inside the same Immer `produce` pass:
+`afterEach` runs synchronously after the handler on the same Immer `Draft<TState>`:
 
 ```typescript
 .hooks({
-  afterEach: (state, event) => { state.lastUpdated = event.timestamp; }
+  afterEach: (draft, event) => { draft.lastUpdated = event.timestamp; }
 })
 ```
+
+For plain object and array state, mutate draft fields directly. The draft is a proxy, not a plain snapshot: `structuredClone(draft)` (including draft-valued children) does not work. Do not retain the draft or use it from asynchronous work. Handler and hook changes are finalized together.
+
+The native Mongo path does not freeze state to enforce these rules. Treat Immer’s `original(draft)` and `current(draft)` as read-only, and do not retain or mutate baseline, result, or patch references after handoff. If you assign a mutable object, do not mutate it through another alias after the recipe.
+
+Commit-native hooks have the same Immer value semantics as handlers. Existing `Map` and `Set` values cannot be used as collection drafts without Immer’s MapSet plugin, which the worker does not enable. Collections newly assigned during the recipe are raw values, not collection drafts. Portable JSON is the supported recording domain; collections and finalized `-0` are outside it. Enable runtime `stateValidation` for strict diagnostics. With recording off, collection storage is not guaranteed across adapters.
 
 ## Reusing Aggregate Projectors
 

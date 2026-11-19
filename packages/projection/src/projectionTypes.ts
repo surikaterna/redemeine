@@ -1,3 +1,4 @@
+import type { Draft } from 'immer';
 import type { ProjectionDeduplicationStrategy } from './deduplication';
 import type { ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { InheritExtended, InheritToken } from './inherit';
@@ -5,8 +6,8 @@ import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
 export interface ProjectionHooks<TState> {
-  /** Runs after every event handler — receives mutable state and the raw event */
-  afterEach?: (state: TState, event: BaseProjectionEvent) => void;
+  /** Runs synchronously after the handler on the same draft. Do not retain the draft. */
+  afterEach?: (state: Draft<TState>, event: BaseProjectionEvent) => void;
 }
 
 type HandlerEvent<TPayload, TType extends string> = Omit<BaseProjectionEvent, 'payload' | 'type'> & {

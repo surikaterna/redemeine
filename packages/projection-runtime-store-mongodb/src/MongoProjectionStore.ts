@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
@@ -5,14 +6,18 @@ import type {
   ProjectionSourceCommitSnapshot,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
-import { validateCommitProjectionSourceCommitRelationships } from '@redemeine/projection-runtime-core';
+import {
+  matchNativeProjectionCaptures, registerNativeProjectionCaptureSnapshot, validateCommitProjectionSourceCommitRelationships
+} from '@redemeine/projection-runtime-core';
 import { BSON, type ClientSession, type TransactionOptions, type UpdateOptions } from 'mongodb';
 import type { Checkpoint, IProjectionStore, ProjectionStoreAtomicManyResult, ProjectionStoreCommitAtomicManyRequest } from './contracts';
 import { commitAtomicMany } from './store/commitAtomicMany';
 import { buildDocumentWriteOperation } from './store/documentWriteOperationBuilder';
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
+import { isUnknownSourceCommitOutcome, readSourceCommitChange } from './store/sourceCommitChanges';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
-import { commitMongoV2, loadMongoV2Snapshot } from './store/sourceCommitV2';
+import { commitMongoV2 } from './store/sourceCommitV2';
+import { matchesSourceSnapshot, protectSourceSnapshot, readMongoSourceSnapshot, type NativeSourceSnapshot } from './store/sourceCommitSnapshot';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
 import type { MongoPatchPlanTelemetryEvent, MongoProjectionStoreOptions } from './types';
@@ -31,6 +36,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     { mode: 'compiled-update-document' | 'compiled-update-pipeline' | 'fallback-full-document'; fallbackReason?: string }
   >();
   private sourceCommitReadiness: Promise<void> | undefined;
+  private readonly sourceSnapshots = new WeakMap<ProjectionSourceCommitSnapshot<TState>, NativeSourceSnapshot<TState>>();
   private readonly emittedDedupeWarnings = new Set<string>();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
@@ -38,6 +44,12 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     this.patchPlanTelemetry = options.patchPlanTelemetry;
     this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
   }
+
+  get projectionChangesCapability(): 'atomic-turn-receipts-v1' | undefined {
+    return this.options.changeCollection ? 'atomic-turn-receipts-v1' : undefined;
+  }
+
+  readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
 
   async load(documentId: string): Promise<TState | null> {
     const row = await this.options.collection.findOne({ _id: documentId });
@@ -86,7 +98,22 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
     await this.initializeProjectionSourceCommitStore();
-    return loadMongoV2Snapshot(request, this.options);
+    if (request.prepareSourceCommit) {
+      const loaded = await readMongoSourceSnapshot(request, this.options);
+      const proof = protectSourceSnapshot(loaded, request);
+      if (proof) {
+        this.sourceSnapshots.set(loaded.snapshot, proof);
+        registerNativeProjectionCaptureSnapshot(loaded.snapshot);
+      }
+      return loaded.snapshot;
+    }
+    if (request.changeIdentity && this.options.changeCollection) {
+      if (!request.targetDocumentIds.length && !request.links.length && request.progressStrategy === 'none') {
+        return (await readMongoSourceSnapshot(request, this.options)).snapshot;
+      }
+      return this.createTransactionExecutor()(async (session) => (await readMongoSourceSnapshot(request, this.options, session)).snapshot);
+    }
+    return (await readMongoSourceSnapshot(request, this.options)).snapshot;
   }
 
   async initializeProjectionSourceCommitStore(): Promise<void> {
@@ -94,15 +121,22 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return this.sourceCommitReadiness;
   }
 
-  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
-    const malformed = validateCommitProjectionSourceCommitRelationships(request);
+  async commitProjectionSourceCommit(
+    request: CommitProjectionSourceCommitRequest<TState>, snapshot?: ProjectionSourceCommitSnapshot<TState>
+  ): Promise<CommitProjectionSourceCommitResult> {
+    const malformed = validateCommitProjectionSourceCommitRelationships(request)
+      ?? (request.additionalWrites && !this.options.changeCollection ? 'projection_changes collection is not configured' : null);
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
     }
+    const applicationId = request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined;
     try {
       await this.initializeProjectionSourceCommitStore();
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor());
-      if (result.status === 'committed') {
+      const candidate = snapshot && this.sourceSnapshots.get(snapshot);
+      const observed = snapshot && candidate && matchesSourceSnapshot(request, candidate)
+        ? { loaded: candidate, captures: matchNativeProjectionCaptures(request, candidate.snapshot, snapshot) } : undefined;
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), observed, applicationId, snapshot !== undefined);
+      if (result.status === 'committed' && !result.replayed) {
         try {
           await this.reportDedupeWarnings(request);
         } catch {
@@ -111,8 +145,8 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       }
       return result;
     } catch (error) {
-      if (!this.isUnknownCommitOutcome(error)) throw error;
-      return this.reconcileUnknownCommit(request);
+      if (!isUnknownSourceCommitOutcome(error)) throw error;
+      return this.reconcileUnknownCommit(request, applicationId);
     }
   }
 
@@ -158,13 +192,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     return createTransactionExecutor(() => this.options.mongoClient.startSession(), transactionOptions);
   }
 
-  private isUnknownCommitOutcome(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const labelled = error as Error & { hasErrorLabel?: (label: string) => boolean };
-    return labelled.hasErrorLabel?.('UnknownTransactionCommitResult') === true;
-  }
-
-  private async reconcileUnknownCommit(request: CommitProjectionSourceCommitRequest<TState>): Promise<CommitProjectionSourceCommitResult> {
+  private async reconcileUnknownCommit(
+    request: CommitProjectionSourceCommitRequest<TState>, applicationId?: string
+  ): Promise<CommitProjectionSourceCommitResult> {
+    if (request.additionalWrites) {
+      const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId });
+      this.reportReconciliation(request, receipt?.status === 'committed' ? 'committed' : 'ambiguous');
+      if (receipt && (applicationId === undefined || receipt.status === 'committed')) return receipt;
+      return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
+    }
     if (request.progress.strategy === 'none') {
       this.reportReconciliation(request, 'ambiguous');
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
@@ -220,14 +256,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async reportDedupeWarnings(request: CommitProjectionSourceCommitRequest<TState>): Promise<void> {
-    if (request.progress.strategy !== 'in_document' || !request.progress.warnings) return;
+    if (request.progress.strategy !== 'in_document' || !request.progress.warnings || !this.options.onDedupeWarning) return;
     for (const target of request.progress.targets) {
-      const row = await this.options.collection.findOne({ _id: target.targetDocumentId });
-      if (!row) continue;
       const sourceCount = Object.keys(target.final).length;
-      const metadataBytes = BSON.calculateObjectSize(row);
       this.emitWarning(request, target.targetDocumentId, 'source_count', sourceCount, request.progress.warnings.warnAtSourceCount);
-      this.emitWarning(request, target.targetDocumentId, 'metadata_bytes', metadataBytes, request.progress.warnings.warnAtMetadataBytes);
+      if (request.progress.warnings.warnAtMetadataBytes !== undefined) {
+        const row = await this.options.collection.findOne({ _id: target.targetDocumentId });
+        if (row) this.emitWarning(request, target.targetDocumentId, 'metadata_bytes', BSON.calculateObjectSize(row),
+          request.progress.warnings.warnAtMetadataBytes);
+      }
     }
   }
 

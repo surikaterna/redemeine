@@ -1,6 +1,6 @@
 import type { ProjectionStoreRfc6902Operation } from './contracts';
 import { makeCacheKey } from './patch-planner/cacheKey';
-import { tryCompileOrderedArraySet, tryCompileSimpleArrayReorder } from './patch-planner/compileFastPath';
+import { tryCompileMixedArraySet, tryCompileOrderedArraySet, tryCompileSimpleArrayReorder } from './patch-planner/compileFastPath';
 import { compileSafeOperation } from './patch-planner/compileSafePath';
 import { toCompiledDocumentPlan, toCompiledPipelinePlan } from './patch-planner/planFinalizers';
 import { parsePointer } from './patch-planner/pointer';
@@ -11,6 +11,11 @@ import type {
   MutableCompileState,
   PlannerRuntime
 } from './patch-planner/types';
+
+type PlannerOptions = {
+  /** Only replace a whole array when the caller fences the state used to derive the final document. */
+  coalesceGuardedArrayEdits?: boolean;
+};
 
 const createMutableState = (): MutableCompileState => ({
   set: {},
@@ -41,7 +46,7 @@ const createRuntime = <TState>(
   };
 };
 
-const compileWithFastPath = <TState>(runtime: PlannerRuntime<TState>): MongoPatchUpdatePlan<TState> | null => {
+const compileWithFastPath = <TState>(runtime: PlannerRuntime<TState>, options?: PlannerOptions): MongoPatchUpdatePlan<TState> | null => {
   const reorderPlan = tryCompileSimpleArrayReorder(runtime);
   if (reorderPlan) {
     return reorderPlan;
@@ -52,7 +57,7 @@ const compileWithFastPath = <TState>(runtime: PlannerRuntime<TState>): MongoPatc
     return orderedArrayPlan;
   }
 
-  return null;
+  return options?.coalesceGuardedArrayEdits ? tryCompileMixedArraySet(runtime) : null;
 };
 
 const compileWithOrderedOrSafePath = <TState>(runtime: PlannerRuntime<TState>): MongoPatchUpdatePlan<TState> => {
@@ -76,15 +81,17 @@ const compileWithOrderedOrSafePath = <TState>(runtime: PlannerRuntime<TState>): 
 
 export const patch6902ToMongoUpdatePlan = <TState>(
   patch: ReadonlyArray<ProjectionStoreRfc6902Operation>,
-  fullDocument: TState
-): MongoPatchUpdatePlan<TState> => patch6902ToMongoUpdatePlanWithMetadata(patch, fullDocument);
+  fullDocument: TState,
+  options?: PlannerOptions
+): MongoPatchUpdatePlan<TState> => patch6902ToMongoUpdatePlanWithMetadata(patch, fullDocument, options);
 
 export const patch6902ToMongoUpdatePlanWithMetadata = <TState>(
   patch: ReadonlyArray<ProjectionStoreRfc6902Operation>,
-  fullDocument: TState
+  fullDocument: TState,
+  options?: PlannerOptions
 ): MongoPatchUpdatePlan<TState> => {
   const runtime = createRuntime(patch, fullDocument);
-  const fastPath = compileWithFastPath(runtime);
+  const fastPath = compileWithFastPath(runtime, options);
   if (fastPath) {
     return fastPath;
   }

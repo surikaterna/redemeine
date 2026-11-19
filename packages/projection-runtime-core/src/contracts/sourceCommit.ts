@@ -52,6 +52,32 @@ export function isCanonicalProjectionUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
+const nativeObjectConstructor = Function.prototype.toString.call(Object);
+
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === Object.prototype) return true;
+  // structuredClone and VM boundaries can supply another realm's Object.prototype.
+  if (!prototype || Object.getPrototypeOf(prototype) !== null) return false;
+  const prototypeConstructor: unknown = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value;
+  return typeof prototypeConstructor === 'function' && Function.prototype.toString.call(prototypeConstructor) === nativeObjectConstructor;
+}
+
+function jsonChildren(value: object): unknown[] | undefined {
+  const keys = Object.keys(value);
+  const array = Array.isArray(value);
+  if (Reflect.ownKeys(value).length !== keys.length + (array ? 1 : 0)) return undefined;
+  if (array && keys.length !== value.length) return undefined;
+  const children: unknown[] = [];
+  for (const [index, key] of keys.entries()) {
+    if (array && key !== String(index)) return undefined;
+    const field = Object.getOwnPropertyDescriptor(value, key);
+    if (!field || !('value' in field)) return undefined;
+    children.push(field.value);
+  }
+  return children;
+}
+
 export function isProjectionJsonValue(value: unknown): value is ProjectionJsonValue {
   const pending: Array<{ value: unknown; exiting: boolean }> = [{ value, exiting: false }];
   const active = new WeakSet<object>();
@@ -67,11 +93,12 @@ export function isProjectionJsonValue(value: unknown): value is ProjectionJsonVa
       continue;
     }
     if (active.has(current)) return false;
-    if (!Array.isArray(current) && Object.getPrototypeOf(current) !== Object.prototype) return false;
-    if (!Array.isArray(current) && Reflect.ownKeys(current).length !== Object.keys(current).length) return false;
+    if (!Array.isArray(current) && !isPlainObject(current)) return false;
+    const children = jsonChildren(current);
+    if (!children) return false;
     active.add(current);
     pending.push({ value: current, exiting: true });
-    for (const child of Array.isArray(current) ? current : Object.values(current)) {
+    for (const child of children) {
       pending.push({ value: child, exiting: false });
     }
   }

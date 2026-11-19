@@ -7,6 +7,7 @@ import EventStore, { type ICommit } from 'tapeworm';
 import MongoTapewormPersistence from 'tapeworm_persistence_store_mongodb';
 import { awaitStackChild, type ChildOutcome } from './childRunner';
 import {
+  createTapewormMongoCompleteCommitRangeReader,
   MongoProjectionTransportStore,
   type ProjectionTransportDocument
 } from '../src';
@@ -15,9 +16,11 @@ import {
   SOURCE_ID,
   stackManifest,
   tapewormCommit,
+  toProjectionCommit,
   type StackEvent,
   type StackState
 } from './realStackFixtures';
+import { checkRealChangeRecordingAdmission } from './realChangeRecordingAdmission';
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -319,13 +322,15 @@ async function startSource(client: MongoClient): Promise<{
 }
 
 async function run(): Promise<void> {
-  const client = new MongoClient(mongoUri);
+  const client = new MongoClient(mongoUri, { monitorCommands: true });
   const rabbit = await connect(rabbitUri);
   const channel = await rabbit.createConfirmChannel();
   await client.connect();
   const { partition, first, collection, commits } = await startSource(client);
   const db = client.db(databaseName);
 
+  const changeRecordingAdmissionTrace = await checkRealChangeRecordingAdmission(client, db,
+    createTapewormMongoCompleteCommitRangeReader({ collection, partitionId: PARTITION_ID }), toProjectionCommit(first));
   const normal = await runNormalSequenceZero(client, channel, first);
   const crashes = [];
   crashes.push(await runCrashScenario(client, channel, first, 'before_save', 4));
@@ -359,7 +364,7 @@ async function run(): Promise<void> {
     versions: { tapeworm: '0.6.0', tapewormMongo: '3.1.0', mongodbDriver: '6.18.0', mongoServer: server.version, rabbitServer: rabbitVersion, amqplib: '2.0.1' },
     images: { mongo: process.env.REDEMEINE_MONGO_DIGEST, rabbit: process.env.REDEMEINE_RABBIT_DIGEST },
     databaseName, queues, childRuns, multiEventCount: persisted[0]?.events.length,
-    slicedQueryObserved: true, normal, crashes, gap, poison, reducedRegistryRejected,
+    slicedQueryObserved: true, normal, crashes, gap, poison, reducedRegistryRejected, changeRecordingAdmission: 'passed', changeRecordingAdmissionTrace,
     index: { name: rangeIndex.name, key: rangeIndex.key, unique: rangeIndex.unique, collation: rangeIndex.collation ?? 'default' },
     query: { filter: { streamId: SOURCE_ID, commitSequence: { $gt: -1, $lte: 1 } }, sort: { commitSequence: 1 }, hint: rangeIndex.name, limit: 3, batchSize: 1, winningPlan: explain.queryPlanner?.winningPlan },
     logicalCleanupVerified: true
