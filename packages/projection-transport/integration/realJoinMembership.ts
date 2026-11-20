@@ -6,9 +6,12 @@ import {
   MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDocumentRecord, type ProjectionJoinMembershipRecord
 } from '@redemeine/projection-runtime-store-mongodb';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
-import { coordinator, fixtureOptions, orderId, routed, snapshot, type State, turn } from './joinMembershipFixture';
+import { coordinator, fixtureCoverage, fixtureOptions, orderId, routed, snapshot, type State, turn } from './joinMembershipFixture';
 import { completed, runDisjointAttach, runFirstCandidateWrite, runNone, runRace, runRouting } from './joinMembershipScenarios';
 import { runJoinMembershipCutover } from './realJoinMembershipCutover';
+import { runJoinBinding } from './realJoinBinding';
+import { runJoinInvalidRows } from './realJoinInvalidRows';
+import { runJoinReceiptRaces } from './realJoinReceiptRace';
 import { runFracturedReadRegression, runMultiEventBatch } from './joinMembershipMongoAudit';
 
 function mongoResources(db: Db, client: MongoClient) {
@@ -42,7 +45,7 @@ async function runRollback(db: Db, client: MongoClient, commands: CommandStarted
   assert.equal(await joinMembershipCollection.countDocuments(), 0);
   assert.equal(await changeCollection.countDocuments(), 0);
   assert.equal((await snapshot(store, source)).ownRecordSequence, null);
-  assert.equal((await options.sourceOrder.admitForDispatch(original, 'join-set')).coverage.sequence, null);
+  assert.equal(await fixtureCoverage(options, original), null);
   await db.command({ collMod: 'changes', validator: {} });
   await completed(runtime, original);
   assert.equal(await changeCollection.countDocuments(), 1);
@@ -124,6 +127,11 @@ async function main() {
     }
     await runRollback(db(), client, commands);
     await runJoinMembershipCutover(db(), client);
+    for (const boundSet of [true, false]) {
+      for (const recording of [true, false]) await runJoinBinding(db(), client, boundSet, recording);
+    }
+    await runJoinInvalidRows(db(), client);
+    await runJoinReceiptRaces(db(), client);
     for (const fallback of [false, true]) {
       const database = db();
       const store = mongoResources(database, client).makeStore();

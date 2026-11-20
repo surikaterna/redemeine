@@ -1,5 +1,5 @@
 import type { ProjectionSourceCommit } from './sourceCommit';
-import { type ProjectionJoinMembership, type ProjectionJoinMembershipFence, validateJoinMembershipFences } from './joinMembership';
+import { assertJoinIdentifier, type ProjectionJoinMembership, type ProjectionJoinMembershipFence, validateJoinMembershipFences } from './joinMembership';
 import type { ProjectionUuidBase64Url22 } from './uuidCodec';
 import {
   type ProjectionChangesAppend,
@@ -139,6 +139,13 @@ export function validateCommitProjectionSourceCommitRelationships<TState>(
   if (request.validateStateChanges !== undefined && request.validateStateChanges !== true) return 'invalid state validation flag';
   if (request.joinMembershipFences !== undefined) {
     if (request.stagedLinks.length || request.progress.strategy === 'in_document') return 'Join membership sets cannot use scalar links or in_document.';
+    try {
+      assertJoinIdentifier(request.projectionName);
+      assertJoinIdentifier(request.projectionGeneration);
+      for (const document of request.finalDocuments) assertJoinIdentifier(document.targetDocumentId);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid joined identifier.';
+    }
     const invalid = validateJoinMembershipFences(request.joinMembershipFences);
     if (invalid) return invalid;
   }

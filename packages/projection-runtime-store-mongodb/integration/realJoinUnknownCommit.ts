@@ -174,4 +174,14 @@ export async function checkRealJoinUnknownCommit(db: Db, client: MongoClient): P
   await assertPreparedCommit(db, client);
   await assertMembershipOnly(db, client, 'own_record');
   await assertMembershipOnly(db, client, 'none');
+  const plan = request('unknown_corrupt_proof');
+  const { suspect, arm, outcomes } = prepare(db, client, plan.projectionName);
+  await suspect.initializeProjectionSourceCommitStore();
+  arm({ abort: false, after: async () => {
+    await db.collection('unknown_corrupt_proof_sets').updateOne({}, { $set: { targetDocumentIds: ['B', 'A'] } });
+  } });
+  assert.deepEqual(await suspect.commitProjectionSourceCommit(plan), {
+    version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome'
+  });
+  assert.deepEqual(outcomes, ['ambiguous']);
 }

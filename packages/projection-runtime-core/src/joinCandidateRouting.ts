@@ -1,6 +1,6 @@
 import type { ProjectionCandidateSelector } from './createProjection';
 import type { ProjectionEvent } from './types';
-import { MAX_JOIN_TARGETS, validateJoinTargetSet } from './contracts/joinMembership';
+import { MAX_JOIN_TARGETS, ProjectionJoinMembershipValidationError, validateJoinTargetSet } from './contracts/joinMembership';
 
 /** Pure routing phase. No state, store or handler context is available to selectors. */
 export function selectJoinTargets(
@@ -17,14 +17,14 @@ export function selectJoinCandidates(event: ProjectionEvent, selector?: Projecti
   const selected: unknown = selector?.(structuredClone(event));
   if (selected && typeof (selected as PromiseLike<unknown>).then === 'function') {
     void Promise.resolve(selected).catch(() => undefined);
-    throw new Error('Projection .joinRight() selector must be synchronous.');
+    throw new ProjectionJoinMembershipValidationError('Projection .joinRight() selector must be synchronous.');
   }
   const candidates: readonly unknown[] = selected == null ? [] : Array.isArray(selected) ? selected : [selected];
   const unique = new Set<string>();
   for (const id of candidates) {
-    if (typeof id !== 'string' || !id) throw new Error('Invalid projection .joinRight() candidate ID.');
+    if (typeof id !== 'string' || !id) throw new ProjectionJoinMembershipValidationError('Invalid projection .joinRight() candidate ID.');
     unique.add(id);
-    if (unique.size > MAX_JOIN_TARGETS) throw new Error('Joined target count exceeds capacity.');
+    if (unique.size > MAX_JOIN_TARGETS) throw new ProjectionJoinMembershipValidationError('Joined target count exceeds capacity.');
   }
   const targets = [...unique].sort();
   validateJoinTargetSet(targets);

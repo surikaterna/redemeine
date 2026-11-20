@@ -8,6 +8,8 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   projectionChangesHistoryFailure,
+  ProjectionJoinMembershipValidationError,
+  ProjectionPersistedJoinMembershipError,
   joinMembershipKey,
   validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState
@@ -255,9 +257,22 @@ async function runSourceCommit<TState>(
   });
 }
 
+async function resolveInvalidPersistedMembership(request: CommitProjectionSourceCommitRequest,
+  options: Pick<MongoProjectionStoreOptions, 'changeCollection'>,
+  error: ProjectionPersistedJoinMembershipError): Promise<CommitProjectionSourceCommitResult> {
+  if (!request.additionalWrites || request.progress.strategy === 'none') return terminal(error.message);
+  // The write transaction did not apply. A different worker may already have committed this exact turn.
+  try {
+    const receipt = await readSourceCommitChange(request, options.changeCollection, { applicationId: undefined });
+    return receipt?.status === 'committed' ? { ...receipt, replayed: true } : receipt ?? terminal(error.message);
+  } catch {
+    return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'Unable to verify projection_changes receipt.' };
+  }
+}
+
 function classifyCommitError(request: CommitProjectionSourceCommitRequest, error: unknown): CommitProjectionSourceCommitResult {
   if ((request.additionalWrites || request.joinMembershipFences) && isUnknownSourceCommitOutcome(error)) throw error;
-  if (request.additionalWrites && isTransientSourceCommitError(error)) {
+  if ((request.additionalWrites || request.joinMembershipFences) && isTransientSourceCommitError(error)) {
     return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'transient MongoDB source transaction failure' };
   }
   if (error instanceof MongoChangeAppendValidationError) return terminal(error.message);
@@ -294,6 +309,8 @@ export async function commitMongoV2<TState>(
   try {
     result = await runSourceCommit(request, options, execute, observed, identity);
   } catch (error) {
+    if (error instanceof ProjectionPersistedJoinMembershipError) return resolveInvalidPersistedMembership(request, options, error);
+    if (error instanceof ProjectionJoinMembershipValidationError) return terminal(error.message);
     result = classifyCommitError(request, error);
   }
   if (result.status === 'committed' || !request.additionalWrites) return result;
