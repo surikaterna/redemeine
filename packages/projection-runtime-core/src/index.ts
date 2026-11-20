@@ -7,6 +7,7 @@ export type {
   ProjectionWarning
 } from './types';
 export * from './contracts/joinMembership';
+export * from './contracts/dispatchBinding';
 export { selectJoinCandidates, selectJoinTargets, mergeJoinTargets } from './joinCandidateRouting';
 export type {
   ProjectionDedupeWarningPolicy,

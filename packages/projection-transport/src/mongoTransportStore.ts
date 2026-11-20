@@ -1,5 +1,5 @@
 import type {
-  ProjectionChangeRecordingScope,
+  ProjectionDispatchBindingProof,
   ProjectionQueueRegistryBindResult,
   ProjectionQueueRegistryBinding,
   ProjectionQueueRegistryBindingPort,
@@ -11,9 +11,10 @@ import type {
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import {
+  createProjectionDispatchBindingProof,
   hasMatchingProjectionRegistryIdentity,
-  matchesProjectionChangeRecordingScope,
-  ProjectionChangeRecordingPolicyMismatchError,
+  matchesProjectionDispatchBinding,
+  ProjectionDispatchBindingMismatchError,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
@@ -91,7 +92,7 @@ const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
 const BASELINE_INDEX = 'projection_transport_baseline_queue_source_unique';
 
 function sameManifest(left: ProjectionQueueRegistryManifest, right: ProjectionQueueRegistryManifest): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return matchesProjectionDispatchBinding({ version: 1, manifest: left }, { version: 1, manifest: right });
 }
 
 function coverageId(queueBindingId: string, sourceId: string): string {
@@ -122,6 +123,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   async bindImmutableManifest(manifest: ProjectionQueueRegistryManifest): Promise<ProjectionQueueRegistryBindResult> {
     const issues = validateProjectionQueueRegistryManifest(manifest);
     if (issues.length > 0) throw new Error(`Invalid registry manifest: ${issues.join(',')}`);
+    manifest = createProjectionDispatchBindingProof(manifest).manifest;
     const binding: ProjectionQueueRegistryBinding = {
       queueId: manifest.queueId,
       manifestId: manifest.manifestId,
@@ -275,17 +277,15 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   async admitForDispatch(
     commit: ProjectionSourceCommit,
     queueBindingId: string,
-    expectedChangeRecordingScope?: readonly ProjectionChangeRecordingScope[]
+    expectedDispatchProof: ProjectionDispatchBindingProof
   ): Promise<ProjectionSourceDispatchAdmission> {
     if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
     const binding = await this.readBindingDocument(queueBindingId);
     if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
-      || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Immutable projection registry binding mismatch.');
-    const boundChangeRecordingScope = binding.manifest.definitions;
-    if (expectedChangeRecordingScope && !matchesProjectionChangeRecordingScope(expectedChangeRecordingScope, boundChangeRecordingScope)) {
-      throw new ProjectionChangeRecordingPolicyMismatchError();
-    }
+      || !sameManifest(binding.manifest, this.options.manifest)) throw new ProjectionDispatchBindingMismatchError();
+    const boundDispatchProof = { version: 1 as const, manifest: binding.manifest };
+    if (!matchesProjectionDispatchBinding(expectedDispatchProof, boundDispatchProof)) throw new ProjectionDispatchBindingMismatchError();
     await this.initialize();
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
@@ -300,7 +300,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     );
     const row = await this.readCoverage(id);
     if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
-    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundChangeRecordingScope };
+    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundDispatchProof };
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {

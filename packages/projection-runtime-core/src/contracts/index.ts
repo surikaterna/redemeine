@@ -228,3 +228,4 @@ export {
   transitionToCutover,
   transitionToRollback
 } from './rebuild';
+export * from './dispatchBinding';

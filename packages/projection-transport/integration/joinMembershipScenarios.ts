@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { ProjectionSourceCommit, ProjectionSourceCommitStorePort } from '@redemeine/projection-runtime-core';
-import { coordinator, fixtureOptions, orderId, path, routed, snapshot, type State, turn } from './joinMembershipFixture';
+import { coordinator, fixtureCoverage, fixtureOptions, orderId, path, routed, snapshot, type State, turn } from './joinMembershipFixture';
 
 export async function completed(runtime: ReturnType<typeof coordinator>, commit: ProjectionSourceCommit) {
   const result = await runtime.process(commit);
@@ -100,7 +100,7 @@ export async function runRace(makeStore: () => ProjectionSourceCommitStorePort<S
     assert.equal(current.targets.find(({ targetDocumentId }) => targetDocumentId === row)?.state?.visits
       .filter((visit) => visit === 'ordinary').length, 1);
   }
-  assert.equal((await options.sourceOrder.admitForDispatch(original, 'join-set')).coverage.sequence, 0);
+  assert.equal(await fixtureCoverage(options, original), 0);
   const proof = await store.loadProjectionSourceCommitSnapshot({
     projectionName: 'boards', projectionGeneration: 'set-generation', targetDocumentIds: [], links: [], progressStrategy: 'none',
     changeIdentity: { sourceId: source, collection: 'join-changes', commitId: original.commitId, commitSequence: 0 }

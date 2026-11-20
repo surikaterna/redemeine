@@ -1,12 +1,13 @@
 import {
   isCompleteCommitRangeCapability,
-  matchesProjectionChangeRecordingScope,
-  ProjectionChangeRecordingPolicyMismatchError,
+  createProjectionDispatchBindingProof,
+  matchesProjectionDispatchBinding,
+  ProjectionDispatchBindingMismatchError,
   validateCompleteCommitRange,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionChangeRecordingScope, ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionDispatchBindingProof, ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
   ProjectionCommitCoordinatorOptions,
@@ -101,7 +102,7 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>
 interface CoordinatorRuntime<TState> {
   options: ProjectionCommitCoordinatorOptions<TState>;
   definitions: readonly ProjectionCommitRegistryDefinition<TState>[];
-  changeRecordingScope: readonly ProjectionChangeRecordingScope[];
+  dispatchProof: ProjectionDispatchBindingProof;
   sourceStartAnchors: Readonly<Record<string, number>>;
   sourceLanes: ProjectionLaneScheduler;
   targetLanes: ProjectionLaneScheduler;
@@ -239,13 +240,13 @@ async function processInSourceLane<TState>(
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   let admission;
   try {
-    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.options.queueBindingId, runtime.changeRecordingScope);
+    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.dispatchProof.manifest.queueId, runtime.dispatchProof);
   } catch (error) {
     return failureOutcome(error instanceof Error ? error.message : 'Source admission unavailable.', [], [],
-      error instanceof ProjectionChangeRecordingPolicyMismatchError);
+      error instanceof ProjectionDispatchBindingMismatchError);
   }
-  if (!matchesProjectionChangeRecordingScope(runtime.changeRecordingScope, admission.boundChangeRecordingScope)) {
-    return failureOutcome(new ProjectionChangeRecordingPolicyMismatchError().message, [], [], true);
+  if (!matchesProjectionDispatchBinding(runtime.dispatchProof, admission.boundDispatchProof)) {
+    return failureOutcome(new ProjectionDispatchBindingMismatchError().message, [], [], true);
   }
   if (admission.coverage.sourceId !== commit.streamId
     || admission.coverage.queueBindingId !== runtime.options.queueBindingId) {
@@ -293,9 +294,7 @@ function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   return {
     options,
     definitions: Object.freeze(definitions),
-    changeRecordingScope: Object.freeze(definitions.map(({ definition, generation, projectionChanges }) => Object.freeze({
-      projectionName: definition.name, generation, ...(projectionChanges === undefined ? {} : { projectionChanges })
-    }))),
+    dispatchProof: createProjectionDispatchBindingProof(options.manifest),
     sourceStartAnchors: Object.freeze({ ...options.manifest.sourceStartAnchors }),
     sourceLanes: createProjectionLaneScheduler(),
     targetLanes: createProjectionLaneScheduler(),

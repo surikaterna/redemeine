@@ -420,9 +420,10 @@ function orderPort(): ProjectionSourceOrderPort & { advances: number[] } {
   const advances: number[] = [];
   return {
     advances,
-    async admitForDispatch(sourceCommit, queueBindingId) {
+    async admitForDispatch(sourceCommit, queueBindingId, proof) {
       return {
         dispatch: true,
+        boundDispatchProof: proof,
         startAnchor: 0,
         strategyScope: [],
         coverage: { queueBindingId, sourceId: sourceCommit.streamId, sequence: coverage.get(sourceCommit.streamId) ?? null }
@@ -466,10 +467,9 @@ function coordinatorOptions(
     definitions: definitions.map((item) => ({ generation: 'g1', definition: item })),
     store, sourceOrder: {
       ...order,
-      async admitForDispatch(sourceCommit, queueId, expectedChangeRecordingScope) {
-        const admission = await order.admitForDispatch(sourceCommit, queueId, expectedChangeRecordingScope);
+      async admitForDispatch(sourceCommit, queueId, proof) {
+        const admission = await order.admitForDispatch(sourceCommit, queueId, proof);
         return { ...admission, startAnchor: anchors[sourceCommit.streamId] ?? admission.startAnchor,
-          ...(expectedChangeRecordingScope ? { boundChangeRecordingScope: expectedChangeRecordingScope } : {}),
           strategyScope: definitions.map((entry) => ({ projectionName: entry.name, generation: 'g1',
             strategy: entry.deduplication.strategy, stableSingleTarget: true })) };
       }
@@ -480,6 +480,24 @@ function coordinatorOptions(
 function coordinator(...args: Parameters<typeof coordinatorOptions>) {
   return createProjectionCommitCoordinator(coordinatorOptions(...args));
 }
+
+test('requires authoritative proof even for a recording-off scalar worker', async () => {
+  const store = new InMemoryProjectionStore<State>();
+  const options = coordinatorOptions([definition('boards', { strategy: 'own_record' })], store);
+  const admit = options.sourceOrder.admitForDispatch.bind(options.sourceOrder);
+  const advance = jest.spyOn(options.sourceOrder, 'advanceCoverage');
+  const write = jest.spyOn(store, 'commitProjectionSourceCommit');
+  const runtime = createProjectionCommitCoordinator({ ...options, sourceOrder: {
+    ...options.sourceOrder,
+    async admitForDispatch(...args) {
+      const result = await admit(...args);
+      return { ...result, boundDispatchProof: undefined! }; // Exercise an un-upgraded port at runtime.
+    }
+  } });
+  expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: expect.stringContaining('missing dispatch proof') });
+  expect(write).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
+});
 
 function changeCoordinator(
   definition: ProjectionCommitDefinition<State>,

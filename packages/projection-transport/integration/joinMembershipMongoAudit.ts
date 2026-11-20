@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createProjection, type ProjectionSourceCommitStorePort } from '@redemeine/projection-runtime-core';
 import type { Collection, CommandStartedEvent } from 'mongodb';
 import type { ProjectionDocumentRecord } from '@redemeine/projection-runtime-store-mongodb';
-import { coordinator, fixtureOptions, orderId, routed, snapshot, type State, turn } from './joinMembershipFixture';
+import { coordinator, fixtureCoverage, fixtureOptions, orderId, routed, snapshot, type State, turn } from './joinMembershipFixture';
 import { completed } from './joinMembershipScenarios';
 
 function interleavingDefinition() {
@@ -86,7 +86,7 @@ export async function runFracturedReadRegression(docs: Collection<ProjectionDocu
   assert.equal(conflicts, concurrent ? 1 : 0);
   assert(observed.reads() >= (concurrent ? 2 : 1));
   assert.equal(current.ownRecordSequence, 0);
-  assert.equal((await options.sourceOrder.admitForDispatch(main, 'join-set')).coverage.sequence, 0);
+  assert.equal(await fixtureCoverage(options, main), 0);
   assert.deepEqual(current.joinMemberships?.[0]?.targetDocumentIds, concurrent ? [] : ['C']);
   assert.deepEqual(current.targets.map(({ state }) => state?.visits ?? null),
     concurrent ? [['concurrent-create', 'applied'], ['applied'], ['seed']] : [null, ['applied'], ['seed', 'applied']]);
