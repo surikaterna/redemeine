@@ -52,6 +52,11 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     if (entry.definition.joinMembership !== manifest.joinMembership) {
       throw new Error('Join membership format must match the immutable manifest.');
     }
+    const { fromStream, joinStreams = [], reverseSubscribeStreams = [], joinMembership } = entry.definition;
+    if (joinMembership !== 'set-v1' && [fromStream, ...joinStreams, ...reverseSubscribeStreams]
+      .some((stream) => 'candidateSelectors' in stream)) {
+      throw new Error('Candidate selectors require joinMembership: set-v1.');
+    }
     if (manifest.joinMembership && (options.store.joinMembershipCapability !== manifest.joinMembership
       || entry.definition.deduplication.strategy === 'in_document')) {
       throw new Error('Join membership sets require a capable store and own_record or none.');

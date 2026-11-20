@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from '@jest/globals';
-import { createProjection } from '@redemeine/projection';
 import type {
   CommitProjectionSourceCommitRequest,
+  CommitProjectionSourceCommitResult,
   ProjectionCommitDefinition,
   ProjectionCompleteCommitRangeReader,
   ProjectionQueueRegistryManifest,
@@ -11,7 +11,8 @@ import type {
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import {
-  freezePortableProjectionChangeJson, projectionUuidToBase64Url22, validateProjectionChangesState, verifyProjectionSourceCommitStatePatches
+  createProjection, freezePortableProjectionChangeJson, projectionUuidToBase64Url22,
+  validateProjectionChangesState, verifyProjectionSourceCommitStatePatches
 } from '@redemeine/projection-runtime-core';
 import {
   createProjectionCommitCoordinator,
@@ -29,20 +30,22 @@ const HASH = `sha256:${'a'.repeat(64)}` as const;
 type State = { count: number; seen: string[] };
 
 function commit(sequence: number, source = SOURCE_A, types: readonly string[] = ['Added']): ProjectionSourceCommit {
+  const [first, ...rest] = types.map((type, eventIndex) => ({
+    eventId: `00000000-0000-4000-8001-${String((sequence * 10) + eventIndex).padStart(12, '0')}`,
+    eventIndex,
+    streamVersion: (sequence * 10) + eventIndex,
+    aggregateType: 'Order',
+    aggregateId: source,
+    type,
+    payload: { amount: 1 },
+    timestamp: '2026-09-22T00:00:00.000Z'
+  }));
+  if (!first) throw new Error('Test source commit requires at least one event.');
   return {
     streamId: source,
     commitId: `00000000-0000-4000-8000-${String(sequence + 100).padStart(12, '0')}`,
     commitSequence: sequence,
-    events: types.map((type, eventIndex) => ({
-      eventId: `00000000-0000-4000-8001-${String((sequence * 10) + eventIndex).padStart(12, '0')}`,
-      eventIndex,
-      streamVersion: (sequence * 10) + eventIndex,
-      aggregateType: 'Order',
-      aggregateId: source,
-      type,
-      payload: { amount: 1 },
-      timestamp: '2026-09-22T00:00:00.000Z'
-    })) as ProjectionSourceCommit['events']
+    events: [first, ...rest]
   };
 }
 
@@ -384,7 +387,7 @@ class MemoryCommitStore implements ProjectionSourceCommitStorePort<State> {
     });
   }
 
-  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<State>) {
+  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<State>): Promise<CommitProjectionSourceCommitResult> {
     this.requests.push(request);
     if (this.conflicts > 0) {
       this.conflicts -= 1;
@@ -497,6 +500,57 @@ test('requires authoritative proof even for a recording-off scalar worker', asyn
   expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: expect.stringContaining('missing dispatch proof') });
   expect(write).not.toHaveBeenCalled();
   expect(advance).not.toHaveBeenCalled();
+});
+
+test.each([
+  { setMode: false, candidate: false },
+  { setMode: false, candidate: true },
+  { setMode: true, candidate: false },
+  { setMode: true, candidate: true }
+])('candidate maps require explicit set mode (set: $setMode, candidate B: $candidate)', async ({ setMode, candidate }) => {
+  const store = new InMemoryProjectionStore<State>();
+  const order = { aggregateType: 'Order' };
+  const board = { aggregateType: 'Board', pure: { eventProjectors: {} } };
+  const selectB = jest.fn(() => 'B');
+  const selectors = candidate ? { Added: selectB } : {};
+  const builder = createProjection('boards', (): State => ({ count: 0, seen: [] }))
+    .from(board, { attach(draft, _event, ctx) {
+      ctx.subscribeTo(order, SOURCE_A);
+      draft.seen.push('attached');
+    } })
+    .join(order, { Added(draft) { draft.count++; } });
+  if (setMode) builder.joinRight(order, selectors);
+  const projection = builder.deduplication({ strategy: 'own_record' }).build();
+  const options = coordinatorOptions([projection], store);
+  const configured = { ...options, manifest: { ...options.manifest, definitions: [{
+    ...options.manifest.definitions[0]!, joined: true as const, ...(setMode ? { joinMembership: 'set-v1' as const } : {})
+  }] } };
+  const seed = commit(0, SOURCE_B);
+  const runtime = createProjectionCommitCoordinator(configured);
+  expect(await runtime.process({ ...seed, events: [{
+    ...seed.events[0], aggregateType: 'Board', aggregateId: 'A', type: 'attach'
+  }] })).toMatchObject({ status: 'completed' });
+  const membership = await store.loadProjectionSourceCommitSnapshot({
+    projectionName: 'boards', projectionGeneration: 'g1', targetDocumentIds: [],
+    links: [{ aggregateType: 'Order', aggregateId: SOURCE_A }], progressStrategy: 'none',
+    ...(setMode ? { joinMembership: 'set-v1' } : {})
+  });
+
+  if (!setMode) {
+    expect(membership.links[0]?.targetDocumentId).toBe('A');
+    const malformed = { ...projection, joinStreams: [{ ...projection.joinStreams![0]!, candidateSelectors: selectors }] };
+    expect(() => createProjectionCommitCoordinator({ ...configured, definitions: [{ generation: 'g1', definition: malformed }] }))
+      .toThrow(/Candidate selectors require joinMembership: set-v1/);
+    expect(selectB).not.toHaveBeenCalled();
+    expect(await store.load('A')).toEqual({ count: 0, seen: ['attached'] });
+    expect(await store.load('B')).toBeNull();
+    return;
+  }
+
+  expect(membership.joinMemberships?.[0]?.targetDocumentIds).toEqual(['A']);
+  expect(await runtime.process(commit(0))).toMatchObject({ status: 'completed' });
+  expect(await store.load('A')).toEqual({ count: 1, seen: ['attached'] });
+  expect(await store.load('B')).toEqual(candidate ? { count: 1, seen: [] } : null);
 });
 
 function changeCoordinator(
@@ -892,14 +946,18 @@ describe('source ordering and scheduling', () => {
     }
   );
 
-  test('missing or mismatched cutover anchor rejects without store writes', async () => {
+  test.each([
+    { omitProof: true, diagnostic: /missing dispatch proof/ },
+    { omitProof: false, diagnostic: /source start anchor/ }
+  ])('invalid admission (missing proof: $omitProof) rejects before loading views', async ({ omitProof, diagnostic }) => {
     const store = new MemoryCommitStore();
     const missing = orderPort();
-    missing.admitForDispatch = async (sourceCommit, queueBindingId) => ({ dispatch: true,
+    missing.admitForDispatch = async (sourceCommit, queueBindingId, proof) => ({ dispatch: true,
+      boundDispatchProof: omitProof ? undefined! : proof, // Deliberately exercise an invalid adapter at runtime.
       coverage: { queueBindingId, sourceId: sourceCommit.streamId, sequence: null },
       startAnchor: Number.NaN, strategyScope: [{ projectionName: 'own', generation: 'g1', strategy: 'own_record', stableSingleTarget: false }] });
     const runtime = coordinator([definition('own', { strategy: 'own_record' })], store, missing);
-    expect((await runtime.process(commit(0))).status).toBe('terminal');
+    expect(await runtime.process(commit(0))).toMatchObject({ status: 'terminal', reason: expect.stringMatching(diagnostic) });
     expect(store.loads).toHaveLength(0);
   });
 
@@ -923,6 +981,7 @@ describe('source ordering and scheduling', () => {
     const options = { queueBindingId: 'orders', manifest: manifest(['own']),
       definitions: [{ generation: 'g1', definition: definition('own', { strategy: 'own_record' }) }],
       store, sourceOrder: order, rangeReader: rangeReader(), maxCommits: 2, maxBytes: 1000 };
+    // @ts-expect-error Simulate a caller still supplying the obsolete option.
     const runtime = createProjectionCommitCoordinator({ ...options, migrationReplay: true });
     const call = runtime.process as (...args: unknown[]) => ReturnType<typeof runtime.process>;
     expect(await call(sourceCommit, { legacyReceipt: true })).toMatchObject({ status: 'terminal' });
