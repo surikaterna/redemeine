@@ -1,5 +1,13 @@
 # @redemeine/projection
 
+## 0.2.0-pre.4
+
+### Patch Changes
+
+- [#174](https://github.com/surikaterna/redemeine/pull/174) [`2661989`](https://github.com/surikaterna/redemeine/commit/2661989d617334e7874922a3f2881fb769c317c2) Thanks [@spralle](https://github.com/spralle)! - Publish a CommonJS entry point and matching declarations alongside the existing ESM exports.
+
+- [#174](https://github.com/surikaterna/redemeine/pull/174) [`916d5bc`](https://github.com/surikaterna/redemeine/commit/916d5bc9bf9acffe868d5c5b337a11da5f4a8cd0) Thanks [@spralle](https://github.com/spralle)! - Mirror canonical mounted events, preserving explicit overrides and inferring direct list/map mounted payloads from aggregate registry metadata. Nested and mixin events inherit at runtime; exhaustive static alias typing for their collisions remains limited by aggregate metadata.
+
 ## 0.2.0-pre.3
 
 ### Patch Changes

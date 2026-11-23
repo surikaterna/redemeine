@@ -1,5 +1,12 @@
 # @redemeine/projection-router-core
 
+## 0.1.1-pre.4
+
+### Patch Changes
+
+- Updated dependencies [[`2661989`](https://github.com/surikaterna/redemeine/commit/2661989d617334e7874922a3f2881fb769c317c2), [`916d5bc`](https://github.com/surikaterna/redemeine/commit/916d5bc9bf9acffe868d5c5b337a11da5f4a8cd0)]:
+  - @redemeine/projection@0.2.0-pre.4
+
 ## 0.1.1-pre.3
 
 ### Patch Changes
