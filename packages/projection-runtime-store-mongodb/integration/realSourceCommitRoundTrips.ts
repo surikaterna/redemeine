@@ -6,10 +6,17 @@ import type { CommandStartedEvent, Db, MongoClient } from 'mongodb';
 import { executeProjectionDefinition } from '../../projection-worker-core/src/projectionDefinitionExecutor';
 import { reduceProjectionSourceCommit } from '../../projection-worker-core/src/projectionCommitReducer';
 import { createProjectionLaneScheduler } from '../../projection-worker-core/src/targetLaneScheduler';
-import { MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDedupeRecord,
+import { MongoProjectionStore, type MongoProjectionChangesRecord, type MongoSourceCommitPatchPlanEvent, type ProjectionDedupeRecord,
   type ProjectionDocumentRecord, type ProjectionLinkRecord } from '../src';
 
-type State = { quantity: number; lastUpdated?: string; nested?: { quantity: number }; items?: Map<string, number> | Set<string> | null };
+type State = {
+  quantity: number;
+  lastUpdated?: string;
+  nested?: { quantity: number };
+  items?: Map<string, number> | Set<string> | null;
+  when?: Date;
+  lines?: { when: Date }[];
+};
 const sourceId = '00000000-0000-4000-8000-000000000001';
 const sourceKey = projectionUuidToBase64Url22(sourceId);
 const progressKey = (name: string) => `${name}\0g1\0${sourceId}`;
@@ -27,8 +34,10 @@ function roundtripStore(db: Db, mongoClient: MongoClient) {
   const changeCollection = db.collection<MongoProjectionChangesRecord>('rt_feed');
   const dedupeCollection = db.collection<ProjectionDedupeRecord>('rt_progress');
   const linkCollection = db.collection<ProjectionLinkRecord>('rt_links');
-  return { collection, changeCollection, dedupeCollection, linkCollection,
-    store: new MongoProjectionStore({ collection, changeCollection, dedupeCollection, linkCollection, mongoClient }) };
+  let lastPlan: MongoSourceCommitPatchPlanEvent | undefined;
+  return { collection, changeCollection, dedupeCollection, linkCollection, lastPlan: () => lastPlan,
+    store: new MongoProjectionStore({ collection, changeCollection, dedupeCollection, linkCollection, mongoClient,
+      onSourceCommitPatchPlan(plan) { lastPlan = plan; } }) };
 }
 
 function commandTrace(db: Db, mongoClient: MongoClient) {
@@ -264,6 +273,45 @@ async function checkRecordedStateBoundary(
   return 'passed';
 }
 
+async function checkDateReplacement(
+  ctx: ReturnType<typeof roundtripStore>, trace: ReturnType<typeof commandTrace>, nested: boolean
+) {
+  const { store, collection, changeCollection } = ctx;
+  const id = nested ? 'date-replacement-nested-with-scalar' : 'date-replacement';
+  const when = new Date('2020-01-02T12:34:56.000Z');
+  const initial: State = { quantity: 0, ...(nested ? { lines: [{ when }] } : { when }) };
+  await collection.insertOne({ _id: id, state: initial, updatedAt: 'seed', v2Revision: 1,
+    v2WriteId: source(0).commitId, sourceProgress: { [sourceKey]: 0 } });
+  const definition = createProjection<State>(id, () => initial)
+    .from({ aggregateType: 'Order', initialState: {}, pure: { eventProjectors: {} } }, {
+      Change(draft) {
+        const target = nested ? draft.lines![0]! : draft;
+        const old = target.when!;
+        const next = new Date(old.getTime());
+        next.setUTCFullYear(2027);
+        target.when = next;
+        if (nested) draft.quantity++;
+      }
+    }).identity(() => id).deduplication({ strategy: 'in_document' }).buildCommitDefinition();
+  trace.begin();
+  const result = await executeProjectionDefinition({ definition, generation: 'g1', store,
+    lanes: createProjectionLaneScheduler(), maxConflictRetries: 0 }, source(1));
+  const observed = trace.end();
+  assert.equal(result.status, 'committed');
+  assert.deepEqual(observed.order, ['find:rt_docs', 'update:rt_docs']);
+  assert.equal(observed.singleMajority, true);
+  assert.deepEqual(ctx.lastPlan(), { mode: 'delta', historyRecording: 'disabled' });
+  const row = await collection.findOne({ _id: id });
+  assert.ok(row);
+  const persistedDate = nested ? row.state.lines?.[0]?.when : row.state.when;
+  assert.equal(persistedDate?.toISOString(), '2027-01-02T12:34:56.000Z');
+  assert.equal(row.state.quantity, nested ? 1 : 0);
+  assert.equal(row.v2Revision, 2);
+  assert.equal(row.sourceProgress?.[sourceKey], 1);
+  assert.equal(await changeCollection.countDocuments({ projectionName: id }), 0);
+  return 'passed';
+}
+
 export async function checkRealSourceCommitRoundTrips(db: Db, mongoClient: MongoClient) {
   const ctx = roundtripStore(db, mongoClient);
   await db.createCollection(ctx.changeCollection.collectionName);
@@ -284,7 +332,10 @@ export async function checkRealSourceCommitRoundTrips(db: Db, mongoClient: Mongo
       finalizedNegativeOff: await checkSignedZero(ctx, trace, false, true)
     };
     const recordedStateBoundary = await checkRecordedStateBoundary(ctx, trace);
-    return { inline, warmInline, olderInline, ownOff, ownOn, fanout, storeOnly, duplicateEmpty, ownProgressRace, signedZero, recordedStateBoundary };
+    const dateReplacement = { topLevel: await checkDateReplacement(ctx, trace, false),
+      nestedWithScalar: await checkDateReplacement(ctx, trace, true) };
+    return { inline, warmInline, olderInline, ownOff, ownOn, fanout, storeOnly, duplicateEmpty, ownProgressRace,
+      signedZero, recordedStateBoundary, dateReplacement };
   } finally {
     trace.close();
   }

@@ -80,6 +80,17 @@ Hooks follow the same draft and value semantics as handlers. Existing `Map` and 
 
 Source commits send each target’s authoritative final document plus an optional `statePatch` hint, independently of recording. Adapters may ignore the hint and persist the final document. Mongo falls back to a full-state write when it lacks a proven, safe modifier plan, not merely because a value falls outside strict portable JSON. With recording and diagnostics off, for example, a trusted native write can persist a finalized `-0` with a dotted `$set`. This does not certify the value for recording or other adapters. Recording-disabled turns neither require nor access the feed collection.
 
+For BSON `Date` fields in Mongo projections with recording and portability diagnostics off, **replace the value** in the draft:
+
+```typescript
+const old = draft.shipBy;
+const next = new Date(old.getTime());
+next.setUTCFullYear(2027);
+draft.shipBy = next;
+```
+
+Legacy full-document writes could persist an in-place Date edit. The commit-native delta path does not track Date setters: `draft.shipBy.setUTCFullYear(2027)` is unsupported and can advance revision and progress without saving the date change, even when the handler also edits a tracked field. For recorded history, store a portable JSON timestamp such as an ISO 8601 string or epoch milliseconds instead of a BSON `Date`.
+
 Diagnostics are runtime options on `createProjectionCommitCoordinator`, independent of the generation's `projectionChanges` setting:
 
 - `stateValidation: { load: true }` checks a loaded target before its first recipe in the turn.
