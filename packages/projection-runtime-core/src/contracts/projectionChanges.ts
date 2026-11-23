@@ -85,14 +85,30 @@ export function matchProjectionChangesReceipt(
   record: ProjectionChangesReceipt,
   applicationId?: string
 ): 'committed' | 'mismatch' {
-  const validKind = record.kind === 'projection_changes_empty'
-    || (record.kind === 'projection_changes' && Array.isArray(record.targets) && record.targets.length > 0);
-  return validKind && record.version === 1 && record.resumeToken === projectionChangesResumeToken(expected, applicationId)
+  return record.version === 1 && record.resumeToken === projectionChangesResumeToken(expected, applicationId)
     && record.applicationId === applicationId
     && record.commitId === expected.commitId && record.collection === expected.collection
     && record.sourceId === expected.sourceId && record.commitSequence === expected.commitSequence
     && record.projectionName === expected.projectionName && record.projectionGeneration === expected.projectionGeneration
+    && validReceiptEnvelope(record)
     ? 'committed' : 'mismatch';
+}
+
+/** Check persisted receipt metadata without inspecting transition entries or their payloads. */
+function validReceiptEnvelope(record: ProjectionChangesReceipt): boolean {
+  if (record.kind === 'projection_changes_empty') return !('targets' in record);
+  if (record.kind !== 'projection_changes' || !Array.isArray(record.targets) || !record.targets.length) return false;
+  const seen = new Set<string>();
+  for (const target of record.targets) {
+    if (!target || typeof target !== 'object' || Array.isArray(target)) return false;
+    const { targetDocumentId: id, transitions, previousRevision, revision } = target;
+    if (typeof id !== 'string' || !id.length || seen.has(id)
+      || !Array.isArray(transitions) || !transitions.length
+      || (previousRevision !== null && (!Number.isSafeInteger(previousRevision) || previousRevision < 0))
+      || !Number.isSafeInteger(revision) || revision !== (previousRevision ?? 0) + 1) return false;
+    seen.add(id);
+  }
+  return true;
 }
 
 export function projectionChangesIdentity(request: CommitProjectionSourceCommitRequest): (ProjectionChangesSourceIdentity & ChangeScope) | undefined {

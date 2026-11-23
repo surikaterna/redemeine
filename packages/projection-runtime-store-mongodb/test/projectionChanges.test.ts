@@ -105,9 +105,70 @@ test('reconciles unknown outcome from the durable record, including for none str
   const request = projectionChangesRequest();
   const result = await store.commitProjectionSourceCommit(request);
   expect(result).toMatchObject({ status: 'committed', additionalWrites: [records()[0]] });
+  expect(result).not.toHaveProperty('replayed');
   expect(await store.commitProjectionSourceCommit(request)).toMatchObject({ status: 'rejected', category: 'conflict' });
   expect(records()).toHaveLength(1);
   expect((await store.loadProjectionSourceCommitSnapshot(changeSnapshotRequest)).targets[0]?.revision).toBe(1);
+});
+
+function reliableRequest() {
+  const first = projectionChangesRequest();
+  return { ...first, progress: { strategy: 'own_record' as const, source: {
+    sourceId: first.commit.streamId, expectedSequence: null, finalSequence: 0
+  } } };
+}
+
+test.each(['malformed record', 'malformed empty', 'canonical record'] as const)('early lookup validates %s', async (shape) => {
+  const { store, changeCollection } = fixtures();
+  const first = reliableRequest();
+  const request = shape === 'malformed empty' ? {
+    ...first, finalDocuments: [], stagedLinks: [], additionalWrites: [{ ...first.additionalWrites![0], targets: [] }] as const
+  } : first;
+  expect(await store.commitProjectionSourceCommit(request)).toMatchObject({ status: 'committed' });
+  if (shape !== 'canonical record') {
+    await changeCollection.updateOne({ _id: projectionChangesResumeToken(request) },
+      { $set: { targets: shape === 'malformed empty' ? [] : [null] } });
+  }
+  const receipt = await store.loadProjectionSourceCommitSnapshot({ ...changeSnapshotRequest, targetDocumentIds: [], links: [],
+    progressStrategy: 'none', changeIdentity: { sourceId: request.commit.streamId, commitId: request.commit.commitId,
+      commitSequence: 0, collection: request.additionalWrites![0].collection } });
+  expect(receipt.changeReceipt).toBe(shape === 'canonical record' ? 'committed' : 'mismatch');
+});
+
+test.each([false, true])('unknown reliable outcome returns this invocation without replay (empty=%s)', async (empty) => {
+  const { store, collection, changeCollection } = fixtures(createFakeMongoClient({ unknownAfterCommitOnTransaction: 2 }));
+  const first = reliableRequest();
+  const request = empty ? {
+    ...first, finalDocuments: [], stagedLinks: [], additionalWrites: [{ ...first.additionalWrites![0], targets: [] }] as const
+  } : first;
+  const result = await store.commitProjectionSourceCommit(request);
+  expect(result).toMatchObject(empty ? {
+    status: 'committed', documentRevisions: {}, emptyChangeReceipt: { kind: 'projection_changes_empty' }
+  } : { status: 'committed', documentRevisions: { one: 1 } });
+  expect(result).not.toHaveProperty('replayed');
+  const writeId = changeCollection.snapshot()[0]?.outcome.writeId;
+  expect(writeId).toEqual(expect.any(String));
+  if (!empty) expect(writeId).toBe(collection.snapshot()[0]?.v2WriteId);
+});
+
+test.each(['earlier winner', 'old-format winner', 'malformed winner'] as const)('unknown recorded loser sees %s', async (winner) => {
+  const { store, collection, changeCollection } = fixtures(createFakeMongoClient({ unknownAfterCommitOnTransaction: 3 }));
+  const first = reliableRequest();
+  expect(await store.commitProjectionSourceCommit(first)).toMatchObject({ status: 'committed' });
+  const filter = { _id: projectionChangesResumeToken(first) };
+  if (winner === 'malformed winner') await changeCollection.updateOne(filter, { $set: { targets: [null] } });
+  if (winner === 'old-format winner') await changeCollection.updateOne(filter, { $unset: { 'outcome.writeId': '' } });
+  const losingPlan: typeof first = {
+    ...first, finalDocuments: [], stagedLinks: [], additionalWrites: [{ ...first.additionalWrites![0], targets: [] }]
+  };
+  const result = await store.commitProjectionSourceCommit(losingPlan);
+  expect(result).toMatchObject(winner === 'malformed winner' ? { status: 'rejected', category: 'terminal' } : {
+    status: 'committed', replayed: true, documentRevisions: { one: 1 },
+    additionalWrites: [{ kind: 'projection_changes', targets: [{ targetDocumentId: 'one' }] }]
+  });
+  expect(result).not.toHaveProperty('emptyChangeReceipt');
+  expect(collection.snapshot()).toMatchObject([{ state: { value: 1 }, v2Revision: 1 }]);
+  expect(changeCollection.snapshot()).toHaveLength(1);
 });
 
 test('unknown empty turn is reconciled with its receipt, not mistaken for a feed record', async () => {

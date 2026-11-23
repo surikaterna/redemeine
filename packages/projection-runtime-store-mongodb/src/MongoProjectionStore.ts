@@ -129,13 +129,13 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
     }
-    const applicationId = request.additionalWrites && request.progress.strategy === 'none' ? randomUUID() : undefined;
+    const writeId = randomUUID();
     try {
       await this.initializeProjectionSourceCommitStore();
       const candidate = snapshot && this.sourceSnapshots.get(snapshot);
       const observed = snapshot && candidate && matchesSourceSnapshot(request, candidate)
         ? { loaded: candidate, captures: matchNativeProjectionCaptures(request, candidate.snapshot, snapshot) } : undefined;
-      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), observed, applicationId, snapshot !== undefined);
+      const result = await commitMongoV2(request, this.options, this.createTransactionExecutor(), writeId, observed, snapshot !== undefined);
       if (result.status === 'committed' && !result.replayed) {
         try {
           await this.reportDedupeWarnings(request);
@@ -146,7 +146,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       return result;
     } catch (error) {
       if (!isUnknownSourceCommitOutcome(error)) throw error;
-      return this.reconcileUnknownCommit(request, applicationId);
+      return this.reconcileUnknownCommit(request, writeId);
     }
   }
 
@@ -193,10 +193,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   private async reconcileUnknownCommit(
-    request: CommitProjectionSourceCommitRequest<TState>, applicationId?: string
+    request: CommitProjectionSourceCommitRequest<TState>, writeId: string
   ): Promise<CommitProjectionSourceCommitResult> {
     if (request.additionalWrites) {
-      const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId });
+      const applicationId = request.progress.strategy === 'none' ? writeId : undefined;
+      const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId, recoveringWriteId: writeId });
       this.reportReconciliation(request, receipt?.status === 'committed' ? 'committed' : 'ambiguous');
       if (receipt && (applicationId === undefined || receipt.status === 'committed')) return receipt;
       return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };

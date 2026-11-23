@@ -133,24 +133,12 @@ type AttemptResult<TState> =
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
   | { kind: 'conflict'; reason: string };
 
-function matchesReceiptTargets(
-  receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest, replayed: boolean
-): boolean {
+function matchesReceiptTargets(receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest): boolean {
   const documents = request.finalDocuments;
-  if (receipt.kind === 'projection_changes_empty') return !('targets' in receipt) && (replayed || documents.length === 0);
-  if (!replayed && receipt.targets.length !== documents.length) return false;
-  const expected = replayed ? undefined : new Set(documents.map(({ targetDocumentId }) => targetDocumentId));
-  const seen = new Set<string>();
-  for (const target of receipt.targets) {
-    if (!target || typeof target !== 'object' || Array.isArray(target)) return false;
-    const { targetDocumentId: id, transitions, previousRevision, revision } = target;
-    if (typeof id !== 'string' || !id.length || seen.has(id) || (expected && !expected.has(id))
-      || !Array.isArray(transitions) || !transitions.length
-      || (previousRevision !== null && (!Number.isSafeInteger(previousRevision) || previousRevision < 0))
-      || !Number.isSafeInteger(revision) || revision !== (previousRevision ?? 0) + 1) return false;
-    seen.add(id);
-  }
-  return true;
+  if (receipt.kind === 'projection_changes_empty') return documents.length === 0;
+  if (receipt.targets.length !== documents.length) return false;
+  const expected = new Set(documents.map(({ targetDocumentId }) => targetDocumentId));
+  return receipt.targets.every(({ targetDocumentId }) => expected.has(targetDocumentId));
 }
 
 function hasMatchingCommitReceipt(request: CommitProjectionSourceCommitRequest, result: CommitProjectionSourceCommitCommitted): boolean {
@@ -168,7 +156,7 @@ function hasMatchingCommitReceipt(request: CommitProjectionSourceCommitRequest, 
   if (!reliable && !isCanonicalProjectionUuid(applicationId)) return false;
   // A canonical replay can describe an earlier plan, not the losing attempt's target set.
   return matchProjectionChangesReceipt(identity, receipt, applicationId) === 'committed'
-    && matchesReceiptTargets(receipt, request, result.replayed === true);
+    && (result.replayed === true || matchesReceiptTargets(receipt, request));
 }
 
 async function commitReduction<TState>(
