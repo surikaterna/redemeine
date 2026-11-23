@@ -1,7 +1,8 @@
-import { defineConfig } from 'tsup'
-import { baseConfig } from '../../tsup.config.base'
+import { defineConfig } from 'tsup';
+import { baseConfig } from '../../tsup.config.base';
 
 export default defineConfig({
   ...baseConfig,
-  entry: ['src/index.ts'],
-})
+  format: ['esm', 'cjs'],
+  entry: ['src/index.ts']
+});
