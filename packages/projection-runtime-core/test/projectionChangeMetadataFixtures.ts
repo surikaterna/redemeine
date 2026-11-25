@@ -37,6 +37,23 @@ export function withUnicodeChangeMetadata<T>(request: CommitProjectionSourceComm
   };
 }
 
+export function emptyChangeIdentifierRequests<T>(
+  first: CommitProjectionSourceCommitRequest<T>
+): readonly (readonly [name: string, request: CommitProjectionSourceCommitRequest<T>])[] {
+  const append = first.additionalWrites![0];
+  const target = append.targets[0]!;
+  const link = { operation: 'subscribe' as const, targetDocumentId: target.targetDocumentId,
+    aggregateType: 'Detail', aggregateId: 'related', expectedRevision: null };
+  return [
+    ['document target ID', withTarget(first, '')],
+    ['link target ID', { ...first, stagedLinks: [{ ...link, targetDocumentId: '' }] }],
+    ['link aggregate type', { ...first, stagedLinks: [{ ...link, aggregateType: '' }] }],
+    ['link aggregate ID', { ...first, stagedLinks: [{ ...link, aggregateId: '' }] }],
+    ['transition event ID', { ...first, commit: { ...first.commit, events: [{ ...first.commit.events[0], eventId: '' }] },
+      additionalWrites: [{ ...append, targets: [{ ...target, transitions: [{ ...target.transitions[0]!, eventId: '' }] }] }] }]
+  ];
+}
+
 export function invalidChangeMetadataRequests<T>(
   first: CommitProjectionSourceCommitRequest<T>
 ): readonly (readonly [name: string, request: CommitProjectionSourceCommitRequest<T>])[] {
@@ -51,6 +68,7 @@ export function invalidChangeMetadataRequests<T>(
     { operation: 'subscribe' as const, targetDocumentId: target.targetDocumentId, aggregateType: 'A', aggregateId: 'B:C', expectedRevision: null }
   ];
   return [
+    ...emptyChangeIdentifierRequests(first),
     ['collection surrogate', { ...first, additionalWrites: [{ ...append, collection: 'order_\ud800' }] }],
     ['target NUL', withTarget(first, 'order\0two')],
     ['projection name NUL', { ...first, projectionName: `${first.projectionName}\0` }],
