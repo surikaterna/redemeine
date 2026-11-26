@@ -2,7 +2,6 @@ import type {
   CommitProjectionSourceCommitCommitted,
   CommitProjectionSourceCommitRequest,
   ProjectionChangesReceipt,
-  ProjectionCommitDefinition,
   ProjectionSourceCommit,
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort
@@ -18,7 +17,7 @@ import {
   projectionChangesIdentity,
   validateProjectionChangeIdentityMetadata
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
+import type { ProjectionCommitDefinitionInput as ProjectionCommitDefinition, ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
 import { linksByKey, planSetRouting, routeEvent, routingLinkRequests, type SetRoutingEntry } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';

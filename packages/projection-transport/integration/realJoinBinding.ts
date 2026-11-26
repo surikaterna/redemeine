@@ -48,7 +48,7 @@ async function sourceFixture(db: Db, source: string, queueId: string, deferTail:
 }
 
 export async function seedJoinBinding(db: Db, client: MongoClient, boundSet: boolean,
-  registry: ProjectionQueueRegistryManifest, source: string, deferTail = false) {
+  registry: ProjectionQueueRegistryManifest, source: string, deferTail = false, deferAdoption = false) {
   const { queueId, manifestId, registryGeneration } = registry;
   const collection = db.collection<ProjectionTransportDocument>('transport');
   const joinedApprovals = db.collection<JoinedApproval>('approvals');
@@ -77,7 +77,7 @@ export async function seedJoinBinding(db: Db, client: MongoClient, boundSet: boo
     registryGeneration, approvalNamespace: joinedApprovals.namespace, transportNamespace: collection.namespace,
     approvedBy: 'test', approvedAt: new Date().toISOString(), inventories: [inventory] };
   await joinedApprovals.insertOne({ ...approval, digest: approvalDigest(approval) });
-  await sourceOrder.verifyJoinedCutover(queueId, source);
+  if (!deferAdoption) await sourceOrder.verifyJoinedCutover(queueId, source);
   return { indexed, docs, links, collection, sourceOrder };
 }
 

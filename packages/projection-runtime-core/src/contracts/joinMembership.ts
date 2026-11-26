@@ -23,12 +23,18 @@ export class JoinTurnBudget {
   private count = 0;
   private bytes = 0;
 
+  assertEntriesAvailable(entries: number): void {
+    if (entries > MAX_JOIN_TURN_KEYS - this.count) throw new ProjectionJoinCapacityError('Joined turn routing exceeds capacity.');
+  }
+
   add(value: string): void {
-    assertJoinIdentifier(value);
+    this.assertEntriesAvailable(1);
     // Fail before allocating the UTF-8 copy when the string alone exceeds the remaining budget.
-    if (++this.count > MAX_JOIN_TURN_KEYS || value.length > MAX_JOIN_TURN_BYTES - this.bytes) {
+    if (typeof value === 'string' && value.length > MAX_JOIN_TURN_BYTES - this.bytes) {
       throw new ProjectionJoinCapacityError('Joined turn routing exceeds capacity.');
     }
+    assertJoinIdentifier(value);
+    this.count += 1;
     this.bytes += this.encoder.encode(value).byteLength;
     if (this.bytes > MAX_JOIN_TURN_BYTES) throw new ProjectionJoinCapacityError('Joined turn routing exceeds capacity.');
   }

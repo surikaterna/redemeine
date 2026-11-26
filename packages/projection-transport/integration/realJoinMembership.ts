@@ -18,6 +18,9 @@ import { runValidReceiptRace } from './joinMembershipValidReceiptRace';
 import { runCapacityRace, runEventLocalCapacity } from './joinMembershipCapacity';
 import { runScalarBindingOrder } from './realScalarBindingOrder';
 import { runJoinRabbit } from './realJoinRabbit';
+import { runJoinSelectorRawBudget } from './joinSelectorRawBudget';
+import { runCutoverTargetPresence, runLargeCutoverIdentity } from './realJoinCutoverIdentity';
+import { runJoinApprovalCollation } from './realJoinApprovalCollation';
 
 function mongoResources(db: Db, client: MongoClient) {
   const collection = db.collection<ProjectionDocumentRecord<State>>('views');
@@ -137,6 +140,7 @@ async function main() {
         await runValidReceiptRace(suite(), scenario, true);
       }
       await runEventLocalCapacity(suite()());
+      await runJoinSelectorRawBudget(suite()());
       for (const compatibility of [false, true]) {
         for (const scenario of ['winner', 'winner-after-missing', 'capacity-released', 'fresh', 'wrong-commit',
           'unreadable', 'unacknowledged', 'none'] as const) {
@@ -148,7 +152,10 @@ async function main() {
     await runRollback(db(), client, commands);
     await runScalarBindingOrder(db(), client);
     await runJoinMembershipCutover(db(), client);
+    await runLargeCutoverIdentity(db(), client);
+    for (const insensitive of [false, true]) await runJoinApprovalCollation(db(), client, commands, insensitive);
     for (const boundSet of [true, false]) {
+      await runCutoverTargetPresence(db(), client, boundSet);
       for (const recording of [true, false]) await runJoinBinding(db(), client, boundSet, recording);
     }
     await runJoinInvalidRows(db(), client);

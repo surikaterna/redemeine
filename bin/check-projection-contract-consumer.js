@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
+const { copyFileSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 
@@ -50,6 +50,9 @@ try {
   const runtimeDirectory = join(repoRoot, 'packages/projection-runtime-core');
   pack(projectionDirectory);
   pack(runtimeDirectory);
+  for (const name of ['projection-router-core', 'projection-worker-core', 'projection-runtime-store-inmemory']) {
+    pack(join(repoRoot, 'packages', name));
+  }
 
   const tarballs = readdirSync(temporaryDirectory)
     .filter((name) => name.endsWith('.tgz'))
@@ -292,8 +295,17 @@ if (!issues.includes('definitions[0].sourceSelectors[0].normalized')
   const tsc = join(runtimeDirectory, 'node_modules/typescript/bin/tsc');
   checkTypes(tsc, 'consumer.mts', 'index.d.ts');
   checkTypes(tsc, 'consumer.cts', 'index.d.cts');
+  const authored = 'projection-authored-consumer.mts';
+  copyFileSync(join(repoRoot, 'bin/fixtures', authored), join(temporaryDirectory, authored));
+  checkTypes(tsc, authored, 'index.d.ts');
+  run(process.execPath, [tsc, '-p', 'tsconfig.json', '--noEmit', 'false', '--outDir', 'compiled'], { cwd: temporaryDirectory });
+  run(process.execPath, ['--input-type=module', '--eval', `
+import { InMemoryProjectionStore } from '@redemeine/projection-runtime-store-inmemory';
+import { verifyAuthoredDispatch } from './compiled/projection-authored-consumer.mjs';
+await verifyAuthoredDispatch(new InMemoryProjectionStore());
+`], { cwd: temporaryDirectory });
   run(process.execPath, [join(temporaryDirectory, 'runtime.mjs')]);
-  console.log('✅ Installed projection ESM/CJS and runtime-core contract checks passed.');
+  console.log('✅ Installed projection ESM/CJS contracts and authored native set dispatch passed.');
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

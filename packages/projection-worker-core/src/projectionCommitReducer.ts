@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 import type {
   CommitProjectionSourceCommitRequest,
   ProjectionChangeTransition,
-  ProjectionCommitDefinition,
   ProjectionContext,
   ProjectionJoinMembership,
   ProjectionSourceCommit,
@@ -18,6 +17,7 @@ import {
   projectionUuidToBase64Url22, sealProjectionCaptureRequest
 } from '@redemeine/projection-runtime-core';
 import { produce, type Draft } from 'immer';
+import type { ProjectionCommitDefinitionInput as ProjectionCommitDefinition } from './commitCoordinatorContracts';
 import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState, type SetRoutingEntry } from './projectionCommitRouting';
 import { JoinMembershipStaging, membershipFences, routeStagedSetEvent } from './joinMembershipReduction';
 

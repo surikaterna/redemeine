@@ -11,7 +11,7 @@ import {
 import { coordinator, fixtureOptions, manifest, orderId, path, snapshot, type State, turn } from './joinMembershipFixture';
 import { completed } from './joinMembershipScenarios';
 
-async function seedCutover(db: Db, client: MongoClient, source: string) {
+export async function seedCutover(db: Db, client: MongoClient, source: string) {
   const registry = manifest('forward-cutover', { [source]: 1 });
   const { queueId, manifestId, registryGeneration } = registry;
   const collection = db.collection<ProjectionTransportDocument>('transport');
@@ -31,8 +31,8 @@ async function seedCutover(db: Db, client: MongoClient, source: string) {
     getIndexName: () => 'synthetic-source-index',
     getQueryObservation: () => ({ cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator', maxReturnedBytes: 0,
       maxReturnedDocuments: 0, sourceProbeMethod: 'findOne.hint + find.sort(-1).hint.limit(1)' }) };
-  const makeTransport = () => new MongoProjectionTransportStore({ collection, joinedApprovals, mongoClient: client,
-    manifest: registry, joinedInventories: [{ ...scope, links: members, documents: docs }], cutoverReadiness: { reader } });
+  const makeTransport = (links = members) => new MongoProjectionTransportStore({ collection, joinedApprovals, mongoClient: client,
+    manifest: registry, joinedInventories: [{ ...scope, links, documents: docs }], cutoverReadiness: { reader } });
   const transport = makeTransport();
   const baseline: AcceptedBaseline = { version: 2, kind: 'existing', queueBindingId: queueId, manifestId, registryGeneration,
     sourceId: source, startAnchor: 1, lastAcceptedSequence: 0, operator: 'operator', acceptedAt: new Date().toISOString(),

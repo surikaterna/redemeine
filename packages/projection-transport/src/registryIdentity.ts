@@ -1,6 +1,6 @@
 import type { ProjectionDeduplicationStrategy, ProjectionQueueRegistryManifest,
   ProjectionRegistryDefinitionManifest } from '@redemeine/projection-runtime-core';
-import type { ProjectionCommitRegistryDefinition } from '@redemeine/projection-worker-core';
+import type { ProjectionCommitRegistryInput } from '@redemeine/projection-worker-core';
 import { projectionRegistryDigest } from './registryDigest';
 
 export interface ProjectionStreamConfiguration {
@@ -56,7 +56,7 @@ function normalizeStream(value: { aggregate: { aggregateType: string }; handlers
     ...(value.candidateSelectors ? { candidateSelectorKeys: Object.keys(value.candidateSelectors).sort() } : {}) };
 }
 
-export function normalizeProjectionRegistryDefinitions<TState>(values: readonly ProjectionCommitRegistryDefinition<TState>[],
+export function normalizeProjectionRegistryDefinitions<TState>(values: readonly ProjectionCommitRegistryInput<TState>[],
   identityConfigurations: readonly unknown[]): readonly ProjectionDeploymentDefinition[] {
   if (values.length !== identityConfigurations.length) throw new Error('Identity configuration coverage mismatch.');
   return values.map(({ generation, definition, projectionChanges }, index) => ({

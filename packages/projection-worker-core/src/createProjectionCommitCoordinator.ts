@@ -7,12 +7,13 @@ import {
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionDispatchBindingProof, ProjectionCommitDefinition, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionDispatchBindingProof, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
-  ProjectionCommitCoordinatorOptions,
+  ProjectionCommitCoordinatorInput,
   ProjectionCommitCoordinatorOutcome,
-  ProjectionCommitRegistryDefinition,
+  ProjectionCommitDefinitionInput,
+  ProjectionCommitRegistryInput,
   ProjectionDefinitionCommitResult
 } from './commitCoordinatorContracts';
 import { executeProjectionDefinition } from './projectionDefinitionExecutor';
@@ -21,7 +22,7 @@ import { createProjectionLaneScheduler, type ProjectionLaneScheduler } from './t
 const DEFAULT_MAX_GAP_PAGES = 1_000;
 const DEFAULT_MAX_CONFLICT_RETRIES = 3;
 
-function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TState>): void {
+function assertOptions<TState>(options: ProjectionCommitCoordinatorInput<TState>): void {
   const manifestIssues = validateProjectionQueueRegistryManifest(options.manifest);
   if (manifestIssues.length > 0) throw new Error(`Invalid registry manifest: ${manifestIssues.join(',')}`);
   if (!isCompleteCommitRangeCapability(options.rangeReader.capability)) throw new Error('Complete unsliced commit range capability is required.');
@@ -73,7 +74,7 @@ function failureOutcome(
   return { status: terminal ? 'terminal' : 'retryable', reason, processedSequences, definitions };
 }
 
-function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>): ProjectionCommitDefinition<TState> {
+function freezeDefinition<TState>(definition: ProjectionCommitDefinitionInput<TState>): ProjectionCommitDefinitionInput<TState> {
   const copyStream = <T extends { aggregate: object; handlers: Record<string, unknown>; candidateSelectors?: object }>(stream: T): T => {
     const copy = { ...stream, aggregate: Object.freeze({ ...stream.aggregate }), handlers: { ...stream.handlers },
       ...(stream.candidateSelectors ? { candidateSelectors: Object.freeze({ ...stream.candidateSelectors }) } : {}) };
@@ -92,7 +93,7 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>
       ? { warnings: Object.freeze({ ...definition.deduplication.warnings }) }
       : {})
   };
-  const copy: ProjectionCommitDefinition<TState> = {
+  const copy: ProjectionCommitDefinitionInput<TState> = {
     ...definition,
     fromStream: copyStream(definition.fromStream),
     joinStreams,
@@ -105,8 +106,8 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinition<TState>
 }
 
 interface CoordinatorRuntime<TState> {
-  options: ProjectionCommitCoordinatorOptions<TState>;
-  definitions: readonly ProjectionCommitRegistryDefinition<TState>[];
+  options: ProjectionCommitCoordinatorInput<TState>;
+  definitions: readonly ProjectionCommitRegistryInput<TState>[];
   dispatchProof: ProjectionDispatchBindingProof;
   sourceStartAnchors: Readonly<Record<string, number>>;
   sourceLanes: ProjectionLaneScheduler;
@@ -290,7 +291,7 @@ async function processInSourceLane<TState>(
   return processCandidates(runtime, commit, [...recovered.commits, commit], coverage, startAnchor, admission.strategyScope);
 }
 
-function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TState>): CoordinatorRuntime<TState> {
+function createRuntime<TState>(options: ProjectionCommitCoordinatorInput<TState>): CoordinatorRuntime<TState> {
   const definitions = options.definitions.map((entry) => Object.freeze({
     generation: entry.generation,
     definition: freezeDefinition(entry.definition),
@@ -309,7 +310,7 @@ function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TStat
 }
 
 export function createProjectionCommitCoordinator<TState = unknown>(
-  options: ProjectionCommitCoordinatorOptions<TState>
+  options: ProjectionCommitCoordinatorInput<TState>
 ): ProjectionCommitCoordinator {
   assertOptions(options);
   const runtime = createRuntime(options);
