@@ -10,6 +10,8 @@ The builder infers event payload types from your aggregate's `pure.eventProjecto
 
 For native multi-target joins, use `.join(aggregate, handlers)` with `.joinRight(aggregate, selectors)`. See [join membership and forward cutover](../../docs/projection-join-memberships.md).
 
+To seed an explicitly attached membership, declare a typed `joinInitializer` and register it with `.onJoinInitialize()`. This reads a persisted aggregate snapshot or named projection document once on attachment; live handlers still receive aggregate events. `ctx.subscribeTo(aggregate, id)` remains forward-only. See [join initialization and reader requirements](../../docs/projection-join-memberships.md#initialize-a-new-membership).
+
 Three mechanisms reuse write-model projectors instead of duplicating folding logic:
 
 - **`inherit`** token — delegates a single event key to the aggregate's `applyToDraft`.
@@ -178,6 +180,8 @@ For plain object and array state, mutate draft fields directly. The draft is a p
 The native Mongo path does not freeze state to enforce these rules. Treat Immer’s `original(draft)` and `current(draft)` as read-only, and do not retain or mutate baseline, result, or patch references after handoff. If you assign a mutable object, do not mutate it through another alias after the recipe.
 
 Commit-native hooks have the same Immer value semantics as handlers. Existing `Map` and `Set` values cannot be used as collection drafts without Immer’s MapSet plugin, which the worker does not enable. Collections newly assigned during the recipe are raw values, not collection drafts. Portable JSON is the supported recording domain; collections and finalized `-0` are outside it. Enable runtime `stateValidation` for strict diagnostics. With recording off, collection storage is not guaranteed across adapters.
+
+For BSON `Date` in Mongo state with history and portability diagnostics off, replace the field: `const old = draft.shipBy; const next = new Date(old.getTime()); next.setUTCFullYear(2027); draft.shipBy = next;`. Unlike legacy full-document writes, commit-native deltas do not track in-place Date setters: a turn can advance revision and progress without saving the date change. Store ISO 8601 strings or epoch milliseconds for recorded history.
 
 ## Reusing Aggregate Projectors
 

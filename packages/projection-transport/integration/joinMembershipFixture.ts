@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
-  createProjection, type ProjectionCommitDefinition, type ProjectionJsonObject,
+  createProjection, createProjectionDispatchBindingProof, type ProjectionCommitDefinition, type ProjectionJsonObject,
   type ProjectionQueueRegistryManifest, type ProjectionSourceCommit, type ProjectionSourceCommitStorePort
 } from '@redemeine/projection-runtime-core';
 import { createProjectionCommitCoordinator, type ProjectionCommitCoordinatorOptions } from '@redemeine/projection-worker-core';
@@ -72,8 +72,8 @@ export function fixtureOptions(store: ProjectionSourceCommitStorePort<State>, co
     store, queueBindingId: 'join-set', manifest: manifest(), maxCommits: 10, maxBytes: 2_000_000,
     definitions: [{ generation: 'set-generation', definition: definition(deduplication), projectionChanges: 'join-changes' }],
     sourceOrder: {
-      async admitForDispatch(commit, queueBindingId, scope) {
-        return { dispatch: true, startAnchor: 0, ...(scope ? { boundChangeRecordingScope: scope } : {}),
+      async admitForDispatch(commit, queueBindingId, proof) {
+        return { dispatch: true, startAnchor: 0, boundDispatchProof: proof,
           coverage: { queueBindingId, sourceId: commit.streamId, sequence: coverage.get(commit.streamId) ?? null },
           strategyScope: [{ projectionName: 'boards', generation: 'set-generation', strategy: deduplication.strategy,
             stableSingleTarget: false }] };
@@ -98,6 +98,11 @@ export function fixtureOptions(store: ProjectionSourceCommitStorePort<State>, co
 
 export function coordinator(options: ProjectionCommitCoordinatorOptions<State>) {
   return createProjectionCommitCoordinator(options);
+}
+
+export async function fixtureCoverage(options: ProjectionCommitCoordinatorOptions<State>, commit: ProjectionSourceCommit) {
+  return (await options.sourceOrder.admitForDispatch(commit, options.queueBindingId,
+    createProjectionDispatchBindingProof(options.manifest))).coverage.sequence;
 }
 
 export function snapshot(store: ProjectionSourceCommitStorePort<State>, sourceId: string,

@@ -36,7 +36,7 @@ await writeFile(resolve(output, 'scope.sha256'), (await Promise.all([...scope].s
 await writeFile(resolve(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies,
   devDependencies: { typescript: '5.9.3', '@types/node': '24.13.2' } }, null, 2));
 await writeFile(resolve(consumer, 'pnpm-workspace.yaml'), JSON.stringify({ storeDir: store, overrides: {
-  ...dependencies, immer: '10.2.0', zod: '4.4.3'
+  ...dependencies, zod: '4.4.3'
 } }, null, 2));
 run('pnpm', ['install', '--offline', '--ignore-scripts']);
 for (const name of ['kernel', 'aggregate', 'demeine-interop']) {

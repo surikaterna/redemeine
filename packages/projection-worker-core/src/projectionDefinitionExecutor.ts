@@ -1,10 +1,16 @@
 import type {
+  CommitProjectionSourceCommitCommitted,
+  CommitProjectionSourceCommitRequest,
+  ProjectionChangesReceipt,
   ProjectionSourceCommit,
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort
 } from '@redemeine/projection-runtime-core';
 import {
   isCanonicalProjectionUuid,
+  checkedJoinMembershipKey,
+  ProjectionJoinMembershipValidationError,
+  ProjectionPersistedJoinMembershipError,
   JoinTurnBudget,
   joinMembershipKey,
   matchProjectionChangesReceipt,
@@ -64,9 +70,10 @@ function failed(
     : { status, retryable: true, reason, attempts };
 }
 
-function loadFailure(reason: string, attempts: number): ProjectionDefinitionCommitOutcome {
-  return failed(reason.startsWith('Detected legacy writer') || reason === 'Joined turn routing exceeds capacity.'
-    ? 'terminal' : 'ambiguous', reason, attempts);
+function loadFailure(error: unknown, attempts: number): ProjectionDefinitionCommitOutcome {
+  const reason = error instanceof Error ? error.message : 'snapshot load failed';
+  return failed(error instanceof ProjectionJoinMembershipValidationError || reason.startsWith('Detected legacy writer')
+    ? 'terminal' : 'transient', reason, attempts);
 }
 
 async function loadSnapshot<TState>(
@@ -131,6 +138,22 @@ async function checkDeferredReceipt<TState>(
   }
 }
 
+async function resolveMembershipReadFailure<TState>(options: ProjectionDefinitionExecutorOptions<TState>,
+  commit: ProjectionSourceCommit, error: ProjectionJoinMembershipValidationError, attempts: number): Promise<ProjectionDefinitionCommitOutcome> {
+  const failure = loadFailure(error, attempts);
+  if (!(error instanceof ProjectionPersistedJoinMembershipError) || options.projectionChanges === undefined
+    || options.definition.deduplication.strategy === 'none') return failure;
+  try {
+    const proof = (await loadSnapshot(options, commit, [], [], 'receipt')).changeReceipt;
+    if (proof === 'committed') return { status: 'deduplicated', attempts };
+    if (proof === 'missing') return failure;
+    if (proof === 'mismatch') return failed('terminal', 'projection change source commit or collection identity mismatch', attempts);
+    return failed('ambiguous', 'Store did not verify the projection_changes receipt.', attempts);
+  } catch (error) {
+    return failed('ambiguous', error instanceof Error ? error.message : 'receipt lookup failed', attempts);
+  }
+}
+
 function mergeLinks(
   current: readonly { aggregateType: string; aggregateId: string }[],
   additions: readonly { aggregateType: string; aggregateId: string }[],
@@ -151,7 +174,7 @@ function setMemberships<TState>(snapshot: ProjectionSourceCommitSnapshot<TState>
 
 function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[]) {
   const budget = new JoinTurnBudget();
-  for (const link of links) budget.add(joinMembershipKey(link.aggregateType, link.aggregateId));
+  for (const link of links) budget.add(checkedJoinMembershipKey(link.aggregateType, link.aggregateId));
 }
 
 type AttemptResult<TState> =
@@ -159,6 +182,32 @@ type AttemptResult<TState> =
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
   | { kind: 'read_seeds'; inputs: readonly JoinSeedInput[] }
   | { kind: 'conflict'; reason: string };
+
+function matchesReceiptTargets(receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest): boolean {
+  const documents = request.finalDocuments;
+  if (receipt.kind === 'projection_changes_empty') return documents.length === 0;
+  if (receipt.targets.length !== documents.length) return false;
+  const expected = new Set(documents.map(({ targetDocumentId }) => targetDocumentId));
+  return receipt.targets.every(({ targetDocumentId }) => expected.has(targetDocumentId));
+}
+
+function hasMatchingCommitReceipt(request: CommitProjectionSourceCommitRequest, result: CommitProjectionSourceCommitCommitted): boolean {
+  const identity = projectionChangesIdentity(request);
+  if (!identity) return true;
+  const writes = result.additionalWrites;
+  const empty = result.emptyChangeReceipt;
+  if (writes !== undefined && (empty !== undefined || !Array.isArray(writes)
+    || writes.length !== 1 || writes[0]?.kind !== 'projection_changes')) return false;
+  if (empty !== undefined && empty?.kind !== 'projection_changes_empty') return false;
+  const receipt = writes?.[0] ?? empty;
+  if (!receipt) return false;
+  const reliable = request.progress.strategy !== 'none';
+  const applicationId = reliable ? undefined : receipt.applicationId;
+  if (!reliable && !isCanonicalProjectionUuid(applicationId)) return false;
+  // A canonical replay can describe an earlier plan, not the losing attempt's target set.
+  return matchProjectionChangesReceipt(identity, receipt, applicationId) === 'committed'
+    && (result.replayed === true || matchesReceiptTargets(receipt, request));
+}
 
 async function commitReduction<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>,
@@ -171,17 +220,15 @@ async function commitReduction<TState>(
     const result = snapshot ? await options.store.commitProjectionSourceCommit(reduction.request, snapshot)
       : await options.store.commitProjectionSourceCommit(reduction.request);
     if (result.status === 'committed') {
-      const append = reduction.request.additionalWrites?.[0];
-      const identity = projectionChangesIdentity(reduction.request);
-      const receipt = result.additionalWrites?.[0] ?? result.emptyChangeReceipt;
-      const applicationId = reduction.request.progress.strategy === 'none' ? receipt?.applicationId : undefined;
-      if (identity && (!receipt || (reduction.request.progress.strategy === 'none' && !isCanonicalProjectionUuid(applicationId))
-        || matchProjectionChangesReceipt(identity, receipt, applicationId) === 'mismatch'
-        || (append?.targets.length && receipt.kind !== 'projection_changes'))) {
+      if ((result.replayed !== undefined && typeof result.replayed !== 'boolean')
+        || (result.replayed === true && reduction.request.progress.strategy === 'none')) {
+        return { kind: 'done', outcome: failed('terminal', 'Store returned an invalid commit replay flag.', attempt) };
+      }
+      if (!hasMatchingCommitReceipt(reduction.request, result)) {
         return { kind: 'done', outcome: failed('terminal', 'Store did not return a matching projection_changes receipt.', attempt) };
       }
       const outcome = result.commitSequence === commit.commitSequence
-        ? { status: result.replayed ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
+        ? { status: result.replayed === true ? 'deduplicated' as const : 'committed' as const, attempts: attempt }
         : failed('terminal', 'Store returned a mismatched commit sequence.', attempt);
       return { kind: 'done', outcome };
     }
@@ -211,9 +258,11 @@ async function executeAttempt<TState>(
     try {
       snapshot = await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'snapshot load failed';
+      if (error instanceof ProjectionJoinMembershipValidationError) {
+        return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
+      }
       return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
-        ?? loadFailure(reason, attempt) };
+        ?? loadFailure(error, attempt) };
     }
     const replay = replayOutcome(options, commit, snapshot, attempt, native);
     if (replay) return { kind: 'done', outcome: replay };
@@ -229,12 +278,16 @@ async function executeAttempt<TState>(
         options.projectionChanges, options.stateValidation, setPlan && memberships
           ? { events: setPlan, memberships, ...(seeds ? { seeds } : {}) } : undefined);
     } catch (error) {
+      if (error instanceof ProjectionJoinMembershipValidationError) {
+        return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
+      }
       return { kind: 'done', outcome: failed('terminal', error instanceof Error ? error.message : 'Invalid membership snapshot.', attempt) };
     }
     if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
     if (reduction.status === 'needs_join_seeds') return { kind: 'read_seeds', inputs: reduction.inputs };
     if (reduction.status === 'terminal') {
-      const receipt = snapshot.changeReceipt === undefined ? await checkDeferredReceipt(options, commit, attempt) : undefined;
+      const receipt = !reduction.invalidMembershipInput && snapshot.changeReceipt === undefined
+        ? await checkDeferredReceipt(options, commit, attempt) : undefined;
       return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
     }
     if (reduction.status === 'deduplicated') {
@@ -282,7 +335,8 @@ export async function executeProjectionDefinition<TState>(
     else if (setMode) initial = await loadSnapshot(options, commit, [], links, 'turn');
     else if (links.length) initial = await loadSnapshot(options, commit, [], links, 'discovery');
   } catch (error) {
-    return loadFailure(error instanceof Error ? error.message : 'snapshot load failed', 0);
+    if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
+    return loadFailure(error, 0);
   }
   const replay = replayOutcome(options, commit, initial, 0, native && !lookupEarly);
   if (replay) return replay;
@@ -293,6 +347,7 @@ export async function executeProjectionDefinition<TState>(
     targets = setPlan ? collectSetTargets(setPlan, [], setMemberships(initial, links))
       : new Set(provisionalTargets(options.definition, commit, initial));
   } catch (error) {
+    if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
     return await checkDeferredReceipt(options, commit, 0)
       ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
   }

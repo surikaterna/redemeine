@@ -9,6 +9,7 @@ export type {
 export * from './contracts/joinMembership';
 export * from './joinSeed';
 export * from './contracts/joinSeedProvenance';
+export * from './contracts/dispatchBinding';
 export { selectJoinCandidates, selectJoinTargets, mergeJoinTargets } from './joinCandidateRouting';
 export type {
   ProjectionDedupeWarningPolicy,

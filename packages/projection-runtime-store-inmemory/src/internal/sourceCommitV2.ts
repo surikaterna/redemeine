@@ -285,7 +285,8 @@ export const commitV2 = <TState>(
     const change = receipt?.additionalWrites?.[0] ?? receipt?.emptyChangeReceipt;
     if (receipt && change) {
       return { result: matchProjectionChangesReceipt(identity, change) === 'committed'
-        ? structuredClone(receipt) : rejectMalformed('projection change source commit or collection identity mismatch') };
+        ? { ...structuredClone(receipt), ...(allowCapture || request.joinMembershipFences !== undefined ? { replayed: true } : {}) }
+        : rejectMalformed('projection change source commit or collection identity mismatch') };
     }
   }
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);

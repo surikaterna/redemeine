@@ -26,9 +26,9 @@ function noneCoordinator(store: MongoProjectionStore<State>, commit: ProjectionS
         executableCodeArtifactDigest: digest }, sourceStartAnchors: { [commit.streamId]: anchor }
     },
     sourceOrder: {
-      async admitForDispatch(sourceCommit, queueBindingId) {
+      async admitForDispatch(sourceCommit, queueBindingId, proof) {
         return { dispatch: true, startAnchor: anchor, coverage: { sourceId: sourceCommit.streamId, queueBindingId, sequence: coverage },
-          boundChangeRecordingScope: [{ projectionName: definition.name, generation: 'g1', projectionChanges: 'none_views' }],
+          boundDispatchProof: proof,
           strategyScope: [{ projectionName: definition.name, generation: 'g1', strategy: 'none', stableSingleTarget: true }] };
       },
       async advanceCoverage(request) {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {
-  createProjection, joinInitializer, type JoinSeedPosition, type JoinSeedProvenance,
-  type ProjectionChangeRecordingScope, type ProjectionChangesRecord, type ProjectionSourceCommit,
+  createProjection, createProjectionDispatchBindingProof, joinInitializer, matchesProjectionDispatchBinding,
+  ProjectionDispatchBindingMismatchError, type JoinSeedPosition, type JoinSeedProvenance,
+  type ProjectionChangesRecord, type ProjectionDispatchBindingProof, type ProjectionSourceCommit,
   type ProjectionSourceCommitStorePort, type ProjectionSourceCoverageAdvance
 } from '@redemeine/projection-runtime-core';
 import {
@@ -96,16 +97,19 @@ export function fixtureRuntime(backend: Backend, fixture: { definition: Projecti
   const coverage = new Map<string, number>();
   const m = manifest('seed-queue');
   const { projectionChanges: _, ...scope } = m.definitions[0]!;
+  const registry = { ...m, definitions: [{
+    ...scope, generation, joinSeeds: joinSeedDeployments([fixture.reader]),
+    ...(recording ? { projectionChanges: 'join-changes' } : {})
+  }] };
+  const boundDispatchProof = createProjectionDispatchBindingProof(registry);
   const options = {
-    queueBindingId: m.queueId, manifest: { ...m, definitions: [{
-      ...scope, generation, joinSeeds: joinSeedDeployments([fixture.reader]),
-      ...(recording ? { projectionChanges: 'join-changes' } : {})
-    }] }, maxBytes: 2_000_000, maxCommits: 10,
+    queueBindingId: m.queueId, manifest: registry, maxBytes: 2_000_000, maxCommits: 10,
     definitions: [{ generation, definition: fixture.definition, joinSeedReaders: [fixture.reader],
       ...(recording ? { projectionChanges: 'join-changes' } : {}) }],
     sourceOrder: {
-      async admitForDispatch(commit: ProjectionSourceCommit, queueBindingId: string, scope?: readonly ProjectionChangeRecordingScope[]) {
-        return { dispatch: true as const, startAnchor: 0, ...(scope ? { boundChangeRecordingScope: scope } : {}),
+      async admitForDispatch(commit: ProjectionSourceCommit, queueBindingId: string, expected: ProjectionDispatchBindingProof) {
+        if (!matchesProjectionDispatchBinding(expected, boundDispatchProof)) throw new ProjectionDispatchBindingMismatchError();
+        return { dispatch: true as const, startAnchor: 0, boundDispatchProof,
           coverage: { queueBindingId, sourceId: commit.streamId, sequence: coverage.get(commit.streamId) ?? null },
           strategyScope: [{ projectionName: 'boards', generation, strategy: 'own_record' as const, stableSingleTarget: false }] };
       },

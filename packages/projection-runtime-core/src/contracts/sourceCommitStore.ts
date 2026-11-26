@@ -1,5 +1,5 @@
 import type { ProjectionSourceCommit } from './sourceCommit';
-import { type ProjectionJoinMembership, type ProjectionJoinMembershipFence, validateJoinMembershipFences } from './joinMembership';
+import { assertJoinIdentifier, type ProjectionJoinMembership, type ProjectionJoinMembershipFence, validateJoinMembershipFences } from './joinMembership';
 import type { ProjectionUuidBase64Url22 } from './uuidCodec';
 import {
   type ProjectionChangesAppend,
@@ -93,7 +93,7 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
 export interface CommitProjectionSourceCommitCommitted {
   version: 1;
   status: 'committed';
-  /** Native prepared turns may resolve a retry to its already committed canonical receipt. */
+  /** True when this result acknowledges a reliable turn committed by an earlier invocation. */
   replayed?: true;
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;
@@ -143,6 +143,13 @@ export function validateCommitProjectionSourceCommitRelationships<TState>(
     || request.progress.strategy !== 'own_record')) return 'Join initialization requires own_record and membership fences.';
   if (request.joinMembershipFences !== undefined) {
     if (request.stagedLinks.length || request.progress.strategy === 'in_document') return 'Join membership sets cannot use scalar links or in_document.';
+    try {
+      assertJoinIdentifier(request.projectionName);
+      assertJoinIdentifier(request.projectionGeneration);
+      for (const document of request.finalDocuments) assertJoinIdentifier(document.targetDocumentId);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid joined identifier.';
+    }
     const invalid = validateJoinMembershipFences(request.joinMembershipFences);
     if (invalid) return invalid;
     if (!request.joinSeedVersion && request.joinMembershipFences.some((fence) => fence.seeds !== undefined)) {

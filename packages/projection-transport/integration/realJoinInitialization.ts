@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import {
+  createProjectionDispatchBindingProof, matchesProjectionDispatchBinding, ProjectionDispatchBindingMismatchError,
   projectionUuidToBase64Url22, type ProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
 import { createProjectionCommitCoordinator } from '@redemeine/projection-worker-core';
@@ -12,6 +13,7 @@ import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory
 import { manifest, orderId } from './joinMembershipFixture';
 import { conflict, crossSourceMismatch, failures, order, proven, providerRace, sourceOnlyMetadata, unknown } from './joinSeedScenarios';
 import { evidence, fixtureRuntime, OrderProjection, read, type Backend, type State, viewFixture } from './joinSeedFixture';
+import { recoverSeedReceipt } from './joinSeedReceiptRace';
 
 function memory(): Backend {
   const store = new InMemoryProjectionStore<State>();
@@ -39,6 +41,8 @@ async function allCases(backend: () => Backend) {
   await providerRace(backend());
   await conflict(backend(), false);
   await conflict(backend(), true);
+  await recoverSeedReceipt(backend(), false);
+  await recoverSeedReceipt(backend(), true);
 }
 
 async function rollback(db: Db, client: MongoClient) {
@@ -75,14 +79,18 @@ async function coherentProducer(db: Db, client: MongoClient) {
   const producer = { projectionName: OrderProjection.name, generation: 'producer-g1',
     strategy: 'in_document' as const, stableSingleTarget: true };
   let sequence: number | null = null;
-  const runtime = createProjectionCommitCoordinator({ manifest: { ...m, definitions: [{
+  const registry = { ...m, definitions: [{
     projectionName: producer.projectionName, generation: producer.generation,
     sourceSelectors: ['Order'], definitionHash: m.manifestId
-  }] }, queueBindingId: m.queueId, store, definitions: [{ generation: producer.generation, definition: OrderProjection }],
+  }] };
+  const boundDispatchProof = createProjectionDispatchBindingProof(registry);
+  const runtime = createProjectionCommitCoordinator({ manifest: registry,
+  queueBindingId: m.queueId, store, definitions: [{ generation: producer.generation, definition: OrderProjection }],
   maxBytes: 10000, maxCommits: 2, sourceOrder: {
-    async admitForDispatch(commit: ProjectionSourceCommit, queueBindingId, scope) {
+    async admitForDispatch(commit: ProjectionSourceCommit, queueBindingId, expected) {
+      if (!matchesProjectionDispatchBinding(expected, boundDispatchProof)) throw new ProjectionDispatchBindingMismatchError();
       return { dispatch: true, coverage: { queueBindingId, sourceId: commit.streamId, sequence },
-        startAnchor: 0, strategyScope: [producer], ...(scope ? { boundChangeRecordingScope: scope } : {}) };
+        startAnchor: 0, strategyScope: [producer], boundDispatchProof };
     },
     async advanceCoverage({ queueBindingId, sourceId, sequence: next }) {
       sequence = next;
@@ -128,6 +136,11 @@ async function main() {
     await rollback(db(), client);
     await coherentProducer(db(), client);
     await latestAggregateSnapshot(db(), client);
+    const corruptDb = db();
+    await recoverSeedReceipt(mongo(corruptDb, client), true, async () => {
+      const result = await corruptDb.collection('memberships').updateOne({}, { $set: { seeds: [null] } });
+      assert.equal(result.modifiedCount, 1);
+    });
     console.log('Join initialization: replica-set scenarios passed, including coherent producer read and receipt rollback.');
   } finally {
     for (const database of databases) await database.dropDatabase();

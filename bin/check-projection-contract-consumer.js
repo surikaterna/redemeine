@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-const { execFileSync } = require('node:child_process');
-const { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
+const assert = require('node:assert/strict');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { copyFileSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 
 const repoRoot = resolve(__dirname, '..');
-const temporaryDirectory = mkdtempSync(join(tmpdir(), 'redemeine-projection-consumer-'));
+const temporaryDirectory = realpathSync(mkdtempSync(join(tmpdir(), 'redemeine-projection-consumer-')));
 
 function run(command, argumentsList, options = {}) {
   execFileSync(command, argumentsList, { stdio: 'inherit', ...options });
@@ -14,6 +15,34 @@ function run(command, argumentsList, options = {}) {
 
 function pack(packageDirectory) {
   run('pnpm', ['pack', '--pack-destination', temporaryDirectory], { cwd: packageDirectory });
+}
+
+function checkTypes(tsc, consumer, declaration) {
+  writeFileSync(join(temporaryDirectory, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      noEmit: true,
+      exactOptionalPropertyTypes: true,
+      noUncheckedIndexedAccess: true,
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      target: 'ES2022',
+      skipLibCheck: false,
+      types: []
+    },
+    files: [consumer]
+  }));
+  const result = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.json', '--listFiles'], {
+    cwd: temporaryDirectory,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit']
+  });
+  if (result.error) throw result.error;
+  assert.equal(result.status, 0, result.stdout);
+  assert.ok(
+    result.stdout.split(/\r?\n/).map((file) => resolve(file)).includes(join(temporaryDirectory, 'node_modules/@redemeine/projection/dist', declaration)),
+    `${consumer} did not load the installed ${declaration}`
+  );
 }
 
 try {
@@ -32,21 +61,8 @@ try {
   ], { cwd: temporaryDirectory });
 
   writeFileSync(join(temporaryDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
-  writeFileSync(join(temporaryDirectory, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: {
-      strict: true,
-      noEmit: true,
-      exactOptionalPropertyTypes: true,
-      module: 'NodeNext',
-      moduleResolution: 'NodeNext',
-      target: 'ES2022',
-      skipLibCheck: false
-    },
-    files: ['consumer.ts', 'join-initializer.ts']
-  }));
-  writeFileSync(join(temporaryDirectory, 'join-initializer.ts'),
-    readFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.ts'), 'utf8'));
-  writeFileSync(join(temporaryDirectory, 'consumer.ts'), `
+  copyFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.ts'), join(temporaryDirectory, 'join-initializer.mts'));
+  writeFileSync(join(temporaryDirectory, 'consumer.mts'), `
 import {
   createProjection,
   inherit,
@@ -220,8 +236,38 @@ const invalidAnchors: ProjectionQueueRegistryManifest = { ...manifest, sourceSta
 void [wrongPartialState, unsafePartialNarrowState, wrongExtended, wrongExplicitEvent, unsafeWideEventSource, unsafeNarrowStateSource, invalidCheckpoint, invalidNone, unboundedRange, unboundManifest, invalidSelectors, invalidAnchors];
 `);
 
+  writeFileSync(join(temporaryDirectory, 'consumer.cts'), `
+import projection = require('@redemeine/projection');
+const definition: projection.ProjectionDefinition<{ count: number }> =
+  projection.createProjection('cjs', () => ({ count: 0 })).build();
+definition.initialState('one').count.toFixed();
+// @ts-expect-error The CommonJS builder retains the inferred state.
+projection.createProjection('cjs', () => ({ count: 0 })).build().initialState('one').count.toUpperCase();
+`);
+
   writeFileSync(join(temporaryDirectory, 'runtime.mjs'), `
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { createProjection } from '@redemeine/projection';
 import { validateProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
+
+const name = '@redemeine/projection';
+const require = createRequire(import.meta.url);
+const dist = new URL('./node_modules/@redemeine/projection/dist/', import.meta.url);
+assert.equal(import.meta.resolve(name), new URL('index.js', dist).href);
+assert.equal(require.resolve(name), fileURLToPath(new URL('index.cjs', dist)));
+for (const create of [createProjection, require(name).createProjection]) {
+  const projection = create('packed-view', (id) => ({ id, count: 0 }))
+    .from({ aggregateType: 'counter', pure: { eventProjectors: {} } }, {
+      incremented: (state) => { state.count += 1; }
+    })
+    .build();
+  const state = projection.initialState('one');
+  projection.fromStream.handlers.incremented(state, { type: 'incremented', payload: {} }, {});
+  assert.deepEqual(state, { id: 'one', count: 1 });
+}
+
 const digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const issues = validateProjectionQueueRegistryManifest({
   version: 1,
@@ -245,9 +291,11 @@ if (!issues.includes('definitions[0].sourceSelectors[0].normalized')
 `);
 
   const tsc = join(runtimeDirectory, 'node_modules/typescript/bin/tsc');
-  run(process.execPath, [tsc, '-p', join(temporaryDirectory, 'tsconfig.json')]);
+  checkTypes(tsc, 'consumer.mts', 'index.d.ts');
+  checkTypes(tsc, 'consumer.cts', 'index.d.cts');
+  checkTypes(tsc, 'join-initializer.mts', 'index.d.ts');
   run(process.execPath, [join(temporaryDirectory, 'runtime.mjs')]);
-  console.log('✅ Installed projection contract consumer compiled successfully.');
+  console.log('✅ Installed projection ESM/CJS and runtime-core contract checks passed.');
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

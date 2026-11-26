@@ -8,6 +8,7 @@ Related references:
 
 - [Projection Runtime v3 Contracts and Invariants](/docs/architecture/projection-runtime-v3-contracts-and-invariants)
 - [Projection Runtime v3 Crash/Chaos Safety Matrix](/docs/architecture/projection-runtime-v3-crash-chaos-safety-matrix)
+- [Real MongoDB 6 and 8 qualification](./projection-p1-qualification.md#real-mongodb-compatibility-matrix)
 
 ## Scope and non-goals
 
@@ -78,6 +79,17 @@ Each record groups a source application’s target revisions and ordered per-eve
 Hooks follow the same draft and value semantics as handlers. Existing `Map` and `Set` values are not supported as Immer collection drafts (the worker does not enable MapSet). Collections newly assigned in the recipe are raw values and may be mutable, but are not portable JSON. **Portable JSON is the supported recording domain**, including when diagnostics are off. It excludes collections, negative zero, BSON-specific values and ambiguous keys/shapes such as own `__proto__` fields. With diagnostics off, unsupported inputs are not guaranteed to be detected or to replay exactly. Storage of values outside portable JSON is adapter-specific, even with recording off.
 
 Source commits send each target’s authoritative final document plus an optional `statePatch` hint, independently of recording. Adapters may ignore the hint and persist the final document. Mongo falls back to a full-state write when it lacks a proven, safe modifier plan, not merely because a value falls outside strict portable JSON. With recording and diagnostics off, for example, a trusted native write can persist a finalized `-0` with a dotted `$set`. This does not certify the value for recording or other adapters. Recording-disabled turns neither require nor access the feed collection.
+
+For BSON `Date` fields in Mongo projections with recording and portability diagnostics off, **replace the value** in the draft:
+
+```typescript
+const old = draft.shipBy;
+const next = new Date(old.getTime());
+next.setUTCFullYear(2027);
+draft.shipBy = next;
+```
+
+Legacy full-document writes could persist an in-place Date edit. The commit-native delta path does not track Date setters: `draft.shipBy.setUTCFullYear(2027)` is unsupported and can advance revision and progress without saving the date change, even when the handler also edits a tracked field. For recorded history, store a portable JSON timestamp such as an ISO 8601 string or epoch milliseconds instead of a BSON `Date`.
 
 Diagnostics are runtime options on `createProjectionCommitCoordinator`, independent of the generation's `projectionChanges` setting:
 

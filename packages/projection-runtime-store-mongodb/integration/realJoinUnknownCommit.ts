@@ -112,7 +112,28 @@ async function assertCommitted(db: Db, client: MongoClient, superseded: boolean,
   assert.equal(result.status, 'committed', JSON.stringify(result));
   assert.deepEqual(result.linkRevisions, { [key]: 1, [joinMembershipKey('Order', 'tombstone')]: 1 });
   assert.deepEqual(result.documentRevisions, recorded ? {} : { A: 1 });
-  if (recorded) assert.equal(result.emptyChangeReceipt?.kind, 'projection_changes_empty');
+  if (recorded) {
+    assert.equal(result.emptyChangeReceipt?.kind, 'projection_changes_empty');
+    assert.notEqual(result.replayed, true, 'this attempt wrote the durable receipt');
+  }
+  assert.deepEqual(outcomes, ['committed']);
+}
+
+async function assertRecordedRivalReplay(db: Db, client: MongoClient) {
+  const plan: Request = { ...request('unknown_recorded_rival'),
+    additionalWrites: [{ kind: 'projection_changes', collection: 'views', targets: [] }] };
+  const { suspect, rival, arm, outcomes } = prepare(db, client, plan.projectionName);
+  await suspect.initializeProjectionSourceCommitStore();
+  const rivalMembership = { ...membership, aggregateId: 'rival-order' };
+  arm({ abort: true, after: async () => {
+    const result = await rival.commitProjectionSourceCommit({ ...plan, joinMembershipFences: [rivalMembership] });
+    assert.equal(result.status, 'committed');
+  } });
+  const result = await suspect.commitProjectionSourceCommit(plan);
+  assert.equal(result.status, 'committed', JSON.stringify(result));
+  assert.equal(result.replayed, true, 'only the rival wrote the durable receipt');
+  assert.equal(result.emptyChangeReceipt?.kind, 'projection_changes_empty');
+  assert.deepEqual(result.linkRevisions, { [joinMembershipKey('Order', 'rival-order')]: 1 });
   assert.deepEqual(outcomes, ['committed']);
 }
 
@@ -196,8 +217,19 @@ export async function checkRealJoinUnknownCommit(db: Db, client: MongoClient): P
   await assertCommitted(db, client, false);
   await assertCommitted(db, client, true);
   await assertCommitted(db, client, true, true);
+  await assertRecordedRivalReplay(db, client);
   await assertPreparedCommit(db, client);
   await assertMembershipOnly(db, client, 'own_record');
   await assertMembershipOnly(db, client, 'none');
   for (const corrupt of [false, true]) await assertSeedWitness(db, client, corrupt);
+  const plan = request('unknown_corrupt_proof');
+  const { suspect, arm, outcomes } = prepare(db, client, plan.projectionName);
+  await suspect.initializeProjectionSourceCommitStore();
+  arm({ abort: false, after: async () => {
+    await db.collection('unknown_corrupt_proof_sets').updateOne({}, { $set: { targetDocumentIds: ['B', 'A'] } });
+  } });
+  assert.deepEqual(await suspect.commitProjectionSourceCommit(plan), {
+    version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome'
+  });
+  assert.deepEqual(outcomes, ['ambiguous']);
 }

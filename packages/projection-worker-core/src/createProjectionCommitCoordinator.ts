@@ -1,12 +1,13 @@
 import {
   isCompleteCommitRangeCapability,
-  matchesProjectionChangeRecordingScope,
-  ProjectionChangeRecordingPolicyMismatchError,
+  createProjectionDispatchBindingProof,
+  matchesProjectionDispatchBinding,
+  ProjectionDispatchBindingMismatchError,
   validateCompleteCommitRange,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
-import type { ProjectionChangeRecordingScope, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import type { ProjectionDispatchBindingProof, ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
 import type {
   ProjectionCommitCoordinator,
   ProjectionCommitCoordinatorOptions,
@@ -52,6 +53,11 @@ function assertOptions<TState>(options: ProjectionCommitCoordinatorOptions<TStat
     if (joined !== (manifest.joined === true)) throw new Error('Joined definition must be declared in the immutable manifest.');
     if (entry.definition.joinMembership !== manifest.joinMembership) {
       throw new Error('Join membership format must match the immutable manifest.');
+    }
+    const { fromStream, joinStreams = [], reverseSubscribeStreams = [], joinMembership } = entry.definition;
+    if (joinMembership !== 'set-v1' && [fromStream, ...joinStreams, ...reverseSubscribeStreams]
+      .some((stream) => 'candidateSelectors' in stream)) {
+      throw new Error('Candidate selectors require joinMembership: set-v1.');
     }
     if (manifest.joinMembership && (options.store.joinMembershipCapability !== manifest.joinMembership
       || entry.definition.deduplication.strategy === 'in_document')) {
@@ -107,7 +113,7 @@ function freezeDefinition<TState>(definition: ProjectionCommitDefinitionInput<TS
 interface CoordinatorRuntime<TState> {
   options: ProjectionCommitCoordinatorOptions<TState>;
   definitions: readonly ProjectionCommitRegistryDefinition<TState>[];
-  changeRecordingScope: readonly ProjectionChangeRecordingScope[];
+  dispatchProof: ProjectionDispatchBindingProof;
   sourceStartAnchors: Readonly<Record<string, number>>;
   sourceLanes: ProjectionLaneScheduler;
   targetLanes: ProjectionLaneScheduler;
@@ -246,13 +252,13 @@ async function processInSourceLane<TState>(
 ): Promise<ProjectionCommitCoordinatorOutcome> {
   let admission;
   try {
-    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.options.queueBindingId, runtime.changeRecordingScope);
+    admission = await runtime.options.sourceOrder.admitForDispatch(commit, runtime.dispatchProof.manifest.queueId, runtime.dispatchProof);
   } catch (error) {
     return failureOutcome(error instanceof Error ? error.message : 'Source admission unavailable.', [], [],
-      error instanceof ProjectionChangeRecordingPolicyMismatchError);
+      error instanceof ProjectionDispatchBindingMismatchError);
   }
-  if (!matchesProjectionChangeRecordingScope(runtime.changeRecordingScope, admission.boundChangeRecordingScope)) {
-    return failureOutcome(new ProjectionChangeRecordingPolicyMismatchError().message, [], [], true);
+  if (!matchesProjectionDispatchBinding(runtime.dispatchProof, admission.boundDispatchProof)) {
+    return failureOutcome(new ProjectionDispatchBindingMismatchError().message, [], [], true);
   }
   if (admission.coverage.sourceId !== commit.streamId
     || admission.coverage.queueBindingId !== runtime.options.queueBindingId) {
@@ -301,9 +307,7 @@ function createRuntime<TState>(options: ProjectionCommitCoordinatorOptions<TStat
   return {
     options,
     definitions: Object.freeze(definitions),
-    changeRecordingScope: Object.freeze(definitions.map(({ definition, generation, projectionChanges }) => Object.freeze({
-      projectionName: definition.name, generation, ...(projectionChanges === undefined ? {} : { projectionChanges })
-    }))),
+    dispatchProof: createProjectionDispatchBindingProof(options.manifest),
     sourceStartAnchors: Object.freeze({ ...options.manifest.sourceStartAnchors }),
     sourceLanes: createProjectionLaneScheduler(),
     targetLanes: createProjectionLaneScheduler(),

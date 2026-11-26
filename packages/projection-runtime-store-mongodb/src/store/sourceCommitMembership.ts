@@ -1,5 +1,6 @@
 import {
-  assertJoinRevision, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT, validateJoinMembershipSeeds, validateJoinTargetSet,
+  assertJoinRevision, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
+  ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError, validateJoinMembershipSeeds, validateJoinTargetSet,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
 import type { AnyBulkWriteOperation, ClientSession, FindOptions } from 'mongodb';
@@ -7,7 +8,7 @@ import type { MongoProjectionStoreOptions, ProjectionJoinMembershipRecord } from
 
 type Scope = Pick<LoadProjectionSourceCommitSnapshotRequest, 'projectionName' | 'projectionGeneration'>;
 const scopedKey = (scope: Scope, source: ProjectionJoinSource) =>
-  joinMembershipKey(scope.projectionName, scope.projectionGeneration, source.aggregateType, source.aggregateId);
+  checkedJoinMembershipKey(scope.projectionName, scope.projectionGeneration, source.aggregateType, source.aggregateId);
 
 // The driver's bulk writer additionally splits by BSON size. Bound find filters independently of cursor batches.
 export function* sourceCommitChunks<T>(items: readonly T[], size = 256): Generator<T[]> {
@@ -23,6 +24,18 @@ export function checkedSourceCommitIds<T>(items: readonly T[], idOf: (item: T) =
   });
 }
 
+function validatePersistedTargets(row: ProjectionJoinMembershipRecord, budget: JoinTurnBudget): void {
+  try {
+    assertJoinRevision(row.revision);
+    validateJoinTargetSet(row.targetDocumentIds);
+    validateJoinMembershipSeeds(row);
+    for (const id of row.targetDocumentIds) budget.add(id);
+  } catch (error) {
+    if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
+    throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
+  }
+}
+
 export async function readMongoMemberships<T>(
   request: LoadProjectionSourceCommitSnapshotRequest, options: MongoProjectionStoreOptions<T>, readOptions?: FindOptions
 ) {
@@ -33,9 +46,7 @@ export async function readMongoMemberships<T>(
   const resultsBudget = new JoinTurnBudget();
   for (const chunk of sourceCommitChunks(ids)) {
     for await (const row of collection.find({ _id: { $in: chunk } }, readOptions)) {
-      validateJoinTargetSet(row.targetDocumentIds);
-      validateJoinMembershipSeeds(row);
-      for (const id of row.targetDocumentIds) resultsBudget.add(id);
+      validatePersistedTargets(row, resultsBudget);
       rows.set(row._id, row);
     }
   }
@@ -44,8 +55,9 @@ export async function readMongoMemberships<T>(
     if (!row) return { ...source, revision: null, targetDocumentIds: [] };
     if (row.format !== JOIN_MEMBERSHIP_FORMAT || row.aggregateType !== source.aggregateType || row.aggregateId !== source.aggregateId
       || row.revision === null || Object.keys(row).length !== (row.seeds ? 7 : 6)
-      || (row.seeds && request.joinSeedVersion !== 1)) throw new Error('Invalid joined membership row.');
-    assertJoinRevision(row.revision);
+      || (row.seeds && request.joinSeedVersion !== 1)) {
+      throw new ProjectionPersistedJoinMembershipError('Invalid joined membership row.');
+    }
     return { ...source, revision: row.revision, targetDocumentIds: Object.freeze([...row.targetDocumentIds]),
       ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) };
   });

@@ -1,4 +1,4 @@
-import type { ProjectionSourceCommit } from '@redemeine/projection-runtime-core';
+import { createProjectionDispatchBindingProof, type ProjectionSourceOrderPort } from '@redemeine/projection-runtime-core';
 import { BSON, type Db, type MongoClient } from 'mongodb';
 import type { ICommit } from 'tapeworm';
 import { createTapewormMongoCompleteCommitRangeReader, MongoProjectionTransportStore,
@@ -25,14 +25,14 @@ export function benchmarkCoverageBaseline(): AcceptedBaseline {
 
 export interface CoverageOrderPort {
   installAcceptedBaseline(record: AcceptedBaseline): Promise<void>;
-  admitForDispatch(commit: ProjectionSourceCommit, queue: string): Promise<unknown>;
+  admitForDispatch(...args: Parameters<ProjectionSourceOrderPort['admitForDispatch']>): Promise<unknown>;
   advanceCoverage(request: { queueBindingId: string; sourceId: string; expectedSequence: number | null; sequence: number }): Promise<unknown>;
 }
 
 export async function prepareCoverageAdmission(store: CoverageOrderPort, baseline: AcceptedBaseline): Promise<void> {
   await store.installAcceptedBaseline(baseline);
   const syntheticWakeup = request('coverage', SOURCE_ID, 0, 1, null, null, { strategy: 'none' }).commit;
-  await store.admitForDispatch(syntheticWakeup, baseline.queueBindingId);
+  await store.admitForDispatch(syntheticWakeup, baseline.queueBindingId, createProjectionDispatchBindingProof(stackManifest(QUEUE)));
 }
 
 export async function measureCoverageAdvances(store: CoverageOrderPort, samples: number) {

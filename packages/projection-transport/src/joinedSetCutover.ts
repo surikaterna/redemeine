@@ -1,4 +1,4 @@
-import { joinMembershipKey, validateJoinTargetSet } from '@redemeine/projection-runtime-core';
+import { checkedJoinMembershipKey, validateJoinTargetSet } from '@redemeine/projection-runtime-core';
 import type { ClientSession, Document } from 'mongodb';
 import type { JoinedInventory } from './joinedCutover';
 
@@ -27,7 +27,7 @@ export function joinedMembershipSeedRow(scope: Pick<ApprovedJoinedSetInventory, 
   set: ApprovedJoinedSet) {
   validateJoinTargetSet(set.targetDocumentIds);
   const { aggregateType, aggregateId, targetDocumentIds } = set;
-  return { _id: joinMembershipKey(scope.projectionName, scope.generation, aggregateType, aggregateId),
+  return { _id: checkedJoinMembershipKey(scope.projectionName, scope.generation, aggregateType, aggregateId),
     format: 'set-v1' as const, aggregateType, aggregateId, targetDocumentIds: [...targetDocumentIds], revision: 0 };
 }
 

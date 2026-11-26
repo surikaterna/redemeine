@@ -1,8 +1,8 @@
 import type { Draft } from 'immer';
 import type { ProjectionDeduplicationStrategy } from './deduplication';
-import type { ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { InheritExtended, InheritToken } from './inherit';
 import type { JoinSeed, JoinSeedBinding, JoinSeedEventCoverage, JoinSeedInitializer, JoinSeedRegistration } from './joinSeed';
+import type { ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
 /** Hooks for cross-cutting projection concerns (e.g., metadata tracking) */
@@ -58,18 +58,42 @@ export type MirrorableAggregateConstraint = ProjectionAggregateSource & {
 /** Prefer the aggregate model marker; structural sources fall back to initialState without an aggregate dependency. */
 export type AggregateStateOf<T> = T extends unknown
   ? '__stateType' extends keyof T
-    ? T extends { readonly __stateType?: infer S } ? S : never
-    : T extends { initialState: infer S } ? S : never
+    ? T extends { readonly __stateType?: infer S }
+      ? S
+      : never
+    : T extends { initialState: infer S }
+      ? S
+      : never
   : never;
 
+type RegistryOf<T> = '__registryType' extends keyof T ? (T extends { readonly __registryType?: infer Registry } ? NonNullable<Registry> : {}) : {};
+
+type MountedProjectors<Entry> = Entry extends { kind: 'list' | 'map'; entity: { projectors: infer Projectors } } ? Projectors : {};
+
+// Registry metadata preserves direct mounts, not exhaustive nested/mixin alias provenance.
+type MountedPayloadEntries<Registry> = {
+  [Mount in keyof Registry & string]: {
+    [Key in keyof MountedProjectors<Registry[Mount]> & string]: {
+      key: `${Mount}:${Key}`;
+      payload: ProjectorPayload<MountedProjectors<Registry[Mount]>[Key]>;
+    };
+  }[keyof MountedProjectors<Registry[Mount]> & string];
+}[keyof Registry & string];
+
+type DirectMountedPayloads<T> = {
+  [Entry in MountedPayloadEntries<RegistryOf<T>> as Entry['key']]: Entry['payload'];
+};
+
 /** Extract aggregate event payloads from built aggregates or explicit definitions. */
-export type AggregateEventPayloadMap<TAggregate> = [EventProjectorsOf<TAggregate>] extends [never]
+type RootEventPayloadMap<TAggregate> = [EventProjectorsOf<TAggregate>] extends [never]
   ? TAggregate extends AggregateDefinition<unknown, infer TPayloads>
     ? TPayloads
     : Record<string, unknown>
   : {
       [K in keyof EventProjectorsOf<TAggregate> & string]: ProjectorPayload<EventProjectorsOf<TAggregate>[K]>;
     };
+
+export type AggregateEventPayloadMap<TAggregate> = RootEventPayloadMap<TAggregate> & DirectMountedPayloads<TAggregate>;
 
 export type AggregateEventKeys<TAggregate> = keyof AggregateEventPayloadMap<TAggregate> & string;
 

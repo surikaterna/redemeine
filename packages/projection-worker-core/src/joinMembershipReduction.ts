@@ -1,5 +1,7 @@
 import {
-  assertJoinRevision, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey, mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
+  assertJoinRevision, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey,
+  mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
+  ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
 import type { RoutedEvent, SetRoutingEntry } from './projectionCommitRouting';
@@ -7,19 +9,24 @@ import type { RoutedEvent, SetRoutingEntry } from './projectionCommitRouting';
 export function observedMemberships(
   rows: readonly ProjectionJoinMembership[] | undefined, keys: readonly ProjectionJoinSource[]
 ): Map<string, ProjectionJoinMembership> {
-  if (!Array.isArray(rows) || rows.length !== keys.length) throw new Error('Incomplete joined membership snapshot.');
+  if (!Array.isArray(rows) || rows.length !== keys.length) throw new ProjectionPersistedJoinMembershipError('Incomplete joined membership snapshot.');
   const remaining = new Set(keys.map(({ aggregateType, aggregateId }) => joinMembershipKey(aggregateType, aggregateId)));
   const result = new Map<string, ProjectionJoinMembership>();
   const budget = new JoinTurnBudget();
   for (const row of rows as readonly ProjectionJoinMembership[]) {
     const { aggregateType, aggregateId, revision, targetDocumentIds } = row;
     const key = joinMembershipKey(aggregateType, aggregateId);
-    if (!remaining.delete(key)) throw new Error('Unexpected joined membership snapshot key.');
-    assertJoinRevision(revision);
-    validateJoinTargetSet(targetDocumentIds);
-    validateJoinMembershipSeeds(row);
-    for (const id of targetDocumentIds) budget.add(id);
-    if (revision === null && targetDocumentIds.length) throw new Error('Absent membership cannot have targets.');
+    if (!remaining.delete(key)) throw new ProjectionPersistedJoinMembershipError('Unexpected joined membership snapshot key.');
+    try {
+      assertJoinRevision(revision);
+      validateJoinTargetSet(targetDocumentIds);
+      validateJoinMembershipSeeds(row);
+      for (const id of targetDocumentIds) budget.add(id);
+    } catch (error) {
+      if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
+      throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
+    }
+    if (revision === null && targetDocumentIds.length) throw new ProjectionPersistedJoinMembershipError('Absent membership cannot have targets.');
     result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]),
       ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) }));
   }
@@ -61,7 +68,7 @@ export function stageMembership(
   rows: Map<string, ProjectionJoinMembership>, missing: Map<string, ProjectionJoinSource>,
   source: ProjectionJoinSource, target: string, subscribe: boolean
 ): void {
-  const key = joinMembershipKey(source.aggregateType, source.aggregateId);
+  const key = checkedJoinMembershipKey(source.aggregateType, source.aggregateId);
   const prior = rows.get(key);
   if (!prior) {
     missing.set(key, source);

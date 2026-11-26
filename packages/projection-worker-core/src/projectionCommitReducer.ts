@@ -11,7 +11,8 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   captureProjectionSourceEvent, isCertifiedProjectionSnapshotJson, isNativeProjectionCaptureSnapshot, isOwnedProjectionState, isPortableProjectionChangeJson,
-  joinMembershipKey, MISSING_PROJECTION_CHANGES_HISTORY, projectionUuidToBase64Url22, sealProjectionCaptureRequest
+  joinMembershipKey, MISSING_PROJECTION_CHANGES_HISTORY, ProjectionJoinMembershipValidationError,
+  projectionUuidToBase64Url22, sealProjectionCaptureRequest
 } from '@redemeine/projection-runtime-core';
 import { produce, type Draft } from 'immer';
 import { linksByKey, routeEvent, type RoutedEvent, type SetRoutingEntry } from './projectionCommitRouting';
@@ -25,7 +26,7 @@ export type ProjectionReductionResult<TState> =
   | { status: 'deduplicated' }
   | { status: 'needs_snapshot'; targetIds: readonly string[]; links: readonly { aggregateType: string; aggregateId: string }[] }
   | { status: 'needs_join_seeds'; inputs: readonly JoinSeedInput[] }
-  | { status: 'terminal'; reason: string };
+  | { status: 'terminal'; reason: string; invalidMembershipInput?: true };
 
 interface ReducedDocument<TState> {
   state: TState;
@@ -325,7 +326,7 @@ export function reduceProjectionSourceCommit<TState>(
   } catch (error) {
     if (error instanceof NeedsJoinSeeds) return needsSnapshot(reduction) ?? { status: 'needs_join_seeds', inputs: error.inputs };
     const reason = error instanceof Error ? error.message : 'projection handler threw';
-    return { status: 'terminal', reason };
+    return { status: 'terminal', reason, ...(error instanceof ProjectionJoinMembershipValidationError ? { invalidMembershipInput: true } : {}) };
   }
   if (reduction.previouslyAppliedTarget) return { status: 'terminal', reason: MISSING_PROJECTION_CHANGES_HISTORY };
   const missing = needsSnapshot(reduction);

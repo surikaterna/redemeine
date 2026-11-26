@@ -2,7 +2,9 @@ import type {
   JoinSeedEventCoverage, JoinSeedKey, JoinSeedProvenance, JoinSeedRegistration, ProjectionEvent,
   ProjectionJoinMembership, ProjectionSourceCommit, ProjectionSourceEvent
 } from '@redemeine/projection-runtime-core';
-import { isJoinSeedIdentity, joinMembershipKey, ownProjectionState } from '@redemeine/projection-runtime-core';
+import {
+  checkedJoinMembershipKey, isJoinSeedIdentity, joinMembershipKey, ownProjectionState, ProjectionJoinMembershipValidationError
+} from '@redemeine/projection-runtime-core';
 import type { Draft } from 'immer';
 import type { JoinSeedReader, JoinSeedRead } from './joinSeedReaders';
 import { sourceEventToProjectionEvent } from './projectionCommitRouting';
@@ -74,12 +76,12 @@ export class JoinSeedEvent<T> {
 
   stage(type: string, id: string, subscribe: boolean, binding?: JoinSeedKey): void {
     const { memberships, target, initializers, seeds } = this.settings;
-    const key = joinMembershipKey(type, id);
+    const key = checkedJoinMembershipKey(type, id);
     const row = memberships.get(key);
     const initializer = binding && initializers.find((item) => item.binding === binding && binding.sourceAggregateType === type);
     const reader = initializer && seeds.readers.get(type);
     if (binding !== undefined && (!initializer || !reader || !isJoinSeedIdentity(id))) {
-      throw new Error('subscribeTo initialization requires the registered binding and a valid aggregate ID.');
+      throw new ProjectionJoinMembershipValidationError('subscribeTo initialization requires the registered binding and a valid aggregate ID.');
     }
     if (!row) return;
     const present = row.targetDocumentIds.includes(target);
