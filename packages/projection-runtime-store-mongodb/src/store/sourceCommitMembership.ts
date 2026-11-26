@@ -1,5 +1,5 @@
 import {
-  assertJoinRevision, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
+  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
   measureJoinTargetSet, ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
@@ -25,7 +25,11 @@ export function checkedSourceCommitIds<T>(items: readonly T[], idOf: (item: T) =
   });
 }
 
-function measurePersistedTargets(row: ProjectionJoinMembershipRecord): number {
+function measurePersistedTargets(row: ProjectionJoinMembershipRecord, source: ProjectionJoinSource | undefined): number {
+  if (!source || row.format !== JOIN_MEMBERSHIP_FORMAT || row.aggregateType !== source.aggregateType
+    || row.aggregateId !== source.aggregateId || row.revision === null || Object.keys(row).length !== 6) {
+    throw new ProjectionPersistedJoinMembershipError('Invalid joined membership row.');
+  }
   try {
     assertJoinRevision(row.revision);
     return measureJoinTargetSet(row.targetDocumentIds);
@@ -41,22 +45,19 @@ export async function readMongoMemberships<T>(
   const collection = options.joinMembershipCollection;
   if (!collection) throw new Error('Join membership collection is not configured.');
   const ids = checkedSourceCommitIds(request.links, (source) => scopedKey(request, source));
+  const expected = new Map(ids.map((id, index) => [id, request.links[index]!]));
   const rows = new Map<string, ProjectionJoinMembershipRecord>();
   const resultsBudget = new JoinTurnBudget();
   for (const chunk of sourceCommitChunks(ids)) {
     for await (const row of collection.find({ _id: { $in: chunk } }, { ...readOptions, collation: setIdentityCollation })) {
-      const bytes = measurePersistedTargets(row);
-      resultsBudget.addMeasured(row.targetDocumentIds.length, bytes);
+      const bytes = measurePersistedTargets(row, expected.get(row._id));
+      chargeJoinMembershipSnapshotTargets(resultsBudget, row.targetDocumentIds.length, bytes);
       rows.set(row._id, row);
     }
   }
   return request.links.map((source, index) => {
     const row = rows.get(ids[index]!);
     if (!row) return { ...source, revision: null, targetDocumentIds: [] };
-    if (row.format !== JOIN_MEMBERSHIP_FORMAT || row.aggregateType !== source.aggregateType || row.aggregateId !== source.aggregateId
-      || row.revision === null || Object.keys(row).length !== 6) {
-      throw new ProjectionPersistedJoinMembershipError('Invalid joined membership row.');
-    }
     return { ...source, revision: row.revision, targetDocumentIds: Object.freeze([...row.targetDocumentIds]) };
   });
 }

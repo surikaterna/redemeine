@@ -24,6 +24,7 @@ import { runJoinApprovalCollation } from './realJoinApprovalCollation';
 import { runFenceWriteBudget } from './joinFenceWriteBudget';
 import { runSetCollationCutover } from './realJoinResourceCollation';
 import { runFenceCapacityRace } from './joinFenceCapacityRace';
+import { runExpansionCapacityMatrix } from './joinExpansionCapacity';
 
 function mongoResources(db: Db, client: MongoClient) {
   const collection = db.collection<ProjectionDocumentRecord<State>>('views');
@@ -155,6 +156,12 @@ async function main() {
     await runRollback(db(), client, commands);
     await runScalarBindingOrder(db(), client);
     await runJoinMembershipCutover(db(), client);
+    await runExpansionCapacityMatrix(() => memory()(), 'memory');
+    await runExpansionCapacityMatrix(() => {
+      commands.length = 0;
+      return mongo()();
+    }, 'mongo');
+    commands.length = 0;
     for (const collated of ['views', 'memberships', 'neither'] as const) await runSetCollationCutover(db(), client, commands, collated);
     for (const prepared of [false, true]) {
       await runFenceWriteBudget(memory()(), prepared);

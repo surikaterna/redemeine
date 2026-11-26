@@ -11,6 +11,7 @@ import {
   checkedJoinMembershipKey,
   JOIN_MEMBERSHIP_FENCE_CAPACITY,
   ProjectionJoinCapacityError,
+  ProjectionJoinMembershipResultCapacityError,
   ProjectionJoinMembershipValidationError,
   JoinTurnBudget,
   joinMembershipKey,
@@ -61,12 +62,12 @@ function provisionalTargets<TState>(
 }
 
 async function capacityRejection<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
-  reason: string, attempt: number, confirmed: boolean): Promise<CapacityResult> {
-  if (!recordsReliableReceipt(options)) return { kind: 'done', outcome: failed('terminal', reason, attempt) };
-  const outcome = await exactReceipt(options, commit, attempt);
-  if (outcome) return { kind: 'done', outcome };
+  reason: string, attempt: number, confirmed: boolean, accumulatedExpansion = false): Promise<CapacityResult> {
+  const reliable = recordsReliableReceipt(options);
+  const receipt = reliable ? await exactReceipt(options, commit, attempt) : undefined;
+  if (receipt) return { kind: 'done', outcome: receipt };
   // Missing proof says nothing about whether the observation that overflowed is still current.
-  if (!confirmed) return { kind: 'confirm_capacity' };
+  if (!confirmed && (reliable || accumulatedExpansion)) return { kind: 'confirm_capacity' };
   return { kind: 'done', outcome: failed('terminal', reason, attempt) };
 }
 
@@ -88,9 +89,9 @@ function setMemberships<TState>(snapshot: ProjectionSourceCommitSnapshot<TState>
   return observedMemberships(snapshot.joinMemberships, links);
 }
 
-function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[]) {
+function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[], name: string, generation: string) {
   const budget = new JoinTurnBudget();
-  for (const link of links) budget.add(checkedJoinMembershipKey(link.aggregateType, link.aggregateId));
+  for (const link of links) budget.add(checkedJoinMembershipKey(name, generation, link.aggregateType, link.aggregateId));
 }
 
 type CapacityResult =
@@ -169,7 +170,8 @@ async function executeAttempt<TState>(
   links: readonly { aggregateType: string; aggregateId: string }[],
   attempt: number,
   setPlan: SetPlan<TState> | undefined,
-  confirmCapacity: boolean
+  confirmCapacity: boolean,
+  expandedLinks: boolean
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
@@ -178,27 +180,29 @@ async function executeAttempt<TState>(
     try {
       snapshot = await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
     } catch (error) {
-      if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity);
+      if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity,
+        expandedLinks && error instanceof ProjectionJoinMembershipResultCapacityError);
       if (error instanceof ProjectionJoinMembershipValidationError) {
         return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
       }
       return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
         ?? loadFailure(error, attempt) };
     }
-    if (confirmCapacity && snapshot.changeReceipt === undefined) {
+    if (confirmCapacity && recordsReliableReceipt(options) && snapshot.changeReceipt === undefined) {
       return { kind: 'done', outcome: failed('ambiguous', 'Store did not verify the projection_changes receipt.', attempt) };
     }
     const replay = replayOutcome(options, commit, snapshot, attempt, native);
     if (replay) return { kind: 'done', outcome: replay };
-    return reduceAttempt(options, commit, snapshot, targets, links, attempt, setPlan, confirmCapacity, native);
+    return reduceAttempt(options, commit, snapshot, targets, links, { attempt, setPlan, confirmCapacity, native, expandedLinks });
   });
 }
 
 async function reduceAttempt<TState>(
   options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>, targets: ReadonlySet<string>, links: ReturnType<typeof routingLinkRequests>,
-  attempt: number, setPlan: SetPlan<TState> | undefined, confirmCapacity: boolean, native: boolean
+  settings: { attempt: number; setPlan: SetPlan<TState> | undefined; confirmCapacity: boolean; native: boolean; expandedLinks: boolean }
 ): Promise<AttemptResult<TState>> {
+  const { attempt, setPlan, confirmCapacity, native, expandedLinks } = settings;
   let reduction: ProjectionReductionResult<TState>;
   try {
     const memberships = setPlan ? setMemberships(snapshot, links) : undefined;
@@ -209,7 +213,8 @@ async function reduceAttempt<TState>(
     reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence,
       options.projectionChanges, options.stateValidation, setPlan && memberships ? { events: setPlan, memberships } : undefined);
   } catch (error) {
-    if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity);
+    if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity,
+      expandedLinks && error instanceof ProjectionJoinMembershipResultCapacityError);
     if (error instanceof ProjectionJoinMembershipValidationError) {
       return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
     }
@@ -268,7 +273,7 @@ export async function executeProjectionDefinition<TState>(
     && (options.alreadyCovered || commit.commitSequence <= (options.baselineSequence ?? -1));
   let initial: ProjectionSourceCommitSnapshot<TState> = { targets: [], links: [], ownRecordSequence: null };
   let confirmCapacity = false;
-  try { if (setMode) checkLinkBudget(links); } catch (error) {
+  try { if (setMode) checkLinkBudget(links, options.definition.name, options.generation); } catch (error) {
     return failed('terminal', (error as Error).message, 0);
   }
   try {
@@ -316,7 +321,7 @@ async function executeWithRetries<TState>(options: ProjectionDefinitionExecutorO
   let maxAttempts = options.maxConflictRetries + expansionBudget;
   let conflicts = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan, confirmCapacity);
+    let outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan, confirmCapacity, links.length > initialLinks.length);
     if (outcome.kind === 'retarget') {
       targets = outcome.targets;
       continue;
@@ -324,13 +329,14 @@ async function executeWithRetries<TState>(options: ProjectionDefinitionExecutorO
     if (outcome.kind === 'expand') {
       const nextLinks = mergeLinks(links, outcome.reduction.links, Boolean(setPlan));
       try {
-        if (setPlan) checkLinkBudget(nextLinks);
+        if (setPlan) checkLinkBudget(nextLinks, options.definition.name, options.generation);
         links = nextLinks;
         for (const target of outcome.reduction.targetIds) targets.add(target);
         continue;
       } catch (error) {
         if (!(error instanceof ProjectionJoinCapacityError)) return loadFailure(error, attempt);
-        outcome = await capacityRejection(options, commit, error.message, attempt, confirmCapacity);
+        // Old discovery keys can overflow only in combination with their replacements.
+        outcome = await capacityRejection(options, commit, error.message, attempt, confirmCapacity, true);
       }
     }
     if (outcome.kind === 'done') return outcome.outcome;

@@ -12,6 +12,7 @@ export class ProjectionJoinMembershipValidationError extends Error {}
 
 export class ProjectionJoinCapacityError extends ProjectionJoinMembershipValidationError {}
 class ProjectionJoinTurnCapacityError extends ProjectionJoinCapacityError {}
+export class ProjectionJoinMembershipResultCapacityError extends ProjectionJoinCapacityError {}
 
 /** A bad durable observation, distinct from an invalid selector or staged membership write. */
 export class ProjectionPersistedJoinMembershipError extends ProjectionJoinMembershipValidationError {}
@@ -47,6 +48,16 @@ export class JoinTurnBudget {
     if (bytes > MAX_JOIN_TURN_BYTES - this.bytes) throw new ProjectionJoinTurnCapacityError(JOIN_TURN_CAPACITY);
     this.count += entries;
     this.bytes += bytes;
+  }
+}
+
+/** Only use after individual rows have passed their persisted shape and per-row limits. */
+export function chargeJoinMembershipSnapshotTargets(budget: JoinTurnBudget, entries: number, rawBytes: number): void {
+  try {
+    budget.addMeasured(entries, rawBytes);
+  } catch (error) {
+    if (!(error instanceof ProjectionJoinTurnCapacityError)) throw error;
+    throw new ProjectionJoinMembershipResultCapacityError(error.message, { cause: error });
   }
 }
 

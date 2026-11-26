@@ -1,5 +1,6 @@
 import {
-  assertJoinRevision, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, measureJoinTargetSet, mergeJoinTargets, validateJoinTargetSet,
+  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey,
+  measureJoinTargetSet, mergeJoinTargets, validateJoinTargetSet,
   ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
@@ -24,8 +25,8 @@ export function observedMemberships(
       if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
       throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
     }
-    budget.addMeasured(targetDocumentIds.length, bytes);
     if (revision === null && targetDocumentIds.length) throw new ProjectionPersistedJoinMembershipError('Absent membership cannot have targets.');
+    chargeJoinMembershipSnapshotTargets(budget, targetDocumentIds.length, bytes);
     result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]) }));
   }
   return result;
