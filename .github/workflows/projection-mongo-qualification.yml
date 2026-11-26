@@ -42,7 +42,7 @@ jobs:
         env:
           REDEMEINE_ZYFY3_RECEIPT_PATH: ${{ runner.temp }}/replica-set.json
         run: pnpm run test:projection-mongo-real
-      - name: Run real MongoDB and RabbitMQ transport suites
+      - name: Run real MongoDB membership and RabbitMQ transport suites
         env:
           REDEMEINE_ZYFY4_RECEIPT_PATH: ${{ runner.temp }}/transport.json
         run: pnpm run test:projection-real-stack

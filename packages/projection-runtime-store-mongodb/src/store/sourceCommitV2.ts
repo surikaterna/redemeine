@@ -8,6 +8,7 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   projectionChangesHistoryFailure,
+  ProjectionJoinCapacityError,
   ProjectionJoinMembershipValidationError,
   ProjectionPersistedJoinMembershipError,
   joinMembershipKey,
@@ -256,14 +257,16 @@ async function runSourceCommit<TState>(
   });
 }
 
-async function resolveInvalidPersistedMembership(request: CommitProjectionSourceCommitRequest,
+async function resolveMembershipReadRejection(request: CommitProjectionSourceCommitRequest,
   options: Pick<MongoProjectionStoreOptions, 'changeCollection'>,
-  error: ProjectionPersistedJoinMembershipError): Promise<CommitProjectionSourceCommitResult> {
+  error: ProjectionPersistedJoinMembershipError | ProjectionJoinCapacityError): Promise<CommitProjectionSourceCommitResult> {
   if (!request.additionalWrites || request.progress.strategy === 'none') return terminal(error.message);
   // The write transaction did not apply. A different worker may already have committed this exact turn.
   try {
     const receipt = await readSourceCommitChange(request, options.changeCollection, { applicationId: undefined });
-    return receipt?.status === 'committed' ? { ...receipt, replayed: true } : receipt ?? terminal(error.message);
+    // Valid rows can exceed the combined read budget because membership changed after planning.
+    return receipt?.status === 'committed' ? { ...receipt, replayed: true }
+      : receipt ?? (error instanceof ProjectionJoinCapacityError ? conflict(error.message) : terminal(error.message));
   } catch {
     return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'Unable to verify projection_changes receipt.' };
   }
@@ -303,7 +306,9 @@ export async function commitMongoV2<TState>(
   try {
     result = await runSourceCommit(request, options, execute, observed, writeId);
   } catch (error) {
-    if (error instanceof ProjectionPersistedJoinMembershipError) return resolveInvalidPersistedMembership(request, options, error);
+    if (error instanceof ProjectionPersistedJoinMembershipError || error instanceof ProjectionJoinCapacityError) {
+      return resolveMembershipReadRejection(request, options, error);
+    }
     if (error instanceof ProjectionJoinMembershipValidationError) return terminal(error.message);
     result = classifyCommitError(request, error);
   }

@@ -6,6 +6,8 @@ export const MAX_JOIN_TURN_BYTES = 8 * 1024 * 1024;
 
 export class ProjectionJoinMembershipValidationError extends Error {}
 
+export class ProjectionJoinCapacityError extends ProjectionJoinMembershipValidationError {}
+
 /** A bad durable observation, distinct from an invalid selector or staged membership write. */
 export class ProjectionPersistedJoinMembershipError extends ProjectionJoinMembershipValidationError {}
 
@@ -25,10 +27,10 @@ export class JoinTurnBudget {
     assertJoinIdentifier(value);
     // Fail before allocating the UTF-8 copy when the string alone exceeds the remaining budget.
     if (++this.count > MAX_JOIN_TURN_KEYS || value.length > MAX_JOIN_TURN_BYTES - this.bytes) {
-      throw new ProjectionJoinMembershipValidationError('Joined turn routing exceeds capacity.');
+      throw new ProjectionJoinCapacityError('Joined turn routing exceeds capacity.');
     }
     this.bytes += this.encoder.encode(value).byteLength;
-    if (this.bytes > MAX_JOIN_TURN_BYTES) throw new ProjectionJoinMembershipValidationError('Joined turn routing exceeds capacity.');
+    if (this.bytes > MAX_JOIN_TURN_BYTES) throw new ProjectionJoinCapacityError('Joined turn routing exceeds capacity.');
   }
 }
 
@@ -59,7 +61,8 @@ export function checkedJoinMembershipKey(...parts: readonly string[]): string {
 }
 
 export function validateJoinTargetSet(ids: readonly string[]): void {
-  if (!Array.isArray(ids) || ids.length > MAX_JOIN_TARGETS) throw new ProjectionJoinMembershipValidationError('Joined target count exceeds capacity.');
+  if (!Array.isArray(ids)) throw new ProjectionJoinMembershipValidationError('Invalid joined target set.');
+  if (ids.length > MAX_JOIN_TARGETS) throw new ProjectionJoinCapacityError('Joined target count exceeds capacity.');
   let minimumBytes = 2; // Brackets, quotes and separators plus the minimum UTF-8 bytes of each ID.
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
@@ -68,10 +71,10 @@ export function validateJoinTargetSet(ids: readonly string[]): void {
       throw new ProjectionJoinMembershipValidationError('Joined target set must contain sorted, unique IDs.');
     }
     minimumBytes += id.length + (i === 0 ? 2 : 3);
-    if (minimumBytes > MAX_JOIN_TARGET_BYTES) throw new ProjectionJoinMembershipValidationError('Joined target bytes exceed capacity.');
+    if (minimumBytes > MAX_JOIN_TARGET_BYTES) throw new ProjectionJoinCapacityError('Joined target bytes exceed capacity.');
   }
   if (new TextEncoder().encode(JSON.stringify(ids)).byteLength > MAX_JOIN_TARGET_BYTES) {
-    throw new ProjectionJoinMembershipValidationError('Joined target bytes exceed capacity.');
+    throw new ProjectionJoinCapacityError('Joined target bytes exceed capacity.');
   }
 }
 

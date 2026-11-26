@@ -24,11 +24,10 @@ export function checkedSourceCommitIds<T>(items: readonly T[], idOf: (item: T) =
   });
 }
 
-function validatePersistedTargets(row: ProjectionJoinMembershipRecord, budget: JoinTurnBudget): void {
+function validatePersistedTargets(row: ProjectionJoinMembershipRecord): void {
   try {
     assertJoinRevision(row.revision);
     validateJoinTargetSet(row.targetDocumentIds);
-    for (const id of row.targetDocumentIds) budget.add(id);
   } catch (error) {
     if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
     throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
@@ -45,7 +44,8 @@ export async function readMongoMemberships<T>(
   const resultsBudget = new JoinTurnBudget();
   for (const chunk of sourceCommitChunks(ids)) {
     for await (const row of collection.find({ _id: { $in: chunk } }, readOptions)) {
-      validatePersistedTargets(row, resultsBudget);
+      validatePersistedTargets(row);
+      for (const id of row.targetDocumentIds) resultsBudget.add(id);
       rows.set(row._id, row);
     }
   }
