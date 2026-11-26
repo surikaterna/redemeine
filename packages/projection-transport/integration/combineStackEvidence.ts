@@ -17,6 +17,12 @@ async function load(path: string, sha: string): Promise<Record<string, unknown>>
 const sha = required('REDEMEINE_GIT_SHA');
 const old = await load(required('REDEMEINE_OLD_EVIDENCE_PATH'), sha);
 const accepted = await load(required('REDEMEINE_ACCEPTED_EVIDENCE_PATH'), sha);
+const expectedMongoVersion = required('REDEMEINE_EXPECTED_MONGO_VERSION');
+const originalMongo = (old.versions as Record<string, unknown> | undefined)?.mongoServer;
+const acceptedMongo = (accepted.versions as Record<string, unknown> | undefined)?.mongo;
+if (originalMongo !== expectedMongoVersion || acceptedMongo !== expectedMongoVersion) {
+  throw new Error(`Expected MongoDB ${expectedMongoVersion}; original reported ${originalMongo}, accepted reported ${acceptedMongo}.`);
+}
 const oldScenarios = ['normal-seq0', 'before-save', 'after-p', 'after-all', 'after-coverage',
   'gap-catchup', 'reconnect-redelivery', 'terminal-poison', 'durable-retry', 'reduced-registry',
   'unknown-source-retry'];

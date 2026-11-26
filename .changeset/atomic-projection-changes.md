@@ -17,3 +17,5 @@ Commit-native `afterEach` hooks run synchronously on the same Immer draft as the
 Runtime state diagnostics are independently opt-in. The native Mongo path uses genuine same-store captures without replay or defensive whole-state freezing; trusted handlers must edit only the synchronous draft and must not retain or mutate state aliases. Direct untrusted requests retain verification or fall back to full writes.
 
 Pin Immer 11.2.10 across packages sharing draft APIs. Its finalizer avoids revisiting untouched array items in the Mongo draft-only path when a recipe reads one item and edits another.
+
+Reject empty document targets, staged link identifiers, and recorded transition event identifiers before writing the recorded turn.

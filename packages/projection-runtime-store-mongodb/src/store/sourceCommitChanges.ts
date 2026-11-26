@@ -43,7 +43,7 @@ function decodeOutcome(outcome: MongoProjectionChangesRecord['outcome']) {
 export async function readSourceCommitChange(
   request: CommitProjectionSourceCommitRequest,
   collection: ChangeCollection | undefined,
-  lookup: { session?: ClientSession; applicationId: string | undefined }
+  lookup: { session?: ClientSession; applicationId: string | undefined; recoveringWriteId?: string }
 ): Promise<CommitProjectionSourceCommitResult | undefined> {
   const identity = projectionChangesIdentity(request);
   if (!identity || !collection) return undefined;
@@ -56,7 +56,8 @@ export async function readSourceCommitChange(
     return { version: 1, status: 'rejected', category: 'terminal', retryable: false,
       reason: 'projection change source commit or collection identity mismatch' };
   }
-  return { version: 1, status: 'committed', commitSequence: change.commitSequence,
+  const replayed = applicationId === undefined && lookup.recoveringWriteId !== undefined && outcome.writeId !== lookup.recoveringWriteId;
+  return { version: 1, status: 'committed', commitSequence: change.commitSequence, ...(replayed ? { replayed: true } : {}),
     ...decodeOutcome(outcome), ...(change.kind === 'projection_changes' ? { additionalWrites: [change] } : { emptyChangeReceipt: change }) };
 }
 
@@ -77,8 +78,9 @@ export async function appendSourceCommitChange(
   result: CommitProjectionSourceCommitCommitted,
   collection: ChangeCollection | undefined,
   session: ClientSession,
-  applicationId?: string
+  writeId: string
 ): Promise<CommitProjectionSourceCommitCommitted> {
+  const applicationId = request.progress.strategy === 'none' ? writeId : undefined;
   const change = buildProjectionChangesReceipt(request, applicationId);
   if (!change) return result;
   if (!collection) throw new Error('projection_changes collection is not configured');
@@ -87,7 +89,8 @@ export async function appendSourceCommitChange(
   const row: MongoProjectionChangesRecord = { _id, ...change, outcome: {
     documentRevisionEntries: Object.entries(documentRevisions),
     linkRevisionEntries: Object.entries(linkRevisions),
-    progress
+    progress,
+    ...(applicationId === undefined ? { writeId } : {})
   } };
   try {
     const inserted = await collection.updateOne({ _id }, { $setOnInsert: row }, { upsert: true, session }) as

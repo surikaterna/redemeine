@@ -1,11 +1,13 @@
 import {
+  matchProjectionChangesReceipt,
+  projectionChangesIdentity,
   projectionChangesResumeToken,
   projectionUuidToBase64Url22,
   type CommitProjectionSourceCommitRequest,
   type ProjectionChangesRecord,
   type ProjectionSourceCommitStorePort
 } from '../src';
-import { withSerializerLikeTargetIds, withTarget } from './projectionChangeMetadataFixtures';
+import { emptyChangeIdentifierRequests, withSerializerLikeTargetIds, withTarget } from './projectionChangeMetadataFixtures';
 
 type State = { value: number; kept?: string };
 type Request = CommitProjectionSourceCommitRequest<State>;
@@ -45,11 +47,62 @@ export const changeSnapshotRequest = {
   sourceId
 } as const;
 
+const initialOwnProgress = {
+  strategy: 'own_record', source: { sourceId, expectedSequence: null, finalSequence: 0 }
+} as const;
+
 export function defineProjectionChangesStoreConformance(
   label: string,
   create: () => { store: ProjectionSourceCommitStorePort<State>; records: () => readonly ProjectionChangesRecord[] }
 ): void {
   describe(`${label} atomic projection changes`, () => {
+    test.each(emptyChangeIdentifierRequests({ ...projectionChangesRequest(), progress: initialOwnProgress }))(
+      'rejects empty %s atomically', async (_name, request) => {
+        const { store, records } = create();
+        const result = await store.commitProjectionSourceCommit(request);
+        const retry = await store.commitProjectionSourceCommit(request);
+        const snapshot = await store.loadProjectionSourceCommitSnapshot({
+          ...changeSnapshotRequest, changeIdentity: projectionChangesIdentity(request)!,
+          targetDocumentIds: request.finalDocuments.map(({ targetDocumentId }) => targetDocumentId),
+          links: request.stagedLinks.map(({ aggregateType, aggregateId }) => ({ aggregateType, aggregateId }))
+        });
+        expect({ result, retry, snapshot, records: records() }).toMatchObject({
+          result: { status: 'rejected', category: 'terminal', retryable: false, reason: expect.stringContaining('metadata') },
+          snapshot: {
+            targets: [{ state: null, revision: null, sourceProgress: {} }],
+            links: [{ targetDocumentId: null, revision: null }],
+            ownRecordSequence: null, changeReceipt: 'missing'
+          },
+          records: [],
+          retry: { status: 'rejected', category: 'terminal', retryable: false, reason: expect.stringContaining('metadata') }
+        });
+      }
+    );
+
+    test('preserves exact identifiers and meaningful empty patch values on replay', async () => {
+      const { store, records } = create();
+      const targetDocumentId = ' order ';
+      const first = withTarget(projectionChangesRequest(), targetDocumentId);
+      const append = first.additionalWrites![0];
+      const target = append.targets[0]!;
+      const finalDocument = { value: 1, kept: '' };
+      const request: Request = {
+        ...first, progress: initialOwnProgress, stagedLinks: [],
+        finalDocuments: [{ ...first.finalDocuments[0]!, finalDocument }],
+        additionalWrites: [{ ...append, targets: [{ ...target, transitions: [{
+          ...target.transitions[0]!, patch: [{ op: 'add', path: '', value: finalDocument }]
+        }] }] }]
+      };
+      const result = await store.commitProjectionSourceCommit(request);
+      expect(result).toMatchObject({ status: 'committed', documentRevisions: { [targetDocumentId]: 1 } });
+      expect(records()).toHaveLength(1);
+      expect(matchProjectionChangesReceipt(projectionChangesIdentity(request)!, records()[0]!)).toBe('committed');
+      expect(await store.commitProjectionSourceCommit(request)).toEqual(result);
+      expect(records()).toHaveLength(1);
+      expect(await store.loadProjectionSourceCommitSnapshot({ ...changeSnapshotRequest, targetDocumentIds: [targetDocumentId] }))
+        .toMatchObject({ targets: [{ targetDocumentId, state: finalDocument, revision: 1 }], ownRecordSequence: 0 });
+    });
+
     test('rejects a NUL target ID without writing a change', async () => {
       const { store, records } = create();
       const request = withTarget(projectionChangesRequest(), 'order\0two');

@@ -92,7 +92,7 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
 export interface CommitProjectionSourceCommitCommitted {
   version: 1;
   status: 'committed';
-  /** Native prepared turns may resolve a retry to its already committed canonical receipt. */
+  /** True when this result acknowledges a reliable turn committed by an earlier invocation. */
   replayed?: true;
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;

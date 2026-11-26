@@ -56,7 +56,10 @@ type LegacyRevisionMaps = Pick<CommitProjectionSourceCommitCommitted, 'documentR
 
 export type MongoProjectionChangesRecord = ProjectionChangesReceipt & {
   _id: string;
-  outcome: Pick<CommitProjectionSourceCommitCommitted, 'progress'> & ({
+  outcome: Pick<CommitProjectionSourceCommitCommitted, 'progress'> & {
+    /** Internal invocation marker for reliable unknown-outcome reconciliation; absent in older receipts. */
+    writeId?: string;
+  } & ({
     /** IDs are values here so BSON cannot reinterpret them as field names. */
     documentRevisionEntries: readonly RevisionEntry[];
     linkRevisionEntries: readonly RevisionEntry[];

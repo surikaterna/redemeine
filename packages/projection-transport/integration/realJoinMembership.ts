@@ -13,6 +13,7 @@ import { runJoinBinding } from './realJoinBinding';
 import { runJoinInvalidRows } from './realJoinInvalidRows';
 import { runJoinReceiptRaces } from './realJoinReceiptRace';
 import { runFracturedReadRegression, runMultiEventBatch } from './joinMembershipMongoAudit';
+import { runValidReceiptRace } from './joinMembershipValidReceiptRace';
 
 function mongoResources(db: Db, client: MongoClient) {
   const collection = db.collection<ProjectionDocumentRecord<State>>('views');
@@ -123,6 +124,10 @@ async function main() {
       for (const kind of ['absent', 'empty', 'member', 'aba'] as const) {
         await runRace(suite(), kind, false);
         await runRace(suite(), kind, true);
+      }
+      for (const scenario of ['recorded', 'wrong-commit', 'none', 'fresh'] as const) {
+        await runValidReceiptRace(suite(), scenario, false);
+        await runValidReceiptRace(suite(), scenario, true);
       }
     }
     await runRollback(db(), client, commands);

@@ -1,5 +1,19 @@
 # @redemeine/aggregate
 
+## 1.0.0-pre.11
+
+### Patch Changes
+
+- [#175](https://github.com/surikaterna/redemeine/pull/175) [`968c015`](https://github.com/surikaterna/redemeine/commit/968c015aabb41c01b78726278a73a7b67d34de25) Thanks [@spralle](https://github.com/spralle)! - Enable durable change recording per projection generation in the coordinator and queue manifest. Stores atomically persist ordered, fine-grained JSON Patch transitions and revision receipts; `none` retains at-least-once application semantics. Source turns can pass ordered patch hints and the final document even when history is off. MongoDB plans native revision-guarded writes from one prepared snapshot and uses an acknowledged single-document update for eligible inline turns.
+
+  Commit-native `afterEach` hooks run synchronously on the same Immer draft as the handler; their effects are finalized and captured together.
+
+  Runtime state diagnostics are independently opt-in. The native Mongo path uses genuine same-store captures without replay or defensive whole-state freezing; trusted handlers must edit only the synchronous draft and must not retain or mutate state aliases. Direct untrusted requests retain verification or fall back to full writes.
+
+  Pin Immer 11.2.10 across packages sharing draft APIs. Its finalizer avoids revisiting untouched array items in the Mongo draft-only path when a recipe reads one item and edits another.
+
+  Reject empty document targets, staged link identifiers, and recorded transition event identifiers before writing the recorded turn.
+
 ## 1.0.0-pre.10
 
 ### Patch Changes

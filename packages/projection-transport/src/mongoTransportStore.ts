@@ -281,12 +281,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   ): Promise<ProjectionSourceDispatchAdmission> {
     if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
-    const binding = await this.readBindingDocument(queueBindingId);
-    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
-      || !sameManifest(binding.manifest, this.options.manifest)) throw new ProjectionDispatchBindingMismatchError();
-    const boundDispatchProof = { version: 1 as const, manifest: binding.manifest };
-    if (!matchesProjectionDispatchBinding(expectedDispatchProof, boundDispatchProof)) throw new ProjectionDispatchBindingMismatchError();
-    await this.initialize();
+    const boundDispatchProof = await this.verifyDispatchBinding(queueBindingId, expectedDispatchProof);
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
     await this.verifyJoinedCutover(queueBindingId, commit.streamId);
@@ -301,6 +296,24 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     const row = await this.readCoverage(id);
     if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
     return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundDispatchProof };
+  }
+
+  private async verifyDispatchBinding(queueBindingId: string, expected: ProjectionDispatchBindingProof): Promise<ProjectionDispatchBindingProof> {
+    // Initialization can bind a fresh queue; require the full configured proof before it can write.
+    if (!matchesProjectionDispatchBinding(expected, { version: 1, manifest: this.options.manifest })) {
+      throw new ProjectionDispatchBindingMismatchError();
+    }
+    let binding = await this.readBindingDocument(queueBindingId);
+    if (!binding) {
+      await this.initialize();
+      binding = await this.readBindingDocument(queueBindingId);
+    }
+    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
+      || !matchesProjectionDispatchBinding(expected, { version: 1, manifest: binding.manifest })) {
+      throw new ProjectionDispatchBindingMismatchError();
+    }
+    await this.initialize();
+    return { version: 1, manifest: binding.manifest };
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {

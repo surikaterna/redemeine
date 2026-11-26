@@ -72,7 +72,10 @@ async function receiptRace(db: Db, client: MongoClient, phase: Phase, proof: Pro
     },
     async commitProjectionSourceCommit(request, snapshot) {
       if (phase === 'fallback-write') await disrupt();
-      return raw.commitProjectionSourceCommit(request, snapshot);
+      const readsBeforeCommit = totalReads;
+      const result = await raw.commitProjectionSourceCommit(request, snapshot);
+      if (proof === 'fresh') assert.equal(totalReads, readsBeforeCommit, 'fresh writes must not probe receipts');
+      return result;
     }
   };
   const options = optionsFor(port);
@@ -87,13 +90,15 @@ async function receiptRace(db: Db, client: MongoClient, phase: Phase, proof: Pro
   if (proof === 'missing' || proof === 'none' || proof === 'off') assert.match(reason, /sorted, unique/);
   if (proof === 'fresh') assert.equal(outcome?.status, 'committed');
   assert.equal(proofReads, ['none', 'off', 'fresh'].includes(proof) ? 0 : 1);
-  if (['none', 'off', 'fresh'].includes(proof)) assert.equal(totalReads, 0);
+  if (proof === 'none' || proof === 'off') assert.equal(totalReads, 0);
+  // Compatibility still reads receipts in its two snapshots, before the write path.
+  if (proof === 'fresh') assert.equal(totalReads, phase === 'fallback-write' ? 2 : 0);
   const winnerWrote = !['missing', 'off'].includes(proof);
   assert.equal(await progress.countDocuments(), winnerWrote && proof !== 'none' ? 1 : 0);
   assert.equal(await receipts.countDocuments(), winnerWrote ? 1 : 0);
   assert.deepEqual((await views.find().sort({ _id: 1 }).toArray()).map(({ state }) => state.visits),
     winnerWrote && proof !== 'empty' ? [['ordinary'], ['ordinary']] : []);
-  console.log(JSON.stringify({ scenario: 'membership-receipt-race', phase, proof, status: result.status, proofReads }));
+  console.log(JSON.stringify({ scenario: 'membership-receipt-race', phase, proof, status: result.status, proofReads, totalReads }));
 }
 
 async function invalidAttachDoesNotProbeReceipts(db: Db, client: MongoClient) {
@@ -121,6 +126,6 @@ async function invalidAttachDoesNotProbeReceipts(db: Db, client: MongoClient) {
 export async function runJoinReceiptRaces(db: Db, client: MongoClient) {
   for (const phase of ['initial', 'full', 'compat-full', 'fallback-write'] as const) await receiptRace(db, client, phase, 'match');
   for (const proof of ['missing', 'mismatch', 'unavailable', 'none', 'off', 'fresh'] as const) await receiptRace(db, client, 'full', proof);
-  for (const proof of ['empty', 'missing', 'mismatch', 'unavailable', 'none', 'off'] as const) await receiptRace(db, client, 'fallback-write', proof);
+  for (const proof of ['empty', 'missing', 'mismatch', 'unavailable', 'none', 'off', 'fresh'] as const) await receiptRace(db, client, 'fallback-write', proof);
   await invalidAttachDoesNotProbeReceipts(db, client);
 }

@@ -179,6 +179,8 @@ The native Mongo path does not freeze state to enforce these rules. Treat Immerâ
 
 Commit-native hooks have the same Immer value semantics as handlers. Existing `Map` and `Set` values cannot be used as collection drafts without Immerâ€™s MapSet plugin, which the worker does not enable. Collections newly assigned during the recipe are raw values, not collection drafts. Portable JSON is the supported recording domain; collections and finalized `-0` are outside it. Enable runtime `stateValidation` for strict diagnostics. With recording off, collection storage is not guaranteed across adapters.
 
+For BSON `Date` in Mongo state with history and portability diagnostics off, replace the field: `const old = draft.shipBy; const next = new Date(old.getTime()); next.setUTCFullYear(2027); draft.shipBy = next;`. Unlike legacy full-document writes, commit-native deltas do not track in-place Date setters: a turn can advance revision and progress without saving the date change. Store ISO 8601 strings or epoch milliseconds for recorded history.
+
 ## Reusing Aggregate Projectors
 
 When the read model's state shape matches the write model, duplicating folding logic is maintenance overhead and drift risk. All reuse mechanisms require the aggregate to expose `applyToDraft`. Aggregates from `createAggregate(...).build()` provide this automatically.

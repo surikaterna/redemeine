@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import type {
+  CommitProjectionSourceCommitCommitted,
   CommitProjectionSourceCommitRequest,
   CommitProjectionSourceCommitResult,
   ProjectionCommitDefinition,
@@ -11,7 +12,7 @@ import type {
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import {
-  createProjection, freezePortableProjectionChangeJson, projectionUuidToBase64Url22,
+  buildProjectionChangesReceipt, createProjection, freezePortableProjectionChangeJson, projectionUuidToBase64Url22,
   validateProjectionChangesState, verifyProjectionSourceCommitStatePatches
 } from '@redemeine/projection-runtime-core';
 import {
@@ -297,6 +298,92 @@ describe('commit-native projection changes', () => {
     expect(await runtime.process(ignored)).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
     expect(await runtime.processPolled(ignored)).toMatchObject({ status: 'terminal', reason: expect.stringMatching(/Missing projection_changes history/) });
     expect(store.getProjectionChanges()).toEqual([]);
+  });
+
+  test.each([
+    ['fresh empty', 'empty', false, false, 'committed'],
+    ['fresh target', 'record', true, false, 'committed'],
+    ['fresh empty with record', 'record', false, false, 'terminal'],
+    ['fresh target with empty receipt', 'empty', true, false, 'terminal'],
+    ['both receipt fields', 'both', false, true, 'terminal'],
+    ['empty receipt plus empty writes array', 'empty-array', false, false, 'terminal'],
+    ['more than one write receipt', 'multiple', true, false, 'terminal'],
+    ['record in empty receipt field', 'wrong-field', false, true, 'terminal'],
+    ['canonical target replay of empty plan', 'record', false, true, 'deduplicated'],
+    ['canonical empty replay of target plan', 'empty', true, true, 'deduplicated'],
+    ['canonical replay with wrong commit ID', 'wrong-identity', false, true, 'terminal'],
+    ['canonical record with different target set', 'wrong-target', true, true, 'deduplicated'],
+    ['fresh record with unrelated target', 'wrong-target', true, undefined, 'terminal'],
+    ['fresh record with null target', 'null-target', true, undefined, 'terminal'],
+    ['canonical record with duplicate targets', 'duplicate-target', true, true, 'terminal'],
+    ['fresh record with malformed target metadata', 'invalid-target', true, false, 'terminal'],
+    ['empty receipt with target data', 'empty-with-targets', false, undefined, 'terminal'],
+    ['reliable truthy string flag', 'empty', false, 'false', 'terminal'],
+    ['none truthy string flag', 'record', true, 'false', 'terminal', 'none'],
+    ['none truthy numeric flag', 'empty', false, 1, 'terminal', 'none'],
+    ['none may not claim canonical replay', 'record', true, true, 'terminal', 'none'],
+    ['none same-invocation receipt remains committed', 'record', true, false, 'committed', 'none']
+  ] as const)('%s enforces the committed receipt envelope', async (_label, shape, targets, replayed, expected, strategy: 'own_record' | 'none' = 'own_record') => {
+    const native = new InMemoryProjectionStore<State>();
+    const store: ProjectionSourceCommitStorePort<State> = {
+      projectionChangesCapability: native.projectionChangesCapability,
+      loadProjectionSourceCommitSnapshot: native.loadProjectionSourceCommitSnapshot.bind(native),
+      async commitProjectionSourceCommit(request) {
+        const append = request.additionalWrites![0];
+        const applicationId = strategy === 'none' ? SOURCE_B : undefined;
+        const empty = buildProjectionChangesReceipt({ ...request, additionalWrites: [{ ...append, targets: [] }] }, applicationId);
+        const [event] = request.commit.events;
+        const record = buildProjectionChangesReceipt({ ...request, additionalWrites: [{ ...append, targets: [{
+          targetDocumentId: SOURCE_A, transitions: [{ eventId: event.eventId, eventIndex: 0, changeType: 'noop', patch: [] }]
+        }] }] }, applicationId);
+        if (record?.kind !== 'projection_changes' || empty?.kind !== 'projection_changes_empty') throw new Error('Invalid test receipt');
+        const target = record.targets[0]!;
+        const malformedOrValid = {
+          empty: { emptyChangeReceipt: empty }, record: { additionalWrites: [record] },
+          both: { additionalWrites: [record], emptyChangeReceipt: empty },
+          'empty-array': { additionalWrites: [], emptyChangeReceipt: empty },
+          multiple: { additionalWrites: [record, record] }, 'wrong-field': { emptyChangeReceipt: record },
+          'wrong-identity': { emptyChangeReceipt: { ...empty, commitId: SOURCE_B } },
+          'wrong-target': { additionalWrites: [{ ...record, targets: [{ ...target, targetDocumentId: SOURCE_B }] }] },
+          'null-target': { additionalWrites: [{ ...record, targets: [null] }] },
+          'duplicate-target': { additionalWrites: [{ ...record, targets: [target, target] }] },
+          'invalid-target': { additionalWrites: [{ ...record, targets: [{ ...target, revision: null }] }] },
+          'empty-with-targets': { emptyChangeReceipt: { ...empty, targets: record.targets } }
+        }[shape];
+        return { version: 1, status: 'committed', replayed, commitSequence: request.commit.commitSequence,
+          documentRevisions: {}, linkRevisions: {}, progress: request.progress, ...malformedOrValid } as CommitProjectionSourceCommitCommitted;
+      }
+    };
+    const result = await executeProjectionDefinition({ definition: definition('orders', strategy === 'none'
+      ? { strategy, duplicateEffects: 'acknowledged', reason: 'test' } : { strategy }),
+      generation: 'g1', projectionChanges: 'order_views', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0
+    }, commit(0, SOURCE_A, [targets ? 'Added' : 'Ignored']));
+    expect(result).toMatchObject({ status: expected });
+    if (expected === 'terminal') {
+      const invalidReplay = (replayed !== undefined && typeof replayed !== 'boolean') || (strategy === 'none' && replayed === true);
+      expect(result).toMatchObject({ reason: invalidReplay ? 'Store returned an invalid commit replay flag.'
+        : 'Store did not return a matching projection_changes receipt.' });
+    }
+  });
+
+  test('a racing canonical empty commit can win over a prepared InMemory target plan', async () => {
+    const native = new InMemoryProjectionStore<State>();
+    const store: ProjectionSourceCommitStorePort<State> = {
+      projectionChangesCapability: native.projectionChangesCapability,
+      sourceCommitSnapshotCapability: native.sourceCommitSnapshotCapability,
+      loadProjectionSourceCommitSnapshot: native.loadProjectionSourceCommitSnapshot.bind(native),
+      async commitProjectionSourceCommit(request, prepared) {
+        expect(request.finalDocuments).toHaveLength(1);
+        expect(await native.commitProjectionSourceCommit({ ...request, finalDocuments: [], additionalWrites: [
+          { ...request.additionalWrites![0], targets: [] }
+        ] })).toMatchObject({ status: 'committed', emptyChangeReceipt: { kind: 'projection_changes_empty' } });
+        return native.commitProjectionSourceCommit(request, prepared);
+      }
+    };
+    expect(await executeProjectionDefinition({ definition: definition('orders', { strategy: 'own_record' }),
+      generation: 'g1', projectionChanges: 'order_views', store, lanes: createProjectionLaneScheduler(), maxConflictRetries: 0
+    }, commit(0))).toMatchObject({ status: 'deduplicated' });
+    expect(await native.load(SOURCE_A)).toBeNull();
   });
 
   test('accepted reliable baseline skips do not require a durable turn receipt', async () => {
