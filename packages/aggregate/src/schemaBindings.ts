@@ -48,11 +48,14 @@ function bindingMap(forward: readonly (readonly [string, string])[], reverse: re
 
 function eventBindings(forward: readonly Forward[], dispatch: ReadonlyMap<string, CompiledEventRegistration>): SchemaBindingMap {
   const origins = new Map<string, { origin: EventOrigin; wireType: string }>();
-  const entries = forward.map(({ wireType, registration }) => {
+  const declarations = forward.flatMap(({ wireType, registration }) => [registration.schemaOrigin,
+    ...(registration.schemaOrigin?.aliases ?? [])].map(schemaOrigin => ({ wireType,
+      registration: schemaOrigin ? { ...registration, schemaOrigin } : registration })));
+  const entries = declarations.map(({ wireType, registration }) => {
     const schemaId = eventSchemaId(registration);
     const origin = registration.schemaOrigin!;
     const previous = origins.get(schemaId);
-    if (previous && (previous.wireType !== wireType || !sameOrigin(previous.origin, origin))) {
+    if (previous && (origin.segments.length === 1 || previous.wireType !== wireType || !sameOrigin(previous.origin, origin))) {
       throw new Error(`Ambiguous event schema registration: ${schemaId}`);
     }
     origins.set(schemaId, { origin, wireType });
@@ -63,6 +66,7 @@ function eventBindings(forward: readonly Forward[], dispatch: ReadonlyMap<string
 
 function eventSchemaId(registration: CompiledEventRegistration): string {
   const origin = registration.schemaOrigin;
+  if (origin?.ambiguous) throw new Error(`Ambiguous event schema registration: ${origin.segments.join('.')}`);
   if (!origin || registration.unsupportedSchema) {
     throw new Error(`Unsupported direct mixin event schema registration: ${origin?.segments.join('.') ?? 'unknown'}`);
   }

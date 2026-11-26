@@ -99,12 +99,14 @@ test('namespace collisions and repeated mounts fail only at access, without alte
   expect(Object.keys(schemaBindings(identical).events.schemaToWire)).toEqual(['rows.registered']);
 });
 
-test('all direct mixin events fail closed, including identical handlers and no root collision', () => {
+test('unique direct mixin events are supported, duplicate authored keys fail only at access', () => {
   const projector = () => {};
   const mixin = createMixin<{}>().events({ changed: projector }).build();
-  for (const built of [createAggregate('host', {}).mixins(mixin).build(),
+  expect(schemaBindings(createAggregate('host', {}).mixins(mixin).build()).events.wireToSchema)
+    .toEqual({ 'host.changed.event': 'changed' });
+  for (const built of [createAggregate('host', {}).mixins(mixin, mixin).build(),
     createAggregate('host', {}).events({ changed: projector }).mixins(mixin).build()]) {
-    expect(() => schemaBindings(built)).toThrow(/Unsupported direct mixin.*changed/);
+    expect(() => schemaBindings(built)).toThrow(/Ambiguous.*changed/);
     expect(() => built.apply({}, { type: 'host.changed.event', payload: {} })).not.toThrow();
   }
 });

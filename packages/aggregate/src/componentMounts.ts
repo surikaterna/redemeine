@@ -4,7 +4,7 @@ import type { MountedStructureKind, MountedStructureMetadata, MountedEntityPacka
 import type { MapEntityCommands } from './types/aggregate';
 import { entitySelectorContext } from './build/entityCommandContext';
 import { commandTarget, definitionTargets, mergeDefinitions, recordCommandName } from './build/entityCommandTarget';
-import { eventDefinitionKeys, mergeEventDefinitions, recordEventAssignment, eventOrigin, recordEventOrigin } from './build/eventDefinitions';
+import { eventDefinitionKeys, mergeEventDefinitions, recordEventAssignment, eventOrigin, recordEventOrigin, scopeEventOrigin } from './build/eventDefinitions';
 import { primaryKey, validateListMounts } from './build/primaryKey';
 import { ownDefinition } from './build/definitionMap';
 import { commandModes } from './entityCommandLifecycle';
@@ -99,7 +99,7 @@ export function composeMountedComponentBehavior(
       mergedEvents[mappedEventKey] = nestedEvents[eventKey];
       recordEventAssignment(mergedEvents, mappedEventKey);
       const origin = eventOrigin(nestedEvents, eventKey);
-      recordEventOrigin(mergedEvents, mappedEventKey, { ...origin, segments: [mountName, ...origin.segments] });
+      recordEventOrigin(mergedEvents, mappedEventKey, scopeEventOrigin(origin, mountName));
       recordMountedName(mergedEvents, mappedEventKey, nestedEvents, eventKey, segment,
         ownDefinition(nestedEventNameOverrides, eventKey), ownDefinition(mountEventNameOverrides, eventKey));
       mounts[mountName]!.eventTargets![mappedEventKey] = [target, ...(nestedEventTargets[eventKey] ?? [])];

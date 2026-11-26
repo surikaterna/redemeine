@@ -34,22 +34,20 @@ export function resolveEvents<S, TMeta>(
         Object.assign(allEventMetadata, (m.eventMetadata || {}) as Record<string, TMeta | undefined>);
     });
     const allEventOverrides = mixins.reduce<Record<string, string>>(
-        (acc, m) => ({ ...acc, ...(m.eventOverrides || {}) }),
-        { ...snapshot.eventOverrides }
+        (acc, m) => Object.assign(acc, m.eventOverrides || {}),
+        Object.assign(Object.create(null), snapshot.eventOverrides)
     );
-    const unsupported = new Set(mixins.flatMap(m => Object.keys(m.projectors || m.events || {})));
-    const dispatch = compileDeclaredEvents(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy, unsupported);
-    const forward = declaredForward<TMeta>(allEvents, allEventOverrides, unsupported);
+    const dispatch = compileDeclaredEvents(allEvents, allEventMetadata, allEventOverrides, aggregateName, namingStrategy);
+    const forward = declaredForward<TMeta>(allEvents, allEventOverrides);
     return { allEvents, allEventMetadata, allEventOverrides, dispatch, forward };
 }
 
-function declaredForward<TMeta>(allEvents: Record<string, Function>, overrides: Record<string, string>, unsupported: Set<string>): ResolvedEvents<TMeta>['forward'] {
+function declaredForward<TMeta>(allEvents: Record<string, Function>, overrides: Record<string, string>): ResolvedEvents<TMeta>['forward'] {
     const forward: ResolvedEvents<TMeta>['forward'] = [];
     for (const key of eventDefinitionKeys(allEvents)) {
         const origin = eventOrigin(allEvents, key);
-        forward.push({ wireType: overrides[key]!, registration: {
-            projector: allEvents[key]!, targets: [], schemaOrigin: origin,
-            unsupportedSchema: unsupported.has(key) && origin.segments.length === 1
+        forward.push({ wireType: ownDefinition(overrides, key)!, registration: {
+            projector: allEvents[key]!, targets: [], schemaOrigin: origin
         } });
     }
     return forward;
@@ -60,8 +58,7 @@ function compileDeclaredEvents<TMeta>(
     metadata: Record<string, TMeta | undefined>,
     overrides: Record<string, string>,
     aggregateName: string,
-    namingStrategy: NamingStrategy,
-    unsupported: Set<string>
+    namingStrategy: NamingStrategy
 ): Map<string, CompiledEventRegistration<TMeta>> {
     const dispatch = new Map<string, CompiledEventRegistration<TMeta>>();
     const targets = definitionTargets(events);
@@ -76,7 +73,7 @@ function compileDeclaredEvents<TMeta>(
             overrides[key] = type;
             const origin = eventOrigin(events, key);
             dispatch.set(type, { projector: events[key]!, targets: snapshotTargetChain(chain), metadata: ownDefinition(metadata, key),
-                schemaOrigin: origin, unsupportedSchema: unsupported.has(key) && origin.segments.length === 1 });
+                schemaOrigin: origin });
         }
     }
     return dispatch;
