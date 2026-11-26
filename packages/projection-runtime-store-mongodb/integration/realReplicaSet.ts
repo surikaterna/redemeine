@@ -11,6 +11,9 @@ import {
   type ProjectionDocumentRecord,
   type ProjectionLinkRecord
 } from '../src';
+import { checkRealProjectionChanges } from './realProjectionChanges';
+import { checkRealFineGrainedChanges } from './realFineGrainedChanges';
+import { checkRealSourceCommitRoundTrips } from './realSourceCommitRoundTrips';
 
 const uri = process.env.REDEMEINE_MONGO_URI;
 if (!uri) throw new Error('REDEMEINE_MONGO_URI is required');
@@ -215,7 +218,9 @@ const run = async (): Promise<void> => {
     'oversized',
     1,
     [
-      { targetDocumentId: 'rollback-first', expectedRevision: 1, finalDocument: { value: 2 } },
+      { targetDocumentId: 'rollback-first', expectedRevision: 1, finalDocument: { value: 2 },
+        statePatch: { kind: 'ordered', transitions: [{ eventIndex: 0, eventId: commit(1).events[0].eventId,
+          changeType: 'update', patch: [{ op: 'replace', path: '/value', value: 2 }] }] } },
       { targetDocumentId: 'rollback-second', expectedRevision: null, finalDocument: { value: 2 } },
       { targetDocumentId: 'rollback-oversized', expectedRevision: null, finalDocument: { padding: 'x'.repeat(oversizedPayloadBytes) } }
     ],
@@ -287,6 +292,9 @@ const run = async (): Promise<void> => {
   assert(JSON.stringify(await dedupe.findOne({ projectionName: 'oversized-own' })) === JSON.stringify(baselineOwn), 'own rollback advanced scalar progress');
 
   const buildInfo = await db.admin().command({ buildInfo: 1 });
+  await checkRealProjectionChanges(db, client);
+  await checkRealFineGrainedChanges(db, client);
+  const sourceCommitRoundTrips = await checkRealSourceCommitRoundTrips(db, client);
   const receipt = {
     databaseName,
     mongoVersion: buildInfo.version,
@@ -301,6 +309,9 @@ const run = async (): Promise<void> => {
     driverUnknownCommitRetries: commitTransactionFailures,
     storeReconciliations,
     noneDedupeOperations,
+    projectionChangesAtomicity: 'passed',
+    fineGrainedHistoryAndMongoWrites: 'passed',
+    sourceCommitRoundTrips,
     cleanup: 'pending'
   };
   await db.dropDatabase();

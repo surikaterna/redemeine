@@ -143,7 +143,7 @@ const buildPlannedWriteOperation = <TState>(
     updateOne: {
       filter,
       update: buildDocumentUpdateFromCompiled(write.checkpoint, now, plan),
-      upsert: true
+      upsert: !plan.orderedArraySet
     }
   };
 };
@@ -167,7 +167,9 @@ export const buildDocumentWriteOperation = <TState>(
 
   let plan;
   try {
-    plan = patch6902ToMongoUpdatePlan(write.patch, write.fullDocument);
+    const precondition = write.precondition;
+    const coalesceGuardedArrayEdits = precondition?.expectedRevision != null || precondition?.expectedCheckpoint != null;
+    plan = patch6902ToMongoUpdatePlan(write.patch, write.fullDocument, { coalesceGuardedArrayEdits });
   } catch (error) {
     throw new ProjectionStoreAtomicManyError(
       createInvalidRequestFailure(error instanceof Error ? error.message : 'invalid patch request')

@@ -41,7 +41,7 @@
     "@redemeine/mirage": "workspace:*",
     "@redemeine/projection": "workspace:*",
     "@redemeine/saga": "workspace:*",
-    "immer": "^10.2.0"
+    "immer": "11.2.10"
   },
   "devDependencies": {
     "@redemeine/projection-runtime-core": "workspace:*",

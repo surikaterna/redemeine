@@ -116,7 +116,7 @@ test('uses actual BSON document bytes for best-effort rate-limited warnings', as
   const base = makeRequest();
   if (base.progress.strategy !== 'in_document') throw new Error('test request strategy');
   const projected = {
-    _id: 'first', state: { value: 1 }, updatedAt: now, v2Revision: 1,
+    _id: 'first', state: { value: 1 }, updatedAt: now, v2Revision: 1, v2WriteId: '00000000-0000-0000-0000-000000000000',
     sourceProgress: { [encodedSource]: 0 }
   };
   const request: CommitProjectionSourceCommitRequest<{ value: number; padding?: string }> = {

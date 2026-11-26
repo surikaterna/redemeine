@@ -3,6 +3,7 @@ import { MongoClient, type Db } from 'mongodb';
 import type {
   CommitProjectionSourceCommitRequest,
   LoadProjectionSourceCommitSnapshotRequest,
+  ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStorePort,
   ProjectionSourceCoverageAdvance,
   ProjectionSourceOrderPort
@@ -55,6 +56,7 @@ async function killAt(client: MongoClient, point: string, details: Record<string
 
 class ObservedStore implements ProjectionSourceCommitStorePort<StackState> {
   private completed = 0;
+  readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
 
   constructor(
     private readonly delegate: MongoProjectionStore<StackState>,
@@ -65,9 +67,9 @@ class ObservedStore implements ProjectionSourceCommitStorePort<StackState> {
     return this.delegate.loadProjectionSourceCommitSnapshot(request);
   }
 
-  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<StackState>) {
+  async commitProjectionSourceCommit(request: CommitProjectionSourceCommitRequest<StackState>, snapshot?: ProjectionSourceCommitSnapshot<StackState>) {
     if (crashPoint === 'before_save') await killAt(this.client, crashPoint, { projection: request.projectionName });
-    const result = await this.delegate.commitProjectionSourceCommit(request);
+    const result = await this.delegate.commitProjectionSourceCommit(request, snapshot);
     await this.client.db(databaseName).collection('definitionAttempts').insertOne({
       scenario, projection: request.projectionName, sequence: request.commit.commitSequence,
       result: result.status, completedAt: new Date()
@@ -89,8 +91,8 @@ class ObservedSourceOrder implements ProjectionSourceOrderPort {
     private readonly client: MongoClient
   ) {}
 
-  admitForDispatch(commit: Parameters<ProjectionSourceOrderPort['admitForDispatch']>[0], queueBindingId: string) {
-    return this.delegate.admitForDispatch(commit, queueBindingId);
+  admitForDispatch(...args: Parameters<ProjectionSourceOrderPort['admitForDispatch']>) {
+    return this.delegate.admitForDispatch(...args);
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance) {

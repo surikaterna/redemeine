@@ -23,10 +23,12 @@ export type {
   MongoCollectionLike,
   MongoProjectionStoreOptions,
   MongoPatchPlanTelemetryEvent,
+  MongoSourceCommitPatchPlanEvent,
   MongoPatchPlanMode,
   MongoProjectionLinkStoreOptions,
   MongoProjectionDedupeWarning,
   MongoSourceCommitReconciliation,
+  MongoProjectionChangesRecord,
   ProjectionDocumentRecord,
   ProjectionDedupeRecord,
   ProjectionLinkRecord

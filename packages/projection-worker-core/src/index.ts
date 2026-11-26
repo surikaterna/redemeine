@@ -42,6 +42,6 @@ export type {
 } from './commitCoordinatorContracts';
 export { createProjectionCommitCoordinator } from './createProjectionCommitCoordinator';
 export { reduceProjectionSourceCommit } from './projectionCommitReducer';
-export type { ProjectionReductionResult } from './projectionCommitReducer';
+export type { ProjectionReductionResult, ProjectionStateValidation } from './projectionCommitReducer';
 export { createProjectionLaneScheduler } from './targetLaneScheduler';
 export type { ProjectionLaneScheduler } from './targetLaneScheduler';

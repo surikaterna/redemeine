@@ -5,7 +5,7 @@ import type {
   ProjectionStoreAtomicManyResult,
   ProjectionStoreCommitAtomicManyRequest
 } from '../contracts';
-import { assertWritePrecondition, createInvalidRequestFailure, toWriteFailure } from '../storeFailures';
+import { assertWritePrecondition, createInvalidRequestFailure, createStoreFailure, ProjectionStoreAtomicManyError, toWriteFailure } from '../storeFailures';
 import type { MongoCollectionLike, ProjectionDedupeRecord, ProjectionDocumentRecord } from '../types';
 import { withSession } from './withSession';
 
@@ -101,7 +101,8 @@ const applyWrite = async <TState>(
   }
 
   if (documentOps.length > 0) {
-    await deps.collection.bulkWrite(documentOps, withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: false }, session));
+    const result = await deps.collection.bulkWrite(documentOps, withSession<Pick<BulkWriteOptions, 'ordered'>>({ ordered: false }, session));
+    assertGuardedWritesMatched(documentOps, result);
   }
 
   if (write.dedupe.upserts.length > 0) {
@@ -122,6 +123,16 @@ const applyWrite = async <TState>(
     watermarks.byLaneWatermark[write.routingKeySource] = laneWatermark;
   }
 };
+
+function assertGuardedWritesMatched<TState>(
+  operations: readonly AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>[], result: unknown
+): void {
+  // Guarded updates cannot upsert. A miss must abort the whole transaction, not just skip one write.
+  if (!operations.some((op) => 'updateOne' in op && op.updateOne.upsert === false)) return;
+  const { matchedCount, upsertedCount } = (result ?? {}) as { matchedCount?: number; upsertedCount?: number };
+  if (matchedCount !== undefined && upsertedCount !== undefined && matchedCount + upsertedCount === operations.length) return;
+  throw new ProjectionStoreAtomicManyError(createStoreFailure('conflict', 'occ-conflict', 'Guarded projection patch did not match.'));
+}
 
 const executeWrites = async <TState>(deps: CommitAtomicManyDependencies<TState>, watermarks: Watermarks): Promise<void> => {
   await deps.execute(async (session) => {

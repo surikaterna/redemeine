@@ -1,4 +1,5 @@
 import type {
+  ProjectionChangeRecordingScope,
   ProjectionQueueRegistryBindResult,
   ProjectionQueueRegistryBinding,
   ProjectionQueueRegistryBindingPort,
@@ -11,6 +12,8 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   hasMatchingProjectionRegistryIdentity,
+  matchesProjectionChangeRecordingScope,
+  ProjectionChangeRecordingPolicyMismatchError,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
@@ -271,11 +274,20 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
 
   async admitForDispatch(
     commit: ProjectionSourceCommit,
-    queueBindingId: string
+    queueBindingId: string,
+    expectedChangeRecordingScope?: readonly ProjectionChangeRecordingScope[]
   ): Promise<ProjectionSourceDispatchAdmission> {
     if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
-    await this.initialize();
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
+    // Initialization can bind a fresh queue, so reject a mismatched policy before it can be persisted.
+    if (expectedChangeRecordingScope && !matchesProjectionChangeRecordingScope(expectedChangeRecordingScope, this.options.manifest.definitions)) {
+      throw new ProjectionChangeRecordingPolicyMismatchError();
+    }
+    await this.initialize();
+    const binding = await this.readBindingDocument(queueBindingId);
+    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
+      || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Immutable projection registry binding mismatch.');
+    const boundChangeRecordingScope = binding.manifest.definitions;
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
     await this.verifyJoinedCutover(queueBindingId, commit.streamId);
@@ -289,7 +301,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     );
     const row = await this.readCoverage(id);
     if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
-    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope };
+    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundChangeRecordingScope };
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {

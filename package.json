@@ -99,7 +99,7 @@
     "zod": "^4.3.6"
   },
   "dependencies": {
-    "immer": "^10.1.1",
+    "immer": "11.2.10",
     "type-fest": "^5.5.0"
   },
   "peerDependencies": {

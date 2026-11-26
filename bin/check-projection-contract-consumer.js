@@ -71,6 +71,7 @@ import {
   type ProjectionEvent
 } from '@redemeine/projection';
 import {
+  createProjection as createRuntimeProjection,
   projectionUuidToBase64Url22,
   validateProjectionQueueRegistryManifest,
   type ProjectionNoCommitProgress,
@@ -81,6 +82,14 @@ import {
 } from '@redemeine/projection-runtime-core';
 
 const aggregate = { aggregateType: 'sample', pure: { eventProjectors: { changed: () => undefined } } };
+type ReadonlyView = { readonly metadata: { readonly timestamps: readonly string[] } };
+const initialView = (): ReadonlyView => ({ metadata: { timestamps: [] } });
+createProjection('public-hook', initialView).hooks({
+  afterEach(draft, event) { draft.metadata.timestamps.push(event.timestamp); }
+});
+createRuntimeProjection('core-hook', initialView).hooks({
+  afterEach(draft, event) { draft.metadata.timestamps.push(event.timestamp); }
+});
 const definition = createProjection('sample', () => ({}))
   .from(aggregate, {})
   .deduplication({ strategy: 'own_record' })
