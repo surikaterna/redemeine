@@ -9,6 +9,7 @@ import type {
 import {
   isCanonicalProjectionUuid,
   checkedJoinMembershipKey,
+  JOIN_MEMBERSHIP_FENCE_CAPACITY,
   ProjectionJoinCapacityError,
   ProjectionJoinMembershipValidationError,
   JoinTurnBudget,
@@ -229,7 +230,11 @@ async function reduceAttempt<TState>(
     return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
       ?? failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
   }
-  return commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
+  const result = await commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
+  if (setPlan && result.kind === 'done' && result.outcome.status === 'terminal' && result.outcome.reason === JOIN_MEMBERSHIP_FENCE_CAPACITY) {
+    return capacityRejection(options, commit, result.outcome.reason, attempt, confirmCapacity);
+  }
+  return result;
 }
 
 function validateDefinitionTurn<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit) {

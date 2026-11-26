@@ -1,5 +1,5 @@
 import {
-  assertJoinRevision, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, mergeJoinTargets, validateJoinTargetSet,
+  assertJoinRevision, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, measureJoinTargetSet, mergeJoinTargets, validateJoinTargetSet,
   ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
@@ -16,14 +16,15 @@ export function observedMemberships(
     const { aggregateType, aggregateId, revision, targetDocumentIds } = row;
     const key = joinMembershipKey(aggregateType, aggregateId);
     if (!remaining.delete(key)) throw new ProjectionPersistedJoinMembershipError('Unexpected joined membership snapshot key.');
+    let bytes: number;
     try {
       assertJoinRevision(revision);
-      validateJoinTargetSet(targetDocumentIds);
+      bytes = measureJoinTargetSet(targetDocumentIds);
     } catch (error) {
       if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
       throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
     }
-    for (const id of targetDocumentIds) budget.add(id);
+    budget.addMeasured(targetDocumentIds.length, bytes);
     if (revision === null && targetDocumentIds.length) throw new ProjectionPersistedJoinMembershipError('Absent membership cannot have targets.');
     result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]) }));
   }

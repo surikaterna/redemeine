@@ -146,7 +146,7 @@ export function validateCommitProjectionSourceCommitRelationships<TState>(
     } catch (error) {
       return error instanceof Error ? error.message : 'Invalid joined identifier.';
     }
-    const invalid = validateJoinMembershipFences(request.joinMembershipFences);
+    const invalid = validateJoinMembershipFences(request.joinMembershipFences, request);
     if (invalid) return invalid;
   }
   const malformedAppend = validateProjectionChangesAppend(request);

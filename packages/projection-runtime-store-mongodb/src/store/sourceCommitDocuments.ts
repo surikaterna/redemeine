@@ -6,7 +6,7 @@ import type { AnyBulkWriteOperation, ClientSession } from 'mongodb';
 import type { MongoProjectionStoreOptions, MongoSourceCommitPatchDecision, ProjectionDocumentRecord } from '../types';
 import { planSourceDocumentWrite } from './sourceCommitDelta';
 import { majorityPrimary, type LoadedSourceSnapshot } from './sourceCommitSnapshot';
-import { sourceCommitChunks } from './sourceCommitMembership';
+import { setIdentityCollation, sourceCommitChunks } from './sourceCommitMembership';
 
 export function revisionFilter(id: string, revision: number | null): Record<string, unknown> {
   return { _id: id, v2Revision: revision === null ? { $exists: false } : revision };
@@ -125,7 +125,7 @@ async function writeDocumentChunk<TState>(
     } catch {
       // Observability must not change the source write.
     }
-    return { updateOne: { filter: write.filter, update: write.update, upsert: write.insertOnly } };
+    return { updateOne: { filter: write.filter, update: write.update, upsert: write.insertOnly, collation: setIdentityCollation } };
   });
   const counts = await options.collection.bulkWrite(operations, { session, ordered: true }) as
     { matchedCount: number; upsertedCount: number };

@@ -21,6 +21,9 @@ import { runJoinRabbit } from './realJoinRabbit';
 import { runJoinSelectorRawBudget } from './joinSelectorRawBudget';
 import { runCutoverTargetPresence, runLargeCutoverIdentity } from './realJoinCutoverIdentity';
 import { runJoinApprovalCollation } from './realJoinApprovalCollation';
+import { runFenceWriteBudget } from './joinFenceWriteBudget';
+import { runSetCollationCutover } from './realJoinResourceCollation';
+import { runFenceCapacityRace } from './joinFenceCapacityRace';
 
 function mongoResources(db: Db, client: MongoClient) {
   const collection = db.collection<ProjectionDocumentRecord<State>>('views');
@@ -152,6 +155,15 @@ async function main() {
     await runRollback(db(), client, commands);
     await runScalarBindingOrder(db(), client);
     await runJoinMembershipCutover(db(), client);
+    for (const collated of ['views', 'memberships', 'neither'] as const) await runSetCollationCutover(db(), client, commands, collated);
+    for (const prepared of [false, true]) {
+      await runFenceWriteBudget(memory()(), prepared);
+      await runFenceWriteBudget(mongo()(), prepared, commands);
+      for (const scenario of ['fresh', 'cancel', 'winner-after-missing', 'none'] as const) {
+        await runFenceCapacityRace(memory()(), prepared, scenario);
+        await runFenceCapacityRace(mongo()(), prepared, scenario, commands);
+      }
+    }
     await runLargeCutoverIdentity(db(), client);
     for (const insensitive of [false, true]) await runJoinApprovalCollation(db(), client, commands, insensitive);
     for (const boundSet of [true, false]) {

@@ -93,8 +93,9 @@ export async function verifyInitialMembershipSets(item: ApprovedJoinedSetInvento
   for (let offset = 0; offset < targets.length; offset += 256) {
     const chunk = targets.slice(offset, offset + 256);
     const rows = await resource.documents.find({ _id: { $in: chunk }, ...joinedTargetPresence },
-      { session, projection: joinedTargetIdentityProjection }).toArray();
-    if (rows.length !== chunk.length) {
+      { session, projection: joinedTargetIdentityProjection, collation: { locale: 'simple' } }).toArray();
+    const pending = new Set(chunk);
+    if (rows.some(({ _id }) => !pending.delete(_id)) || pending.size) {
       throw new Error('Joined target document missing or tombstoned.');
     }
   }

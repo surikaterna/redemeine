@@ -12,7 +12,6 @@ import {
   ProjectionJoinMembershipValidationError,
   ProjectionPersistedJoinMembershipError,
   joinMembershipKey,
-  validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState
 } from '@redemeine/projection-runtime-core';
 import type {
@@ -300,8 +299,7 @@ export async function commitMongoV2<TState>(
   observed?: ObservedSourceCommit<TState>,
   preparedRequest = false
 ): Promise<CommitProjectionSourceCommitResult> {
-  const malformed = validateCommitProjectionSourceCommitRelationships(request);
-  if (malformed) return terminal(malformed);
+  // The store validates the complete request before readiness or opening a write transaction.
   let result: CommitProjectionSourceCommitResult;
   try {
     result = await runSourceCommit(request, options, execute, observed, writeId);

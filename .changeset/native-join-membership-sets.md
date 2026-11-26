@@ -18,3 +18,5 @@ Source-order ports now require an authoritative, versioned dispatch binding proo
 Matching durable receipts take precedence over capacity errors from a stale membership snapshot. Final staged sets are validated at event boundaries; idempotent edge operations do not rebuild the set. Scalar manifest field order is preserved on disk for compatibility with older binders.
 
 Public authored join definitions register with the native coordinator without a cast. Raw selector output is bounded before deduplication. After cutover adoption, workers check durable approval identity without loading seed inventories again. Initial target presence checks allow explicit JSON null and do not return state bodies.
+
+Native set cutover verifies exact target IDs and requires simple collation for its document and membership collections. Aggregate final membership fence budgets match the snapshot read budgets in both stores.

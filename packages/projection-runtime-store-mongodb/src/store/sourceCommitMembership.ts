@@ -1,12 +1,13 @@
 import {
   assertJoinRevision, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
-  ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError, validateJoinTargetSet,
+  measureJoinTargetSet, ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
 import type { AnyBulkWriteOperation, ClientSession, FindOptions } from 'mongodb';
 import type { MongoProjectionStoreOptions, ProjectionJoinMembershipRecord } from '../types';
 
 type Scope = Pick<LoadProjectionSourceCommitSnapshotRequest, 'projectionName' | 'projectionGeneration'>;
+export const setIdentityCollation = { locale: 'simple' } as const;
 const scopedKey = (scope: Scope, source: ProjectionJoinSource) =>
   checkedJoinMembershipKey(scope.projectionName, scope.projectionGeneration, source.aggregateType, source.aggregateId);
 
@@ -24,10 +25,10 @@ export function checkedSourceCommitIds<T>(items: readonly T[], idOf: (item: T) =
   });
 }
 
-function validatePersistedTargets(row: ProjectionJoinMembershipRecord): void {
+function measurePersistedTargets(row: ProjectionJoinMembershipRecord): number {
   try {
     assertJoinRevision(row.revision);
-    validateJoinTargetSet(row.targetDocumentIds);
+    return measureJoinTargetSet(row.targetDocumentIds);
   } catch (error) {
     if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
     throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
@@ -43,9 +44,9 @@ export async function readMongoMemberships<T>(
   const rows = new Map<string, ProjectionJoinMembershipRecord>();
   const resultsBudget = new JoinTurnBudget();
   for (const chunk of sourceCommitChunks(ids)) {
-    for await (const row of collection.find({ _id: { $in: chunk } }, readOptions)) {
-      validatePersistedTargets(row);
-      for (const id of row.targetDocumentIds) resultsBudget.add(id);
+    for await (const row of collection.find({ _id: { $in: chunk } }, { ...readOptions, collation: setIdentityCollation })) {
+      const bytes = measurePersistedTargets(row);
+      resultsBudget.addMeasured(row.targetDocumentIds.length, bytes);
       rows.set(row._id, row);
     }
   }
@@ -75,7 +76,7 @@ export async function writeMongoMemberships<T>(
     if (expectedRevision === null) {
       inserts.push({ insertOne: { document: { _id, ...source, format: JOIN_MEMBERSHIP_FORMAT, revision, targetDocumentIds } } });
     } else {
-      updates.push({ updateOne: { filter: { _id, format: JOIN_MEMBERSHIP_FORMAT, revision: expectedRevision },
+      updates.push({ updateOne: { filter: { _id, format: JOIN_MEMBERSHIP_FORMAT, revision: expectedRevision }, collation: setIdentityCollation,
         update: { $set: { revision, targetDocumentIds } } } });
     }
     revisions.set(joinMembershipKey(aggregateType, aggregateId), revision);

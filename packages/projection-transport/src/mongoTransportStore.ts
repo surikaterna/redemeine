@@ -23,6 +23,7 @@ import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from
 import type { TapewormMongoRangeReader } from './tapewormMongoRangeReader';
 import type { JoinedApproval, JoinedInventory } from './joinedCutover';
 import { verifyJoinedAdoption } from './joinedAdoption';
+import { verifyJoinedSetResourceCollations } from './joinedSetResources';
 
 export interface ProjectionTransportBindingDocument extends Document {
   _id: string;
@@ -108,6 +109,7 @@ function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceC
 }
 
 export class MongoProjectionTransportStore implements ProjectionSourceOrderPort, ProjectionQueueRegistryBindingPort {
+  private setResourceReadiness: Promise<void> | undefined;
   private readiness: Promise<void> | undefined;
   private readonly now: () => string;
 
@@ -212,7 +214,8 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     const binding = await this.readBindingDocument(queueId);
     if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
       || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Joined registry binding changed.');
-    await verifyJoinedAdoption(this.options);
+    await verifyJoinedAdoption(this.options, () => this.setResourceReadiness
+      ??= verifyJoinedSetResourceCollations(this.options.manifest, this.options.joinedInventories ?? []));
   }
 
   async admitForDispatch(

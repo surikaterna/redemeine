@@ -87,7 +87,7 @@ async function adopt(resources: Resources, approval: JoinedApproval, expected: P
   }
 }
 
-export async function verifyJoinedAdoption(resources: Resources): Promise<void> {
+export async function verifyJoinedAdoption(resources: Resources, verifySetCollations: () => Promise<void>): Promise<void> {
   const inventories = resources.joinedInventories ?? [];
   if (!resources.manifest.definitions.some(({ joined }) => joined === true)) {
     if (inventories.length) throw new Error('Unexpected joined resources without joined definitions.');
@@ -104,10 +104,12 @@ export async function verifyJoinedAdoption(resources: Resources): Promise<void> 
     // Use the collection's collation for its _id index, never for identity equality. The operator-owned seed stays immutable.
     const match = await joinedApprovals.findOne({ _id: identity._id }, { ...majority, projection: identityProjection(identity) });
     if (!isDeepStrictEqual(match, identity)) throw new Error('Joined approval identity differs from durable adoption.');
+    await verifySetCollations();
     return;
   }
   const approval = await joinedApprovals.findOne({ _id: `joined_approval:${manifest.queueId}` }, majority);
   validateApproval(manifest, approval, inventories, collectionNamespace(collection), approvalNamespace);
+  await verifySetCollations();
   const expected = adoptionIdentity(resources, approval.digest);
   await adopt(resources, approval, expected);
   assertAdopted(await collection.findOne({ _id: expected._id }, majority), expected);
