@@ -34,10 +34,12 @@ export { createProjectionWorkerCore } from './createProjectionWorkerCore';
 export { createProjectionWorkerReplayPollingAdapter } from './createProjectionWorkerReplayPollingAdapter';
 export type {
   ProjectionCommitCoordinator,
+  ProjectionCommitCoordinatorInput,
   ProjectionCommitCoordinatorOptions,
   ProjectionCommitCoordinatorOutcome,
   ProjectionCommitDefinitionInput,
   ProjectionCommitRegistryDefinition,
+  ProjectionCommitRegistryInput,
   ProjectionDefinitionCommitOutcome,
   ProjectionDefinitionCommitResult
 } from './commitCoordinatorContracts';

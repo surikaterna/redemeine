@@ -6,6 +6,8 @@ import {
   type ProjectionCommitDefinition, type ProjectionContext, type ProjectionStreamDefinition
 } from '@redemeine/projection-runtime-core';
 import type { Draft } from 'immer';
+import { bindJoinSeedReader, createProjectionCommitCoordinator, type ProjectionCommitCoordinatorInput, type ProjectionCommitCoordinatorOptions,
+  type ProjectionCommitRegistryDefinition } from '@redemeine/projection-worker-core';
 
 const Order = { aggregateType: 'Order' as const, initialState: { inventory: { counts: [1] } },
   pure: { eventProjectors: { changed: () => {} } } };
@@ -77,6 +79,32 @@ const coreProjection = createCore('core-projection', target)
     seed.summary.totals.push(4);
   }).build() satisfies ProjectionCommitDefinition<Booking>;
 
+const legacyRegistry: readonly ProjectionCommitRegistryDefinition<Booking>[] = [{
+  generation: 'old-generation', definition: createCore('legacy-registry', target).from(Sailing, {})
+    .deduplication({ strategy: 'own_record' }).build()
+}];
+const legacyProjectors = legacyRegistry[0]!.definition.fromStream.aggregate.pure.eventProjectors;
+declare const priorOptions: ProjectionCommitCoordinatorOptions<Booking>;
+const priorOptionProjectors = priorOptions.definitions[0]!.definition.fromStream.aggregate.pure.eventProjectors;
+const registry: ProjectionCommitCoordinatorInput<Booking>['definitions'] = [
+  ...legacyRegistry,
+  { generation: 'public-view', definition: publicProjection, joinSeedReaders: [
+    bindJoinSeedReader(publicView, { seedGeneration: 'view-v1', policy: 'proven', async readOne() { return null; } })
+  ] },
+  { generation: 'public-snapshot', definition: publicAggregate },
+  { generation: 'core-view', definition: coreProjection },
+  { generation: 'core-snapshot', definition: coreAggregate }
+];
+const initializeCoordinator = () => createProjectionCommitCoordinator({ ...priorOptions, definitions: registry });
+const weakened: ProjectionCommitRegistryDefinition<Booking> = { generation: 'bad', definition: {
+  // @ts-expect-error The legacy exported registry type must require the full core aggregate.
+  ...coreProjection, fromStream: { ...coreProjection.fromStream, aggregate: { aggregateType: 'Sailing' } }
+} };
+bindJoinSeedReader(coreSnapshot, { seedGeneration: 'snapshot-v1', policy: 'proven',
+  // @ts-expect-error A projection-shaped value cannot be returned from a snapshot reader.
+  async readOne() { return { state: { summary: { totals: [1] } }, provenance: {} }; }
+});
+
 // @ts-expect-error A join initializer cannot return a promise.
 createCore('async', target).onJoinInitialize(publicView, async () => {});
 // @ts-expect-error The removed third-argument form is not public API.
@@ -87,4 +115,4 @@ const fake = (ctx: import('@redemeine/projection').ProjectionContext) => ctx.sub
 }, 'id');
 
 void [publicAggregate, publicProjection, coreAggregate, coreProjection, publicForwardCall, publicInitializeCall,
-  coreForwardCall, coreInitializeCall, coreHandlerKeys];
+  coreForwardCall, coreInitializeCall, coreHandlerKeys, legacyProjectors, priorOptionProjectors, initializeCoordinator, weakened];

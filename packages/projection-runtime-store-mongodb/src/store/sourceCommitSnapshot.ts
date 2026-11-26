@@ -6,7 +6,7 @@ import {
 import type { ClientSession, FindOptions } from 'mongodb';
 import type { MongoProjectionStoreOptions, ProjectionDocumentRecord } from '../types';
 import { readSnapshotChangeReceipt } from './sourceCommitChanges';
-import { checkedSourceCommitIds, readMongoMemberships, sourceCommitChunks } from './sourceCommitMembership';
+import { checkedSourceCommitIds, readMongoMemberships, setIdentityCollation, sourceCommitChunks } from './sourceCommitMembership';
 
 const scope = (name: string, generation: string): string => `${name}\u0000${generation}`;
 export const linkId = (name: string, generation: string, type: string, id: string): string =>
@@ -61,7 +61,8 @@ async function readSetDocuments<TState>(ids: readonly string[], options: MongoPr
   const rows = new Map<string, ProjectionDocumentRecord<TState>>();
   for (const chunk of sourceCommitChunks(checkedSourceCommitIds(ids, (id) => id))) {
     if (!options.collection.find) throw new Error('Join membership sets require Mongo batched document reads.');
-    for (const row of await options.collection.find({ _id: { $in: chunk } }, readOptions).toArray()) rows.set(row._id, row);
+    for (const row of await options.collection.find({ _id: { $in: chunk } },
+      { ...readOptions, collation: setIdentityCollation }).toArray()) rows.set(row._id, row);
   }
   return ids.map((id) => [id, rows.get(id) ?? null]);
 }

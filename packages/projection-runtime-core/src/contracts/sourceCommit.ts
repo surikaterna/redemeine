@@ -78,7 +78,7 @@ function jsonChildren(value: object): unknown[] | undefined {
   return children;
 }
 
-export function isProjectionJsonValue(value: unknown): value is ProjectionJsonValue {
+function validateProjectionJson(value: unknown, allowNullPrototypeRecords: boolean): value is ProjectionJsonValue {
   const pending: Array<{ value: unknown; exiting: boolean }> = [{ value, exiting: false }];
   const active = new WeakSet<object>();
   while (pending.length > 0) {
@@ -93,7 +93,8 @@ export function isProjectionJsonValue(value: unknown): value is ProjectionJsonVa
       continue;
     }
     if (active.has(current)) return false;
-    if (!Array.isArray(current) && !isPlainObject(current)) return false;
+    if (!Array.isArray(current) && !isPlainObject(current)
+      && !(allowNullPrototypeRecords && Object.getPrototypeOf(current) === null)) return false;
     const children = jsonChildren(current);
     if (!children) return false;
     active.add(current);
@@ -103,6 +104,15 @@ export function isProjectionJsonValue(value: unknown): value is ProjectionJsonVa
     }
   }
   return true;
+}
+
+export function isProjectionJsonValue(value: unknown): value is ProjectionJsonValue {
+  return validateProjectionJson(value, false);
+}
+
+/** Registry metadata allows null-prototype records; source payloads still require plain objects. */
+export function isProjectionManifestJson(value: unknown): value is ProjectionJsonValue {
+  return validateProjectionJson(value, true);
 }
 
 function isProjectionJsonObject(value: unknown): value is ProjectionJsonObject {

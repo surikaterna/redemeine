@@ -13,10 +13,10 @@ import { manifest, orderId } from './joinMembershipFixture';
 import { createProjection as createPublicProjection, joinInitializer as publicInitializer } from '../../projection/src';
 
 const Board = { aggregateType: 'Board', initialState: {}, pure: { eventProjectors: {
-  attach: (_: unknown, _event: { payload: { seed?: boolean; cancel?: boolean } }) => {}
+  attach: (_: unknown, _event: { payload: { seed?: boolean; cancel?: boolean; ids?: string[]; total?: number } }) => {}
 } } };
 const Order = { aggregateType: 'Order', initialState: { warehouse: { remaining: [0] } }, pure: { eventProjectors: {
-  assign: (_: unknown, _event: { payload: { to: string; amount: number } }) => {},
+  assign: (_: unknown, _event: { payload: { to: string; amount: number; skip?: boolean } }) => {},
   delta: (_: unknown, _event: { payload: { amount: number } }) => {}, unlink: () => {}
 } } };
 export const OrderProjection = createPublicProjection('OrderProjection', () => ({ booking: { total: 0 } }))
@@ -36,13 +36,17 @@ function builder(binding: typeof view | typeof snapshot) {
   return createProjection('boards', (): State => ({ total: 0, effects: [] }))
     .deduplication({ strategy: 'own_record' })
     .from(Board, { attach(draft, { payload }, ctx) {
-      if (payload.seed) ctx.subscribeTo(binding, orderId);
-      else ctx.subscribeTo(Order, orderId);
-      if (payload.cancel) ctx.unsubscribeFrom(Order, orderId);
+      for (const id of payload.ids ?? [orderId]) {
+        if (payload.seed) ctx.subscribeTo(binding, id);
+        else ctx.subscribeTo(Order, id);
+        if (payload.cancel) ctx.unsubscribeFrom(Order, id);
+      }
+      if (payload.total !== undefined) draft.total = payload.total;
       draft.effects.push('attach');
     } })
     .join(Order, {
       assign(draft, event, ctx) {
+        if (event.payload.skip) return;
         ctx.subscribeTo(binding, event.aggregateId);
         if (ctx.joinSeedCoverage === 'uncovered' || ctx.joinSeedCoverage === 'unknown') draft.total += event.payload.amount;
         draft.effects.push(`assign:${ctx.joinSeedCoverage ?? 'unseeded'}`);
@@ -57,7 +61,7 @@ function builder(binding: typeof view | typeof snapshot) {
       }
     })
     .joinRight(Order, { assign: (event) => event.payload.to })
-    .hooks({ afterEach(draft, event) { if (event.type === 'assign') draft.effects.push(`after:${draft.total}`); } });
+    .hooks({ afterEach(draft, event) { if (event.type === 'assign' && !event.payload.skip) draft.effects.push(`after:${draft.total}`); } });
 }
 
 export function viewFixture(readOne: (id: string, signal: AbortSignal) => Promise<JoinSeedRead<ViewInput> | null>,

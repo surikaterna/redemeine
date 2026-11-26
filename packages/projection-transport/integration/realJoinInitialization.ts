@@ -1,19 +1,27 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import {
   createProjectionDispatchBindingProof, matchesProjectionDispatchBinding, ProjectionDispatchBindingMismatchError,
   projectionUuidToBase64Url22, type ProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
 import { createProjectionCommitCoordinator } from '@redemeine/projection-worker-core';
 import {
-  MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDocumentRecord, type ProjectionJoinMembershipRecord
+  decodeMongoProjectionChangesReceipt, MongoProjectionStore, type MongoProjectionChangesRecord,
+  type ProjectionDocumentRecord, type ProjectionJoinMembershipRecord
 } from '@redemeine/projection-runtime-store-mongodb';
 import { MongoClient, type Db } from 'mongodb';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
 import { manifest, orderId } from './joinMembershipFixture';
 import { conflict, crossSourceMismatch, failures, order, proven, providerRace, sourceOnlyMetadata, unknown } from './joinSeedScenarios';
 import { evidence, fixtureRuntime, OrderProjection, read, type Backend, type State, viewFixture } from './joinSeedFixture';
-import { recoverSeedReceipt } from './joinSeedReceiptRace';
+import { providerReceiptRace, recoverSeedReceipt } from './joinSeedReceiptRace';
+import { negativeTargetFence, pausedCrossStream, scaleReadSet, staleUnchangedTarget } from './joinSeedReadSet';
+import { adoptedForwardOnly } from './joinSeedCutover';
+import { caughtBinding, rerouteFailedSeed, staleProvider, staleReceiptSize } from './joinSeedStaleFailures';
+import { runJoinSeedRabbit } from './realJoinSeedRabbit';
+import { plannedSeedReadLimit } from './joinSeedReadLimit';
+import { staleSeedExpansion } from './joinSeedExpansionLimit';
 
 function memory(): Backend {
   const store = new InMemoryProjectionStore<State>();
@@ -29,10 +37,11 @@ function mongo(db: Db, client: MongoClient): Backend {
     changeCollection: changes, mongoClient: client
   });
   return { store, history: async () => (await changes.find({ kind: 'projection_changes' }).toArray())
+    .map(decodeMongoProjectionChangesReceipt)
     .filter((entry) => entry.kind === 'projection_changes') };
 }
 
-async function allCases(backend: () => Backend) {
+async function allCases(backend: () => Backend, client?: MongoClient) {
   await proven(backend());
   await unknown(backend());
   await failures(backend());
@@ -43,6 +52,31 @@ async function allCases(backend: () => Backend) {
   await conflict(backend(), true);
   await recoverSeedReceipt(backend(), false);
   await recoverSeedReceipt(backend(), true);
+  for (const compat of [false, true]) {
+    for (const recording of [false, true]) for (const limit of ['keys', 'results'] as const) {
+      for (const genuine of [false, true]) await staleSeedExpansion(backend(), compat, recording, genuine, limit);
+    }
+    for (const scenario of ['fits-on-refresh', 'genuine-limit', 'late-winner'] as const) {
+      await plannedSeedReadLimit(backend(), compat, scenario);
+    }
+    await caughtBinding(backend(), compat);
+    await rerouteFailedSeed(backend(), compat);
+    for (const wrongStream of [false, true]) {
+      await staleProvider(backend(), { compatibility: compat, recording: true, wrongStream, forwardWinner: true });
+      await staleProvider(backend(), { compatibility: compat, recording: true, wrongStream, forwardWinner: false });
+    }
+    await staleProvider(backend(), { compatibility: compat, recording: false, wrongStream: true, forwardWinner: true });
+    if (client) {
+      for (const scenario of ['fresh', 'shrink', 'winner'] as const) await staleReceiptSize(backend(), client, compat, scenario);
+    }
+    for (const proof of ['exact', 'exact-malformed', 'late-exact', 'wrong', 'missing', 'unreadable', 'unacknowledged', 'off'] as const) {
+      await providerReceiptRace(backend(), compat, proof);
+    }
+    for (const count of [1, 8, 32]) await scaleReadSet(backend(), count, compat, client);
+  }
+  await negativeTargetFence(backend());
+  await staleUnchangedTarget(backend());
+  await pausedCrossStream(backend());
 }
 
 async function rollback(db: Db, client: MongoClient) {
@@ -124,18 +158,25 @@ async function main() {
   console.log('Join initialization: in-memory scenarios passed.');
   const uri = process.env.REDEMEINE_MONGO_URI;
   if (!uri) return;
-  const client = new MongoClient(uri);
+  const client = new MongoClient(uri, { monitorCommands: true });
   const databases: Db[] = [];
+  let mongoVersion: string | undefined;
+  let rabbit: Awaited<ReturnType<typeof runJoinSeedRabbit>> | undefined;
   function db() {
     const temporary = client.db(`cdyb_${randomUUID().replaceAll('-', '')}`);
     databases.push(temporary);
     return temporary;
   }
   try {
-    await allCases(() => mongo(db(), client));
+    mongoVersion = (await client.db('admin').command({ buildInfo: 1 })).version;
+    await allCases(() => mongo(db(), client), client);
     await rollback(db(), client);
     await coherentProducer(db(), client);
     await latestAggregateSnapshot(db(), client);
+    const cutover = db();
+    await adoptedForwardOnly(cutover, client, mongo(cutover, client));
+    const rabbitUri = process.env.REDEMEINE_RABBIT_URI;
+    if (rabbitUri) rabbit = await runJoinSeedRabbit(db(), client, rabbitUri);
     const corruptDb = db();
     await recoverSeedReceipt(mongo(corruptDb, client), true, async () => {
       const result = await corruptDb.collection('memberships').updateOne({}, { $set: { seeds: [null] } });
@@ -146,6 +187,9 @@ async function main() {
     for (const database of databases) await database.dropDatabase();
     await client.close();
   }
+  const output = process.env.REDEMEINE_JOIN_INITIALIZATION_EVIDENCE_PATH;
+  if (output) await writeFile(output, JSON.stringify({ gitSha: process.env.REDEMEINE_GIT_SHA, mongo: mongoVersion,
+    memoryAndMongoInitialization: 'passed', rabbit, logicalCleanupVerified: true }), { flag: 'wx' });
 }
 
 void main().catch((error: unknown) => {

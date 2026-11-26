@@ -28,12 +28,13 @@ export interface SetRoutingEntry<TState> {
 export function planSetRouting<TState>(definition: ProjectionCommitDefinitionInput<TState>, events: readonly ProjectionSourceEvent[]):
   readonly (SetRoutingEntry<TState> | null)[] {
   const budget = new JoinTurnBudget();
+  const rawSelectorBudget = new JoinTurnBudget();
   return events.map((source) => {
     const event = sourceEventToProjectionEvent(source);
     const match = findHandler(definition, event);
     if (!match) return null;
     const joined = event.aggregateType !== definition.fromStream.aggregate.aggregateType;
-    const initialTargets = joined ? selectJoinCandidates(event, match.selector) : identityTargets(definition, event);
+    const initialTargets = joined ? selectJoinCandidates(event, match.selector, rawSelectorBudget) : identityTargets(definition, event);
     for (const id of initialTargets) budget.add(id);
     return { event, handler: match.handler, initialTargets,
       ...(joined ? { membershipKey: joinMembershipKey(event.aggregateType, event.aggregateId) } : {}) };

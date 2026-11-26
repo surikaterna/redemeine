@@ -114,12 +114,14 @@ export async function runMultiEventBatch(store: ProjectionSourceCommitStorePort<
     commands.length = 0;
     const result = await completed(runtime, commit);
     const { views, memberships, progress, viewWrites } = readCounts(commands, name);
+    const receiptReads = commands.filter(({ databaseName, command }) => databaseName === name && command.find === 'changes').length;
     const transactionCommits = commands.filter(({ commandName }) => commandName === 'commitTransaction').length;
     assert.deepEqual([views, memberships, progress, viewWrites], fallback ? [2, 3, 3, 1] : [1, 2, 2, 1]);
+    assert.equal(receiptReads, fallback ? 2 : 0);
     assert.equal(transactionCommits, 3);
     const state = await snapshot(store, source, ids);
     assert.deepEqual(state.targets.map((row) => row.state?.visits), ids.map(() => ['routed']));
-    console.log(JSON.stringify({ scenario: 'multi-event', count, fallback, views, memberships, progress, transactionCommits,
+    console.log(JSON.stringify({ scenario: 'multi-event', count, fallback, views, memberships, progress, receiptReads, transactionCommits,
       attempts: result.definitions[0]?.outcome.attempts }));
   }
   const source = randomUUID();

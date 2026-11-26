@@ -8,10 +8,10 @@ import type {
 } from '@redemeine/projection-runtime-core';
 import {
   projectionChangesHistoryFailure,
+  ProjectionJoinCapacityError,
   ProjectionJoinMembershipValidationError,
   ProjectionPersistedJoinMembershipError,
   joinMembershipKey,
-  validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState
 } from '@redemeine/projection-runtime-core';
 import type {
@@ -25,8 +25,10 @@ import {
   isTransientSourceCommitError,
   isUnknownSourceCommitOutcome,
   MongoChangeAppendValidationError,
+  prepareSourceCommitChange,
   readSourceCommitChange
 } from './sourceCommitChanges';
+import { MongoReceiptCapacityError, MongoReceiptEncodingError } from './sourceCommitReceiptBson';
 import {
   confirmSingleSourceWrite, didWrite, executeBatchedSourceDocuments, executeSourceDocumentWrites, planSourceDocumentWrites, revisionFilter
 } from './sourceCommitDocuments';
@@ -160,6 +162,7 @@ const lacksLegacyOriginal = <TState>(request: CommitProjectionSourceCommitReques
 
 type Prepared = {
   writes: ReturnType<typeof planSourceDocumentWrites>;
+  receipt: ReturnType<typeof prepareSourceCommitChange>;
 };
 
 type ObservedSourceCommit<T> = {
@@ -183,13 +186,23 @@ function prepareSourceCommit<TState>(
   if (failure) return failure.startsWith('legacy document changed') ? terminal(failure) : conflict(failure);
   const { verified, failure: invalidChange } = checkProjectionSourceCommitState(request, snapshot, captures !== undefined, captures);
   if (invalidChange) return terminal(invalidChange);
-  return { writes: planSourceDocumentWrites(request, loaded, verified, writeId, captures !== undefined, options.now ?? (() => new Date().toISOString())) };
+  const receipt = request.additionalWrites ? prepareSourceCommitChange(request, predictCommitted(request), writeId) : undefined;
+  return { receipt, writes: planSourceDocumentWrites(request, loaded, verified, writeId, captures !== undefined, options.now ?? (() => new Date().toISOString())) };
 }
 
 function committed(
   request: CommitProjectionSourceCommitRequest, documentRevisions: Record<string, number>, linkRevisions: Record<string, number> = {}
 ): CommitProjectionSourceCommitCommitted {
   return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
+}
+
+function predictCommitted(request: CommitProjectionSourceCommitRequest): CommitProjectionSourceCommitCommitted {
+  const documents = request.finalDocuments.map(({ targetDocumentId, expectedRevision }) => [targetDocumentId, (expectedRevision ?? 0) + 1]);
+  const links = (request.joinMembershipFences ?? request.stagedLinks).map(({ aggregateType, aggregateId, expectedRevision }) => [
+    request.joinMembershipFences ? joinMembershipKey(aggregateType, aggregateId) : `${aggregateType}:${aggregateId}`,
+    (expectedRevision ?? 0) + 1
+  ]);
+  return committed(request, Object.fromEntries(documents), Object.fromEntries(links));
 }
 
 async function persistSourceCommit<TState>(
@@ -201,7 +214,7 @@ async function persistSourceCommit<TState>(
     : await executeSourceDocumentWrites(prepared.writes, options, Boolean(request.additionalWrites), session);
   const linkRevisions = setMode ? await writeMongoMemberships(request, options, session) : await writeLinks(request, options, session);
   await writeOwnProgress(request, options, session, writeId);
-  return appendSourceCommitChange(request, committed(request, documentRevisions, linkRevisions), options.changeCollection, session, writeId);
+  return appendSourceCommitChange(prepared.receipt, committed(request, documentRevisions, linkRevisions), options.changeCollection, session);
 }
 
 function canWriteSingle<TState>(request: CommitProjectionSourceCommitRequest<TState>, proof: NativeSourceSnapshot<TState>): boolean {
@@ -244,27 +257,35 @@ async function runSourceCommit<TState>(
   writeId: string
 ): Promise<CommitProjectionSourceCommitResult> {
   if (observed?.captures) {
-    const prepared = prepareSourceCommit(request, options, observed.loaded, writeId, observed.captures);
-    if (!('writes' in prepared)) return prepared;
-    if (canWriteSingle(request, observed.loaded)) return persistSingle(request, options, prepared);
-    return execute((session) => persistSourceCommit(request, options, session, prepared, writeId));
+    try {
+      const prepared = prepareSourceCommit(request, options, observed.loaded, writeId, observed.captures);
+      if (!('writes' in prepared)) return prepared;
+      if (canWriteSingle(request, observed.loaded)) return persistSingle(request, options, prepared);
+      return execute((session) => persistSourceCommit(request, options, session, prepared, writeId));
+    } catch (error) {
+      if (!(error instanceof MongoReceiptCapacityError || error instanceof MongoReceiptEncodingError)) throw error;
+      // The size/shape was computed against the prepared read set. Confirm those fences coherently
+      // before treating an intrinsically oversized/invalid receipt as terminal.
+    }
   }
   return execute(async (session) => {
     const loaded = await readMongoSourceSnapshot(snapshotForCommit(request), options, session);
     if (observed && !matchesObservedFences(loaded, observed.loaded)) return conflict('projection source snapshot changed');
-    const prepared = prepareSourceCommit(request, options, loaded, writeId);
+    const prepared = prepareSourceCommit(request, options, loaded, writeId, observed?.captures);
     return 'writes' in prepared ? persistSourceCommit(request, options, session, prepared, writeId) : prepared;
   });
 }
 
-async function resolveInvalidPersistedMembership(request: CommitProjectionSourceCommitRequest,
+async function resolveMembershipReadRejection(request: CommitProjectionSourceCommitRequest,
   options: Pick<MongoProjectionStoreOptions, 'changeCollection'>,
-  error: ProjectionPersistedJoinMembershipError): Promise<CommitProjectionSourceCommitResult> {
+  error: ProjectionPersistedJoinMembershipError | ProjectionJoinCapacityError): Promise<CommitProjectionSourceCommitResult> {
   if (!request.additionalWrites || request.progress.strategy === 'none') return terminal(error.message);
   // The write transaction did not apply. A different worker may already have committed this exact turn.
   try {
     const receipt = await readSourceCommitChange(request, options.changeCollection, { applicationId: undefined });
-    return receipt?.status === 'committed' ? { ...receipt, replayed: true } : receipt ?? terminal(error.message);
+    // Valid rows can exceed the combined read budget because membership changed after planning.
+    return receipt?.status === 'committed' ? { ...receipt, replayed: true }
+      : receipt ?? (error instanceof ProjectionJoinCapacityError ? conflict(error.message) : terminal(error.message));
   } catch {
     return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'Unable to verify projection_changes receipt.' };
   }
@@ -276,6 +297,7 @@ function classifyCommitError(request: CommitProjectionSourceCommitRequest, error
     return { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'transient MongoDB source transaction failure' };
   }
   if (error instanceof MongoChangeAppendValidationError) return terminal(error.message);
+  if (error instanceof MongoReceiptCapacityError || error instanceof MongoReceiptEncodingError) return terminal(error.message);
   if (error instanceof Error && error.message.startsWith('Detected legacy writer after first touch:')) return terminal(error.message);
   if (error instanceof Error && error.message === 'projection-v2-occ:projection_changes') return conflict(error.message);
   if (request.joinMembershipFences && error instanceof Error && (error.message.startsWith('projection-v2-occ:')
@@ -298,13 +320,14 @@ export async function commitMongoV2<TState>(
   observed?: ObservedSourceCommit<TState>,
   preparedRequest = false
 ): Promise<CommitProjectionSourceCommitResult> {
-  const malformed = validateCommitProjectionSourceCommitRelationships(request);
-  if (malformed) return terminal(malformed);
+  // The store validates the complete request before readiness or opening a write transaction.
   let result: CommitProjectionSourceCommitResult;
   try {
     result = await runSourceCommit(request, options, execute, observed, writeId);
   } catch (error) {
-    if (error instanceof ProjectionPersistedJoinMembershipError) return resolveInvalidPersistedMembership(request, options, error);
+    if (error instanceof ProjectionPersistedJoinMembershipError || error instanceof ProjectionJoinCapacityError) {
+      return resolveMembershipReadRejection(request, options, error);
+    }
     if (error instanceof ProjectionJoinMembershipValidationError) return terminal(error.message);
     result = classifyCommitError(request, error);
   }

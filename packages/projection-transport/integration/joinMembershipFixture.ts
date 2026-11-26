@@ -7,7 +7,7 @@ import { createProjectionCommitCoordinator, type ProjectionCommitCoordinatorOpti
 
 export const orderId = 'order-42';
 const root = { aggregateType: 'Board', initialState: {}, pure: { eventProjectors: {
-  attach: (_state: unknown, _event: { payload: { order?: string } }) => {}, detach: () => {}, direct: () => {}
+  attach: (_state: unknown, _event: { payload: { order?: string; cancel?: boolean } }) => {}, detach: () => {}, direct: () => {}
 } } };
 const order = { aggregateType: 'Order', pure: { eventProjectors: {
   routed: (_state: unknown, _event: { payload: {
@@ -23,7 +23,12 @@ export const path = { aggregateType: 'Order', aggregateId: orderId };
 export function definition(deduplication: ProjectionCommitDefinition<State>['deduplication'] = strategy) {
   return createProjection('boards', (id): State => ({ id, visits: [] }))
     .from(root, {
-      attach(draft, e, ctx) { ctx.subscribeTo(order, String(e.payload.order ?? orderId)); draft.visits.push('root-attach'); },
+      attach(draft, e, ctx) {
+        const id = String(e.payload.order ?? orderId);
+        ctx.subscribeTo(order, id);
+        if (e.payload.cancel) ctx.unsubscribeFrom(order, id);
+        draft.visits.push('root-attach');
+      },
       detach(draft, _e, ctx) { ctx.unsubscribeFrom(order, orderId); draft.visits.push('root-detach'); },
       direct(draft) { draft.visits.push('direct'); }
     })

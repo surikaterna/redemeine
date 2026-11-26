@@ -16,12 +16,13 @@ const scope = { projectionName: 'boards', generation: 'g1' };
 const board = { aggregateType: 'Board', pure: { eventProjectors: {} } };
 const order = { aggregateType: 'Order', pure: { eventProjectors: { ordinary() {} } } };
 const artifact = `sha256:${'a'.repeat(64)}` as const;
-const queueId = 'bind-scope';
-
-function configuration(set: boolean, recording: boolean, source: string) {
+export function joinBindingConfiguration(set: boolean, recording: boolean, source: string, queueId = 'bind-scope', attachCandidate = false) {
   const builder = createProjection('boards', (id): State => ({ id, visits: [] }))
-    .from(board, {}).join(order, { ordinary(draft) { draft.visits.push('ordinary'); } });
-  if (set) builder.joinRight(order, {});
+    .from(board, {}).join(order, { ordinary(draft, event, ctx) {
+      draft.visits.push('ordinary');
+      if (attachCandidate && draft.id === 'C') ctx.subscribeTo(order, event.aggregateId);
+    } });
+  if (set) builder.joinRight(order, attachCandidate ? { ordinary: (event) => event.sequence === 2 ? 'C' : null } : {});
   const policy = recording ? { projectionChanges: 'join-changes' } : {};
   const definitions = [{ definition: builder.deduplication({ strategy: 'own_record' }).build(), generation: scope.generation, ...policy }];
   const config = normalizeProjectionRegistryDefinitions(definitions, [{}]);
@@ -34,62 +35,74 @@ function configuration(set: boolean, recording: boolean, source: string) {
   return { definitions, manifest: { ...body, manifestId: projectionQueueRegistryDigest(body) } };
 }
 
-async function sourceFixture(db: Db, source: string) {
+type BindingFixture = {
+  readonly scope: typeof scope;
+  readonly initialView: (id: string) => Record<string, unknown>;
+  readonly eventAt: (sequence: number) => Pick<TapewormProjectionCommit['events'][number], 'type' | 'payload'>;
+};
+
+async function sourceFixture(db: Db, source: string, queueId: string, deferTail: boolean, eventAt: BindingFixture['eventAt']) {
   const collection = db.collection<TapewormProjectionCommit>('source');
   await collection.createIndex({ streamId: 1, commitSequence: 1 }, { name: 'sourceRange', unique: true });
-  await collection.insertMany([0, 1, 2].map((seq) => ({
+  const commits = [0, 1, 2].map((seq) => ({
     id: randomUUID(), streamId: source, partitionId: queueId, commitSequence: seq,
-    events: [{ ...path, id: randomUUID(), type: 'ordinary', version: seq, timestamp: new Date().toISOString(), payload: {} }]
-  })));
+    events: [{ ...path, id: randomUUID(), ...eventAt(seq), version: seq, timestamp: new Date().toISOString() }]
+  }));
+  await collection.insertMany(deferTail ? commits.slice(0, 1) : commits);
   const reader = createTapewormMongoCompleteCommitRangeReader({ collection, partitionId: queueId });
-  const range = await reader.readCompleteRange({ sourceId: source, afterSequence: 1, throughSequence: 2, maxCommits: 1, maxBytes: 100_000 });
-  assert.equal(range.status, 'complete');
-  return { reader, later: range.commits[0]!.commit };
+  return { reader, tail: commits.slice(1), collection };
 }
 
-async function seedBinding(db: Db, client: MongoClient, boundSet: boolean, registry: ProjectionQueueRegistryManifest, source: string) {
+export async function seedJoinBinding(db: Db, client: MongoClient, boundSet: boolean,
+  registry: ProjectionQueueRegistryManifest, source: string, deferTail = false, deferAdoption = false, fixture?: BindingFixture) {
+  const targetScope = fixture?.scope ?? scope;
+  const { queueId, manifestId, registryGeneration } = registry;
   const collection = db.collection<ProjectionTransportDocument>('transport');
   const joinedApprovals = db.collection<JoinedApproval>('approvals');
   const links = db.collection<Document & { _id: string }>(boundSet ? 'members' : 'scalar');
   const docs = db.collection<Document & { _id: string }>('views');
-  await docs.insertMany(['A', 'B'].map((id) => ({ _id: id, state: { id, visits: [] }, updatedAt: new Date().toISOString() })));
-  const item = { ...scope, linkNamespace: links.namespace, documentNamespace: docs.namespace, maxLinkRows: 1 };
+  await docs.insertMany(['A', 'B'].map((id) => ({ _id: id, state: fixture?.initialView(id) ?? { id, visits: [] }, updatedAt: new Date().toISOString() })));
+  const item = { ...targetScope, linkNamespace: links.namespace, documentNamespace: docs.namespace, maxLinkRows: 1 };
   const set = { ...path, targetDocumentIds: ['A', 'B'] };
   const scalar = { ...path, targetDocId: 'A' };
   const inventory = boundSet
     ? { ...item, format: 'set-v1' as const, expectedSets: [set], maxEdges: 2, maxTargetBytes: 2048 }
     : { ...item, expected: [scalar] };
-  await links.insertOne(boundSet ? joinedMembershipSeedRow(scope, set) : {
-    _id: [scope.projectionName, scope.generation, path.aggregateType, orderId].join('\0'),
+  await links.insertOne(boundSet ? joinedMembershipSeedRow(targetScope, set) : {
+    _id: [targetScope.projectionName, targetScope.generation, path.aggregateType, orderId].join('\0'),
     ...scalar, createdAt: new Date().toISOString(), v2Revision: 0
   });
-  const { reader, later } = await sourceFixture(db, source);
-  const { manifestId, registryGeneration } = registry;
+  const indexed = await sourceFixture(db, source, queueId, deferTail, fixture?.eventAt ?? (() => ({ type: 'ordinary', payload: {} })));
+  const { reader } = indexed;
   const sourceOrder = new MongoProjectionTransportStore({ collection, joinedApprovals, mongoClient: client,
-    manifest: registry, joinedInventories: [{ ...scope, links, documents: docs }], cutoverReadiness: { reader } });
+    manifest: registry, joinedInventories: [{ ...targetScope, links, documents: docs }], cutoverReadiness: { reader } });
   await sourceOrder.installAcceptedBaseline({ version: 2, kind: 'existing', queueBindingId: queueId, manifestId, registryGeneration,
     sourceId: source, startAnchor: 1, lastAcceptedSequence: 0, operator: 'test', acceptedAt: new Date().toISOString(),
     acknowledgesUnverifiedHistoryAndCutoff: true, oldWriterStoppedAt: new Date().toISOString(), oldWriterStoppedBy: 'test',
-    queueTailReadinessReference: 'indexed fixture', strategyScope: [{ ...scope, strategy: 'own_record', stableSingleTarget: false }] });
+    queueTailReadinessReference: 'indexed fixture', strategyScope: [{ ...targetScope, strategy: 'own_record', stableSingleTarget: false }] });
   const approval = { _id: `joined_approval:${queueId}`, kind: 'joined_approval' as const, queueBindingId: queueId, manifestId,
     registryGeneration, approvalNamespace: joinedApprovals.namespace, transportNamespace: collection.namespace,
     approvedBy: 'test', approvedAt: new Date().toISOString(), inventories: [inventory] };
   await joinedApprovals.insertOne({ ...approval, digest: approvalDigest(approval) });
-  await sourceOrder.verifyJoinedCutover(queueId, source);
-  return { reader, later, docs, links, collection, sourceOrder };
+  if (!deferAdoption) await sourceOrder.verifyJoinedCutover(queueId, source);
+  return { indexed, docs, links, collection, sourceOrder };
 }
 
 export async function runJoinBinding(db: Db, client: MongoClient, boundSet: boolean, recording: boolean) {
   const source = randomUUID();
-  const bound = configuration(boundSet, recording, source);
-  const wrong = configuration(!boundSet, recording, source);
-  const { reader, later, docs, links, collection, sourceOrder } = await seedBinding(db, client, boundSet, bound.manifest, source);
+  const bound = joinBindingConfiguration(boundSet, recording, source);
+  const wrong = joinBindingConfiguration(!boundSet, recording, source);
+  const { queueId } = bound.manifest;
+  const { indexed: { reader }, docs, links, collection, sourceOrder } = await seedJoinBinding(db, client, boundSet, bound.manifest, source);
+  const range = await reader.readCompleteRange({ sourceId: source, afterSequence: 1, throughSequence: 2, maxCommits: 1, maxBytes: 100_000 });
+  assert.equal(range.status, 'complete');
+  const later = range.commits[0]!.commit;
   const changes = db.collection('changes');
   const progress = db.collection('progress');
   const store = new MongoProjectionStore<State>({ collection: db.collection<ProjectionDocumentRecord<State>>('views'),
     linkCollection: db.collection('scalar'), joinMembershipCollection: db.collection<ProjectionJoinMembershipRecord>('members'),
     dedupeCollection: db.collection('progress'), changeCollection: db.collection('changes'), mongoClient: client });
-  const make = (options: ReturnType<typeof configuration>) => createProjectionCommitCoordinator({
+  const make = (options: ReturnType<typeof joinBindingConfiguration>) => createProjectionCommitCoordinator({
     ...options, queueBindingId: queueId, sourceOrder, store, rangeReader: reader, maxCommits: 4, maxBytes: 100_000
   });
   const beforeLinks = await links.find().toArray();

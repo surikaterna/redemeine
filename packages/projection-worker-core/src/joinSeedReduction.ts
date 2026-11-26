@@ -7,12 +7,14 @@ import {
 } from '@redemeine/projection-runtime-core';
 import type { Draft } from 'immer';
 import type { JoinSeedReader, JoinSeedRead } from './joinSeedReaders';
+import { findSortedTarget, hasSortedTarget } from './joinMembershipReduction';
 import { sourceEventToProjectionEvent } from './projectionCommitRouting';
 
 export interface JoinSeedInput {
   readonly key: string;
   readonly aggregateId: string;
   readonly reader: JoinSeedReader;
+  readonly expectedStreamId?: string;
 }
 
 export class NeedsJoinSeeds extends Error {
@@ -27,6 +29,10 @@ export interface JoinSeedInputs {
 }
 
 type SourceTurn = Pick<ProjectionSourceCommit, 'streamId' | 'commitSequence'>;
+
+function edgeProof(row: ProjectionJoinMembership | undefined, target: string): JoinSeedProvenance | undefined {
+  return row?.seeds && findSortedTarget(row.seeds, target, (edge) => edge.targetDocumentId)?.provenance;
+}
 
 function coverageFor(proof: JoinSeedProvenance, event: ProjectionSourceEvent, commit: SourceTurn): JoinSeedEventCoverage {
   if (event.aggregateType !== proof.aggregateType || event.aggregateId !== proof.aggregateId) return 'differentSource';
@@ -67,15 +73,15 @@ export class JoinSeedEvent<T> {
   }, joined: boolean) {
     const { event, target, memberships, seeds, commit } = settings;
     const row = joined ? memberships.get(joinMembershipKey(event.aggregateType, event.aggregateId)) : undefined;
-    const proof = row?.seeds?.find((edge) => edge.targetDocumentId === target)?.provenance;
+    const proof = edgeProof(row, target);
     if (proof) {
       assertDeployment(proof, seeds.readers.get(proof.aggregateType));
       this.coverage = coverageFor(proof, event, commit);
     }
   }
 
-  stage(type: string, id: string, subscribe: boolean, binding?: JoinSeedKey): void {
-    const { memberships, target, initializers, seeds } = this.settings;
+  prepareStage(type: string, id: string, subscribe: boolean, binding?: JoinSeedKey): () => void {
+    const { memberships, target, initializers, seeds, event, commit } = this.settings;
     const key = checkedJoinMembershipKey(type, id);
     const row = memberships.get(key);
     const initializer = binding && initializers.find((item) => item.binding === binding && binding.sourceAggregateType === type);
@@ -83,16 +89,23 @@ export class JoinSeedEvent<T> {
     if (binding !== undefined && (!initializer || !reader || !isJoinSeedIdentity(id))) {
       throw new ProjectionJoinMembershipValidationError('subscribeTo initialization requires the registered binding and a valid aggregate ID.');
     }
-    if (!row) return;
-    const present = row.targetDocumentIds.includes(target);
-    const initial = row.seeds?.find((entry) => entry.targetDocumentId === target)?.provenance;
-    const change = this.changes.get(key) ?? { key, initial, initiallyPresent: present, present };
-    if (!subscribe) delete change.requested;
-    else if (!change.initiallyPresent && !change.present && initializer && reader) {
-      change.requested = { input: { key, aggregateId: id, reader }, initializer };
+    const sameSource = event.aggregateType === type && event.aggregateId === id;
+    const requested = initializer && reader ? {
+      input: { key, aggregateId: id, reader, ...(sameSource ? { expectedStreamId: commit.streamId } : {}) }, initializer
+    } : undefined;
+    return () => { if (row) this.stage(key, row, target, subscribe, requested); };
+  }
+
+  private stage(key: string, row: ProjectionJoinMembership, target: string, subscribe: boolean, requested: EdgeChange<T>['requested']): void {
+    let change = this.changes.get(key);
+    if (!change) {
+      const present = hasSortedTarget(row.targetDocumentIds, target);
+      change = { key, initial: edgeProof(row, target), initiallyPresent: present, present };
+      this.changes.set(key, change);
     }
+    if (!subscribe) delete change.requested;
+    else if (!change.initiallyPresent && !change.present && requested) change.requested = requested;
     change.present = subscribe;
-    this.changes.set(key, change);
   }
 
   finish(draft: Draft<T>): void {

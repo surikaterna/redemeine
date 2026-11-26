@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import type { Db, Document, MongoClient } from 'mongodb';
+import type { CollationOptions, Db, Document, MongoClient } from 'mongodb';
 import {
   MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDocumentRecord, type ProjectionJoinMembershipRecord
 } from '@redemeine/projection-runtime-store-mongodb';
@@ -11,13 +11,14 @@ import {
 import { coordinator, fixtureOptions, manifest, orderId, path, snapshot, type State, turn } from './joinMembershipFixture';
 import { completed } from './joinMembershipScenarios';
 
-async function seedCutover(db: Db, client: MongoClient, source: string) {
+export async function seedCutover(db: Db, client: MongoClient, source: string,
+  collations: { views?: CollationOptions; memberships?: CollationOptions } = {}) {
   const registry = manifest('forward-cutover', { [source]: 1 });
   const { queueId, manifestId, registryGeneration } = registry;
   const collection = db.collection<ProjectionTransportDocument>('transport');
   const joinedApprovals = db.collection<JoinedApproval>('approvals');
-  const members = db.collection<Document & { _id: string }>('memberships');
-  const docs = db.collection<Document & { _id: string }>('views');
+  const members = await db.createCollection<Document & { _id: string }>('memberships', collations.memberships ? { collation: collations.memberships } : {});
+  const docs = await db.createCollection<Document & { _id: string }>('views', collations.views ? { collation: collations.views } : {});
   const scope = { projectionName: 'boards', generation: 'set-generation' };
   const store = new MongoProjectionStore<State>({
     collection: db.collection<ProjectionDocumentRecord<State>>(docs.collectionName),
@@ -31,8 +32,8 @@ async function seedCutover(db: Db, client: MongoClient, source: string) {
     getIndexName: () => 'synthetic-source-index',
     getQueryObservation: () => ({ cursorMethod: 'find.sort.hint.limit.batchSize.asyncIterator', maxReturnedBytes: 0,
       maxReturnedDocuments: 0, sourceProbeMethod: 'findOne.hint + find.sort(-1).hint.limit(1)' }) };
-  const makeTransport = () => new MongoProjectionTransportStore({ collection, joinedApprovals, mongoClient: client,
-    manifest: registry, joinedInventories: [{ ...scope, links: members, documents: docs }], cutoverReadiness: { reader } });
+  const makeTransport = (links = members) => new MongoProjectionTransportStore({ collection, joinedApprovals, mongoClient: client,
+    manifest: registry, joinedInventories: [{ ...scope, links, documents: docs }], cutoverReadiness: { reader } });
   const transport = makeTransport();
   const baseline: AcceptedBaseline = { version: 2, kind: 'existing', queueBindingId: queueId, manifestId, registryGeneration,
     sourceId: source, startAnchor: 1, lastAcceptedSequence: 0, operator: 'operator', acceptedAt: new Date().toISOString(),

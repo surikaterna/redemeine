@@ -275,7 +275,8 @@ export const commitV2 = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
   current: V2State,
-  allowCapture = false
+  allowCapture = false,
+  staleReadSet = false
 ): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
   const malformed = validateCommitProjectionSourceCommitRelationships(request);
   if (malformed) return { result: rejectMalformed(malformed) };
@@ -289,6 +290,7 @@ export const commitV2 = <TState>(
         : rejectMalformed('projection change source commit or collection identity mismatch') };
     }
   }
+  if (staleReadSet) return { result: reject('projection source snapshot changed') };
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
   const patchCheck = request.validateStateChanges || request.additionalWrites || request.finalDocuments.some(({ statePatch }) => statePatch?.kind === 'ordered')
     ? validateChangeSnapshot(request, documents, current, failure === null, allowCapture) : {};

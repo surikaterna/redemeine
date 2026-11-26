@@ -150,7 +150,7 @@ export function validateCommitProjectionSourceCommitRelationships<TState>(
     } catch (error) {
       return error instanceof Error ? error.message : 'Invalid joined identifier.';
     }
-    const invalid = validateJoinMembershipFences(request.joinMembershipFences);
+    const invalid = validateJoinMembershipFences(request.joinMembershipFences, request);
     if (invalid) return invalid;
     if (!request.joinSeedVersion && request.joinMembershipFences.some((fence) => fence.seeds !== undefined)) {
       return 'Join seed provenance requires the initialized membership capability.';
@@ -216,4 +216,6 @@ export interface ProjectionSourceCommitSnapshot<TState = unknown> {
   joinMemberships?: readonly ProjectionJoinMembership[];
   ownRecordSequence: number | null;
   changeReceipt?: ProjectionChangesReceiptStatus;
+  /** Native prepared observation whose complete write set can be fenced by this store. */
+  joinSeedReadSet?: 'revision-cas-v1';
 }

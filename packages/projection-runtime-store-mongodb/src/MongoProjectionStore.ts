@@ -125,6 +125,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       const loaded = await read();
       const proof = protectSourceSnapshot(loaded, request);
       if (proof) {
+        if (request.joinSeedVersion === 1) loaded.snapshot.joinSeedReadSet = 'revision-cas-v1';
         this.sourceSnapshots.set(loaded.snapshot, proof);
         registerNativeProjectionCaptureSnapshot(loaded.snapshot);
       }

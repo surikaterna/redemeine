@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import { createProjection } from '@redemeine/projection';
-import { createProjection as coreProjection, selectJoinTargets, type ProjectionEvent } from '@redemeine/projection-runtime-core';
+import { createProjection as coreProjection, MAX_JOIN_TURN_KEYS, selectJoinTargets, type ProjectionEvent } from '@redemeine/projection-runtime-core';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
 import { coordinator, definition, fixtureOptions, orderId, snapshot, type State, turn } from '../../projection-transport/integration/joinMembershipFixture';
 
@@ -58,6 +58,16 @@ test('shared routing validates candidate values and isolates the handler event',
   expect(() => selectJoinTargets(event, [], async () => 'B')).toThrow(/synchronous/);
   expect(() => selectJoinTargets(event, [], () => ['', 'B'])).toThrow(/candidate ID/);
   expect(() => selectJoinTargets(event, [], () => 'x'.repeat(1024 * 1024))).toThrow(/bytes/);
+});
+
+test('overlong selector arrays fail on length without walking entries', () => {
+  const oversized = new Proxy(Array<string>(MAX_JOIN_TURN_KEYS + 1), {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) throw new Error('Oversized raw selector entry was read.');
+      return Reflect.get(target, key, receiver);
+    }
+  });
+  expect(() => selectJoinTargets(event, [], () => oversized)).toThrow(/turn routing exceeds capacity/);
 });
 
 test('set generations refuse manifest mismatch, unsupported stores, and in_document', () => {

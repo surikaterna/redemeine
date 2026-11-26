@@ -1,6 +1,7 @@
 import { checkedJoinMembershipKey, validateJoinTargetSet } from '@redemeine/projection-runtime-core';
 import type { ClientSession, Document } from 'mongodb';
 import type { JoinedInventory } from './joinedCutover';
+import { joinedTargetIdentityProjection, joinedTargetPresence } from './joinedTargetPresence';
 
 export interface ApprovedJoinedSet {
   readonly aggregateType: string;
@@ -91,8 +92,10 @@ export async function verifyInitialMembershipSets(item: ApprovedJoinedSetInvento
   const targets = [...new Set(seeds.flatMap((row) => row.targetDocumentIds))];
   for (let offset = 0; offset < targets.length; offset += 256) {
     const chunk = targets.slice(offset, offset + 256);
-    const rows = await resource.documents.find({ _id: { $in: chunk } }, { session }).toArray();
-    if (rows.length !== chunk.length || rows.some((row) => row.state == null || row.deleted === true || row.tombstone === true)) {
+    const rows = await resource.documents.find({ _id: { $in: chunk }, ...joinedTargetPresence },
+      { session, projection: joinedTargetIdentityProjection, collation: { locale: 'simple' } }).toArray();
+    const pending = new Set(chunk);
+    if (rows.some(({ _id }) => !pending.delete(_id)) || pending.size) {
       throw new Error('Joined target document missing or tombstoned.');
     }
   }

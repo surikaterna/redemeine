@@ -50,6 +50,9 @@ try {
   const runtimeDirectory = join(repoRoot, 'packages/projection-runtime-core');
   pack(projectionDirectory);
   pack(runtimeDirectory);
+  for (const name of ['projection-router-core', 'projection-worker-core', 'projection-runtime-store-inmemory']) {
+    pack(join(repoRoot, 'packages', name));
+  }
 
   const tarballs = readdirSync(temporaryDirectory)
     .filter((name) => name.endsWith('.tgz'))
@@ -62,6 +65,7 @@ try {
 
   writeFileSync(join(temporaryDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
   copyFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.ts'), join(temporaryDirectory, 'join-initializer.mts'));
+  copyFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.cts'), join(temporaryDirectory, 'join-initializer.cts'));
   writeFileSync(join(temporaryDirectory, 'consumer.mts'), `
 import {
   createProjection,
@@ -294,8 +298,20 @@ if (!issues.includes('definitions[0].sourceSelectors[0].normalized')
   checkTypes(tsc, 'consumer.mts', 'index.d.ts');
   checkTypes(tsc, 'consumer.cts', 'index.d.cts');
   checkTypes(tsc, 'join-initializer.mts', 'index.d.ts');
+  checkTypes(tsc, 'join-initializer.cts', 'index.d.cts');
+  run(process.execPath, [tsc, '-p', 'tsconfig.json', '--noEmit', 'false'], { cwd: temporaryDirectory });
+  run(process.execPath, [join(temporaryDirectory, 'join-initializer.cjs')]);
+  const authored = 'projection-authored-consumer.mts';
+  copyFileSync(join(repoRoot, 'bin/fixtures', authored), join(temporaryDirectory, authored));
+  checkTypes(tsc, authored, 'index.d.ts');
+  run(process.execPath, [tsc, '-p', 'tsconfig.json', '--noEmit', 'false', '--outDir', 'compiled'], { cwd: temporaryDirectory });
+  run(process.execPath, ['--input-type=module', '--eval', `
+import { InMemoryProjectionStore } from '@redemeine/projection-runtime-store-inmemory';
+import { verifyAuthoredDispatch } from './compiled/projection-authored-consumer.mjs';
+await verifyAuthoredDispatch(new InMemoryProjectionStore());
+`], { cwd: temporaryDirectory });
   run(process.execPath, [join(temporaryDirectory, 'runtime.mjs')]);
-  console.log('✅ Installed projection ESM/CJS and runtime-core contract checks passed.');
+  console.log('✅ Installed projection ESM/CJS contracts and authored native set dispatch passed.');
 } finally {
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

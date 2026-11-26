@@ -11,6 +11,7 @@ import {
 } from '@redemeine/projection-runtime-core';
 import type { ClientSession } from 'mongodb';
 import type { MongoProjectionChangesRecord, MongoProjectionStoreOptions } from '../types';
+import { decodeMongoProjectionChangesReceipt, encodeMongoReceipt } from './sourceCommitReceiptCodec';
 
 type ChangeCollection = NonNullable<MongoProjectionStoreOptions['changeCollection']>;
 const changeReceiptReadOptions = { readConcern: 'majority', readPreference: 'primary' } as const;
@@ -51,11 +52,12 @@ export async function readSourceCommitChange(
   const row = await collection.findOne({ _id: projectionChangesResumeToken(request, applicationId) }, session
     ? { session } : changeReceiptReadOptions);
   if (!row) return undefined;
-  const { _id, outcome, ...change } = row;
-  if (matchProjectionChangesReceipt(identity, change, applicationId) === 'mismatch') {
+  if (matchProjectionChangesReceipt(identity, row, applicationId) === 'mismatch') {
     return { version: 1, status: 'rejected', category: 'terminal', retryable: false,
       reason: 'projection change source commit or collection identity mismatch' };
   }
+  const { outcome } = row;
+  const change = decodeMongoProjectionChangesReceipt(row);
   const replayed = applicationId === undefined && lookup.recoveringWriteId !== undefined && outcome.writeId !== lookup.recoveringWriteId;
   return { version: 1, status: 'committed', commitSequence: change.commitSequence, ...(replayed ? { replayed: true } : {}),
     ...decodeOutcome(outcome), ...(change.kind === 'projection_changes' ? { additionalWrites: [change] } : { emptyChangeReceipt: change }) };
@@ -70,30 +72,45 @@ export async function readSnapshotChangeReceipt(
   const identity = { ...request, ...request.changeIdentity };
   const token = projectionChangesResumeToken(identity);
   const row = await collection.findOne({ _id: token }, session ? { session } : changeReceiptReadOptions);
-  return row ? matchProjectionChangesReceipt(identity, row) : 'missing';
+  if (!row) return 'missing';
+  const status = matchProjectionChangesReceipt(identity, row);
+  if (status === 'committed') {
+    decodeMongoProjectionChangesReceipt(row);
+    decodeOutcome(row.outcome);
+  }
+  return status;
 }
 
-export async function appendSourceCommitChange(
+export function prepareSourceCommitChange(
   request: CommitProjectionSourceCommitRequest,
   result: CommitProjectionSourceCommitCommitted,
-  collection: ChangeCollection | undefined,
-  session: ClientSession,
   writeId: string
-): Promise<CommitProjectionSourceCommitCommitted> {
+) {
   const applicationId = request.progress.strategy === 'none' ? writeId : undefined;
   const change = buildProjectionChangesReceipt(request, applicationId);
-  if (!change) return result;
-  if (!collection) throw new Error('projection_changes collection is not configured');
+  if (!change) return undefined;
   const { documentRevisions, linkRevisions, progress } = result;
-  const _id = change.resumeToken;
-  const row: MongoProjectionChangesRecord = { _id, ...change, outcome: {
+  const row = encodeMongoReceipt(change, {
     documentRevisionEntries: Object.entries(documentRevisions),
     linkRevisionEntries: Object.entries(linkRevisions),
     progress,
     ...(applicationId === undefined ? { writeId } : {})
-  } };
+  });
+  return { row, change };
+}
+
+export async function appendSourceCommitChange(
+  prepared: ReturnType<typeof prepareSourceCommitChange>,
+  result: CommitProjectionSourceCommitCommitted,
+  collection: ChangeCollection | undefined,
+  session: ClientSession
+): Promise<CommitProjectionSourceCommitCommitted> {
+  if (!prepared) return result;
+  if (!collection) throw new Error('projection_changes collection is not configured');
+  const { row, change } = prepared;
+  const { _id } = row;
   try {
-    const inserted = await collection.updateOne({ _id }, { $setOnInsert: row }, { upsert: true, session }) as
+    const inserted = await collection.updateOne({ _id }, { $setOnInsert: row }, { upsert: true, session, ignoreUndefined: false }) as
       { upsertedCount?: number };
     if (inserted.upsertedCount !== 1) throw new Error('projection-v2-occ:projection_changes');
   } catch (error) {

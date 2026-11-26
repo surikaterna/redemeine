@@ -9,23 +9,30 @@ import type {
 import {
   isCanonicalProjectionUuid,
   checkedJoinMembershipKey,
+  JOIN_MEMBERSHIP_FENCE_CAPACITY,
+  ProjectionJoinCapacityError,
+  ProjectionJoinMembershipResultCapacityError,
   ProjectionJoinMembershipValidationError,
-  ProjectionPersistedJoinMembershipError,
   JoinTurnBudget,
   joinMembershipKey,
   matchProjectionChangesReceipt,
-  MISSING_PROJECTION_CHANGES_HISTORY,
+  ownProjectionState,
   projectionChangesIdentity,
   validateProjectionChangeIdentityMetadata
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionCommitDefinitionInput, ProjectionDefinitionCommitOutcome } from './commitCoordinatorContracts';
+import type { JoinSeedInput } from './joinSeedReduction';
+import type { JoinSeedReader } from './joinSeedReaders';
+import { JoinSeedTurn, MAX_JOIN_SEED_READS } from './joinSeedTurn';
+import { fencesReadSet, resumeSeedRead } from './projectionDefinitionSeedInputs';
 import { linksByKey, planSetRouting, routeEvent, routingLinkRequests, type SetRoutingEntry } from './projectionCommitRouting';
 import { reduceProjectionSourceCommit, type ProjectionReductionResult, type ProjectionStateValidation } from './projectionCommitReducer';
 import type { ProjectionLaneScheduler } from './targetLaneScheduler';
 import { collectSetTargets, observedMemberships } from './joinMembershipReduction';
-import type { JoinSeedInput } from './joinSeedReduction';
-import type { JoinSeedReader } from './joinSeedReaders';
-import { JoinSeedTurn, MAX_JOIN_SEED_READS } from './joinSeedTurn';
+import {
+  checkDeferredReceipt, exactReceipt, failed, hasNativeSnapshots, loadFailure, loadSnapshot,
+  recordsReliableReceipt, replayOutcome, resolveMembershipReadFailure
+} from './projectionDefinitionSnapshot';
 
 type SetPlan<T> = readonly (SetRoutingEntry<T> | null)[];
 
@@ -60,98 +67,14 @@ function provisionalTargets<TState>(
   return [...targets].sort();
 }
 
-function failed(
-  status: 'conflict' | 'transient' | 'terminal' | 'ambiguous',
-  reason: string,
-  attempts: number
-): ProjectionDefinitionCommitOutcome {
-  return status === 'terminal'
-    ? { status, retryable: false, reason, attempts }
-    : { status, retryable: true, reason, attempts };
-}
-
-function loadFailure(error: unknown, attempts: number): ProjectionDefinitionCommitOutcome {
-  const reason = error instanceof Error ? error.message : 'snapshot load failed';
-  return failed(error instanceof ProjectionJoinMembershipValidationError || reason.startsWith('Detected legacy writer')
-    ? 'terminal' : 'transient', reason, attempts);
-}
-
-async function loadSnapshot<TState>(
-  options: ProjectionDefinitionExecutorOptions<TState>,
-  commit: ProjectionSourceCommit,
-  targets: readonly string[],
-  links: readonly { aggregateType: string; aggregateId: string }[],
-  mode: 'legacy' | 'turn' | 'discovery' | 'receipt' = 'legacy'
-): Promise<ProjectionSourceCommitSnapshot<TState>> {
-  const strategy = mode === 'discovery' || mode === 'receipt' ? 'none' : options.definition.deduplication.strategy;
-  return options.store.loadProjectionSourceCommitSnapshot({
-    projectionName: options.definition.name,
-    projectionGeneration: options.generation,
-    targetDocumentIds: targets,
-    links,
-    ...(options.definition.joinMembership && mode !== 'receipt' ? { joinMembership: options.definition.joinMembership } : {}),
-    ...(options.definition.joinInitializers?.length && mode !== 'receipt' ? { joinSeedVersion: 1 } : {}),
-    progressStrategy: strategy,
-    ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
-    ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),
-    ...(mode !== 'discovery' && options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
-      ? { changeIdentity: { sourceId: commit.streamId, commitId: commit.commitId, commitSequence: commit.commitSequence,
-          collection: options.projectionChanges } } : {})
-  });
-}
-
-function replayOutcome<TState>(
-  options: ProjectionDefinitionExecutorOptions<TState>,
-  commit: ProjectionSourceCommit,
-  snapshot: ProjectionSourceCommitSnapshot<TState>,
-  attempts: number,
-  deferred = false
-): ProjectionDefinitionCommitOutcome | undefined {
-  const strategy = options.definition.deduplication.strategy;
-  const ownIncludesTurn = strategy === 'own_record' && snapshot.ownRecordSequence !== null && commit.commitSequence <= snapshot.ownRecordSequence;
-  if (options.projectionChanges === undefined || strategy === 'none') {
-    return ownIncludesTurn ? { status: 'deduplicated', attempts } : undefined;
-  }
-  if (snapshot.changeReceipt === 'mismatch') {
-    return failed('terminal', 'projection change source commit or collection identity mismatch', attempts);
-  }
-  if (snapshot.changeReceipt === 'committed') return { status: 'deduplicated', attempts };
-  if (commit.commitSequence <= (options.baselineSequence ?? -1)) return { status: 'deduplicated', attempts };
-  if (snapshot.changeReceipt === undefined && deferred && !ownIncludesTurn && !options.alreadyCovered) return undefined;
-  if (snapshot.changeReceipt !== 'missing') return failed('terminal', 'Store did not perform the projection_changes receipt lookup.', attempts);
-  if (ownIncludesTurn || options.alreadyCovered) return failed('terminal', MISSING_PROJECTION_CHANGES_HISTORY, attempts);
-  return undefined;
-}
-
-function hasNativeSnapshots<TState>(options: ProjectionDefinitionExecutorOptions<TState>): boolean {
-  return options.store.sourceCommitSnapshotCapability === 'revision-cas-v1';
-}
-
-async function checkDeferredReceipt<TState>(
-  options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit, attempts: number
-): Promise<ProjectionDefinitionCommitOutcome | undefined> {
-  if (!hasNativeSnapshots(options) || options.projectionChanges === undefined || options.definition.deduplication.strategy === 'none') return;
-  try {
-    return replayOutcome(options, commit, await loadSnapshot(options, commit, [], [], 'receipt'), attempts);
-  } catch (error) {
-    return failed('ambiguous', error instanceof Error ? error.message : 'receipt lookup failed', attempts);
-  }
-}
-
-async function resolveMembershipReadFailure<TState>(options: ProjectionDefinitionExecutorOptions<TState>,
-  commit: ProjectionSourceCommit, error: ProjectionJoinMembershipValidationError, attempts: number): Promise<ProjectionDefinitionCommitOutcome> {
-  const failure = loadFailure(error, attempts);
-  if (!(error instanceof ProjectionPersistedJoinMembershipError) || options.projectionChanges === undefined
-    || options.definition.deduplication.strategy === 'none') return failure;
-  try {
-    const proof = (await loadSnapshot(options, commit, [], [], 'receipt')).changeReceipt;
-    if (proof === 'committed') return { status: 'deduplicated', attempts };
-    if (proof === 'missing') return failure;
-    if (proof === 'mismatch') return failed('terminal', 'projection change source commit or collection identity mismatch', attempts);
-    return failed('ambiguous', 'Store did not verify the projection_changes receipt.', attempts);
-  } catch (error) {
-    return failed('ambiguous', error instanceof Error ? error.message : 'receipt lookup failed', attempts);
-  }
+async function capacityRejection<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
+  reason: string, attempt: number, confirmed: boolean, canResetWithoutReceipt = false): Promise<CapacityResult> {
+  const reliable = recordsReliableReceipt(options);
+  const receipt = reliable ? await exactReceipt(options, commit, attempt) : undefined;
+  if (receipt) return { kind: 'done', outcome: receipt };
+  // Missing proof says nothing about whether the observation that overflowed is still current.
+  if (!confirmed && (reliable || canResetWithoutReceipt)) return { kind: 'confirm_capacity' };
+  return { kind: 'done', outcome: failed('terminal', reason, attempt) };
 }
 
 function mergeLinks(
@@ -172,15 +95,21 @@ function setMemberships<TState>(snapshot: ProjectionSourceCommitSnapshot<TState>
   return observedMemberships(snapshot.joinMemberships, links);
 }
 
-function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[]) {
+function checkLinkBudget(links: readonly { aggregateType: string; aggregateId: string }[], name: string, generation: string) {
   const budget = new JoinTurnBudget();
-  for (const link of links) budget.add(checkedJoinMembershipKey(link.aggregateType, link.aggregateId));
+  for (const link of links) budget.add(checkedJoinMembershipKey(name, generation, link.aggregateType, link.aggregateId));
 }
 
-type AttemptResult<TState> =
+type CapacityResult =
   | { kind: 'done'; outcome: ProjectionDefinitionCommitOutcome }
+  | { kind: 'confirm_capacity' };
+
+type AttemptResult<TState> =
+  | CapacityResult
   | { kind: 'expand'; reduction: Extract<ProjectionReductionResult<TState>, { status: 'needs_snapshot' }> }
-  | { kind: 'read_seeds'; inputs: readonly JoinSeedInput[] }
+  | { kind: 'retarget'; targets: Set<string> }
+  | { kind: 'read_seeds'; inputs: readonly JoinSeedInput[]; readSet?: ProjectionSourceCommitSnapshot<TState> }
+  | { kind: 'refresh_read_set' }
   | { kind: 'conflict'; reason: string };
 
 function matchesReceiptTargets(receipt: ProjectionChangesReceipt, request: CommitProjectionSourceCommitRequest): boolean {
@@ -248,64 +177,94 @@ async function executeAttempt<TState>(
   targets: ReadonlySet<string>,
   links: readonly { aggregateType: string; aggregateId: string }[],
   attempt: number,
-  setPlan?: SetPlan<TState>,
-  seeds?: JoinSeedTurn
+  setPlan: SetPlan<TState> | undefined,
+  confirmCapacity: boolean,
+  expandedLinks: boolean,
+  seeds?: JoinSeedTurn,
+  readSet?: ProjectionSourceCommitSnapshot<TState>
 ): Promise<AttemptResult<TState>> {
   const keys = [...targets].map((target) => laneKey(options.definition.name, options.generation, target));
   return options.lanes.run(keys, async () => {
-    const native = hasNativeSnapshots(options);
+    const native = hasNativeSnapshots(options) && !confirmCapacity;
     let snapshot: ProjectionSourceCommitSnapshot<TState>;
     try {
-      snapshot = await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
+      snapshot = readSet ?? await loadSnapshot(options, commit, [...targets].sort(), links, native ? 'turn' : 'legacy');
     } catch (error) {
+      if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity,
+        expandedLinks && error instanceof ProjectionJoinMembershipResultCapacityError);
       if (error instanceof ProjectionJoinMembershipValidationError) {
         return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
       }
       return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
         ?? loadFailure(error, attempt) };
     }
+    if (confirmCapacity && recordsReliableReceipt(options) && snapshot.changeReceipt === undefined) {
+      return { kind: 'done', outcome: failed('ambiguous', 'Store did not verify the projection_changes receipt.', attempt) };
+    }
     const replay = replayOutcome(options, commit, snapshot, attempt, native);
+    if (replay?.status === 'deduplicated' && seeds?.hasFailures && !recordsReliableReceipt(options)) {
+      return { kind: 'done', outcome: failed('ambiguous', 'Own progress alone cannot verify a prior turn after a join seed failure.', attempt) };
+    }
     if (replay) return { kind: 'done', outcome: replay };
-    let reduction: ProjectionReductionResult<TState>;
-    try {
-      const memberships = setPlan ? setMemberships(snapshot, links) : undefined;
-      if (setPlan && memberships) {
-        const fullTargetSet = collectSetTargets(setPlan, targets, memberships);
-        const missing = [...fullTargetSet].filter((id) => !targets.has(id));
-        if (missing.length) return { kind: 'expand', reduction: { status: 'needs_snapshot', targetIds: missing, links: [] } };
-      }
-      reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence,
-        options.projectionChanges, options.stateValidation, setPlan && memberships
-          ? { events: setPlan, memberships, ...(seeds ? { seeds } : {}) } : undefined);
-    } catch (error) {
-      if (error instanceof ProjectionJoinMembershipValidationError) {
-        return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
-      }
-      return { kind: 'done', outcome: failed('terminal', error instanceof Error ? error.message : 'Invalid membership snapshot.', attempt) };
-    }
-    if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
-    if (reduction.status === 'needs_join_seeds') return { kind: 'read_seeds', inputs: reduction.inputs };
-    if (reduction.status === 'terminal') {
-      const receipt = !reduction.invalidMembershipInput && snapshot.changeReceipt === undefined
-        ? await checkDeferredReceipt(options, commit, attempt) : undefined;
-      return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
-    }
-    if (reduction.status === 'deduplicated') {
-      return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
-    }
-    if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
-      || reduction.request.stagedLinks.length > 0)) {
-      return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
-        ?? failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
-    }
-    return commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
+    return reduceAttempt(options, commit, snapshot, targets, links, {
+      attempt, setPlan, confirmCapacity, native, expandedLinks, ...(seeds ? { seeds } : {}), reused: readSet !== undefined
+    });
   });
 }
 
-export async function executeProjectionDefinition<TState>(
-  options: ProjectionDefinitionExecutorOptions<TState>,
-  commit: ProjectionSourceCommit
-): Promise<ProjectionDefinitionCommitOutcome> {
+async function reduceAttempt<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
+  snapshot: ProjectionSourceCommitSnapshot<TState>, targets: ReadonlySet<string>, links: ReturnType<typeof routingLinkRequests>,
+  settings: { attempt: number; setPlan: SetPlan<TState> | undefined; confirmCapacity: boolean; native: boolean;
+    expandedLinks: boolean; seeds?: JoinSeedTurn; reused: boolean }
+): Promise<AttemptResult<TState>> {
+  const { attempt, setPlan, confirmCapacity, native, expandedLinks, seeds, reused } = settings;
+  let reduction: ProjectionReductionResult<TState>;
+  try {
+    const memberships = setPlan ? setMemberships(snapshot, links) : undefined;
+    if (setPlan && memberships) {
+      const currentTargets = collectSetTargets(setPlan, memberships);
+      if ([...currentTargets].some((id) => !targets.has(id))) return { kind: 'retarget', targets: currentTargets };
+    }
+    reduction = reduceProjectionSourceCommit(options.definition, options.generation, commit, snapshot, options.baselineSequence,
+      options.projectionChanges, options.stateValidation, setPlan && memberships ? { events: setPlan, memberships, ...(seeds ? { seeds } : {}) } : undefined);
+  } catch (error) {
+    if (error instanceof ProjectionJoinMembershipResultCapacityError) {
+      return capacityRejection(options, commit, error.message, attempt, confirmCapacity, expandedLinks);
+    }
+    if (reused) return { kind: 'refresh_read_set' };
+    if (error instanceof ProjectionJoinCapacityError) return capacityRejection(options, commit, error.message, attempt, confirmCapacity);
+    if (error instanceof ProjectionJoinMembershipValidationError) {
+      return { kind: 'done', outcome: await resolveMembershipReadFailure(options, commit, error, attempt) };
+    }
+    return { kind: 'done', outcome: failed('terminal', error instanceof Error ? error.message : 'Invalid membership snapshot.', attempt) };
+  }
+  if (reduction.status === 'needs_snapshot') return { kind: 'expand', reduction };
+  if (reduction.status === 'needs_join_seeds') return { kind: 'read_seeds', inputs: reduction.inputs,
+    ...(native && snapshot.joinSeedReadSet === 'revision-cas-v1' && ownProjectionState(snapshot) ? { readSet: snapshot } : {}) };
+  if (reused && (reduction.status !== 'planned' || !fencesReadSet(snapshot, reduction.request))) return { kind: 'refresh_read_set' };
+  if (reduction.status === 'membership_capacity') return capacityRejection(options, commit, reduction.reason, attempt, confirmCapacity);
+  if (reduction.status === 'terminal') {
+    const receipt = !reduction.invalidMembershipInput && snapshot.changeReceipt === undefined
+      ? await checkDeferredReceipt(options, commit, attempt) : undefined;
+    return { kind: 'done', outcome: receipt ?? failed('terminal', reduction.reason, attempt) };
+  }
+  if (reduction.status === 'deduplicated') {
+    return { kind: 'done', outcome: { status: 'deduplicated', attempts: attempt } };
+  }
+  if (options.stableSingleTarget && (reduction.request.finalDocuments.length > 1
+    || reduction.request.stagedLinks.length > 0)) {
+    return { kind: 'done', outcome: await checkDeferredReceipt(options, commit, attempt)
+      ?? failed('terminal', 'Legacy in-document cutover forbids fanout or link mutation.', attempt) };
+  }
+  const result = await commitReduction(options, commit, reduction, attempt, native ? snapshot : undefined);
+  if (setPlan && result.kind === 'done' && result.outcome.status === 'terminal' && result.outcome.reason === JOIN_MEMBERSHIP_FENCE_CAPACITY) {
+    return capacityRejection(options, commit, result.outcome.reason, attempt, confirmCapacity, reused);
+  }
+  return result;
+}
+
+function validateDefinitionTurn<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit) {
   if (options.projectionChanges !== undefined && options.store.projectionChangesCapability !== 'atomic-turn-receipts-v1') {
     return failed('terminal', 'Store does not support atomic projection_changes turn receipts.', 0);
   }
@@ -321,12 +280,23 @@ export async function executeProjectionDefinition<TState>(
     });
     if (invalid) return failed('terminal', invalid, 0);
   }
+}
+
+export async function executeProjectionDefinition<TState>(
+  options: ProjectionDefinitionExecutorOptions<TState>,
+  commit: ProjectionSourceCommit
+): Promise<ProjectionDefinitionCommitOutcome> {
+  const invalid = validateDefinitionTurn(options, commit);
+  if (invalid) return invalid;
+  const seeds = options.joinSeedReaders?.length ? new JoinSeedTurn(options.joinSeedReaders, performance.now()) : undefined;
+  const setMode = options.definition.joinMembership === 'set-v1';
   const links = routingLinkRequests(options.definition, commit.events);
   const native = hasNativeSnapshots(options);
-  const lookupEarly = options.projectionChanges !== undefined && options.definition.deduplication.strategy !== 'none'
+  const lookupEarly = recordsReliableReceipt(options)
     && (options.alreadyCovered || commit.commitSequence <= (options.baselineSequence ?? -1));
   let initial: ProjectionSourceCommitSnapshot<TState> = { targets: [], links: [], ownRecordSequence: null };
-  try { if (setMode) checkLinkBudget(links); } catch (error) {
+  let confirmCapacity = false;
+  try { if (setMode) checkLinkBudget(links, options.definition.name, options.generation); } catch (error) {
     return failed('terminal', (error as Error).message, 0);
   }
   try {
@@ -335,45 +305,88 @@ export async function executeProjectionDefinition<TState>(
     else if (setMode) initial = await loadSnapshot(options, commit, [], links, 'turn');
     else if (links.length) initial = await loadSnapshot(options, commit, [], links, 'discovery');
   } catch (error) {
-    if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
-    return loadFailure(error, 0);
+    if (error instanceof ProjectionJoinCapacityError) {
+      const result = await capacityRejection(options, commit, error.message, 0, false);
+      if (result.kind === 'done') return result.outcome;
+      confirmCapacity = true;
+    } else {
+      if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
+      return loadFailure(error, 0);
+    }
   }
-  const replay = replayOutcome(options, commit, initial, 0, native && !lookupEarly);
+  const replay = confirmCapacity ? undefined : replayOutcome(options, commit, initial, 0, native && !lookupEarly);
   if (replay) return replay;
   let setPlan: SetPlan<TState> | undefined;
-  let targets: Set<string>;
+  let targets = new Set<string>();
   try {
     setPlan = setMode ? planSetRouting(options.definition, commit.events) : undefined;
-    targets = setPlan ? collectSetTargets(setPlan, [], setMemberships(initial, links))
+    if (!confirmCapacity) targets = setPlan ? collectSetTargets(setPlan, setMemberships(initial, links))
       : new Set(provisionalTargets(options.definition, commit, initial));
   } catch (error) {
-    if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
-    return await checkDeferredReceipt(options, commit, 0)
-      ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
+    if (setPlan && error instanceof ProjectionJoinCapacityError) {
+      const result = await capacityRejection(options, commit, error.message, 0, false);
+      if (result.kind === 'done') return result.outcome;
+      confirmCapacity = true;
+    } else {
+      if (error instanceof ProjectionJoinMembershipValidationError) return resolveMembershipReadFailure(options, commit, error, 0);
+      return await checkDeferredReceipt(options, commit, 0)
+        ?? failed('terminal', error instanceof Error ? error.message : 'projection routing failed', 0);
+    }
   }
-  return executeWithRetries(options, commit, targets, links, setPlan);
+  return executeWithRetries(options, commit, targets, links, setPlan, confirmCapacity, seeds);
 }
 
 async function executeWithRetries<TState>(options: ProjectionDefinitionExecutorOptions<TState>, commit: ProjectionSourceCommit,
-  targets: Set<string>, initialLinks: ReturnType<typeof routingLinkRequests>, setPlan?: SetPlan<TState>): Promise<ProjectionDefinitionCommitOutcome> {
+  targets: Set<string>, initialLinks: ReturnType<typeof routingLinkRequests>, setPlan: SetPlan<TState> | undefined,
+  confirmCapacity: boolean, seeds?: JoinSeedTurn): Promise<ProjectionDefinitionCommitOutcome> {
   let links = initialLinks;
-  const seeds = options.joinSeedReaders?.length ? new JoinSeedTurn(options.joinSeedReaders) : undefined;
-  const maxAttempts = options.maxConflictRetries + (commit.events.length * 2) + 2 + (seeds ? MAX_JOIN_SEED_READS : 0);
+  const expansionBudget = (commit.events.length * 2) + 2;
+  let maxAttempts = options.maxConflictRetries + expansionBudget + (seeds ? MAX_JOIN_SEED_READS + 1 : 0);
   let conflicts = 0;
+  let readSet: ProjectionSourceCommitSnapshot<TState> | undefined;
+  let reuse = true;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan, seeds);
-    if (outcome.kind === 'done') return outcome.outcome;
+    const reused = readSet !== undefined;
+    let outcome = await executeAttempt(options, commit, targets, links, attempt, setPlan, confirmCapacity,
+      links.length > initialLinks.length, seeds, readSet);
+    readSet = undefined;
     if (outcome.kind === 'read_seeds') {
-      const problem = await seeds!.load(outcome.inputs);
-      if (problem) return failed(problem.status, problem.reason, attempt);
+      const decision = await resumeSeedRead(options, commit, seeds!, outcome.inputs, attempt, reused);
+      if (!decision) {
+        if (reuse) readSet = outcome.readSet;
+        continue;
+      }
+      if (decision.kind === 'retry_seed_inputs') continue;
+      outcome = decision;
+    }
+    if (outcome.kind === 'retarget') {
+      targets = outcome.targets;
       continue;
     }
     if (outcome.kind === 'expand') {
-      for (const target of outcome.reduction.targetIds) targets.add(target);
-      links = mergeLinks(links, outcome.reduction.links, Boolean(setPlan));
-      try { if (setPlan) checkLinkBudget(links); } catch (error) {
-        return failed('terminal', (error as Error).message, attempt);
+      const nextLinks = mergeLinks(links, outcome.reduction.links, Boolean(setPlan));
+      try {
+        if (setPlan) checkLinkBudget(nextLinks, options.definition.name, options.generation);
+        links = nextLinks;
+        for (const target of outcome.reduction.targetIds) targets.add(target);
+        continue;
+      } catch (error) {
+        if (!(error instanceof ProjectionJoinCapacityError)) return loadFailure(error, attempt);
+        // Old discovery keys can overflow only in combination with their replacements.
+        outcome = await capacityRejection(options, commit, error.message, attempt, confirmCapacity, true);
       }
+    }
+    if (outcome.kind === 'done') return outcome.outcome;
+    if (outcome.kind === 'refresh_read_set') {
+      reuse = false;
+      continue;
+    }
+    if (outcome.kind === 'confirm_capacity') {
+      confirmCapacity = true;
+      reuse = false;
+      maxAttempts += expansionBudget;
+      targets.clear();
+      links = initialLinks;
       continue;
     }
     conflicts += 1;

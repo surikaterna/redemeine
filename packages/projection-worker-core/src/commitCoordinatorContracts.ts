@@ -4,28 +4,31 @@ import type {
   ProjectionQueueRegistryManifest,
   ProjectionSourceCommit,
   ProjectionSourceCommitStorePort,
-  ProjectionSourceOrderPort,
-  ProjectionStreamDefinition
+  ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionStateValidation } from './projectionCommitReducer';
 import type { JoinSeedReader } from './joinSeedReaders';
 
-type SourceAggregate = ProjectionStreamDefinition<unknown>['aggregate'];
-
-/** The coordinator routes by aggregate type; either DSL may supply the definition. */
-export type ProjectionCommitDefinitionInput<TState = unknown> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
-  fromStream: Omit<ProjectionStreamDefinition<TState>, 'aggregate'> & {
-    aggregate: Pick<SourceAggregate, 'aggregateType'> & Partial<SourceAggregate>;
-  };
-};
-
 export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly generation: string;
-  readonly definition: ProjectionCommitDefinitionInput<TState>;
+  readonly definition: ProjectionCommitDefinition<TState>;
   /** Enables history for this generation and names its logical target collection. */
   readonly projectionChanges?: string;
   readonly joinSeedReaders?: readonly JoinSeedReader[];
 }
+
+type PrimaryAggregate<TState> = ProjectionCommitDefinition<TState>['fromStream']['aggregate'];
+
+/** Registration uses the primary aggregate's routing identity, not its aggregate state factory. */
+export type ProjectionCommitDefinitionInput<TState = unknown> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
+  fromStream: Omit<ProjectionCommitDefinition<TState>['fromStream'], 'aggregate'> & {
+    aggregate: Pick<PrimaryAggregate<TState>, 'aggregateType'> & Partial<PrimaryAggregate<TState>>;
+  };
+};
+
+export type ProjectionCommitRegistryInput<TState = unknown> = Omit<ProjectionCommitRegistryDefinition<TState>, 'definition'> & {
+  readonly definition: ProjectionCommitDefinitionInput<TState>;
+};
 
 export type ProjectionDefinitionCommitOutcome =
   | { status: 'committed' | 'deduplicated'; attempts: number }
@@ -61,6 +64,10 @@ export interface ProjectionCommitCoordinatorOptions<TState = unknown> {
   /** Opt-in diagnostics, independent of whether the generation records history. */
   readonly stateValidation?: ProjectionStateValidation;
 }
+
+export type ProjectionCommitCoordinatorInput<TState = unknown> = Omit<ProjectionCommitCoordinatorOptions<TState>, 'definitions'> & {
+  readonly definitions: readonly ProjectionCommitRegistryInput<TState>[];
+};
 
 export interface ProjectionCommitCoordinator {
   process(commit: ProjectionSourceCommit): Promise<ProjectionCommitCoordinatorOutcome>;

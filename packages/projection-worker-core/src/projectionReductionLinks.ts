@@ -1,13 +1,13 @@
 import {
-  isJoinSeedBinding, joinMembershipKey, type ProjectionContext, type ProjectionJoinMembership, type ProjectionJoinSource, type ProjectionSourceCommitLink
+  isJoinSeedBinding, joinMembershipKey, type JoinSeedKey, type ProjectionContext, type ProjectionJoinSource, type ProjectionSourceCommitLink
 } from '@redemeine/projection-runtime-core';
-import { stageMembership } from './joinMembershipReduction';
+import type { JoinMembershipStaging } from './joinMembershipReduction';
 import type { JoinSeedEvent } from './joinSeedReduction';
 import type { RoutingLinkState } from './projectionCommitRouting';
 
 export interface ReductionLinks {
   links: Map<string, RoutingLinkState>;
-  memberships?: Map<string, ProjectionJoinMembership>;
+  memberships?: JoinMembershipStaging;
   membershipReads: Set<string>;
   stagedLinks: Map<string, ProjectionSourceCommitLink>;
   missingLinks: Map<string, ProjectionJoinSource>;
@@ -27,15 +27,18 @@ function stageScalarLink(reduction: ReductionLinks, source: ProjectionJoinSource
 export function createReductionContext<T>(
   reduction: ReductionLinks, target: string, attached?: Set<string>, seeds?: JoinSeedEvent<T>
 ): ProjectionContext {
-  function stage(type: string, id: string, subscribe: boolean) {
+  function stage(type: string, id: string, subscribe: boolean, binding?: JoinSeedKey) {
+    // Validate the initializer first, but do not record it until membership staging also succeeds.
+    const applySeed = seeds?.prepareStage(type, id, subscribe, binding);
     const source = { aggregateType: type, aggregateId: id };
-    const key = joinMembershipKey(type, id);
-    if (reduction.memberships) {
-      reduction.membershipReads.add(key);
-      stageMembership(reduction.memberships, reduction.missingLinks, source, target, subscribe);
-    } else stageScalarLink(reduction, source, target, subscribe);
+    const key = reduction.memberships
+      ? reduction.memberships.stage(reduction.missingLinks, source, target, subscribe)
+      : joinMembershipKey(type, id);
+    if (reduction.memberships) reduction.membershipReads.add(key);
+    else stageScalarLink(reduction, source, target, subscribe);
     if (subscribe) attached?.add(key);
     else attached?.delete(key);
+    applySeed?.();
   }
 
   return {
@@ -43,16 +46,13 @@ export function createReductionContext<T>(
     subscribeTo(input, id) {
       if (isJoinSeedBinding(input)) {
         if (!seeds) throw new Error('subscribeTo initialization requires a registered native join initializer.');
-        seeds.stage(input.sourceAggregateType, id, true, input);
-        stage(input.sourceAggregateType, id, true);
+        stage(input.sourceAggregateType, id, true, input);
         return;
       }
       if (!('aggregateType' in input)) throw new Error('Invalid subscribeTo aggregate or join initializer.');
-      seeds?.stage(input.aggregateType, id, true);
       stage(input.aggregateType, id, true);
     },
     unsubscribeFrom(aggregate, id) {
-      seeds?.stage(aggregate.aggregateType, id, false);
       stage(aggregate.aggregateType, id, false);
     }
   };

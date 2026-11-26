@@ -1,6 +1,6 @@
 import {
-  assertJoinRevision, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey,
-  mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
+  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget,
+  joinMembershipKey, measureJoinTargetSet, mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
   ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
@@ -17,16 +17,17 @@ export function observedMemberships(
     const { aggregateType, aggregateId, revision, targetDocumentIds } = row;
     const key = joinMembershipKey(aggregateType, aggregateId);
     if (!remaining.delete(key)) throw new ProjectionPersistedJoinMembershipError('Unexpected joined membership snapshot key.');
+    let bytes: number;
     try {
       assertJoinRevision(revision);
-      validateJoinTargetSet(targetDocumentIds);
+      bytes = measureJoinTargetSet(targetDocumentIds);
       validateJoinMembershipSeeds(row);
-      for (const id of targetDocumentIds) budget.add(id);
     } catch (error) {
       if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
       throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
     }
     if (revision === null && targetDocumentIds.length) throw new ProjectionPersistedJoinMembershipError('Absent membership cannot have targets.');
+    chargeJoinMembershipSnapshotTargets(budget, targetDocumentIds.length, bytes);
     result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]),
       ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) }));
   }
@@ -42,7 +43,7 @@ export function routeStagedSetEvent<TState>(entry: SetRoutingEntry<TState>, memb
 }
 
 /** A staged attach can only add the current target, so initial recipients bound every later event. */
-export function collectSetTargets<TState>(events: readonly (SetRoutingEntry<TState> | null)[], loaded: Iterable<string>,
+export function collectSetTargets<TState>(events: readonly (SetRoutingEntry<TState> | null)[],
   memberships: ReadonlyMap<string, ProjectionJoinMembership>): Set<string> {
   const ids = new Set<string>();
   const budget = new JoinTurnBudget();
@@ -51,7 +52,6 @@ export function collectSetTargets<TState>(events: readonly (SetRoutingEntry<TSta
     budget.add(id);
     ids.add(id);
   }
-  for (const id of loaded) add(id);
   const readMemberships = new Set<string>();
   for (const entry of events) {
     if (!entry) continue;
@@ -64,22 +64,57 @@ export function collectSetTargets<TState>(events: readonly (SetRoutingEntry<TSta
   return ids;
 }
 
-export function stageMembership(
-  rows: Map<string, ProjectionJoinMembership>, missing: Map<string, ProjectionJoinSource>,
-  source: ProjectionJoinSource, target: string, subscribe: boolean
-): void {
-  const key = checkedJoinMembershipKey(source.aggregateType, source.aggregateId);
-  const prior = rows.get(key);
-  if (!prior) {
-    missing.set(key, source);
-    return;
+export function findSortedTarget<T>(items: readonly T[], id: string, targetOf: (item: T) => string): T | undefined {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const item = items[mid]!;
+    const candidate = targetOf(item);
+    if (candidate === id) return item;
+    if (candidate < id) lo = mid + 1;
+    else hi = mid;
   }
-  const targets = new Set(prior.targetDocumentIds);
-  if (subscribe) targets.add(target);
-  else targets.delete(target);
-  const targetDocumentIds = [...targets].sort();
-  validateJoinTargetSet(targetDocumentIds);
-  rows.set(key, { ...prior, targetDocumentIds });
+  return undefined;
+}
+
+const targetId = (id: string) => id;
+export const hasSortedTarget = (ids: readonly string[], id: string): boolean => findSortedTarget(ids, id, targetId) !== undefined;
+
+export class JoinMembershipStaging {
+  private readonly budget = new JoinTurnBudget();
+  private readonly changed = new Map<string, Set<string>>();
+
+  constructor(readonly rows: Map<string, ProjectionJoinMembership>) {}
+
+  stage(missing: Map<string, ProjectionJoinSource>, source: ProjectionJoinSource, target: string, subscribe: boolean): string {
+    const key = checkedJoinMembershipKey(source.aggregateType, source.aggregateId);
+    // Charge even no-ops and unresolved keys, before allocating event-local edits.
+    this.budget.add(key);
+    const prior = this.rows.get(key);
+    if (!prior) {
+      missing.set(key, source);
+      return key;
+    }
+    let targets = this.changed.get(key);
+    if ((targets ? targets.has(target) : hasSortedTarget(prior.targetDocumentIds, target)) === subscribe) return key;
+    if (!targets) {
+      targets = new Set(prior.targetDocumentIds);
+      this.changed.set(key, targets);
+    }
+    if (subscribe) targets.add(target);
+    else targets.delete(target);
+    return key;
+  }
+
+  finishEvent(): void {
+    for (const [key, targets] of this.changed) {
+      const targetDocumentIds = [...targets].sort();
+      validateJoinTargetSet(targetDocumentIds);
+      this.rows.set(key, { ...this.rows.get(key)!, targetDocumentIds });
+    }
+    this.changed.clear();
+  }
 }
 
 export function membershipFences(rows: Iterable<ProjectionJoinMembership>): readonly ProjectionJoinMembershipFence[] {

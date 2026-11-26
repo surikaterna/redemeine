@@ -34,9 +34,15 @@ For a missing candidate-only target, the handler and `afterEach` run against `in
 
 `own_record` is recommended; proven replays do not re-route after membership drift. With `none`, each delivery is a new application and routes against current membership. Joined `in_document` is unsupported. The legacy daemon, processor and single-document testing fixture do not support this mode. Use the registered native coordinator with a capable store. There is no distributed selector execution or new transport payload.
 
+The public `@redemeine/projection` builder result can be passed directly as the entry's `definition` in `createProjectionCommitCoordinator({ definitions, ... })`. If annotating inputs, use `ProjectionCommitRegistryInput` or `ProjectionCommitCoordinatorInput`; the existing full registry types still expose full runtime-core aggregate metadata.
+
 For a fresh turn, the coordinator evaluates the event-local selectors once and batches the distinct candidates and saved targets before reducing events in order. It acquires a fresh snapshot and starts at event zero after a conflict or discovery of additional keys. In a single worker, target lanes serialize overlapping local turns; they are not distributed locks. If independent MongoDB writers interleave, candidate presence and saved membership are observed in one snapshot transaction. Atomic writes still check touched document revisions and the observed membership revisions, including empty sets. Thus a turn cannot combine a missing candidate from before a concurrent create-and-unlink with the empty membership from after it. A declined missing candidate does not create a view record just to fence the read.
 
-Even without contention, a typical fresh set-mode MongoDB turn has two batched snapshot-read transactions (routing discovery, then the coherent turn read) and one write transaction. The original scalar/direct paths are unchanged. In addition to the per-event and per-row bounds below, set-mode routing is limited to 16,384 entries and 8 MiB of key bytes per discovery input (selector results, saved IDs, or snapshot key batches).
+Even without contention, a typical fresh set-mode MongoDB turn has two batched snapshot-read transactions (routing discovery, then the coherent turn read) and one write transaction. The original scalar/direct paths are unchanged. In addition to the per-event and per-row bounds below, set-mode routing is limited to 16,384 entries and 8 MiB of key bytes per discovery input (raw selector results, distinct routed targets, saved IDs, or snapshot key batches). The raw-selector budget spans all handled events in a definition's turn and charges every returned ID before deduplication, including duplicate IDs. The same work ceilings apply separately to staged subscribe/unsubscribe calls per reduction, including no-ops.
+
+The stores apply the same ceilings to the final scoped fence keys and, separately, to all final target occurrences across those fences. An ID repeated in two rows counts twice; unchanged fenced rows count too. Adds and removals are accounted for in the final sets, so a canceled attach does not consume final target capacity. An oversized turn cannot commit documents, memberships, progress or a receipt.
+
+If expanded discovery keys or their combined membership results exceed the turn limit after routing changes, the worker can discard the accumulated keys and recompute from event zero once, even with recording off. The reset does not enlarge the snapshot or staging budgets, refund seed reads, or extend the seed deadline.
 
 After an unknown MongoDB commit result, a recorded turn can be confirmed by its durable change receipt. With recording off and `own_record`, the store confirms a set-mode write only if a single snapshot matches the attempt's unique progress write ID, its written document revisions and write IDs, and every final membership set and revision. A rival advancing the same source sequence is not proof, even when it wrote the same membership. If the proof is missing, was superseded, or cannot be read, the result is retryable and ambiguous. With `none` and recording off there is no durable reconciliation proof.
 
@@ -44,15 +50,23 @@ After an unknown MongoDB commit result, a recorded turn can be confirmed by its 
 
 Do not enable set membership on an existing scalar generation. Plain `.join()` without `.joinRight()` or `.onJoinInitialize()` continues to use existing scalar semantics and registry identities. Stop old writers, choose and document the accepted forward cutoff **B**, and bind a new queue/manifest with a new projection generation. Declare `joined: true` and `joinMembership: 'set-v1'` in its definition entry. Use isolated collections for documents, memberships, progress, receipts and transport; seed accepted documents explicitly. Pass the same dedicated membership and document namespaces to `MongoProjectionStore` and the transport's joined inventory resources. Do not configure scalar or legacy writers against those collections.
 
+Pre-create the native set document and membership collections with simple (binary) collation, including when the approved inventory is empty. The transport checks their options before adoption and on startup against an existing adoption; the worker needs permission to inspect those collection options. Keep the approved collections in place. Case-insensitive lookalikes are not valid seed targets. This requirement does not change scalar cutover or the supported collated approval lookup.
+
+The stock `MongoProjectionStore` uses a fixed document/membership collection pair; the transport approval does not route store operations. If a multi-definition registry approves different pairs, deployment must route each `(projectionName, generation)` store operation to the exact handles approved for that definition. Do not pass a fixed-pair store and assume the ordered inventory will make it route.
+
+The cutoff is a coverage and polling boundary, not a filter that suppresses `none` delivery effects. A genuine broker redelivery at or before **B** can still be applied with `none` if the exact source commit remains retained and the indexed reader verifies it. This does not advance post-cutover coverage. Reliably deduplicated definitions skip those deliveries; an unavailable or mismatched historical commit cannot authorize a `none` application.
+
 At dispatch the worker presents its immutable manifest in a versioned proof, and the source-order adapter compares its contents with the authoritative queue binding before creating a coverage row. The worker also verifies the returned proof before reducing any event. A missing proof is not interpreted as legacy scalar mode. Custom source-order adapters must implement both sides of this handshake; a caller-provided manifest ID alone does not establish a match.
 
 Prepare a complete, reviewed inventory from the stopped state. Map a known scalar link to a singleton set, a known scalar-null tombstone to `[]`, and absent rows to no entry. Never infer the inventory by letting the runtime scan or fill missing subscriptions. Group edges by source, sort target IDs, reject duplicate or ambiguous inputs, and preflight the 1,024-target and 1 MiB encoded ID-set bounds. The same bounds apply to the union on each handled event. Capacity failure aborts the source turn without truncation.
 
-Supply a `JoinedApproval` with an inventory per joined definition, in registry order. The set inventory uses `format: 'set-v1'`, `expectedSets`, `maxLinkRows`, `maxEdges`, and `maxTargetBytes` (UTF-8 JSON bytes of the seed rows). Include `knownEmpty: true` and `emptyInventoryReference` when the reviewed inventory has no edges, even if it includes tombstones. Use `joinedMembershipSeedRow` to generate revision-zero rows, and `approvalDigest` to bind the exact approval. Seed only in the isolated collection before adoption. The worker checks exact membership and referenced documents before adoption, then uses durable adoption on restart rather than requiring reseeding. Do not edit the approval, reset revisions, delete empty membership rows, or place TTL indexes on these resources.
+Supply one `JoinedApproval` BSON document with an inventory per joined definition, in registry order. The set inventory uses `format: 'set-v1'`, `expectedSets`, `maxLinkRows`, `maxEdges`, and `maxTargetBytes` (UTF-8 JSON bytes of the seed rows). The per-inventory 32 MiB seed-row ceiling is not an approval-document capacity promise: the entire approval, including every inventory, must fit MongoDB's 16 MiB BSON document limit. Include `knownEmpty: true` and `emptyInventoryReference` when the reviewed inventory has no edges, even if it includes tombstones. Use `joinedMembershipSeedRow` to generate revision-zero rows, and `approvalDigest` to bind the exact approval.
+
+Seed only in the isolated collection before adoption. Before adoption, the worker verifies the full approval, exact membership and the presence of each referenced state field (explicit JSON `null` counts; missing state and tombstone/deleted documents do not). It returns only document IDs from these presence checks. After adoption, including on restart, it reads a bounded approval identity through the collection's `_id` index and compares it exactly in the worker, regardless of collation. The seed inventory is not returned or rehashed. The read can still fetch the underlying document on the server. Keep the operator-owned approval immutable and grant the worker read-only access to it: changing its payload without updating the declared digest is not supported or revalidated after adoption. Do not reset revisions, delete empty membership rows, or place TTL indexes on these resources.
 
 There is no automatic backfill, mixed-writer compatibility, or transparent downgrade. Capacity, cutoff, resource isolation and approval completeness are operator responsibilities. The transport gate checks the approved inventory; it does not infer the old application's state.
 
-To exercise the synthetic coordinator and cutover scenarios, start an isolated Mongo replica set with `enableTestCommands=1`, supply its URI using `REDEMEINE_MONGO_URI`, and run `pnpm --dir packages/projection-transport run test:real-join-memberships` after building the workspace packages. The script uses a transient-read failpoint, creates and drops temporary databases, and reports fan-out command counts.
+To exercise the coordinator and cutover scenarios, start an isolated Mongo replica set with `enableTestCommands=1`, supply its URI using `REDEMEINE_MONGO_URI`, and run `pnpm --dir packages/projection-transport run test:real-join-memberships` after building the workspace packages. The suite uses a transient-read failpoint, creates and drops temporary databases, and reports fan-out command counts. `pnpm run test:projection-real-stack` runs the same suite and a real Rabbit delivery that resolves an indexed Tapeworm gap, attaches a set-mode candidate, and verifies receipts and contiguous Mongo coverage. The Mongo 6/8 qualification matrix runs both.
 
 ## Initialize a new membership
 
@@ -106,7 +120,11 @@ matching manifest definition's `joinSeeds`. Keep kind, name, generation and
 coverage policy stable in that deployment generation. Each joined aggregate
 has at most one declared initializer. Use a new consuming generation and the
 usual joined cutover; existing edges adopted as forward-only do not acquire
-invented provenance. Do not mix old and initialized writers for a generation.
+invented provenance. For example, if an approved forward-only edge already
+has `booked: 40` at the accepted cutoff, keep that target state and the edge.
+A live `quantityChanged(+3)` after the cutoff sees `joinSeedCoverage` as
+`undefined` and increments it to 43; registering the initializer does not
+reseed the edge or suppress that delta. Do not mix old and initialized writers for a generation.
 This is a native coordinator feature, not supported by legacy daemons or
 `testProjection`.
 
@@ -148,20 +166,62 @@ attaching handler; fold it in the initializer only if the proof warrants it.
 Later handlers can check `ctx.joinSeedCoverage` for the retained initialized
 edge at event start. Do not use it to skip unlink or other membership controls.
 
-The latest seed can be ahead or behind live delivery. The coordinator does not
-hydrate aggregate history, replay an intervening tail, or wait for another
-projection to catch up in the current turn. A missing seed, missing required
-proof, or reader I/O failure does not acknowledge the turn; malformed evidence
-or mismatched identities fail closed. Reads run outside the target lanes,
-Immer, and write transaction; readers receive a five-second abort deadline.
-Inputs are bounded (64 reads, 1 MiB per state, 8 MiB total per turn). The
-runtime can rerun synchronous handlers and initializers when it replans, so
-write only to the draft. Within that attempt it reuses the detached seed;
+The latest seed can be ahead or behind live delivery. Activation is the
+atomic consumer write that installs the edge, **not** the provider read or
+the seed's watermark. Even proven coverage is not a gap-free handoff: if a
+Sailing attach pauses on an Order seed through commit 10, Order commit 11 can
+complete before the new edge exists. If the attach then commits, it will not
+replay 11; later delivered Order events can apply normally. There is no
+aggregate hydration, tail replay, CDC/feed subscription, or guarantee that
+the producer catches up during the trigger. Best effort offers no inclusive
+watermark at all.
+
+A missing seed, missing required proof, or reader I/O failure does not
+acknowledge fresh work; malformed evidence or mismatched identities fail
+closed. With reliable history enabled, an exact durable receipt can instead
+prove that a concurrent worker already applied this turn. Missing proof
+triggers a fresh replan; if the same input is still needed, the original
+failure is reported without calling the provider again. A concurrent
+forward-only attachment can make that input unnecessary without creating
+seed provenance. Mismatched proof is terminal, and unreadable or
+unacknowledged proof remains retryable. No extra receipt lookup is needed
+on successful seed reads.
+
+Provider I/O runs outside target lanes, Immer and the target transaction.
+The five-second deadline is shared by all seed reads in one definition turn
+(readers should honor the abort signal). Inputs are bounded (64 reads, 1 MiB
+per state, 8 MiB total). A prepared native turn can reuse its coherent
+target/membership/progress read set across reads. It still reruns synchronous
+handlers and initializers from event zero, and atomically checks the whole
+decision read set before using a reused plan. Expansion or OCC conflict loads
+a new snapshot; a missing fence (for example an absent no-op candidate),
+legacy first touch, or an adapter without prepared read-set support falls
+back to fresh reads rather than guessing. Compatibility adapters can still
+issue one target read per seed suspension. Unknown write outcomes aren't
+treated as conflicts or blindly reapplied. Write only to the draft.
+If a reused plan would run out of seed reads, the worker checks reliable
+history and confirms the need on a fresh snapshot before rejecting it.
+Already issued reads still count against the same limit and deadline.
+Within that attempt it reuses the detached seed;
 if an uncommitted turn is delivered again it can read a newer value. It
 atomically persists the winning target changes,
 membership and provenance, source progress, and configured change history.
 Recorded history identifies the actual trigger and applied provenance without
 re-reading today's seed.
+
+MongoDB stores new receipts with seed provenance as `seedEncoding.kind:
+'interned-v1'`: one descriptor per distinct provenance and ordered indexes
+on the transitions that applied it. Public receipts keep ordered inline
+`joinSeeds`; `decodeMongoProjectionChangesReceipt` expands stored rows and
+also accepts older inline rows. The 16 MiB check applies to the exact
+physical BSON receipt including `_id` and outcome metadata, before any
+turn mutations. A prepared over-limit result is checked against a coherent
+read of its fences before it can settle as terminal. It does not waive the
+separate Mongo limit on target documents.
+Upgrade every raw receipt reader before writing initialized receipts in a new
+generation. Old readers cannot interpret interned rows (they may silently
+omit provenance); they must not read that generation. No rewrite, mixed-reader
+rollout guarantee, or downgrade after the first interned write is provided.
 
 Run `pnpm --dir packages/projection-transport run test:join-initialization`
 for the in-memory scenarios. Set `REDEMEINE_MONGO_URI` to also run the actual

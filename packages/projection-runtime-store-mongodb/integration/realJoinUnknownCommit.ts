@@ -23,7 +23,7 @@ function request(name: string): Request {
   };
 }
 
-function injectUnknown(client: MongoClient) {
+export function injectUnknown(client: MongoClient) {
   let injection: { abort: boolean; after?: () => Promise<void> } | undefined;
   const mongoClient = { startSession(): ClientSession {
     const session = client.startSession();

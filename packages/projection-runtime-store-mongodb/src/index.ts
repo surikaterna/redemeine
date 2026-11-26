@@ -35,6 +35,7 @@ export type {
   ProjectionJoinMembershipRecord
 } from './types';
 export { OWN_PROGRESS_INDEX } from './store/sourceCommitReadiness';
+export { decodeMongoProjectionChangesReceipt } from './store/sourceCommitReceiptCodec';
 
 export { MongoProjectionStore } from './MongoProjectionStore';
 export { MongoProjectionLinkStore, toLinkId } from './MongoProjectionLinkStore';

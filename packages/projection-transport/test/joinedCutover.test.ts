@@ -21,7 +21,12 @@ function fixture() {
     toArray: async () => [...rows.values()].sort((left, right) => String(left._id).localeCompare(String(right._id))) }) } as unknown as
     Collection<Document & { _id: string }>;
   const documents = { dbName: 'projection', collectionName: 'A_documents',
-    findOne: async ({ _id }: { _id: string }) => docs.get(_id) ?? null } as unknown as Collection<Document & { _id: string }>;
+    findOne: async ({ _id, state }: { _id: string; state: { $exists: boolean } }, { projection }: { projection: unknown }) => {
+      expect(state).toEqual({ $exists: true });
+      expect(projection).toEqual({ _id: 1 });
+      const row = docs.get(_id);
+      return row && Object.hasOwn(row, 'state') && row.deleted !== true && row.tombstone !== true ? { _id } : null;
+    } } as unknown as Collection<Document & { _id: string }>;
   const item: JoinedInventory = { projectionName: 'A', generation: 'g1', links, documents };
   const draft = { _id: 'joined_approval:queue-A', kind: 'joined_approval' as const, queueBindingId: 'queue-A',
     manifestId: hash, registryGeneration: 'g1', approvalNamespace: 'projection.joined_approvals',

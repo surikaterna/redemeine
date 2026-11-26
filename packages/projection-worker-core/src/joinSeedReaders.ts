@@ -59,7 +59,7 @@ export function assertJoinSeedConfiguration<T>(
   }
 }
 
-const SEED_TIMEOUT_MS = 5_000;
+export const SEED_TIMEOUT_MS = 5_000;
 const MAX_SEED_BYTES = 1024 * 1024;
 
 type SeedReadOutcome =
@@ -88,14 +88,15 @@ function checkSeed(result: JoinSeedRead<unknown> | null, config: JoinSeedDeploym
   return { status: 'loaded', bytes, seed: Object.freeze({ state, provenance: freezeJoinSeedProvenance(p) }) };
 }
 
-export async function readJoinSeed(reader: JoinSeedReader, aggregateId: string): Promise<SeedReadOutcome> {
+export async function readJoinSeed(reader: JoinSeedReader, aggregateId: string, remainingMs: number): Promise<SeedReadOutcome> {
+  if (remainingMs <= 0) return { status: 'transient', reason: 'Join seed turn deadline exceeded.' };
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let result: JoinSeedRead<unknown> | null;
   try {
     result = await Promise.race([
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => { controller.abort(); reject(new Error('Join seed read timed out.')); }, SEED_TIMEOUT_MS);
+        timeout = setTimeout(() => { controller.abort(); reject(new Error('Join seed read timed out.')); }, remainingMs);
       }),
       reader.readOne(aggregateId, controller.signal)
     ]);

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { ClientSession, Collection, Document } from 'mongodb';
+import { BSON, type ClientSession, type Collection, type Document } from 'mongodb';
 import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
 import { type ApprovedJoinedSetInventory, validateJoinedSetInventory, verifyInitialMembershipSets } from './joinedSetCutover';
+import { joinedTargetIdentityProjection, joinedTargetPresence } from './joinedTargetPresence';
 
 export interface JoinedLinkTuple {
   readonly aggregateType: string;
@@ -123,7 +124,9 @@ export function validateApproval(manifest: ProjectionQueueRegistryManifest, reco
     || typeof record.approvedBy !== 'string' || !record.approvedBy || !isIsoInstant(record.approvedAt)
     || !Array.isArray(record.inventories)
     || record.inventories.length !== definitions.length || resources.length !== definitions.length
-    || record.digest !== approvalDigest(record) || !transportNamespace) throw new Error('Invalid durable joined approval.');
+    || !transportNamespace) throw new Error('Invalid durable joined approval.');
+  if (BSON.calculateObjectSize(record) > 16 * 1024 * 1024) throw new Error('Joined approval exceeds MongoDB BSON document capacity.');
+  if (record.digest !== approvalDigest(record)) throw new Error('Invalid durable joined approval.');
   const scopes = new Set<string>();
   for (const [index, item] of record.inventories.entries()) {
     const definition = definitions[index];
@@ -170,8 +173,9 @@ export async function verifyInitialLinks(item: ApprovedJoinedInventory | Approve
   }
   if (expected.size) throw new Error('Missing approved joined link.');
   for (const targetDocId of new Set(item.expected.map((tuple) => tuple.targetDocId))) {
-    const target = await resource.documents.findOne({ _id: targetDocId }, { session });
-    if (!target || target.state == null || target.deleted === true || target.tombstone === true) {
+    const target = await resource.documents.findOne({ _id: targetDocId, ...joinedTargetPresence },
+      { session, projection: joinedTargetIdentityProjection });
+    if (!target) {
       throw new Error('Joined target document missing or tombstoned.');
     }
   }

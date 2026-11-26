@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { writeFile } from 'node:fs/promises';
 import { BSON, MongoClient, type CommandStartedEvent, type Db, type Document } from 'mongodb';
 import {
   MongoProjectionStore, type MongoProjectionChangesRecord, type ProjectionDocumentRecord, type ProjectionJoinMembershipRecord
@@ -14,6 +15,16 @@ import { runJoinInvalidRows } from './realJoinInvalidRows';
 import { runJoinReceiptRaces } from './realJoinReceiptRace';
 import { runFracturedReadRegression, runMultiEventBatch } from './joinMembershipMongoAudit';
 import { runValidReceiptRace } from './joinMembershipValidReceiptRace';
+import { runCapacityRace, runEventLocalCapacity } from './joinMembershipCapacity';
+import { runScalarBindingOrder } from './realScalarBindingOrder';
+import { runJoinRabbit } from './realJoinRabbit';
+import { runJoinSelectorRawBudget } from './joinSelectorRawBudget';
+import { runCutoverTargetPresence, runLargeCutoverIdentity } from './realJoinCutoverIdentity';
+import { runJoinApprovalCollation } from './realJoinApprovalCollation';
+import { runFenceWriteBudget } from './joinFenceWriteBudget';
+import { runSetCollationCutover } from './realJoinResourceCollation';
+import { runFenceCapacityRace } from './joinFenceCapacityRace';
+import { runExpansionCapacityMatrix } from './joinExpansionCapacity';
 
 function mongoResources(db: Db, client: MongoClient) {
   const collection = db.collection<ProjectionDocumentRecord<State>>('views');
@@ -108,6 +119,9 @@ async function main() {
   const client = new MongoClient(uri, { monitorCommands: true });
   client.on('commandStarted', (command) => commands.push(command));
   const dbs: Db[] = [];
+  let rabbit: Awaited<ReturnType<typeof runJoinRabbit>> | undefined;
+  const evidence = process.env.REDEMEINE_MEMBERSHIP_EVIDENCE_PATH;
+  let mongoVersion: unknown;
   const db = () => {
     const value = client.db(`aan1_${randomUUID().replaceAll('-', '')}`);
     dbs.push(value);
@@ -129,10 +143,38 @@ async function main() {
         await runValidReceiptRace(suite(), scenario, false);
         await runValidReceiptRace(suite(), scenario, true);
       }
+      await runEventLocalCapacity(suite()());
+      await runJoinSelectorRawBudget(suite()());
+      for (const compatibility of [false, true]) {
+        for (const scenario of ['winner', 'winner-after-missing', 'capacity-released', 'fresh', 'wrong-commit',
+          'unreadable', 'unacknowledged', 'none'] as const) {
+          await runCapacityRace(suite(), compatibility, scenario);
+        }
+        await runCapacityRace(suite(), compatibility, 'winner-after-missing', true);
+      }
     }
     await runRollback(db(), client, commands);
+    await runScalarBindingOrder(db(), client);
     await runJoinMembershipCutover(db(), client);
+    await runExpansionCapacityMatrix(() => memory()(), 'memory');
+    await runExpansionCapacityMatrix(() => {
+      commands.length = 0;
+      return mongo()();
+    }, 'mongo');
+    commands.length = 0;
+    for (const collated of ['views', 'memberships', 'neither'] as const) await runSetCollationCutover(db(), client, commands, collated);
+    for (const prepared of [false, true]) {
+      await runFenceWriteBudget(memory()(), prepared);
+      await runFenceWriteBudget(mongo()(), prepared, commands);
+      for (const scenario of ['fresh', 'cancel', 'winner-after-missing', 'none'] as const) {
+        await runFenceCapacityRace(memory()(), prepared, scenario);
+        await runFenceCapacityRace(mongo()(), prepared, scenario, commands);
+      }
+    }
+    await runLargeCutoverIdentity(db(), client);
+    for (const insensitive of [false, true]) await runJoinApprovalCollation(db(), client, commands, insensitive);
     for (const boundSet of [true, false]) {
+      await runCutoverTargetPresence(db(), client, boundSet);
       for (const recording of [true, false]) await runJoinBinding(db(), client, boundSet, recording);
     }
     await runJoinInvalidRows(db(), client);
@@ -148,10 +190,18 @@ async function main() {
       }
     }
     for (const count of [1, 32, 256, 1024, 1025]) await runScale(db(), client, commands, count);
+    if (process.env.REDEMEINE_RABBIT_URI) rabbit = await runJoinRabbit(db(), client, process.env.REDEMEINE_RABBIT_URI);
+    if (evidence) mongoVersion = (await client.db('admin').command({ buildInfo: 1 })).version;
     console.log('Join membership scenarios passed in memory and on replica-set MongoDB.');
   } finally {
-    for (const database of dbs) await database.dropDatabase();
+    for (const database of dbs) assert(await database.dropDatabase());
     await client.close();
+  }
+  if (evidence) {
+    assert(rabbit && process.env.REDEMEINE_GIT_SHA && process.env.REDEMEINE_EXPECTED_MONGO_VERSION);
+    assert.equal(mongoVersion, process.env.REDEMEINE_EXPECTED_MONGO_VERSION);
+    await writeFile(evidence, JSON.stringify({ gitSha: process.env.REDEMEINE_GIT_SHA, logicalCleanupVerified: true,
+      mongo: mongoVersion, memoryAndMongoMemberships: 'passed', rabbit }), { flag: 'wx' });
   }
 }
 

@@ -1,5 +1,5 @@
 import { validateProjectionQueueRegistryManifest, type ProjectionQueueRegistryManifest } from './registry';
-import { isProjectionJsonValue, type ProjectionJsonValue } from './sourceCommit';
+import { isProjectionManifestJson, type ProjectionJsonValue } from './sourceCommit';
 
 /** Compare the manifest contents, not just the caller-supplied ID or individual policies. */
 export interface ProjectionDispatchBindingProof {
@@ -25,13 +25,15 @@ export function matchesProjectionDispatchBinding(expected: ProjectionDispatchBin
   const { manifest: worker } = expected;
   const { manifest: authoritative } = bound;
   return validateProjectionQueueRegistryManifest(worker).length === 0 && validateProjectionQueueRegistryManifest(authoritative).length === 0
-    && isProjectionJsonValue(worker) && isProjectionJsonValue(authoritative) && canonicalJson(worker) === canonicalJson(authoritative);
+    && isProjectionManifestJson(worker) && isProjectionManifestJson(authoritative)
+    && canonicalJson(worker) === canonicalJson(authoritative);
 }
 
 export function createProjectionDispatchBindingProof(manifest: ProjectionQueueRegistryManifest): ProjectionDispatchBindingProof {
-  if (!isProjectionJsonValue(manifest)) throw new Error('Dispatch manifest must contain plain JSON.');
+  if (!isProjectionManifestJson(manifest)) throw new Error('Dispatch manifest must contain plain JSON.');
   // The worker offers the same immutable proof on every admission, even if the caller mutates its original options.
-  const proof = { version: 1 as const, manifest: JSON.parse(canonicalJson(manifest)) as ProjectionQueueRegistryManifest };
+  // Only comparisons are canonicalized: older binders compare the persisted field order.
+  const proof = { version: 1 as const, manifest: JSON.parse(JSON.stringify(manifest)) as ProjectionQueueRegistryManifest };
   const pending: object[] = [proof];
   while (pending.length) {
     const next = pending.pop()!;

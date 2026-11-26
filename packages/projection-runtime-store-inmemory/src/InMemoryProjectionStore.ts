@@ -34,6 +34,7 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
   private v2 = createV2State();
+  private readonly joinSeedSnapshots = new WeakMap<ProjectionSourceCommitSnapshot<TState>, ReadonlyMap<string, StoredDocument<TState> | undefined>>();
   private readonly emittedWarnings = new Set<string>();
 
   constructor(private readonly options: { onDedupeWarning?: (warning: ProjectionDedupeWarning) => void } = {}) {}
@@ -79,14 +80,21 @@ export class InMemoryProjectionStore<TState = unknown> implements IProjectionSto
     if (request.joinSeedVersion !== undefined && (request.joinSeedVersion !== 1 || !request.joinMembership)) {
       throw new Error('Invalid join initialization snapshot request.');
     }
-    return loadV2Snapshot(request, this.documents, this.v2);
+    const snapshot = loadV2Snapshot(request, this.documents, this.v2);
+    if (request.prepareSourceCommit && request.joinSeedVersion === 1 && !snapshot.targets.some((target) => target.legacyOriginal)) {
+      snapshot.joinSeedReadSet = 'revision-cas-v1';
+      this.joinSeedSnapshots.set(snapshot, new Map(request.targetDocumentIds.map((id) => [id, this.documents.get(id)])));
+    }
+    return snapshot;
   }
 
   async commitProjectionSourceCommit(
     request: CommitProjectionSourceCommitRequest<TState>,
     snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
-    const execution = commitV2(request, this.documents, this.v2, snapshot !== undefined);
+    const observed = snapshot && this.joinSeedSnapshots.get(snapshot);
+    const stale = observed && [...observed].some(([id, document]) => this.documents.get(id) !== document);
+    const execution = commitV2(request, this.documents, this.v2, snapshot !== undefined, stale);
     if (!execution.documents || !execution.state) return execution.result;
     this.documents = execution.documents;
     this.v2 = execution.state;
