@@ -27,6 +27,7 @@
     "aggregate-nested-map-registry",
     "aggregate-public-decoration",
     "aggregate-readonly-state",
+    "atomic-projection-changes",
     "bridge-command-envelopes",
     "bright-commits-project",
     "cli-intersections-readable",

@@ -1,5 +1,12 @@
 # @redemeine/mirage
 
+## 1.0.0-pre.11
+
+### Patch Changes
+
+- Updated dependencies [[`968c015`](https://github.com/surikaterna/redemeine/commit/968c015aabb41c01b78726278a73a7b67d34de25)]:
+  - @redemeine/aggregate@1.0.0-pre.11
+
 ## 1.0.0-pre.10
 
 ### Patch Changes
