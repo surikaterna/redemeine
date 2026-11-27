@@ -1,6 +1,7 @@
 import { isCanonicalProjectionUuid, validateProjectionSourceCommit } from './sourceCommit';
 import type { ProjectionSourceCommit } from './sourceCommit';
 import type { ProjectionRegistryDefinitionManifest } from './registry';
+import type { ProjectionDispatchBindingProof } from './dispatchBinding';
 
 export type ProjectionChangeRecordingScope = Pick<ProjectionRegistryDefinitionManifest,
   'projectionName' | 'generation' | 'projectionChanges'>;
@@ -37,8 +38,8 @@ export interface ProjectionSourceDispatchAdmission {
   /** Immutable accepted-state boundary shared by ordering and definition dispatch. */
   startAnchor: number;
   strategyScope: readonly ProjectionCutoverStrategyScope[];
-  /** Effective policy from the authoritative binding. Older ports may omit it for disabled workers. */
-  boundChangeRecordingScope?: readonly ProjectionChangeRecordingScope[];
+  /** Must be returned from the authoritative binding, never echoed from the worker request. */
+  boundDispatchProof: ProjectionDispatchBindingProof;
 }
 
 export interface ProjectionCutoverStrategyScope {
@@ -57,8 +58,9 @@ export interface ProjectionSourceCoverageAdvance {
 }
 
 export interface ProjectionSourceOrderPort {
+  /** Validate the expected proof against the authoritative binding before any admission writes. */
   admitForDispatch(
-    commit: ProjectionSourceCommit, queueBindingId: string, expectedChangeRecordingScope?: readonly ProjectionChangeRecordingScope[]
+    commit: ProjectionSourceCommit, queueBindingId: string, expectedDispatchProof: ProjectionDispatchBindingProof
   ): Promise<ProjectionSourceDispatchAdmission>;
   advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage>;
 }

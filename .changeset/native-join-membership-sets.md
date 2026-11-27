@@ -1,0 +1,26 @@
+---
+'@redemeine/projection': minor
+'@redemeine/projection-runtime-core': minor
+'@redemeine/projection-runtime-store-inmemory': minor
+'@redemeine/projection-runtime-store-mongodb': minor
+'@redemeine/projection-worker-core': minor
+'@redemeine/projection-transport': minor
+'@redemeine/projection-runtime': patch
+'@redemeine/testing': patch
+---
+
+Add opt-in native projection join membership sets. `.joinRight()` selects candidate targets from typed events; joined handlers receive the deduplicated union with saved members and explicitly attach or detach their current target. Registration rejects selector maps without set-mode opt-in. Native stores fence even empty membership observations atomically with document writes, source progress and change receipts. Existing singleton generations stay unchanged; set generations require an explicit forward cutover and dedicated Mongo collections.
+
+After explicit `.deduplication(...)`, `.build()` infers a commit-native definition through subsequent fluent calls; `.buildCommitDefinition()` remains available. MongoDB confirms an unknown set-turn outcome only from its durable receipt or an attempt-specific progress witness with matching document and membership writes.
+
+Source-order ports now require an authoritative, versioned dispatch binding proof before admitting coverage. Set-mode writes reject malformed Unicode identifiers, and deterministic persisted membership validation failures are terminal.
+
+Matching durable receipts take precedence over capacity errors from a stale membership snapshot. Final staged sets are validated at event boundaries; idempotent edge operations do not rebuild the set. Scalar manifest field order is preserved on disk for compatibility with older binders.
+
+Public authored join definitions register with the native coordinator without a cast. Raw selector output is bounded before deduplication. After cutover adoption, workers check durable approval identity without loading seed inventories again. Initial target presence checks allow explicit JSON null and do not return state bodies.
+
+Native set cutover verifies exact target IDs and requires simple collation for its document and membership collections. Aggregate final membership fence budgets match the snapshot read budgets in both stores.
+
+Native workers retry once from the original routing keys when abandoned discovery keys make the accumulated query or its membership results exceed capacity, even with change recording disabled.
+
+Native workers reject promise-returning handlers before hooks or persistence. Legacy projection executors and the single-document testing fixture reject raw candidate-selector fields, even empty maps without set-mode opt-in.

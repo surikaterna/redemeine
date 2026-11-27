@@ -16,7 +16,8 @@ import { buildDocumentWriteOperation } from './store/documentWriteOperationBuild
 import { persistCommitAtomicWithBulkWrite } from './store/persistCommitAtomicWithBulkWrite';
 import { isUnknownSourceCommitOutcome, readSourceCommitChange } from './store/sourceCommitChanges';
 import { ensureSourceCommitStoreReady } from './store/sourceCommitReadiness';
-import { commitMongoV2 } from './store/sourceCommitV2';
+import { reconcileSetSourceCommit } from './store/sourceCommitReconciliation';
+import { commitMongoV2, snapshotForCommit } from './store/sourceCommitV2';
 import { matchesSourceSnapshot, protectSourceSnapshot, readMongoSourceSnapshot, type NativeSourceSnapshot } from './store/sourceCommitSnapshot';
 import { createTransactionExecutor, type TransactionExecutor } from './store/transactionExecutor';
 import { withSession } from './store/withSession';
@@ -40,6 +41,11 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   private readonly emittedDedupeWarnings = new Set<string>();
 
   constructor(private readonly options: MongoProjectionStoreOptions<TState>) {
+    const membership = options.joinMembershipCollection;
+    if (membership && [options.collection, options.linkCollection, options.dedupeCollection, options.changeCollection]
+      .some((other) => other && (Object.is(other, membership) || ('namespace' in other && other.namespace === membership.namespace)))) {
+      throw new Error('Join membership sets require a dedicated Mongo collection.');
+    }
     this.now = options.now ?? defaultNow;
     this.patchPlanTelemetry = options.patchPlanTelemetry;
     this.patchPlanCacheMaxEntries = options.patchPlanCacheMaxEntries ?? 512;
@@ -50,6 +56,10 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
+
+  get joinMembershipCapability(): 'set-v1' | undefined {
+    return this.options.joinMembershipCollection && this.options.collection.find ? 'set-v1' : undefined;
+  }
 
   async load(documentId: string): Promise<TState | null> {
     const row = await this.options.collection.findOne({ _id: documentId });
@@ -97,9 +107,15 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   }
 
   async loadProjectionSourceCommitSnapshot(request: LoadProjectionSourceCommitSnapshotRequest): Promise<ProjectionSourceCommitSnapshot<TState>> {
+    if (request.joinMembership && !this.joinMembershipCapability) throw new Error('Join membership sets are not configured.');
     await this.initializeProjectionSourceCommitStore();
+    // Negative candidate reads and membership rows must describe the same database instant.
+    // Keep the scalar/direct snapshot path untouched.
+    const read = () => request.joinMembership
+      ? this.createTransactionExecutor()((session) => readMongoSourceSnapshot(request, this.options, session))
+      : readMongoSourceSnapshot(request, this.options);
     if (request.prepareSourceCommit) {
-      const loaded = await readMongoSourceSnapshot(request, this.options);
+      const loaded = await read();
       const proof = protectSourceSnapshot(loaded, request);
       if (proof) {
         this.sourceSnapshots.set(loaded.snapshot, proof);
@@ -107,6 +123,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
       }
       return loaded.snapshot;
     }
+    if (request.joinMembership) return (await read()).snapshot;
     if (request.changeIdentity && this.options.changeCollection) {
       if (!request.targetDocumentIds.length && !request.links.length && request.progressStrategy === 'none') {
         return (await readMongoSourceSnapshot(request, this.options)).snapshot;
@@ -125,6 +142,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     request: CommitProjectionSourceCommitRequest<TState>, snapshot?: ProjectionSourceCommitSnapshot<TState>
   ): Promise<CommitProjectionSourceCommitResult> {
     const malformed = validateCommitProjectionSourceCommitRelationships(request)
+      ?? (request.joinMembershipFences && !this.joinMembershipCapability ? 'Join membership sets are not configured.' : null)
       ?? (request.additionalWrites && !this.options.changeCollection ? 'projection_changes collection is not configured' : null);
     if (malformed) {
       return { version: 1, status: 'rejected', category: 'terminal', retryable: false, reason: malformed };
@@ -195,6 +213,7 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
   private async reconcileUnknownCommit(
     request: CommitProjectionSourceCommitRequest<TState>, writeId: string
   ): Promise<CommitProjectionSourceCommitResult> {
+    if (request.joinMembershipFences) return this.reconcileUnknownSetCommit(request, writeId);
     if (request.additionalWrites) {
       const applicationId = request.progress.strategy === 'none' ? writeId : undefined;
       const receipt = await readSourceCommitChange(request, this.options.changeCollection, { applicationId, recoveringWriteId: writeId });
@@ -224,6 +243,26 @@ export class MongoProjectionStore<TState = unknown> implements IProjectionStore<
     );
     this.reportReconciliation(request, 'committed');
     return { version: 1, status: 'committed', commitSequence: request.commit.commitSequence, documentRevisions, linkRevisions, progress: request.progress };
+  }
+
+  private async reconcileUnknownSetCommit(request: CommitProjectionSourceCommitRequest<TState>,
+    writeId: string): Promise<CommitProjectionSourceCommitResult> {
+    let result: CommitProjectionSourceCommitResult | undefined;
+    try {
+      if (request.additionalWrites) {
+        const applicationId = request.progress.strategy === 'none' ? writeId : undefined;
+        result = await readSourceCommitChange(request, this.options.changeCollection, { applicationId, recoveringWriteId: writeId });
+      } else if (request.progress.strategy === 'own_record') {
+        // A set turn's own progress, membership and document witnesses must be observed together.
+        const loaded = await this.createTransactionExecutor()((session) =>
+          readMongoSourceSnapshot(snapshotForCommit(request), this.options, session));
+        result = reconcileSetSourceCommit(request, writeId, loaded);
+      }
+    } catch {
+      // A failed proof read cannot turn an unknown commit into an acknowledgement.
+    }
+    this.reportReconciliation(request, result?.status === 'committed' ? 'committed' : 'ambiguous');
+    return result ?? { version: 1, status: 'rejected', category: 'transient', retryable: true, reason: 'ambiguous transaction outcome' };
   }
 
   private reconciliationSnapshotMatches(request: CommitProjectionSourceCommitRequest<TState>, snapshot: ProjectionSourceCommitSnapshot<TState>): boolean {

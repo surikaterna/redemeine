@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { ClientSession, Collection, Document } from 'mongodb';
+import { BSON, type ClientSession, type Collection, type Document } from 'mongodb';
 import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
+import { type ApprovedJoinedSetInventory, validateJoinedSetInventory, verifyInitialMembershipSets } from './joinedSetCutover';
+import { joinedTargetIdentityProjection, joinedTargetPresence } from './joinedTargetPresence';
 
 export interface JoinedLinkTuple {
   readonly aggregateType: string;
@@ -37,7 +39,7 @@ export interface JoinedApproval extends Document {
   readonly transportNamespace: string;
   readonly approvedBy: string;
   readonly approvedAt: string;
-  readonly inventories: readonly ApprovedJoinedInventory[];
+  readonly inventories: readonly (ApprovedJoinedInventory | ApprovedJoinedSetInventory)[];
   readonly digest: string;
 }
 
@@ -93,6 +95,21 @@ function validateInventoryScope(item: ApprovedJoinedInventory,
   return `${item.projectionName}\u0000${item.generation}`;
 }
 
+function validateSetScope(item: ApprovedJoinedSetInventory,
+  definition: ProjectionQueueRegistryManifest['definitions'][number] | undefined,
+  resource: JoinedInventory | undefined, transportNamespace: string, approvalNamespace: string): string {
+  validateJoinedSetInventory(item);
+  if (!definition || !resource || definition.joinMembership !== item.format || item.projectionName !== definition.projectionName
+    || item.generation !== definition.generation || item.projectionName !== resource.projectionName
+    || item.generation !== resource.generation || item.linkNamespace !== collectionNamespace(resource.links)
+    || item.documentNamespace !== collectionNamespace(resource.documents) || resource.documents.dbName !== resource.links.dbName
+    || resource.links.dbName !== transportNamespace.slice(0, transportNamespace.lastIndexOf('.'))
+    || resource.links.dbName !== approvalNamespace.slice(0, approvalNamespace.lastIndexOf('.'))) {
+    throw new Error('Joined membership set approval scope or namespace mismatch.');
+  }
+  return `${item.projectionName}\u0000${item.generation}`;
+}
+
 export function validateApproval(manifest: ProjectionQueueRegistryManifest, record: JoinedApproval | null,
   resources: readonly JoinedInventory[], transportNamespace: string,
   approvalNamespace: string): asserts record is JoinedApproval {
@@ -107,10 +124,18 @@ export function validateApproval(manifest: ProjectionQueueRegistryManifest, reco
     || typeof record.approvedBy !== 'string' || !record.approvedBy || !isIsoInstant(record.approvedAt)
     || !Array.isArray(record.inventories)
     || record.inventories.length !== definitions.length || resources.length !== definitions.length
-    || record.digest !== approvalDigest(record) || !transportNamespace) throw new Error('Invalid durable joined approval.');
+    || !transportNamespace) throw new Error('Invalid durable joined approval.');
+  if (BSON.calculateObjectSize(record) > 16 * 1024 * 1024) throw new Error('Joined approval exceeds MongoDB BSON document capacity.');
+  if (record.digest !== approvalDigest(record)) throw new Error('Invalid durable joined approval.');
   const scopes = new Set<string>();
   for (const [index, item] of record.inventories.entries()) {
-    const scope = validateInventoryScope(item, definitions[index], resources[index], transportNamespace, approvalNamespace);
+    const definition = definitions[index];
+    if (!item || typeof item !== 'object' || ('format' in item) !== Boolean(definition?.joinMembership)) {
+      throw new Error('Joined approval inventory format mismatch.');
+    }
+    const scope = 'format' in item
+      ? validateSetScope(item, definition, resources[index], transportNamespace, approvalNamespace)
+      : validateInventoryScope(item, definition, resources[index], transportNamespace, approvalNamespace);
     if (scopes.has(scope)) throw new Error('Duplicate joined approval scope.');
     scopes.add(scope);
   }
@@ -127,8 +152,9 @@ function validLink(row: Document, tuple: JoinedLinkTuple): boolean {
     && row.targetDocId === tuple.targetDocId && isIsoInstant(row.createdAt) && row.v2Revision === 0;
 }
 
-export async function verifyInitialLinks(item: ApprovedJoinedInventory, resource: JoinedInventory,
+export async function verifyInitialLinks(item: ApprovedJoinedInventory | ApprovedJoinedSetInventory, resource: JoinedInventory,
   session: ClientSession): Promise<void> {
+  if ('format' in item) return verifyInitialMembershipSets(item, resource, session);
   const rows = await resource.links.find({}, { sort: { _id: 1 }, hint: { _id: 1 }, limit: item.maxLinkRows + 1,
     session }).toArray();
   if (rows.length > item.maxLinkRows) throw new Error('Joined inventory exceeds bounded collection scan.');
@@ -147,8 +173,9 @@ export async function verifyInitialLinks(item: ApprovedJoinedInventory, resource
   }
   if (expected.size) throw new Error('Missing approved joined link.');
   for (const targetDocId of new Set(item.expected.map((tuple) => tuple.targetDocId))) {
-    const target = await resource.documents.findOne({ _id: targetDocId }, { session });
-    if (!target || target.state == null || target.deleted === true || target.tombstone === true) {
+    const target = await resource.documents.findOne({ _id: targetDocId, ...joinedTargetPresence },
+      { session, projection: joinedTargetIdentityProjection });
+    if (!target) {
       throw new Error('Joined target document missing or tombstoned.');
     }
   }

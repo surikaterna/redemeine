@@ -15,6 +15,19 @@ export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly projectionChanges?: string;
 }
 
+type PrimaryAggregate<TState> = ProjectionCommitDefinition<TState>['fromStream']['aggregate'];
+
+/** Registration uses the primary aggregate's routing identity, not its aggregate state factory. */
+export type ProjectionCommitDefinitionInput<TState> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
+  fromStream: Omit<ProjectionCommitDefinition<TState>['fromStream'], 'aggregate'> & {
+    aggregate: Pick<PrimaryAggregate<TState>, 'aggregateType'> & Partial<PrimaryAggregate<TState>>;
+  };
+};
+
+export type ProjectionCommitRegistryInput<TState = unknown> = Omit<ProjectionCommitRegistryDefinition<TState>, 'definition'> & {
+  readonly definition: ProjectionCommitDefinitionInput<TState>;
+};
+
 export type ProjectionDefinitionCommitOutcome =
   | { status: 'committed' | 'deduplicated'; attempts: number }
   | { status: 'conflict' | 'transient' | 'ambiguous'; retryable: true; reason: string; attempts: number }
@@ -49,6 +62,10 @@ export interface ProjectionCommitCoordinatorOptions<TState = unknown> {
   /** Opt-in diagnostics, independent of whether the generation records history. */
   readonly stateValidation?: ProjectionStateValidation;
 }
+
+export type ProjectionCommitCoordinatorInput<TState = unknown> = Omit<ProjectionCommitCoordinatorOptions<TState>, 'definitions'> & {
+  readonly definitions: readonly ProjectionCommitRegistryInput<TState>[];
+};
 
 export interface ProjectionCommitCoordinator {
   process(commit: ProjectionSourceCommit): Promise<ProjectionCommitCoordinatorOutcome>;

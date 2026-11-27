@@ -1,4 +1,4 @@
-import type { AnyBulkWriteOperation, BulkWriteOptions, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
+import type { AnyBulkWriteOperation, BulkWriteOptions, Collection, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
 import type {
   CommitProjectionSourceCommitCommitted,
   ProjectionChangesReceipt,
@@ -29,6 +29,15 @@ export interface ProjectionLinkRecord {
   v2Revision?: number;
 }
 
+export interface ProjectionJoinMembershipRecord {
+  _id: string;
+  format: 'set-v1';
+  aggregateType: string;
+  aggregateId: string;
+  targetDocumentIds: readonly string[];
+  revision: number;
+}
+
 export interface ProjectionDedupeRecord {
   _id: string;
   checkpoint: Checkpoint;
@@ -38,6 +47,8 @@ export interface ProjectionDedupeRecord {
   sourceId?: string;
   commitSequence?: number;
   acceptedBaselineSequence?: number;
+  /** Identifies the atomic set turn, not just its source sequence. */
+  v2WriteId?: string;
 }
 
 type RevisionEntry = readonly [key: string, revision: number];
@@ -57,6 +68,7 @@ export type MongoProjectionChangesRecord = ProjectionChangesReceipt & {
 
 export interface MongoCollectionLike<TDocument extends Document = Document> {
   findOne(filter: Record<string, unknown>, options?: FindOptions<TDocument>): Promise<TDocument | null>;
+  find?: Collection<TDocument>['find'];
   updateOne(
     filter: Record<string, unknown>,
     update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
@@ -77,6 +89,8 @@ export type MongoClientLike = Pick<MongoClient, 'startSession'>;
 export interface MongoProjectionStoreOptions<TState = unknown> {
   collection: MongoCollectionLike<ProjectionDocumentRecord<TState>>;
   linkCollection: MongoCollectionLike<ProjectionLinkRecord>;
+  /** Dedicated collection, never shared with scalar links or other projection resources. */
+  joinMembershipCollection?: Pick<Collection<ProjectionJoinMembershipRecord>, 'find' | 'bulkWrite' | 'namespace'>;
   dedupeCollection: MongoCollectionLike<ProjectionDedupeRecord>;
   /** Dedicated projection_changes collection on the same transactional deployment. */
   changeCollection?: Pick<MongoCollectionLike<MongoProjectionChangesRecord>, 'findOne' | 'updateOne'>;

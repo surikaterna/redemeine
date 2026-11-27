@@ -6,6 +6,9 @@ export type {
   ProjectionWarningCode,
   ProjectionWarning
 } from './types';
+export * from './contracts/joinMembership';
+export * from './contracts/dispatchBinding';
+export { selectJoinCandidates, selectJoinTargets, mergeJoinTargets } from './joinCandidateRouting';
 export type {
   ProjectionDedupeWarningPolicy,
   ProjectionInDocumentDeduplication,
@@ -33,6 +36,8 @@ export type {
   AggregateEventKeys,
   AggregateEventPayloadByKey,
   ProjectionContext,
+  ProjectionCandidateSelector,
+  ProjectionCandidateSelectors,
   ProjectionHandler,
   ProjectionHandlers,
   ProjectionStreamDefinition,

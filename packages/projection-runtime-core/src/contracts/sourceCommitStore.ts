@@ -1,4 +1,5 @@
 import type { ProjectionSourceCommit } from './sourceCommit';
+import { assertJoinIdentifier, type ProjectionJoinMembership, type ProjectionJoinMembershipFence, validateJoinMembershipFences } from './joinMembership';
 import type { ProjectionUuidBase64Url22 } from './uuidCodec';
 import {
   type ProjectionChangesAppend,
@@ -80,6 +81,8 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
   commit: ProjectionSourceCommit;
   finalDocuments: readonly ProjectionSourceCommitDocument<TState>[];
   stagedLinks: readonly ProjectionSourceCommitLink[];
+  /** Set-v1 replaces scalar links; includes unchanged and absent observations. */
+  joinMembershipFences?: readonly ProjectionJoinMembershipFence[];
   progress: ProjectionSourceCommitProgress;
   additionalWrites?: readonly [ProjectionChangesAppend];
   /** Enables strict state diagnostics even for an internally captured request. */
@@ -89,7 +92,7 @@ export interface CommitProjectionSourceCommitRequest<TState = unknown> {
 export interface CommitProjectionSourceCommitCommitted {
   version: 1;
   status: 'committed';
-  /** Native prepared turns may resolve a retry to its already committed canonical receipt. */
+  /** True when this result acknowledges a reliable turn committed by an earlier invocation. */
   replayed?: true;
   commitSequence: number;
   documentRevisions: Readonly<Record<string, number>>;
@@ -117,6 +120,8 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
   readonly projectionChangesCapability?: 'atomic-turn-receipts-v1' | undefined;
   /** Native loaders may defer fresh receipt checks to the commit CAS. */
   readonly sourceCommitSnapshotCapability?: 'revision-cas-v1' | undefined;
+  /** Set snapshots must observe target presence and routing membership at one coherent read point. */
+  readonly joinMembershipCapability?: 'set-v1' | undefined;
   loadProjectionSourceCommitSnapshot(
     request: LoadProjectionSourceCommitSnapshotRequest
   ): Promise<ProjectionSourceCommitSnapshot<TState>>;
@@ -129,9 +134,21 @@ export interface ProjectionSourceCommitStorePort<TState = unknown> {
 export function validateCommitProjectionSourceCommitRelationships<TState>(
   request: CommitProjectionSourceCommitRequest<TState>
 ): string | null {
-  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges'];
+  const allowed = ['version', 'mode', 'projectionName', 'projectionGeneration', 'commit', 'finalDocuments', 'stagedLinks', 'progress', 'additionalWrites', 'validateStateChanges', 'joinMembershipFences'];
   if (Object.keys(request).some((key) => !allowed.includes(key))) return 'unsupported source commit request fields';
   if (request.validateStateChanges !== undefined && request.validateStateChanges !== true) return 'invalid state validation flag';
+  if (request.joinMembershipFences !== undefined) {
+    if (request.stagedLinks.length || request.progress.strategy === 'in_document') return 'Join membership sets cannot use scalar links or in_document.';
+    try {
+      assertJoinIdentifier(request.projectionName);
+      assertJoinIdentifier(request.projectionGeneration);
+      for (const document of request.finalDocuments) assertJoinIdentifier(document.targetDocumentId);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid joined identifier.';
+    }
+    const invalid = validateJoinMembershipFences(request.joinMembershipFences, request);
+    if (invalid) return invalid;
+  }
   const malformedAppend = validateProjectionChangesAppend(request);
   if (malformedAppend) return malformedAppend;
   if (request.progress.strategy === 'own_record' && request.progress.source.baselineSequence !== undefined) {
@@ -176,6 +193,7 @@ export interface LoadProjectionSourceCommitSnapshotRequest {
   projectionGeneration: string;
   targetDocumentIds: readonly string[];
   links: readonly { aggregateType: string; aggregateId: string }[];
+  joinMembership?: 'set-v1';
   progressStrategy: ProjectionSourceCommitProgress['strategy'];
   sourceId?: string;
   /** Canonical receipt lookup for reliable dedupe strategies, independent of scalar progress. */
@@ -187,6 +205,7 @@ export interface LoadProjectionSourceCommitSnapshotRequest {
 export interface ProjectionSourceCommitSnapshot<TState = unknown> {
   targets: readonly ProjectionSourceCommitSnapshotTarget<TState>[];
   links: readonly ProjectionSourceCommitSnapshotLink[];
+  joinMemberships?: readonly ProjectionJoinMembership[];
   ownRecordSequence: number | null;
   changeReceipt?: ProjectionChangesReceiptStatus;
 }

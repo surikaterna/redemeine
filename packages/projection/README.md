@@ -8,6 +8,8 @@ Type-safe read-model projections for Redemeine event-sourced aggregates.
 
 The builder infers event payload types from your aggregate's `pure.eventProjectors`, so handler signatures stay in sync with the write model without manual type declarations.
 
+For native multi-target joins, use `.join(aggregate, handlers)` with `.joinRight(aggregate, selectors)`. See [join membership and forward cutover](../../docs/projection-join-memberships.md).
+
 Three mechanisms reuse write-model projectors instead of duplicating folding logic:
 
 - **`inherit`** token — delegates a single event key to the aggregate's `applyToDraft`.

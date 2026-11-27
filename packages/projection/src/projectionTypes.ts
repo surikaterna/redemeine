@@ -130,6 +130,13 @@ type AggregateHandlerEvent<TAggregate, K extends AggregateEventKeys<TAggregate>>
   HandlerEventTypeByKey<TAggregate, K>
 >;
 
+export type ProjectionCandidateSelector<TEvent = BaseProjectionEvent> =
+  (event: Readonly<TEvent>) => string | readonly string[] | null | undefined;
+
+export type ProjectionCandidateSelectors<TAggregate> = {
+  [K in AggregateEventKeys<TAggregate>]?: ProjectionCandidateSelector<AggregateHandlerEvent<TAggregate, K>>;
+};
+
 export type ProjectionHandlersForAggregate<TState, TAggregate> = {
   [K in AggregateEventKeys<TAggregate>]?: ProjectionHandler<TState, AggregateHandlerEvent<TAggregate, K>>;
 };
@@ -149,12 +156,14 @@ export interface ProjectionStreamDefinition<TState> {
 export interface JoinStreamDefinition<TState> {
   aggregate: { aggregateType: string };
   handlers: Record<string, ProjectionHandler<TState>>;
+  candidateSelectors?: Readonly<Record<string, ProjectionCandidateSelector>>;
 }
 
 export interface ProjectionDefinition<TState = unknown> {
   name: string;
   fromStream: ProjectionStreamDefinition<TState>;
   joinStreams?: JoinStreamDefinition<TState>[];
+  joinMembership?: 'set-v1';
   initialState: (documentId: string) => TState;
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
@@ -167,27 +176,59 @@ export interface ProjectionCommitDefinition<TState = unknown> extends Omit<Proje
   deduplication: ProjectionDeduplicationStrategy;
 }
 
-export interface ProjectionBuilder<TState> {
-  initialState(fn: (id: string) => TState): ProjectionBuilder<TState>;
-  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): ProjectionBuilder<TState>;
+type FluentProjectionBuilder<TState, TCommit extends boolean> =
+  TCommit extends true ? ProjectionCommitBuilder<TState> : ProjectionBuilder<TState>;
+
+export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
+  initialState(fn: (id: string) => TState): FluentProjectionBuilder<TState, TCommit>;
+  identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): FluentProjectionBuilder<TState, TCommit>;
   from<TAggregate extends ProjectionAggregateSource>(
     aggregate: TAggregate,
     handlers: InheritableHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
   join<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
-  ): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<TState, TCommit>;
+  /**
+   * Opt in to membership sets for this projection. Requires the native source-commit
+   * coordinator and a store that supports membership sets; an empty map still opts in.
+   *
+   * Use local event keys from the matching `.join()` handlers, even when naming
+   * rules map them to different wire names. Each selector runs synchronously on the
+   * event alone, without a draft or handler context. The coordinator routes to the
+   * deduplicated union of candidate IDs and saved members. Selecting a target does
+   * not save a subscription: the handler must explicitly attach or detach its
+   * current target with `ctx.subscribeTo` or `ctx.unsubscribeFrom`.
+   *
+   * @example
+   * ```ts
+   * warehouseBoard
+   *   .join(Order, {
+   *     warehouseChanged(draft, event, ctx) {
+   *       if (draft.id === event.payload.previousWarehouseId) ctx.unsubscribeFrom(Order, event.aggregateId);
+   *       if (draft.id === event.payload.warehouseId) ctx.subscribeTo(Order, event.aggregateId);
+   *     }
+   *   })
+   *   .joinRight(Order, { warehouseChanged: event => event.payload.warehouseId })
+   *   .deduplication({ strategy: 'own_record' })
+   *   .build();
+   * ```
+   */
+  joinRight<TAggregate extends { aggregateType: string }>(
+    aggregate: TAggregate,
+    selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>
+  ): FluentProjectionBuilder<TState, TCommit>;
   mirror<TAggregate extends MirrorableAggregateConstraint>(
     aggregate: TAggregate,
     handlers?: InheritableHandlersForAggregate<AggregateStateOf<TAggregate>, TAggregate>
-  ): ProjectionBuilder<AggregateStateOf<TAggregate>>;
-  hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState>;
+  ): FluentProjectionBuilder<AggregateStateOf<TAggregate>, TCommit>;
+  hooks(hooks: ProjectionHooks<TState>): FluentProjectionBuilder<TState, TCommit>;
   deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
-  build(): ProjectionDefinition<TState>;
+  build(): TCommit extends true ? ProjectionCommitDefinition<TState> : ProjectionDefinition<TState>;
 }
 
-export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState> {
-  deduplication(strategy: ProjectionDeduplicationStrategy): ProjectionCommitBuilder<TState>;
+export interface ProjectionCommitBuilder<TState> extends ProjectionBuilder<TState, true> {
+  /** Compatibility alias for build() after configuring deduplication. */
   buildCommitDefinition(): ProjectionCommitDefinition<TState>;
 }

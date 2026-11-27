@@ -6,6 +6,7 @@ import type {
   CommitProjectionSourceCommitResult,
   LoadProjectionSourceCommitSnapshotRequest,
   ProjectionSourceCommitSnapshot,
+  ProjectionJoinMembership,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import {
@@ -16,6 +17,7 @@ import {
   projectionChangesResumeToken,
   validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState,
+  joinMembershipKey,
   ownProjectionState
 } from '@redemeine/projection-runtime-core';
 import type { StoredDocument } from './storedDocument';
@@ -34,14 +36,19 @@ export interface V2Link {
 export interface V2State {
   documentMetadata: Map<string, V2DocumentMetadata>;
   links: Map<string, V2Link>;
+  memberships: Map<string, ProjectionJoinMembership>;
   ownProgress: Map<string, number>;
   ownBaselines: Map<string, number>;
   changes: Map<string, CommitProjectionSourceCommitCommitted>;
 }
 
 export const createV2State = (): V2State => ({
-  documentMetadata: new Map(), links: new Map(), ownProgress: new Map(), ownBaselines: new Map(), changes: new Map()
+  documentMetadata: new Map(), links: new Map(), memberships: new Map(), ownProgress: new Map(), ownBaselines: new Map(), changes: new Map()
 });
+
+const scopedMembershipKey = (scope: { projectionName: string; projectionGeneration: string },
+  source: { aggregateType: string; aggregateId: string }): string =>
+  joinMembershipKey(scope.projectionName, scope.projectionGeneration, source.aggregateType, source.aggregateId);
 
 export interface ProjectionDedupeWarning {
   projectionName: string;
@@ -91,6 +98,10 @@ const validateDocuments = <TState>(request: CommitProjectionSourceCommitRequest<
 };
 
 const validateLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): string | null => {
+  for (const fence of request.joinMembershipFences ?? []) {
+    const revision = state.memberships.get(scopedMembershipKey(request, fence))?.revision ?? null;
+    if (revision !== fence.expectedRevision) return 'join membership revision conflict';
+  }
   const keys = new Set<string>();
   for (const link of request.stagedLinks) {
     const key = linkKey(request.projectionName, request.projectionGeneration, link.aggregateType, link.aggregateId);
@@ -141,10 +152,14 @@ export const loadV2Snapshot = <TState>(
         } } : {})
       };
     }),
-    links: request.links.map(({ aggregateType, aggregateId }) => {
+    links: (request.joinMembership ? [] : request.links).map(({ aggregateType, aggregateId }) => {
       const link = state.links.get(linkKey(request.projectionName, request.projectionGeneration, aggregateType, aggregateId));
       return { aggregateType, aggregateId, targetDocumentId: link?.targetDocumentId ?? null, revision: link?.revision ?? null };
     }),
+    ...(request.joinMembership ? { joinMemberships: request.links.map((source) => {
+      const row = state.memberships.get(scopedMembershipKey(request, source));
+      return { ...source, revision: row?.revision ?? null, targetDocumentIds: [...(row?.targetDocumentIds ?? [])] };
+    }) } : {}),
     ownRecordSequence: request.progressStrategy !== 'own_record' || request.sourceId === undefined
       ? null
       : state.ownProgress.get(ownKey(request.projectionName, request.projectionGeneration, request.sourceId)) ?? null,
@@ -163,6 +178,7 @@ function snapshotChangeReceipt(request: LoadProjectionSourceCommitSnapshotReques
 const cloneV2State = (current: V2State): V2State => ({
   documentMetadata: new Map(current.documentMetadata),
   links: new Map(current.links),
+  memberships: new Map(current.memberships),
   ownProgress: new Map(current.ownProgress),
   ownBaselines: new Map(current.ownBaselines),
   changes: current.changes
@@ -200,6 +216,12 @@ const applyDocuments = <TState>(
 
 const applyLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): Record<string, number> => {
   const revisions: Record<string, number> = {};
+  for (const { aggregateType, aggregateId, targetDocumentIds, expectedRevision } of request.joinMembershipFences ?? []) {
+    const source = { aggregateType, aggregateId };
+    const revision = (expectedRevision ?? 0) + 1;
+    state.memberships.set(scopedMembershipKey(request, source), { ...source, revision, targetDocumentIds: [...targetDocumentIds] });
+    revisions[joinMembershipKey(aggregateType, aggregateId)] = revision;
+  }
   for (const link of request.stagedLinks) {
     const key = linkKey(request.projectionName, request.projectionGeneration, link.aggregateType, link.aggregateId);
     const revision = (link.expectedRevision ?? 0) + 1;
@@ -258,7 +280,7 @@ export const commitV2 = <TState>(
     const change = receipt?.additionalWrites?.[0] ?? receipt?.emptyChangeReceipt;
     if (receipt && change) {
       return { result: matchProjectionChangesReceipt(identity, change) === 'committed'
-        ? { ...structuredClone(receipt), ...(allowCapture ? { replayed: true } : {}) }
+        ? { ...structuredClone(receipt), ...(allowCapture || request.joinMembershipFences !== undefined ? { replayed: true } : {}) }
         : rejectMalformed('projection change source commit or collection identity mismatch') };
     }
   }

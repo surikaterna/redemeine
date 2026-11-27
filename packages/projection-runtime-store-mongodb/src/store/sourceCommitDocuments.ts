@@ -2,10 +2,11 @@ import type {
   CommitProjectionSourceCommitRequest, ProjectionSourceCommitDocument,
   ProjectionUuidBase64Url22, VerifiedProjectionSourceCommitStatePatch
 } from '@redemeine/projection-runtime-core';
-import type { ClientSession } from 'mongodb';
+import type { AnyBulkWriteOperation, ClientSession } from 'mongodb';
 import type { MongoProjectionStoreOptions, MongoSourceCommitPatchDecision, ProjectionDocumentRecord } from '../types';
 import { planSourceDocumentWrite } from './sourceCommitDelta';
 import { majorityPrimary, type LoadedSourceSnapshot } from './sourceCommitSnapshot';
+import { setIdentityCollation, sourceCommitChunks } from './sourceCommitMembership';
 
 export function revisionFilter(id: string, revision: number | null): Record<string, unknown> {
   return { _id: id, v2Revision: revision === null ? { $exists: false } : revision };
@@ -100,6 +101,38 @@ export async function executeSourceDocumentWrites<TState>(
     revisions.set(write.id, write.revision);
   }
   return Object.fromEntries(revisions);
+}
+
+export async function executeBatchedSourceDocuments<TState>(
+  writes: readonly DocumentWrite[], options: MongoProjectionStoreOptions<TState>, recording: boolean, session: ClientSession
+): Promise<Record<string, number>> {
+  const groups = [writes.filter((write) => write.legacy), writes.filter((write) => !write.insertOnly && !write.legacy),
+    writes.filter((write) => write.insertOnly)];
+  for (const group of groups) {
+    for (const chunk of sourceCommitChunks(group)) {
+      await writeDocumentChunk(chunk, options, recording, session);
+    }
+  }
+  return Object.fromEntries(writes.map(({ id, revision }) => [id, revision]));
+}
+
+async function writeDocumentChunk<TState>(
+  chunk: readonly DocumentWrite[], options: MongoProjectionStoreOptions<TState>, recording: boolean, session: ClientSession
+): Promise<void> {
+  const operations: AnyBulkWriteOperation<ProjectionDocumentRecord<TState>>[] = chunk.map((write) => {
+    try {
+      options.onSourceCommitPatchPlan?.({ ...write.decision, historyRecording: recording ? 'enabled' : 'disabled' });
+    } catch {
+      // Observability must not change the source write.
+    }
+    return { updateOne: { filter: write.filter, update: write.update, upsert: write.insertOnly, collation: setIdentityCollation } };
+  });
+  const counts = await options.collection.bulkWrite(operations, { session, ordered: true }) as
+    { matchedCount: number; upsertedCount: number };
+  const insert = chunk[0]?.insertOnly;
+  if (counts.matchedCount !== (insert ? 0 : chunk.length) || counts.upsertedCount !== (insert ? chunk.length : 0)) {
+    throw new Error(`${chunk[0]?.legacy ? 'projection-v2-stale-legacy' : 'projection-v2-occ'}:document-batch`);
+  }
 }
 
 export async function confirmSingleSourceWrite<TState>(

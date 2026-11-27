@@ -1,5 +1,5 @@
 import type {
-  ProjectionChangeRecordingScope,
+  ProjectionDispatchBindingProof,
   ProjectionQueueRegistryBindResult,
   ProjectionQueueRegistryBinding,
   ProjectionQueueRegistryBindingPort,
@@ -11,17 +11,19 @@ import type {
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import {
+  createProjectionDispatchBindingProof,
   hasMatchingProjectionRegistryIdentity,
-  matchesProjectionChangeRecordingScope,
-  ProjectionChangeRecordingPolicyMismatchError,
+  matchesProjectionDispatchBinding,
+  ProjectionDispatchBindingMismatchError,
   validateProjectionQueueRegistryManifest,
   validateProjectionSourceCommit
 } from '@redemeine/projection-runtime-core';
 import type { ClientSession, Collection, Document } from 'mongodb';
 import { assertAcceptedBaseline, probeAcceptedTail, type AcceptedBaseline } from './acceptedBaseline';
 import type { TapewormMongoRangeReader } from './tapewormMongoRangeReader';
-import { collectionNamespace, validateApproval, verifyInitialLinks, type JoinedApproval,
-  type JoinedInventory } from './joinedCutover';
+import type { JoinedApproval, JoinedInventory } from './joinedCutover';
+import { verifyJoinedAdoption } from './joinedAdoption';
+import { verifyJoinedSetResourceCollations } from './joinedSetResources';
 
 export interface ProjectionTransportBindingDocument extends Document {
   _id: string;
@@ -91,7 +93,7 @@ const COVERAGE_INDEX = 'projection_transport_queue_source_unique';
 const BASELINE_INDEX = 'projection_transport_baseline_queue_source_unique';
 
 function sameManifest(left: ProjectionQueueRegistryManifest, right: ProjectionQueueRegistryManifest): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return matchesProjectionDispatchBinding({ version: 1, manifest: left }, { version: 1, manifest: right });
 }
 
 function coverageId(queueBindingId: string, sourceId: string): string {
@@ -107,6 +109,7 @@ function toCoverage(row: ProjectionTransportCoverageDocument): ProjectionSourceC
 }
 
 export class MongoProjectionTransportStore implements ProjectionSourceOrderPort, ProjectionQueueRegistryBindingPort {
+  private setResourceReadiness: Promise<void> | undefined;
   private readiness: Promise<void> | undefined;
   private readonly now: () => string;
 
@@ -122,6 +125,7 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
   async bindImmutableManifest(manifest: ProjectionQueueRegistryManifest): Promise<ProjectionQueueRegistryBindResult> {
     const issues = validateProjectionQueueRegistryManifest(manifest);
     if (issues.length > 0) throw new Error(`Invalid registry manifest: ${issues.join(',')}`);
+    manifest = createProjectionDispatchBindingProof(manifest).manifest;
     const binding: ProjectionQueueRegistryBinding = {
       queueId: manifest.queueId,
       manifestId: manifest.manifestId,
@@ -208,86 +212,20 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     const baseline = await this.readAcceptedBaseline(queueId, sourceId);
     if (!baseline) throw new Error('Missing accepted baseline before joined cutover.');
     const binding = await this.readBindingDocument(queueId);
-    if (!binding || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Joined registry binding changed.');
-    const items = this.options.joinedInventories ?? [];
-    if (!this.options.manifest.definitions.some((entry) => entry.joined === true)) {
-      if (items.length) throw new Error('Unexpected joined resources without joined definitions.');
-      return;
-    }
-    const transportNamespace = collectionNamespace(this.options.collection);
-    const approvalNamespace = this.options.joinedApprovals ? collectionNamespace(this.options.joinedApprovals) : '';
-    const approval = await this.options.joinedApprovals?.findOne({ _id: `joined_approval:${queueId}` },
-      { readConcern: { level: 'majority' } }) ?? null;
-    validateApproval(this.options.manifest, approval, items, transportNamespace, approvalNamespace);
-    const _id = `joined_adoption:${queueId}`;
-    const expected: ProjectionTransportJoinedAdoptionDocument = { _id, kind: 'joined_adoption', queueBindingId: queueId,
-      manifestId: this.options.manifest.manifestId, registryGeneration: this.options.manifest.registryGeneration,
-      transportNamespace, approvalDigest: approval.digest };
-    const prior = await this.options.collection.findOne({ _id }, { readConcern: { level: 'majority' } });
-    if (!prior) {
-      await this.adoptJoinedApproval(approval, expected, items);
-    }
-    await this.assertJoinedAdoption(expected);
-  }
-
-  private async assertJoinedAdoption(expected: ProjectionTransportJoinedAdoptionDocument): Promise<void> {
-    const adopted = await this.options.collection.findOne({ _id: expected._id }, { readConcern: { level: 'majority' } });
-    if (!adopted || adopted.kind !== 'joined_adoption' || adopted.queueBindingId !== expected.queueBindingId
-      || adopted.manifestId !== expected.manifestId || adopted.registryGeneration !== expected.registryGeneration
-      || adopted.transportNamespace !== expected.transportNamespace || adopted.approvalDigest !== expected.approvalDigest
-      || Object.keys(adopted).length !== Object.keys(expected).length) {
-      throw new Error('Joined cutover adoption conflict or unknown insert outcome.');
-    }
-  }
-
-  private async adoptJoinedApproval(approval: JoinedApproval, expected: ProjectionTransportJoinedAdoptionDocument,
-    resources: readonly JoinedInventory[]): Promise<void> {
-    const session = this.options.mongoClient.startSession();
-    try {
-      await session.withTransaction(async () => {
-        const persisted = await this.options.joinedApprovals?.findOne({ _id: approval._id }, { session });
-        if (!persisted || persisted.kind !== 'joined_approval' || JSON.stringify(persisted) !== JSON.stringify(approval)) {
-          throw new Error('Joined approval changed during adoption.');
-        }
-        const previous = await this.options.collection.findOne({ _id: expected._id }, { session });
-        if (previous) return;
-        for (const [index, item] of approval.inventories.entries()) {
-          const resource = resources[index];
-          if (!resource) throw new Error('Missing joined collection handle.');
-          await verifyInitialLinks(item, resource, session);
-        }
-        await this.options.collection.insertOne(expected, { session });
-      }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
-    } catch (error) {
-      // A concurrent adopter can win the insert. Only its matching majority record authorizes this worker.
-      let reconciled = false;
-      for (let attempt = 0; attempt < 3 && !reconciled; attempt += 1) {
-        try { await this.assertJoinedAdoption(expected); reconciled = true; } catch {
-          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
-      if (!reconciled) throw error;
-    } finally {
-      await session.endSession();
-    }
+    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
+      || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Joined registry binding changed.');
+    await verifyJoinedAdoption(this.options, () => this.setResourceReadiness
+      ??= verifyJoinedSetResourceCollations(this.options.manifest, this.options.joinedInventories ?? []));
   }
 
   async admitForDispatch(
     commit: ProjectionSourceCommit,
     queueBindingId: string,
-    expectedChangeRecordingScope?: readonly ProjectionChangeRecordingScope[]
+    expectedDispatchProof: ProjectionDispatchBindingProof
   ): Promise<ProjectionSourceDispatchAdmission> {
     if (!validateProjectionSourceCommit(commit).valid) throw new Error('Cannot admit an invalid source commit.');
     if (queueBindingId !== this.options.manifest.queueId) throw new Error('Queue binding does not match the manifest.');
-    // Initialization can bind a fresh queue, so reject a mismatched policy before it can be persisted.
-    if (expectedChangeRecordingScope && !matchesProjectionChangeRecordingScope(expectedChangeRecordingScope, this.options.manifest.definitions)) {
-      throw new ProjectionChangeRecordingPolicyMismatchError();
-    }
-    await this.initialize();
-    const binding = await this.readBindingDocument(queueBindingId);
-    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
-      || !sameManifest(binding.manifest, this.options.manifest)) throw new Error('Immutable projection registry binding mismatch.');
-    const boundChangeRecordingScope = binding.manifest.definitions;
+    const boundDispatchProof = await this.verifyDispatchBinding(queueBindingId, expectedDispatchProof);
     const baseline = await this.readAcceptedBaseline(queueBindingId, commit.streamId);
     if (!baseline) throw new Error('Missing accepted-baseline cutover or source birth record.');
     await this.verifyJoinedCutover(queueBindingId, commit.streamId);
@@ -301,7 +239,25 @@ export class MongoProjectionTransportStore implements ProjectionSourceOrderPort,
     );
     const row = await this.readCoverage(id);
     if (!row || row.startAnchor !== startAnchor) throw new Error('Immutable source start anchor differs.');
-    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundChangeRecordingScope };
+    return { dispatch: true, coverage: toCoverage(row), startAnchor, strategyScope: baseline.strategyScope, boundDispatchProof };
+  }
+
+  private async verifyDispatchBinding(queueBindingId: string, expected: ProjectionDispatchBindingProof): Promise<ProjectionDispatchBindingProof> {
+    // Initialization can bind a fresh queue; require the full configured proof before it can write.
+    if (!matchesProjectionDispatchBinding(expected, { version: 1, manifest: this.options.manifest })) {
+      throw new ProjectionDispatchBindingMismatchError();
+    }
+    let binding = await this.readBindingDocument(queueBindingId);
+    if (!binding) {
+      await this.initialize();
+      binding = await this.readBindingDocument(queueBindingId);
+    }
+    if (!binding || !hasMatchingProjectionRegistryIdentity(binding.manifest, binding.binding)
+      || !matchesProjectionDispatchBinding(expected, { version: 1, manifest: binding.manifest })) {
+      throw new ProjectionDispatchBindingMismatchError();
+    }
+    await this.initialize();
+    return { version: 1, manifest: binding.manifest };
   }
 
   async advanceCoverage(request: ProjectionSourceCoverageAdvance): Promise<ProjectionSourceCoverage> {

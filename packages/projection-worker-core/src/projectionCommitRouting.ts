@@ -1,10 +1,12 @@
 import type {
-  ProjectionCommitDefinition,
+  ProjectionCandidateSelector,
   ProjectionEvent,
   ProjectionHandler,
   ProjectionSourceCommitSnapshotLink,
   ProjectionSourceEvent
 } from '@redemeine/projection-runtime-core';
+import { JoinTurnBudget, joinMembershipKey, selectJoinCandidates } from '@redemeine/projection-runtime-core';
+import type { ProjectionCommitDefinitionInput as ProjectionCommitDefinition } from './commitCoordinatorContracts';
 
 export interface RoutingLinkState extends ProjectionSourceCommitSnapshotLink {}
 
@@ -12,6 +14,31 @@ export interface RoutedEvent<TState> {
   event: ProjectionEvent;
   handler: ProjectionHandler<TState>;
   targetIds: readonly string[];
+  savedMembers?: ReadonlySet<string>;
+}
+
+export interface SetRoutingEntry<TState> {
+  readonly event: ProjectionEvent;
+  readonly handler: ProjectionHandler<TState>;
+  readonly initialTargets: readonly string[];
+  /** Absent for direct events; otherwise reads the membership staged at event start. */
+  readonly membershipKey?: string;
+}
+
+export function planSetRouting<TState>(definition: ProjectionCommitDefinition<TState>, events: readonly ProjectionSourceEvent[]):
+  readonly (SetRoutingEntry<TState> | null)[] {
+  const budget = new JoinTurnBudget();
+  const rawSelectorBudget = new JoinTurnBudget();
+  return events.map((source) => {
+    const event = sourceEventToProjectionEvent(source);
+    const match = findHandler(definition, event);
+    if (!match) return null;
+    const joined = event.aggregateType !== definition.fromStream.aggregate.aggregateType;
+    const initialTargets = joined ? selectJoinCandidates(event, match.selector, rawSelectorBudget) : identityTargets(definition, event);
+    for (const id of initialTargets) budget.add(id);
+    return { event, handler: match.handler, initialTargets,
+      ...(joined ? { membershipKey: joinMembershipKey(event.aggregateType, event.aggregateId) } : {}) };
+  });
 }
 
 export function sourceEventToProjectionEvent(event: ProjectionSourceEvent): ProjectionEvent {
@@ -37,13 +64,18 @@ function handlerCandidates(type: string, aggregateType: string): readonly string
 function findHandler<TState>(
   definition: ProjectionCommitDefinition<TState>,
   event: ProjectionEvent
-): ProjectionHandler<TState> | null {
-  const streams = [definition.fromStream, ...(definition.joinStreams ?? []), ...(definition.reverseSubscribeStreams ?? [])];
+): { handler: ProjectionHandler<TState>; selector?: ProjectionCandidateSelector | undefined } | null {
+  const streams: readonly {
+    aggregate: { aggregateType: string };
+    handlers: Record<string, ProjectionHandler<TState>>;
+    candidateSelectors?: Readonly<Record<string, ProjectionCandidateSelector>>;
+  }[] = [definition.fromStream, ...(definition.joinStreams ?? []), ...(definition.reverseSubscribeStreams ?? [])];
   const stream = streams.find((candidate) => candidate.aggregate.aggregateType === event.aggregateType);
   if (!stream) return null;
   for (const key of handlerCandidates(event.type, event.aggregateType)) {
-    const handler = stream.handlers[key];
-    if (handler) return handler;
+    const handler = Object.hasOwn(stream.handlers, key) ? stream.handlers[key] : undefined;
+    if (handler) return { handler, ...(stream.candidateSelectors && Object.hasOwn(stream.candidateSelectors, key)
+      ? { selector: stream.candidateSelectors[key] } : {}) };
   }
   return null;
 }
@@ -54,17 +86,22 @@ export function routeEvent<TState>(
   links: ReadonlyMap<string, RoutingLinkState>
 ): RoutedEvent<TState> | null {
   const event = sourceEventToProjectionEvent(sourceEvent);
-  const handler = findHandler(definition, event);
-  if (!handler) return null;
+  const match = findHandler(definition, event);
+  if (!match) return null;
+  const { handler } = match;
   let targetIds: readonly string[] = [];
   if (event.aggregateType === definition.fromStream.aggregate.aggregateType) {
-    const identity = definition.identity(event);
-    targetIds = Array.isArray(identity) ? identity : [identity];
+    targetIds = identityTargets(definition, event);
   } else {
     const targetId = links.get(`${event.aggregateType}\u0000${event.aggregateId}`)?.targetDocumentId;
     targetIds = targetId ? [targetId] : [];
   }
   return { event, handler, targetIds: [...new Set(targetIds)].sort() };
+}
+
+function identityTargets<TState>(definition: ProjectionCommitDefinition<TState>, event: ProjectionEvent): readonly string[] {
+  const identity = definition.identity(event);
+  return typeof identity === 'string' ? [identity] : identity;
 }
 
 export function routingLinkRequests<TState>(
@@ -75,7 +112,8 @@ export function routingLinkRequests<TState>(
   const keys = new Map<string, { aggregateType: string; aggregateId: string }>();
   for (const event of events) {
     if (event.aggregateType === fromType || !findHandler(definition, sourceEventToProjectionEvent(event))) continue;
-    const key = `${event.aggregateType}\u0000${event.aggregateId}`;
+    const key = definition.joinMembership ? joinMembershipKey(event.aggregateType, event.aggregateId)
+      : `${event.aggregateType}\u0000${event.aggregateId}`;
     keys.set(key, { aggregateType: event.aggregateType, aggregateId: event.aggregateId });
   }
   return [...keys.values()];

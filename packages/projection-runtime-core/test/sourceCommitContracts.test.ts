@@ -198,9 +198,12 @@ describe('ordering and range contracts', () => {
 
   test('transport coverage can only admit dispatch, including redelivery', async () => {
     const port: ProjectionSourceOrderPort = {
-      async admitForDispatch(commit, queueBindingId) {
+      async admitForDispatch(commit, queueBindingId, proof) {
         return {
           dispatch: true,
+          boundDispatchProof: proof,
+          startAnchor: 0,
+          strategyScope: [],
           coverage: { queueBindingId, sourceId: commit.streamId, sequence: commit.commitSequence }
         };
       },
@@ -208,7 +211,11 @@ describe('ordering and range contracts', () => {
         return { queueBindingId: request.queueBindingId, sourceId: request.sourceId, sequence: request.sequence };
       }
     };
-    const admission = await port.admitForDispatch(createCommit(0), 'queue-v1');
+    const admission = await port.admitForDispatch(createCommit(0), 'queue-v1', { version: 1, manifest: {
+      version: 1, queueId: 'queue-v1', registryGeneration: 'g1', manifestId: digest, definitions: [],
+      identity: { version: 1, normalizedDefinitionRegistryDigest: digest, normalizedRuntimeConfigurationDigest: digest,
+        executableCodeArtifactDigest: digest }, sourceStartAnchors: {}
+    } });
     expect(admission.dispatch).toBe(true);
   });
 });

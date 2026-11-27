@@ -157,6 +157,11 @@ export class ProjectionDaemon<TState = unknown> {
   private readonly orchestrator: SubscriptionOrchestrator<TState>;
 
   constructor(private options: ProjectionDaemonOptions<TState>) {
+    const { joinMembership, fromStream, joinStreams, reverseSubscribeStreams } = options.projection;
+    if (joinMembership || 'candidateSelectors' in fromStream || joinStreams?.some(stream => 'candidateSelectors' in stream)
+      || reverseSubscribeStreams?.some(stream => 'candidateSelectors' in stream)) {
+      throw new Error('.joinRight() requires the native source-commit coordinator.');
+    }
     if (options.subscription && options.subscriptions) {
       throw new Error('Projection daemon options are mutually exclusive: use either subscription or subscriptions');
     }

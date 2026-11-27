@@ -1,5 +1,5 @@
 import type { ProjectionQueueRegistryManifest } from '@redemeine/projection-runtime-core';
-import { ProjectionChangeRecordingPolicyMismatchError } from '@redemeine/projection-runtime-core';
+import { createProjectionDispatchBindingProof, ProjectionDispatchBindingMismatchError } from '@redemeine/projection-runtime-core';
 import { projectionChangesRequest } from '../../projection-runtime-core/test/projectionChangesStoreConformance';
 import { createFakeMongoClient, InMemoryMongoCollection } from '../../projection-runtime-store-mongodb/test/mocks';
 import type { TapewormMongoRangeReader } from '../src/tapewormMongoRangeReader';
@@ -56,35 +56,35 @@ function admissionFixture() {
     collection: collection as unknown as MongoProjectionTransportStoreOptions['collection'],
     mongoClient: createFakeMongoClient(), manifest: configured, cutoverReadiness: { reader }
   });
-  return { collection, scope, store, reader, commit: projectionChangesRequest().commit };
+  return { collection, proof: createProjectionDispatchBindingProof(configured), store, reader, commit: projectionChangesRequest().commit };
 }
 
 test('fresh admission initializes a matching immutable binding before reading accepted progress', async () => {
-  const { collection, scope, store, commit } = admissionFixture();
+  const { collection, proof, store, commit } = admissionFixture();
   // Simulate a pre-provisioned accepted baseline without an initialized queue binding.
   const _id = `baseline:queue:${sourceId}`;
   await collection.updateOne({ _id }, { $setOnInsert: { kind: 'baseline', record: baseline(-1) } }, { upsert: true });
   expect(await store.readQueueBinding('queue')).toBeNull();
-  await expect(store.admitForDispatch(commit, 'queue', scope)).resolves.toMatchObject({
-    dispatch: true, boundChangeRecordingScope: scope, coverage: { sequence: null }, startAnchor: 0
+  await expect(store.admitForDispatch(commit, 'queue', proof)).resolves.toMatchObject({
+    dispatch: true, boundDispatchProof: proof, coverage: { sequence: null }, startAnchor: 0
   });
   expect(collection.snapshot().map(row => row.kind).sort()).toEqual(['baseline', 'binding', 'coverage', 'source_probe']);
 });
 
 test('a mismatched expectation cannot initialize a fresh immutable binding or admit progress', async () => {
-  const { collection, scope, store, reader, commit } = admissionFixture();
-  await expect(store.admitForDispatch(commit, 'queue', [{ ...scope[0]!, projectionChanges: 'wrong' }]))
-    .rejects.toBeInstanceOf(ProjectionChangeRecordingPolicyMismatchError);
+  const { collection, store, reader, commit } = admissionFixture();
+  await expect(store.admitForDispatch(commit, 'queue', createProjectionDispatchBindingProof(manifest)))
+    .rejects.toBeInstanceOf(ProjectionDispatchBindingMismatchError);
   expect(collection.operationLog).toEqual([]);
   expect(collection.snapshot()).toEqual([]);
   expect(reader.initialize).not.toHaveBeenCalled();
 });
 
 test('a conflicting persisted binding is not replaced and cannot admit progress', async () => {
-  const { collection, scope, store, reader, commit } = admissionFixture();
+  const { collection, proof, store, reader, commit } = admissionFixture();
   await store.bindImmutableManifest(manifest);
   const rows = structuredClone(collection.snapshot());
-  await expect(store.admitForDispatch(commit, 'queue', scope)).rejects.toThrow('Immutable projection registry binding mismatch');
+  await expect(store.admitForDispatch(commit, 'queue', proof)).rejects.toBeInstanceOf(ProjectionDispatchBindingMismatchError);
   expect(collection.snapshot()).toEqual(rows);
   expect(reader.initialize).not.toHaveBeenCalled();
 });

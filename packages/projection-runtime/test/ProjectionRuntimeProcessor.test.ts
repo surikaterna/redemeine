@@ -148,6 +148,19 @@ function createProjectionDefinition(name: string, identity?: (event: ProjectionC
 }
 
 describe('ProjectionRuntimeProcessor', () => {
+  it.each([false, true])('rejects raw joined selectors without set mode (populated=%s)', populated => {
+    const projection = createProjectionDefinition('raw-selectors');
+    projection.joinStreams[0].candidateSelectors = populated ? { 'customer.updated': () => 'order-1' } : {};
+    expect(projection).not.toHaveProperty('joinMembership');
+    expect(() => new ProjectionRuntimeProcessor({
+      projection,
+      commitFeed: new InMemoryCommitFeed([]),
+      cursorStore: new InMemoryCursorStore(),
+      linkStore: new InMemoryLinkStore(),
+      persistence: new InMemoryDocumentPersistence()
+    })).toThrow('.joinRight() requires the native source-commit coordinator.');
+  });
+
   it('routes from-stream events with identity fanout', async () => {
     const processor = new ProjectionRuntimeProcessor({
       projection: createProjectionDefinition('fanout-from', () => ['doc-1', 'doc-2', 'doc-1']),

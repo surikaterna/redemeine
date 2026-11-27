@@ -28,6 +28,7 @@ import {
 export class InMemoryProjectionStore<TState = unknown> implements IProjectionStore<TState> {
   readonly projectionChangesCapability = 'atomic-turn-receipts-v1' as const;
   readonly sourceCommitSnapshotCapability = 'revision-cas-v1' as const;
+  readonly joinMembershipCapability = 'set-v1' as const;
   private documents = new Map<string, StoredDocument<TState>>();
   private links = new Map<string, string>();
   private dedupe = new Map<string, Checkpoint>();
