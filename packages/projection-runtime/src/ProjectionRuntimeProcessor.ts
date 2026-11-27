@@ -82,7 +82,10 @@ interface PendingDocument<TState extends PlainObject> {
 
 export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   constructor(private readonly options: ProjectionRuntimeProcessorOptions<TState>) {
-    if (options.projection.joinMembership) throw new Error('.joinRight() requires the native source-commit coordinator.');
+    const { joinMembership, fromStream, joinStreams } = options.projection;
+    if (joinMembership || 'candidateSelectors' in fromStream || joinStreams?.some(stream => 'candidateSelectors' in stream)) {
+      throw new Error('.joinRight() requires the native source-commit coordinator.');
+    }
   }
 
   async processNextBatch(): Promise<ProjectionRuntimeBatchStats> {

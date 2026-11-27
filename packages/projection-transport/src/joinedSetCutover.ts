@@ -24,6 +24,26 @@ export interface ApprovedJoinedSetInventory {
   readonly emptyInventoryReference?: string;
 }
 
+/**
+ * Convert one approved membership set into a revision-zero MongoDB seed row.
+ * The row ID is derived from the projection, generation and joined aggregate.
+ * Target IDs must already be sorted and unique; an empty list represents an explicit
+ * tombstone, while an absent membership should be omitted from the inventory.
+ * Seed the isolated membership collection for the new generation before adoption;
+ * do not use this helper to reset rows in a running generation.
+ *
+ * @example
+ * ```ts
+ * await membershipCollection.insertOne(joinedMembershipSeedRow(
+ *   { projectionName: 'warehouse-board', generation: 'warehouse-set-v1' },
+ *   {
+ *     aggregateType: 'Order',
+ *     aggregateId: 'order-42',
+ *     targetDocumentIds: ['warehouse-north', 'warehouse-west']
+ *   }
+ * ));
+ * ```
+ */
 export function joinedMembershipSeedRow(scope: Pick<ApprovedJoinedSetInventory, 'projectionName' | 'generation'>,
   set: ApprovedJoinedSet) {
   validateJoinTargetSet(set.targetDocumentIds);

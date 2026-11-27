@@ -22,3 +22,5 @@ Public authored join definitions register with the native coordinator without a 
 Native set cutover verifies exact target IDs and requires simple collation for its document and membership collections. Aggregate final membership fence budgets match the snapshot read budgets in both stores.
 
 Native workers retry once from the original routing keys when abandoned discovery keys make the accumulated query or its membership results exceed capacity, even with change recording disabled.
+
+Native workers reject promise-returning handlers before hooks or persistence. Legacy projection executors and the single-document testing fixture reject raw candidate-selector fields, even empty maps without set-mode opt-in.

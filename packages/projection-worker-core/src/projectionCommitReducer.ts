@@ -193,6 +193,13 @@ function needsSnapshot<TState>(reduction: ReductionState<TState>): ProjectionRed
   };
 }
 
+function requireSynchronousResult(result: unknown, callback: 'handler' | 'afterEach'): void {
+  if (!result || typeof (result as PromiseLike<unknown>).then !== 'function') return;
+  // Reject the turn now, but consume rejections from a continuation using the revoked draft.
+  void Promise.resolve(result).catch(() => undefined);
+  throw new Error(`Projection ${callback} must be synchronous.`);
+}
+
 function applyHandler<TState>(
   definition: ProjectionCommitDefinition<TState>,
   reduction: ReductionState<TState>,
@@ -204,12 +211,8 @@ function applyHandler<TState>(
   attached?: Set<string>
 ): ProjectionChangeTransition | undefined {
   const recipe = (draft: Draft<TState>): void => {
-    routed.handler(draft, routed.event, createContext(reduction, targetId, attached));
-    const hookResult: unknown = definition.hooks?.afterEach?.(draft, routed.event);
-    if (hookResult && typeof (hookResult as PromiseLike<unknown>).then === 'function') {
-      void Promise.resolve(hookResult).catch(() => undefined);
-      throw new Error('Projection afterEach must be synchronous.');
-    }
+    requireSynchronousResult(routed.handler(draft, routed.event, createContext(reduction, targetId, attached)), 'handler');
+    requireSynchronousResult(definition.hooks?.afterEach?.(draft, routed.event), 'afterEach');
   };
   if (document.patchFallback) {
     document.state = produce(document.state, recipe);

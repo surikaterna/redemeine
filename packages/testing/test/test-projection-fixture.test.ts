@@ -31,6 +31,15 @@ type InvoiceSummary = {
 };
 
 describe('testProjection fixture', () => {
+  it.each([false, true])('rejects raw joined selectors without set mode (populated=%s)', populated => {
+    const definition = createProjection('invoice-summary', () => ({ shipments: 0 })).from(invoiceAgg, {})
+      .join(orderAgg, { shipped(draft) { draft.shipments++; } }).build();
+    const candidateSelectors: Record<string, () => string> = populated ? { shipped: () => 'invoice-1' } : {};
+    const raw = { ...definition, joinStreams: [{ ...definition.joinStreams![0]!, candidateSelectors }] };
+    expect(raw).not.toHaveProperty('joinMembership');
+    expect(() => testProjection(raw)).toThrow('.joinRight() requires the native source-commit coordinator.');
+  });
+
   it('applies .from handler and returns exact patch order', () => {
     const projection = createProjection<InvoiceSummary>('invoice-summary', () => ({
       total: 0,

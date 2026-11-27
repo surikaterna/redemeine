@@ -97,6 +97,15 @@ describe.each(builders)('resolved names from builder %p', build => {
   });
 });
 
+test.each([false, true])('daemon rejects raw joined selectors without set mode (populated=%s)', populated => {
+  const { projection } = fixture('core', 'default');
+  const candidateSelectors: Record<string, () => string> = populated ? { itemAdded: () => 'order-1' } : {};
+  const raw = { ...projection, joinStreams: [{ ...projection.joinStreams![0]!, candidateSelectors }] };
+  expect(raw).not.toHaveProperty('joinMembership');
+  expect(() => new ProjectionDaemon({ projection: raw, store: new InMemoryProjectionStore<State>() }))
+    .toThrow('.joinRight() requires the native source-commit coordinator.');
+});
+
 test.each(builders)('retains explicit mounted wire keys without guessing camelCase: %s', async build => {
   const line = createEntity<{ id: string; qty: number }, 'line'>('line')
     .events({ qtyUpdated: (state, event: Event<{ id: string; qty: number }>) => { state.qty = event.payload.qty; } })
