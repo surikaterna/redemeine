@@ -6,7 +6,7 @@ import type {
   ProjectionSourceEvent
 } from '@redemeine/projection-runtime-core';
 import { JoinTurnBudget, joinMembershipKey, selectJoinCandidates } from '@redemeine/projection-runtime-core';
-import type { ProjectionCommitDefinitionInput as ProjectionCommitDefinition } from './commitCoordinatorContracts';
+import type { ProjectionCommitDefinitionInput } from './commitCoordinatorContracts';
 
 export interface RoutingLinkState extends ProjectionSourceCommitSnapshotLink {}
 
@@ -25,7 +25,7 @@ export interface SetRoutingEntry<TState> {
   readonly membershipKey?: string;
 }
 
-export function planSetRouting<TState>(definition: ProjectionCommitDefinition<TState>, events: readonly ProjectionSourceEvent[]):
+export function planSetRouting<TState>(definition: ProjectionCommitDefinitionInput<TState>, events: readonly ProjectionSourceEvent[]):
   readonly (SetRoutingEntry<TState> | null)[] {
   const budget = new JoinTurnBudget();
   const rawSelectorBudget = new JoinTurnBudget();
@@ -62,7 +62,7 @@ function handlerCandidates(type: string, aggregateType: string): readonly string
 }
 
 function findHandler<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   event: ProjectionEvent
 ): { handler: ProjectionHandler<TState>; selector?: ProjectionCandidateSelector | undefined } | null {
   const streams: readonly {
@@ -81,7 +81,7 @@ function findHandler<TState>(
 }
 
 export function routeEvent<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   sourceEvent: ProjectionSourceEvent,
   links: ReadonlyMap<string, RoutingLinkState>
 ): RoutedEvent<TState> | null {
@@ -99,13 +99,13 @@ export function routeEvent<TState>(
   return { event, handler, targetIds: [...new Set(targetIds)].sort() };
 }
 
-function identityTargets<TState>(definition: ProjectionCommitDefinition<TState>, event: ProjectionEvent): readonly string[] {
+function identityTargets<TState>(definition: ProjectionCommitDefinitionInput<TState>, event: ProjectionEvent): readonly string[] {
   const identity = definition.identity(event);
   return typeof identity === 'string' ? [identity] : identity;
 }
 
 export function routingLinkRequests<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   events: readonly ProjectionSourceEvent[]
 ): readonly { aggregateType: string; aggregateId: string }[] {
   const fromType = definition.fromStream.aggregate.aggregateType;

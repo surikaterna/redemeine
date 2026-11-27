@@ -17,6 +17,7 @@ import {
   projectionChangesResumeToken,
   validateCommitProjectionSourceCommitRelationships,
   checkProjectionSourceCommitState,
+  freezeJoinSeedEdges,
   joinMembershipKey,
   ownProjectionState
 } from '@redemeine/projection-runtime-core';
@@ -99,8 +100,9 @@ const validateDocuments = <TState>(request: CommitProjectionSourceCommitRequest<
 
 const validateLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): string | null => {
   for (const fence of request.joinMembershipFences ?? []) {
-    const revision = state.memberships.get(scopedMembershipKey(request, fence))?.revision ?? null;
-    if (revision !== fence.expectedRevision) return 'join membership revision conflict';
+    const row = state.memberships.get(scopedMembershipKey(request, fence));
+    if (!request.joinSeedVersion && row?.seeds) return 'join membership capability conflict';
+    if ((row?.revision ?? null) !== fence.expectedRevision) return 'join membership revision conflict';
   }
   const keys = new Set<string>();
   for (const link of request.stagedLinks) {
@@ -158,7 +160,9 @@ export const loadV2Snapshot = <TState>(
     }),
     ...(request.joinMembership ? { joinMemberships: request.links.map((source) => {
       const row = state.memberships.get(scopedMembershipKey(request, source));
-      return { ...source, revision: row?.revision ?? null, targetDocumentIds: [...(row?.targetDocumentIds ?? [])] };
+      if (row?.seeds && request.joinSeedVersion !== 1) throw new Error('Join seed provenance requires initialized membership reads.');
+      return { ...source, revision: row?.revision ?? null, targetDocumentIds: [...(row?.targetDocumentIds ?? [])],
+        ...(row?.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) };
     }) } : {}),
     ownRecordSequence: request.progressStrategy !== 'own_record' || request.sourceId === undefined
       ? null
@@ -216,10 +220,11 @@ const applyDocuments = <TState>(
 
 const applyLinks = <TState>(request: CommitProjectionSourceCommitRequest<TState>, state: V2State): Record<string, number> => {
   const revisions: Record<string, number> = {};
-  for (const { aggregateType, aggregateId, targetDocumentIds, expectedRevision } of request.joinMembershipFences ?? []) {
+  for (const { aggregateType, aggregateId, targetDocumentIds, expectedRevision, seeds } of request.joinMembershipFences ?? []) {
     const source = { aggregateType, aggregateId };
     const revision = (expectedRevision ?? 0) + 1;
-    state.memberships.set(scopedMembershipKey(request, source), { ...source, revision, targetDocumentIds: [...targetDocumentIds] });
+    state.memberships.set(scopedMembershipKey(request, source), { ...source, revision, targetDocumentIds: [...targetDocumentIds],
+      ...(seeds ? { seeds: freezeJoinSeedEdges(seeds) } : {}) });
     revisions[joinMembershipKey(aggregateType, aggregateId)] = revision;
   }
   for (const link of request.stagedLinks) {
@@ -270,7 +275,8 @@ export const commitV2 = <TState>(
   request: CommitProjectionSourceCommitRequest<TState>,
   documents: Map<string, StoredDocument<TState>>,
   current: V2State,
-  allowCapture = false
+  allowCapture = false,
+  staleReadSet = false
 ): { result: CommitProjectionSourceCommitResult; documents?: Map<string, StoredDocument<TState>>; state?: V2State } => {
   const malformed = validateCommitProjectionSourceCommitRelationships(request);
   if (malformed) return { result: rejectMalformed(malformed) };
@@ -284,6 +290,7 @@ export const commitV2 = <TState>(
         : rejectMalformed('projection change source commit or collection identity mismatch') };
     }
   }
+  if (staleReadSet) return { result: reject('projection source snapshot changed') };
   const failure = validateDocuments(request, current) ?? validateLinks(request, current) ?? validateProgress(request, current);
   const patchCheck = request.validateStateChanges || request.additionalWrites || request.finalDocuments.some(({ statePatch }) => statePatch?.kind === 'ordered')
     ? validateChangeSnapshot(request, documents, current, failure === null, allowCapture) : {};

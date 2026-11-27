@@ -1,5 +1,7 @@
 import { types } from 'node:util';
 import { enablePatches, Immer, type Draft } from 'immer';
+import type { JoinSeedProvenance } from '../joinSeed';
+import { freezeJoinSeedEdges, freezeJoinSeedProvenance } from './joinSeedProvenance';
 import { formatProjectionChangePointer } from './projectionChangePatch';
 import type { ProjectionChangePatchOperation, ProjectionChangeTransition } from './projectionChanges';
 import type { ProjectionJsonValue, ProjectionSourceEvent } from './sourceCommit';
@@ -74,7 +76,7 @@ export function ownProjectionState(root: unknown): boolean {
 /** Only an actual Immer execution mints a capture. Native payloads follow the synchronous draft-only contract. */
 export function captureProjectionSourceEvent<T>(
   before: T, event: ProjectionSourceEvent, recipe: (draft: Draft<T>) => void, creating: boolean,
-  native?: NativeCaptureOrigin
+  native?: NativeCaptureOrigin, seedProvenance?: () => readonly JoinSeedProvenance[]
 ): { state: T; transition?: ProjectionChangeTransition } {
   if (!patchesEnabled) {
     enablePatches();
@@ -93,8 +95,10 @@ export function captureProjectionSourceEvent<T>(
     if (!origin && op.op !== 'remove' && !ownProjectionState(op.value)) return { state };
     Object.freeze(op);
   }
+  const seeds = seedProvenance?.();
   const transition = Object.freeze({ eventId: event.eventId, eventIndex: event.eventIndex,
-    changeType: creating ? 'create' : patch.length ? 'update' : 'noop', patch: Object.freeze(patch) } as const);
+    changeType: creating ? 'create' : patch.length ? 'update' : 'noop', patch: Object.freeze(patch),
+    ...(seeds?.length ? { joinSeeds: Object.freeze(seeds.map(freezeJoinSeedProvenance)) } : {}) } as const);
   captures.set(transition, { before, after: state, creating, origin });
   return { state, transition };
 }
@@ -145,7 +149,8 @@ export function sealProjectionCaptureRequest<T>(request: CommitProjectionSourceC
     progress: sealProgress(request.progress),
     stagedLinks: Object.freeze(request.stagedLinks.map((link) => Object.freeze({ ...link }))),
     ...(request.joinMembershipFences ? { joinMembershipFences: Object.freeze(request.joinMembershipFences.map((fence) =>
-      Object.freeze({ ...fence, targetDocumentIds: Object.freeze([...fence.targetDocumentIds]) }))) } : {}),
+      Object.freeze({ ...fence, targetDocumentIds: Object.freeze([...fence.targetDocumentIds]),
+        ...(fence.seeds ? { seeds: freezeJoinSeedEdges(fence.seeds) } : {}) }))) } : {}),
     ...(append ? { additionalWrites: Object.freeze([Object.freeze({ ...append, targets: Object.freeze(append.targets.map((target) =>
       Object.freeze({ ...target, transitions: sequence(target.transitions) }))) })] as const) } : {})
   });

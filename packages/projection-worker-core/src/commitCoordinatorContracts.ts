@@ -7,18 +7,20 @@ import type {
   ProjectionSourceOrderPort
 } from '@redemeine/projection-runtime-core';
 import type { ProjectionStateValidation } from './projectionCommitReducer';
+import type { JoinSeedReader } from './joinSeedReaders';
 
 export interface ProjectionCommitRegistryDefinition<TState = unknown> {
   readonly generation: string;
   readonly definition: ProjectionCommitDefinition<TState>;
   /** Enables history for this generation and names its logical target collection. */
   readonly projectionChanges?: string;
+  readonly joinSeedReaders?: readonly JoinSeedReader[];
 }
 
 type PrimaryAggregate<TState> = ProjectionCommitDefinition<TState>['fromStream']['aggregate'];
 
 /** Registration uses the primary aggregate's routing identity, not its aggregate state factory. */
-export type ProjectionCommitDefinitionInput<TState> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
+export type ProjectionCommitDefinitionInput<TState = unknown> = Omit<ProjectionCommitDefinition<TState>, 'fromStream'> & {
   fromStream: Omit<ProjectionCommitDefinition<TState>['fromStream'], 'aggregate'> & {
     aggregate: Pick<PrimaryAggregate<TState>, 'aggregateType'> & Partial<PrimaryAggregate<TState>>;
   };

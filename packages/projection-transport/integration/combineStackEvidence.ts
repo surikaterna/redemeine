@@ -18,6 +18,7 @@ const sha = required('REDEMEINE_GIT_SHA');
 const old = await load(required('REDEMEINE_OLD_EVIDENCE_PATH'), sha);
 const accepted = await load(required('REDEMEINE_ACCEPTED_EVIDENCE_PATH'), sha);
 const memberships = await load(required('REDEMEINE_MEMBERSHIP_EVIDENCE_PATH'), sha);
+const initialization = await load(required('REDEMEINE_JOIN_INITIALIZATION_EVIDENCE_PATH'), sha);
 const expectedMongoVersion = required('REDEMEINE_EXPECTED_MONGO_VERSION');
 const originalMongo = (old.versions as Record<string, unknown> | undefined)?.mongoServer;
 const acceptedMongo = (accepted.versions as Record<string, unknown> | undefined)?.mongo;
@@ -39,6 +40,12 @@ if (memberships.mongo !== expectedMongoVersion || memberships.memoryAndMongoMemb
   || set.membershipRevision !== 2 || JSON.stringify(set.receipts) !== '[1,2]' || JSON.stringify(set.targets) !== '["A","B","C"]') {
   throw new Error('Real join-membership or set-mode broker evidence is missing.');
 }
+const seed = initialization.rabbit as Record<string, unknown> | undefined;
+if (initialization.mongo !== expectedMongoVersion || initialization.memoryAndMongoInitialization !== 'passed'
+  || seed?.name !== 'rabbit-native-seeded-attach' || seed.index !== 'sourceRange' || seed.providerReads !== 1
+  || seed.acknowledgements !== 1 || seed.covered !== 2 || seed.total !== 37 || JSON.stringify(seed.receipts) !== '[1,2]') {
+  throw new Error('Real join-initialization evidence is missing.');
+}
 if (!Array.isArray(old.crashes) || old.crashes.length !== 4 || !poison || unknown?.rejected !== true || old.gap === undefined
   || old.reducedRegistryRejected !== true || accepted.gapStatus !== 'incomplete'
   || accepted.missingRejected !== true || accepted.incompatibleRejected !== true
@@ -56,7 +63,8 @@ if (!Array.isArray(old.crashes) || old.crashes.length !== 4 || !poison || unknow
   throw new Error('One of the original or accepted-baseline scenarios is missing.');
 }
 const membershipScenarios = [set.name];
+const initializationScenarios = [seed.name];
 await writeFile(required('REDEMEINE_EVIDENCE_PATH'), JSON.stringify({ gitSha: sha,
-  oldScenarios, acceptedScenarios, membershipScenarios,
-  scenarioCount: oldScenarios.length + acceptedScenarios.length + membershipScenarios.length,
-  old, accepted, memberships, logicalCleanupVerified: true }), { flag: 'wx' });
+  oldScenarios, acceptedScenarios, membershipScenarios, initializationScenarios,
+  scenarioCount: oldScenarios.length + acceptedScenarios.length + membershipScenarios.length + initializationScenarios.length,
+  old, accepted, memberships, initialization, logicalCleanupVerified: true }), { flag: 'wx' });

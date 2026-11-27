@@ -15,6 +15,7 @@ import { checkRealProjectionChanges } from './realProjectionChanges';
 import { checkRealFineGrainedChanges } from './realFineGrainedChanges';
 import { checkRealSourceCommitRoundTrips } from './realSourceCommitRoundTrips';
 import { checkRealJoinUnknownCommit } from './realJoinUnknownCommit';
+import { checkRealJoinReceiptCodec } from './realJoinReceiptCodec';
 
 const uri = process.env.REDEMEINE_MONGO_URI;
 if (!uri) throw new Error('REDEMEINE_MONGO_URI is required');
@@ -296,6 +297,7 @@ const run = async (): Promise<void> => {
   await checkRealProjectionChanges(db, client);
   await checkRealFineGrainedChanges(db, client);
   await checkRealJoinUnknownCommit(db, client);
+  const joinSeedReceiptCodec = await checkRealJoinReceiptCodec(db, client);
   const sourceCommitRoundTrips = await checkRealSourceCommitRoundTrips(db, client);
   const receipt = {
     databaseName,
@@ -314,6 +316,7 @@ const run = async (): Promise<void> => {
     projectionChangesAtomicity: 'passed',
     fineGrainedHistoryAndMongoWrites: 'passed',
     joinUnknownCommitReconciliation: 'passed',
+    joinSeedReceiptCodec,
     sourceCommitRoundTrips,
     cleanup: 'pending'
   };

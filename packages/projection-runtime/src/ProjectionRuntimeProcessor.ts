@@ -1,3 +1,4 @@
+import type { ProjectionContext } from '@redemeine/projection';
 import type { CommitFeedContract, ProjectionCheckpoint, ProjectionCommit } from './contracts/commitFeed';
 import type { CursorStoreContract } from './contracts/cursorStore';
 import type { LinkStoreContract } from './contracts/linkStore';
@@ -15,7 +16,7 @@ import type { ProjectionPersistenceCapabilities, ProjectionPersistenceMode } fro
 type PlainObject = Record<string, unknown>;
 
 type RuntimeProjectionContext = {
-  subscribeTo: (aggregate: { aggregateType: string }, aggregateId: string) => void;
+  subscribeTo: ProjectionContext['subscribeTo'];
   getSubscriptions: () => Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
 };
 
@@ -28,6 +29,7 @@ type RuntimeProjectionHandler<TState extends PlainObject> = (
 type RuntimeProjectionDefinition<TState extends PlainObject> = {
   name: string;
   joinMembership?: 'set-v1';
+  joinInitializers?: readonly unknown[];
   fromStream: {
     aggregate: { aggregateType: string };
     handlers: Record<string, RuntimeProjectionHandler<TState>>;
@@ -82,6 +84,7 @@ interface PendingDocument<TState extends PlainObject> {
 
 export class ProjectionRuntimeProcessor<TState extends PlainObject> {
   constructor(private readonly options: ProjectionRuntimeProcessorOptions<TState>) {
+    if (options.projection.joinInitializers?.length) throw new Error('.onJoinInitialize() requires the native source-commit coordinator.');
     const { joinMembership, fromStream, joinStreams } = options.projection;
     if (joinMembership || 'candidateSelectors' in fromStream || joinStreams?.some(stream => 'candidateSelectors' in stream)) {
       throw new Error('.joinRight() requires the native source-commit coordinator.');
@@ -354,6 +357,7 @@ export class ProjectionRuntimeProcessor<TState extends PlainObject> {
 
     return {
       subscribeTo(aggregate, aggregateId) {
+        if (!('aggregateType' in aggregate)) throw new Error('Join initialization requires the native source-commit coordinator.');
         subscriptions.push({ aggregate, aggregateId });
       },
       getSubscriptions() {

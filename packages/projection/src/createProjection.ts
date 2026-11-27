@@ -1,4 +1,6 @@
 import type { ProjectionDeduplicationStrategy } from './deduplication';
+import { registerJoinInitializer, validateJoinInitializers, type JoinSeed, type JoinSeedInitializer,
+  type JoinSeedRegistration } from './joinSeed';
 import { defaultIdentity, isInheritEntry, isInheritExtended } from './inherit';
 import { mirrorEventHandlers } from './mirrorEventHandlers';
 import type {
@@ -52,6 +54,8 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
   private _joinRight = new Map<string, Readonly<Record<string, ProjectionCandidateSelector>>>();
+  private readonly joinInitializers: JoinSeedRegistration<TState>[] = [];
+
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
 
@@ -166,6 +170,13 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  onJoinInitialize<TSource extends { aggregateType: string }, TSeed>(
+    binding: JoinSeed<TSource, TSeed>, initialize: JoinSeedInitializer<TState, NoInfer<TSeed>>
+  ): ProjectionBuilder<TState> {
+    registerJoinInitializer(this.joinInitializers, binding, initialize);
+    return this;
+  }
+
   private _buildJoins(): JoinStreamDefinition<TState>[] {
     for (const [type, selectors] of this._joinRight) {
       const joins = this._joinStreams.filter(({ aggregate }) => aggregate.aggregateType === type);
@@ -205,11 +216,15 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     if (!this._initialState) {
       throw new Error(`Projection '${this._name}' requires an initial state. ` + `Use .mirror() or createProjection(name, fn) to provide one.`);
     }
+    const initializers = this.joinInitializers;
+    if (initializers.length) validateJoinInitializers(initializers, this._fromStream.aggregate.aggregateType,
+      this._joinStreams, this._deduplication);
     return {
       name: this._name,
       fromStream: this._fromStream,
       joinStreams: this._buildJoins(),
-      ...(this._joinRight.size ? { joinMembership: 'set-v1' } : {}),
+      ...(this._joinRight.size || initializers.length ? { joinMembership: 'set-v1' } : {}),
+      ...(initializers.length ? { joinInitializers: Object.freeze([...initializers]) } : {}),
       initialState: this._initialState,
       identity: this._identity,
       subscriptions: [],

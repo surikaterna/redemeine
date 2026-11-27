@@ -1,6 +1,7 @@
 import type { Draft } from 'immer';
 import type { ProjectionDeduplicationStrategy } from './deduplication';
 import type { InheritExtended, InheritToken } from './inherit';
+import type { JoinSeed, JoinSeedBinding, JoinSeedEventCoverage, JoinSeedInitializer, JoinSeedRegistration } from './joinSeed';
 import type { ResolvedHandlerEventType } from './resolvedEventHandlers';
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 
@@ -111,7 +112,8 @@ export interface AggregateDefinition<TState, TPayloads extends Record<string, un
 }
 
 export interface ProjectionContext {
-  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
+  subscribeTo(source: { aggregateType: string } | JoinSeedBinding, aggregateId: string): void;
+  readonly joinSeedCoverage?: JoinSeedEventCoverage;
   unsubscribeFrom(aggregate: { aggregateType: string }, aggregateId: string): void;
 }
 
@@ -164,6 +166,7 @@ export interface ProjectionDefinition<TState = unknown> {
   fromStream: ProjectionStreamDefinition<TState>;
   joinStreams?: JoinStreamDefinition<TState>[];
   joinMembership?: 'set-v1';
+  joinInitializers?: readonly JoinSeedRegistration<TState>[];
   initialState: (documentId: string) => TState;
   identity: (event: BaseProjectionEvent) => string | readonly string[];
   subscriptions: Array<{ aggregate: { aggregateType: string }; aggregateId: string }>;
@@ -180,6 +183,9 @@ type FluentProjectionBuilder<TState, TCommit extends boolean> =
   TCommit extends true ? ProjectionCommitBuilder<TState> : ProjectionBuilder<TState>;
 
 export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
+  onJoinInitialize<TSource extends { aggregateType: string }, TSeed>(
+    binding: JoinSeed<TSource, TSeed>, initialize: JoinSeedInitializer<TState, NoInfer<TSeed>>
+  ): FluentProjectionBuilder<TState, TCommit>;
   initialState(fn: (id: string) => TState): FluentProjectionBuilder<TState, TCommit>;
   identity(fn: (event: BaseProjectionEvent) => string | readonly string[]): FluentProjectionBuilder<TState, TCommit>;
   from<TAggregate extends ProjectionAggregateSource>(

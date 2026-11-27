@@ -1,6 +1,6 @@
 import {
-  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
-  measureJoinTargetSet, ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
+  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget, joinMembershipKey, JOIN_MEMBERSHIP_FORMAT,
+  measureJoinTargetSet, ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError, validateJoinMembershipSeeds,
   type CommitProjectionSourceCommitRequest, type LoadProjectionSourceCommitSnapshotRequest, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
 import type { AnyBulkWriteOperation, ClientSession, FindOptions } from 'mongodb';
@@ -25,14 +25,17 @@ export function checkedSourceCommitIds<T>(items: readonly T[], idOf: (item: T) =
   });
 }
 
-function measurePersistedTargets(row: ProjectionJoinMembershipRecord, source: ProjectionJoinSource | undefined): number {
+function measurePersistedTargets(row: ProjectionJoinMembershipRecord, source: ProjectionJoinSource | undefined, seedVersion?: 1): number {
   if (!source || row.format !== JOIN_MEMBERSHIP_FORMAT || row.aggregateType !== source.aggregateType
-    || row.aggregateId !== source.aggregateId || row.revision === null || Object.keys(row).length !== 6) {
+    || row.aggregateId !== source.aggregateId || row.revision === null || Object.keys(row).length !== (row.seeds ? 7 : 6)
+    || (row.seeds && seedVersion !== 1)) {
     throw new ProjectionPersistedJoinMembershipError('Invalid joined membership row.');
   }
   try {
     assertJoinRevision(row.revision);
-    return measureJoinTargetSet(row.targetDocumentIds);
+    const bytes = measureJoinTargetSet(row.targetDocumentIds);
+    validateJoinMembershipSeeds(row);
+    return bytes;
   } catch (error) {
     if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
     throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
@@ -50,7 +53,7 @@ export async function readMongoMemberships<T>(
   const resultsBudget = new JoinTurnBudget();
   for (const chunk of sourceCommitChunks(ids)) {
     for await (const row of collection.find({ _id: { $in: chunk } }, { ...readOptions, collation: setIdentityCollation })) {
-      const bytes = measurePersistedTargets(row, expected.get(row._id));
+      const bytes = measurePersistedTargets(row, expected.get(row._id), request.joinSeedVersion);
       chargeJoinMembershipSnapshotTargets(resultsBudget, row.targetDocumentIds.length, bytes);
       rows.set(row._id, row);
     }
@@ -58,7 +61,8 @@ export async function readMongoMemberships<T>(
   return request.links.map((source, index) => {
     const row = rows.get(ids[index]!);
     if (!row) return { ...source, revision: null, targetDocumentIds: [] };
-    return { ...source, revision: row.revision, targetDocumentIds: Object.freeze([...row.targetDocumentIds]) };
+    return { ...source, revision: row.revision, targetDocumentIds: Object.freeze([...row.targetDocumentIds]),
+      ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) };
   });
 }
 
@@ -70,15 +74,18 @@ export async function writeMongoMemberships<T>(
   const inserts: AnyBulkWriteOperation<ProjectionJoinMembershipRecord>[] = [];
   const updates: AnyBulkWriteOperation<ProjectionJoinMembershipRecord>[] = [];
   const revisions = new Map<string, number>();
-  for (const { aggregateType, aggregateId, expectedRevision, targetDocumentIds } of request.joinMembershipFences ?? []) {
+  for (const { aggregateType, aggregateId, expectedRevision, targetDocumentIds, seeds } of request.joinMembershipFences ?? []) {
     const source = { aggregateType, aggregateId };
     const _id = scopedKey(request, source);
     const revision = (expectedRevision ?? 0) + 1;
     if (expectedRevision === null) {
-      inserts.push({ insertOne: { document: { _id, ...source, format: JOIN_MEMBERSHIP_FORMAT, revision, targetDocumentIds } } });
+      inserts.push({ insertOne: { document: { _id, ...source, format: JOIN_MEMBERSHIP_FORMAT, revision, targetDocumentIds,
+        ...(seeds ? { seeds } : {}) } } });
     } else {
-      updates.push({ updateOne: { filter: { _id, format: JOIN_MEMBERSHIP_FORMAT, revision: expectedRevision }, collation: setIdentityCollation,
-        update: { $set: { revision, targetDocumentIds } } } });
+      updates.push({ updateOne: { filter: { _id, format: JOIN_MEMBERSHIP_FORMAT, revision: expectedRevision,
+        ...(request.joinSeedVersion ? {} : { seeds: { $exists: false } }) }, collation: setIdentityCollation,
+        update: { $set: { revision, targetDocumentIds, ...(seeds ? { seeds } : {}) },
+          ...(request.joinSeedVersion && !seeds ? { $unset: { seeds: '' } } : {}) } } });
     }
     revisions.set(joinMembershipKey(aggregateType, aggregateId), revision);
   }

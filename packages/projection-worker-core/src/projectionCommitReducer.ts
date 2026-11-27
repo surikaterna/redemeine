@@ -2,10 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type {
   CommitProjectionSourceCommitRequest,
   ProjectionChangeTransition,
-  ProjectionContext,
   ProjectionJoinMembership,
   ProjectionSourceCommit,
-  ProjectionSourceCommitLink,
   ProjectionSourceCommitSnapshot,
   ProjectionSourceCommitStatePatch,
   ProjectionSourceEvent,
@@ -17,14 +15,17 @@ import {
   projectionUuidToBase64Url22, sealProjectionCaptureRequest
 } from '@redemeine/projection-runtime-core';
 import { produce, type Draft } from 'immer';
-import type { ProjectionCommitDefinitionInput as ProjectionCommitDefinition } from './commitCoordinatorContracts';
-import { linksByKey, routeEvent, type RoutedEvent, type RoutingLinkState, type SetRoutingEntry } from './projectionCommitRouting';
+import { linksByKey, routeEvent, type RoutedEvent, type SetRoutingEntry } from './projectionCommitRouting';
 import { JoinMembershipStaging, membershipFences, routeStagedSetEvent } from './joinMembershipReduction';
+import { createReductionContext, type ReductionLinks } from './projectionReductionLinks';
+import { JoinSeedEvent, NeedsJoinSeeds, type JoinSeedInput, type JoinSeedInputs } from './joinSeedReduction';
+import type { ProjectionCommitDefinitionInput } from './commitCoordinatorContracts';
 
 export type ProjectionReductionResult<TState> =
   | { status: 'planned'; request: CommitProjectionSourceCommitRequest<TState> }
   | { status: 'deduplicated' }
   | { status: 'needs_snapshot'; targetIds: readonly string[]; links: readonly { aggregateType: string; aggregateId: string }[] }
+  | { status: 'needs_join_seeds'; inputs: readonly JoinSeedInput[] }
   | { status: 'terminal'; reason: string; invalidMembershipInput?: true }
   | { status: 'membership_capacity'; reason: string };
 
@@ -37,21 +38,18 @@ interface ReducedDocument<TState> {
   legacyOriginal?: ProjectionSourceCommitSnapshot<TState>['targets'][number]['legacyOriginal'];
 }
 
-interface ReductionState<TState> {
+interface ReductionState<TState> extends ReductionLinks {
   documents: Map<string, ReducedDocument<TState>>;
   changeFeed?: string;
   validation?: ProjectionStateValidation;
   nativeSnapshot?: ProjectionSourceCommitSnapshot<TState>;
   previouslyAppliedTarget?: boolean;
   touched: Set<string>;
-  links: Map<string, RoutingLinkState>;
-  memberships?: JoinMembershipStaging;
   setEvents?: readonly (SetRoutingEntry<TState> | null)[];
-  membershipReads: Set<string>;
+  seeds?: JoinSeedInputs;
+  commit: ProjectionSourceCommit;
   snapshotTargets: ReadonlyMap<string, ProjectionSourceCommitSnapshot<TState>['targets'][number]>;
-  stagedLinks: Map<string, ProjectionSourceCommitLink>;
   missingTargets: Set<string>;
-  missingLinks: Map<string, { aggregateType: string; aggregateId: string }>;
 }
 
 export interface ProjectionStateValidation {
@@ -64,7 +62,7 @@ function clone<T>(value: T): T {
 }
 
 function canApplyToTarget<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   targetId: string,
   sourceKey: ProjectionUuidBase64Url22,
@@ -76,7 +74,7 @@ function canApplyToTarget<TState>(
 }
 
 function getDocument<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   reduction: ReductionState<TState>,
   targetId: string
 ): ReducedDocument<TState> | null {
@@ -106,58 +104,8 @@ function getDocument<TState>(
   return document;
 }
 
-function stageLink<TState>(
-  reduction: ReductionState<TState>,
-  operation: 'subscribe' | 'unsubscribe',
-  aggregateType: string,
-  aggregateId: string,
-  targetDocumentId: string
-): void {
-  if (reduction.memberships) {
-    reduction.membershipReads.add(reduction.memberships.stage(reduction.missingLinks, { aggregateType, aggregateId },
-      targetDocumentId, operation === 'subscribe'));
-    return;
-  }
-  const key = `${aggregateType}\u0000${aggregateId}`;
-  const current = reduction.links.get(key);
-  if (!current) {
-    reduction.missingLinks.set(key, { aggregateType, aggregateId });
-    reduction.links.set(key, {
-      aggregateType,
-      aggregateId,
-      targetDocumentId: operation === 'subscribe' ? targetDocumentId : null,
-      revision: null
-    });
-    return;
-  }
-  reduction.stagedLinks.set(key, {
-    operation,
-    aggregateType,
-    aggregateId,
-    targetDocumentId,
-    expectedRevision: current.revision
-  });
-  reduction.links.set(key, {
-    ...current,
-    targetDocumentId: operation === 'subscribe' ? targetDocumentId : null
-  });
-}
-
-function createContext<TState>(reduction: ReductionState<TState>, targetId: string, attached?: Set<string>): ProjectionContext {
-  return {
-    subscribeTo(aggregate, aggregateId) {
-      stageLink(reduction, 'subscribe', aggregate.aggregateType, aggregateId, targetId);
-      attached?.add(joinMembershipKey(aggregate.aggregateType, aggregateId));
-    },
-    unsubscribeFrom(aggregate, aggregateId) {
-      stageLink(reduction, 'unsubscribe', aggregate.aggregateType, aggregateId, targetId);
-      attached?.delete(joinMembershipKey(aggregate.aggregateType, aggregateId));
-    }
-  };
-}
-
 function createProgress<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   targetIds: readonly string[],
@@ -201,7 +149,7 @@ function requireSynchronousResult(result: unknown, callback: 'handler' | 'afterE
 }
 
 function applyHandler<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   reduction: ReductionState<TState>,
   document: ReducedDocument<TState>,
   routed: RoutedEvent<TState>,
@@ -210,8 +158,13 @@ function applyHandler<TState>(
   creating: boolean,
   attached?: Set<string>
 ): ProjectionChangeTransition | undefined {
+  const seedEvent = reduction.seeds && reduction.memberships && definition.joinInitializers
+    ? new JoinSeedEvent({ event: sourceEvent, commit: reduction.commit, target: targetId,
+      memberships: reduction.memberships.rows, initializers: definition.joinInitializers, seeds: reduction.seeds }, routed.savedMembers !== undefined)
+    : undefined;
   const recipe = (draft: Draft<TState>): void => {
-    requireSynchronousResult(routed.handler(draft, routed.event, createContext(reduction, targetId, attached)), 'handler');
+    requireSynchronousResult(routed.handler(draft, routed.event, createReductionContext(reduction, targetId, attached, seedEvent)), 'handler');
+    seedEvent?.finish(draft);
     requireSynchronousResult(definition.hooks?.afterEach?.(draft, routed.event), 'afterEach');
   };
   if (document.patchFallback) {
@@ -219,13 +172,14 @@ function applyHandler<TState>(
     return undefined;
   }
   const captured = captureProjectionSourceEvent(document.state, sourceEvent, recipe, creating,
-    reduction.nativeSnapshot ? { snapshot: reduction.nativeSnapshot, targetId } : undefined);
+    reduction.nativeSnapshot ? { snapshot: reduction.nativeSnapshot, targetId } : undefined,
+    seedEvent ? () => seedEvent.applied : undefined);
   document.state = captured.state;
   return captured.transition;
 }
 
 function applyTargetEvent<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   reduction: ReductionState<TState>,
   document: ReducedDocument<TState>,
   routed: RoutedEvent<TState>,
@@ -254,7 +208,7 @@ function applyTargetEvent<TState>(
 }
 
 function applyEvents<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   reduction: ReductionState<TState>,
@@ -286,7 +240,7 @@ function applyEvents<TState>(
 }
 
 function createRequest<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   generation: string,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
@@ -308,6 +262,7 @@ function createRequest<TState>(
     commit, finalDocuments, stagedLinks: [...reduction.stagedLinks.values()],
     ...(reduction.memberships ? { joinMembershipFences: membershipFences(
       [...reduction.membershipReads].sort().map((key) => reduction.memberships!.rows.get(key)!)) } : {}),
+    ...(reduction.seeds ? { joinSeedVersion: 1 } : {}),
     progress: createProgress(definition, commit, snapshot, targetIds, sourceKey, baselineSequence),
     ...(reduction.validation?.changes ? { validateStateChanges: true } : {}),
     ...(reduction.changeFeed !== undefined ? { additionalWrites: [{
@@ -321,7 +276,7 @@ function createRequest<TState>(
 }
 
 function allResolvedTargetsDeduplicated<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   commit: ProjectionSourceCommit,
   reduction: ReductionState<TState>
 ): boolean {
@@ -331,17 +286,20 @@ function allResolvedTargetsDeduplicated<TState>(
 }
 
 export function reduceProjectionSourceCommit<TState>(
-  definition: ProjectionCommitDefinition<TState>,
+  definition: ProjectionCommitDefinitionInput<TState>,
   generation: string,
   commit: ProjectionSourceCommit,
   snapshot: ProjectionSourceCommitSnapshot<TState>,
   baselineSequence?: number,
   projectionChanges?: string,
   validation?: ProjectionStateValidation,
-  setRouting?: { memberships: Map<string, ProjectionJoinMembership>; events: readonly (SetRoutingEntry<TState> | null)[] }
+  setRouting?: { memberships: Map<string, ProjectionJoinMembership>; events: readonly (SetRoutingEntry<TState> | null)[]; seeds?: JoinSeedInputs }
 ): ProjectionReductionResult<TState> {
   if (Boolean(definition.joinMembership) !== Boolean(setRouting)) {
     return { status: 'terminal', reason: 'Set-v1 reduction requires a validated membership snapshot.' };
+  }
+  if (Boolean(definition.joinInitializers?.length) !== Boolean(setRouting?.seeds)) {
+    return { status: 'terminal', reason: 'Join initialization requires registered native seed inputs.' };
   }
   if (projectionChanges !== undefined && definition.deduplication.strategy !== 'none'
     && snapshot.changeReceipt && snapshot.changeReceipt !== 'missing') {
@@ -358,10 +316,11 @@ export function reduceProjectionSourceCommit<TState>(
   }
   const sourceKey = projectionUuidToBase64Url22(commit.streamId);
   const reduction: ReductionState<TState> = {
-    documents: new Map(), touched: new Set(), links: linksByKey(snapshot.links), stagedLinks: new Map(),
+    commit, documents: new Map(), touched: new Set(), links: linksByKey(snapshot.links), stagedLinks: new Map(),
     snapshotTargets: new Map(snapshot.targets.map((target) => [target.targetDocumentId, target])),
     membershipReads: new Set(),
     ...(setRouting ? { memberships: new JoinMembershipStaging(setRouting.memberships), setEvents: setRouting.events } : {}),
+    ...(setRouting?.seeds ? { seeds: setRouting.seeds } : {}),
     missingTargets: new Set(), missingLinks: new Map(),
     ...(isNativeProjectionCaptureSnapshot(snapshot) ? { nativeSnapshot: snapshot } : {}),
     ...(validation ? { validation } : {}),
@@ -370,6 +329,7 @@ export function reduceProjectionSourceCommit<TState>(
   try {
     applyEvents(definition, commit, snapshot, reduction, sourceKey);
   } catch (error) {
+    if (error instanceof NeedsJoinSeeds) return needsSnapshot(reduction) ?? { status: 'needs_join_seeds', inputs: error.inputs };
     const reason = error instanceof Error ? error.message : 'projection handler threw';
     if (error instanceof ProjectionJoinCapacityError) return { status: 'membership_capacity', reason };
     return { status: 'terminal', reason, ...(error instanceof ProjectionJoinMembershipValidationError ? { invalidMembershipInput: true } : {}) };

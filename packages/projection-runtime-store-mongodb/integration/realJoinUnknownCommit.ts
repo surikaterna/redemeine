@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { captureProjectionSourceEvent, joinMembershipKey, sealProjectionCaptureRequest,
-  type CommitProjectionSourceCommitRequest } from '@redemeine/projection-runtime-core';
+  type CommitProjectionSourceCommitRequest, type JoinSeedEdge } from '@redemeine/projection-runtime-core';
 import type { ClientSession, CommandStartedEvent, Db, MongoClient } from 'mongodb';
 import { MongoProjectionStore, type MongoProjectionStoreOptions } from '../src';
 
@@ -23,7 +23,7 @@ function request(name: string): Request {
   };
 }
 
-function injectUnknown(client: MongoClient) {
+export function injectUnknown(client: MongoClient) {
   let injection: { abort: boolean; after?: () => Promise<void> } | undefined;
   const mongoClient = { startSession(): ClientSession {
     const session = client.startSession();
@@ -187,6 +187,31 @@ async function assertMembershipOnly(db: Db, client: MongoClient, strategy: 'own_
   assert.equal(await db.collection(`${plan.projectionName}_sets`).countDocuments(), 1);
 }
 
+async function assertSeedWitness(db: Db, client: MongoClient, corrupt: boolean) {
+  const base = request(`unknown_seed_witness_${corrupt}`);
+  const { suspect, arm, outcomes } = prepare(db, client, base.projectionName);
+  const seeds: JoinSeedEdge[] = [{ targetDocumentId: 'A', provenance: {
+    aggregateType: 'Order', aggregateId: 'order', documentId: 'order', from: 'snapshot', seedName: 'Order',
+    seedGeneration: 'producer-g1', position: { kind: 'throughCommit', streamId: base.commit.streamId, commitSequence: 0 }
+  } }];
+  const plan: Request = { ...base, joinSeedVersion: 1, joinMembershipFences: [{ ...membership, seeds }],
+    finalDocuments: [{ targetDocumentId: 'A', expectedRevision: null, finalDocument: { visits: 1 } }] };
+  await suspect.initializeProjectionSourceCommitStore();
+  arm({ abort: false, after: async () => {
+    if (!corrupt) return;
+    await db.collection(`${base.projectionName}_sets`).updateOne({ aggregateId: 'order' },
+      { $set: { 'seeds.0.provenance.position.commitSequence': 12 } });
+  } });
+  const result = await suspect.commitProjectionSourceCommit(plan);
+  if (corrupt) assert(result.status === 'rejected' && result.retryable && result.reason === 'ambiguous transaction outcome');
+  else {
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    assert.deepEqual(result.linkRevisions, { [key]: 1 });
+    assert.deepEqual(result.documentRevisions, { A: 1 });
+  }
+  assert.deepEqual(outcomes, [corrupt ? 'ambiguous' : 'committed']);
+}
+
 export async function checkRealJoinUnknownCommit(db: Db, client: MongoClient): Promise<void> {
   for (const rival of ['missing', 'different', 'identical', 'none'] as const) await assertAborted(db, client, rival);
   await assertCommitted(db, client, false);
@@ -196,6 +221,7 @@ export async function checkRealJoinUnknownCommit(db: Db, client: MongoClient): P
   await assertPreparedCommit(db, client);
   await assertMembershipOnly(db, client, 'own_record');
   await assertMembershipOnly(db, client, 'none');
+  for (const corrupt of [false, true]) await assertSeedWitness(db, client, corrupt);
   const plan = request('unknown_corrupt_proof');
   const { suspect, arm, outcomes } = prepare(db, client, plan.projectionName);
   await suspect.initializeProjectionSourceCommitStore();

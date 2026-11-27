@@ -1,6 +1,6 @@
 import {
-  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, JoinTurnBudget, joinMembershipKey,
-  measureJoinTargetSet, mergeJoinTargets, validateJoinTargetSet,
+  assertJoinRevision, chargeJoinMembershipSnapshotTargets, checkedJoinMembershipKey, freezeJoinSeedEdges, JoinTurnBudget,
+  joinMembershipKey, measureJoinTargetSet, mergeJoinTargets, validateJoinMembershipSeeds, validateJoinTargetSet,
   ProjectionJoinMembershipValidationError, ProjectionPersistedJoinMembershipError,
   type ProjectionJoinMembership, type ProjectionJoinMembershipFence, type ProjectionJoinSource
 } from '@redemeine/projection-runtime-core';
@@ -21,13 +21,15 @@ export function observedMemberships(
     try {
       assertJoinRevision(revision);
       bytes = measureJoinTargetSet(targetDocumentIds);
+      validateJoinMembershipSeeds(row);
     } catch (error) {
       if (!(error instanceof ProjectionJoinMembershipValidationError)) throw error;
       throw new ProjectionPersistedJoinMembershipError(error.message, { cause: error });
     }
     if (revision === null && targetDocumentIds.length) throw new ProjectionPersistedJoinMembershipError('Absent membership cannot have targets.');
     chargeJoinMembershipSnapshotTargets(budget, targetDocumentIds.length, bytes);
-    result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]) }));
+    result.set(key, Object.freeze({ aggregateType, aggregateId, revision, targetDocumentIds: Object.freeze([...targetDocumentIds]),
+      ...(row.seeds ? { seeds: freezeJoinSeedEdges(row.seeds) } : {}) }));
   }
   return result;
 }
@@ -62,18 +64,22 @@ export function collectSetTargets<TState>(events: readonly (SetRoutingEntry<TSta
   return ids;
 }
 
-function hasSortedTarget(ids: readonly string[], id: string): boolean {
+export function findSortedTarget<T>(items: readonly T[], id: string, targetOf: (item: T) => string): T | undefined {
   let lo = 0;
-  let hi = ids.length;
+  let hi = items.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    const candidate = ids[mid]!;
-    if (candidate === id) return true;
+    const item = items[mid]!;
+    const candidate = targetOf(item);
+    if (candidate === id) return item;
     if (candidate < id) lo = mid + 1;
     else hi = mid;
   }
-  return false;
+  return undefined;
 }
+
+const targetId = (id: string) => id;
+export const hasSortedTarget = (ids: readonly string[], id: string): boolean => findSortedTarget(ids, id, targetId) !== undefined;
 
 export class JoinMembershipStaging {
   private readonly budget = new JoinTurnBudget();

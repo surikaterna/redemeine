@@ -64,6 +64,8 @@ try {
   ], { cwd: temporaryDirectory });
 
   writeFileSync(join(temporaryDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
+  copyFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.ts'), join(temporaryDirectory, 'join-initializer.mts'));
+  copyFileSync(join(repoRoot, 'bin/fixtures/projection-join-initializer.cts'), join(temporaryDirectory, 'join-initializer.cts'));
   writeFileSync(join(temporaryDirectory, 'consumer.mts'), `
 import {
   createProjection,
@@ -295,6 +297,10 @@ if (!issues.includes('definitions[0].sourceSelectors[0].normalized')
   const tsc = join(runtimeDirectory, 'node_modules/typescript/bin/tsc');
   checkTypes(tsc, 'consumer.mts', 'index.d.ts');
   checkTypes(tsc, 'consumer.cts', 'index.d.cts');
+  checkTypes(tsc, 'join-initializer.mts', 'index.d.ts');
+  checkTypes(tsc, 'join-initializer.cts', 'index.d.cts');
+  run(process.execPath, [tsc, '-p', 'tsconfig.json', '--noEmit', 'false'], { cwd: temporaryDirectory });
+  run(process.execPath, [join(temporaryDirectory, 'join-initializer.cjs')]);
   const authored = 'projection-authored-consumer.mts';
   copyFileSync(join(repoRoot, 'bin/fixtures', authored), join(temporaryDirectory, authored));
   checkTypes(tsc, authored, 'index.d.ts');

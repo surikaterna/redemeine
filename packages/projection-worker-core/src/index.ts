@@ -37,12 +37,15 @@ export type {
   ProjectionCommitCoordinatorInput,
   ProjectionCommitCoordinatorOptions,
   ProjectionCommitCoordinatorOutcome,
+  ProjectionCommitDefinitionInput,
   ProjectionCommitRegistryDefinition,
   ProjectionCommitRegistryInput,
   ProjectionDefinitionCommitOutcome,
   ProjectionDefinitionCommitResult
 } from './commitCoordinatorContracts';
 export { createProjectionCommitCoordinator } from './createProjectionCommitCoordinator';
+export { bindJoinSeedReader, joinSeedDeployments } from './joinSeedReaders';
+export type { JoinSeedReader, JoinSeedRead } from './joinSeedReaders';
 export { reduceProjectionSourceCommit } from './projectionCommitReducer';
 export type { ProjectionReductionResult, ProjectionStateValidation } from './projectionCommitReducer';
 export { createProjectionLaneScheduler } from './targetLaneScheduler';

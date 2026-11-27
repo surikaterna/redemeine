@@ -10,6 +10,8 @@ The builder infers event payload types from your aggregate's `pure.eventProjecto
 
 For native multi-target joins, use `.join(aggregate, handlers)` with `.joinRight(aggregate, selectors)`. See [join membership and forward cutover](../../docs/projection-join-memberships.md).
 
+To seed an explicitly attached membership, declare a typed `joinInitializer` and register it with `.onJoinInitialize()`. This reads a persisted aggregate snapshot or named projection document once on attachment; live handlers still receive aggregate events. `ctx.subscribeTo(aggregate, id)` remains forward-only. See [join initialization and reader requirements](../../docs/projection-join-memberships.md#initialize-a-new-membership).
+
 Three mechanisms reuse write-model projectors instead of duplicating folding logic:
 
 - **`inherit`** token — delegates a single event key to the aggregate's `applyToDraft`.

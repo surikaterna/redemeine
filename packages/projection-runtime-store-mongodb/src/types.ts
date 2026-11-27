@@ -1,7 +1,11 @@
 import type { AnyBulkWriteOperation, BulkWriteOptions, Collection, DeleteOptions, Document, FindOptions, MongoClient, TransactionOptions, UpdateOptions } from 'mongodb';
 import type {
   CommitProjectionSourceCommitCommitted,
-  ProjectionChangesReceipt,
+  JoinSeedEdge,
+  JoinSeedProvenance,
+  ProjectionChangeTransition,
+  ProjectionChangesEmptyReceipt,
+  ProjectionChangesRecord,
   ProjectionUuidBase64Url22
 } from '@redemeine/projection-runtime-core';
 import type { Checkpoint } from './contracts';
@@ -36,6 +40,7 @@ export interface ProjectionJoinMembershipRecord {
   aggregateId: string;
   targetDocumentIds: readonly string[];
   revision: number;
+  seeds?: readonly JoinSeedEdge[];
 }
 
 export interface ProjectionDedupeRecord {
@@ -54,8 +59,17 @@ export interface ProjectionDedupeRecord {
 type RevisionEntry = readonly [key: string, revision: number];
 type LegacyRevisionMaps = Pick<CommitProjectionSourceCommitCommitted, 'documentRevisions' | 'linkRevisions'>;
 
-export type MongoProjectionChangesRecord = ProjectionChangesReceipt & {
+type MongoChangeTransition = ProjectionChangeTransition & { readonly joinSeedRefs?: readonly number[] };
+type MongoChangesTarget = Omit<ProjectionChangesRecord['targets'][number], 'transitions'> & {
+  readonly transitions: readonly MongoChangeTransition[];
+};
+
+export type MongoProjectionChangesRecord = (ProjectionChangesEmptyReceipt | (Omit<ProjectionChangesRecord, 'targets'> & {
+  readonly targets: readonly MongoChangesTarget[];
+})) & {
   _id: string;
+  /** Physical encoding only; the public receipt decoder expands transition references. */
+  seedEncoding?: { readonly kind: 'interned-v1'; readonly descriptors: readonly JoinSeedProvenance[] };
   outcome: Pick<CommitProjectionSourceCommitCommitted, 'progress'> & {
     /** Internal invocation marker for reliable unknown-outcome reconciliation; absent in older receipts. */
     writeId?: string;
@@ -72,7 +86,7 @@ export interface MongoCollectionLike<TDocument extends Document = Document> {
   updateOne(
     filter: Record<string, unknown>,
     update: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
-    options?: Pick<UpdateOptions, 'upsert' | 'session' | 'writeConcern'>
+    options?: Pick<UpdateOptions, 'upsert' | 'session' | 'writeConcern' | 'ignoreUndefined'>
   ): Promise<unknown>;
   bulkWrite(operations: ReadonlyArray<AnyBulkWriteOperation<TDocument>>, options?: Pick<BulkWriteOptions, 'ordered' | 'session'>): Promise<unknown>;
   deleteOne(filter: Record<string, unknown>, options?: Pick<DeleteOptions, 'session'>): Promise<unknown>;

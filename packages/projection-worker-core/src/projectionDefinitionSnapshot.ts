@@ -35,6 +35,7 @@ export async function loadSnapshot<TState>(
     targetDocumentIds: targets,
     links,
     ...(options.definition.joinMembership && mode !== 'receipt' ? { joinMembership: options.definition.joinMembership } : {}),
+    ...(options.definition.joinInitializers?.length && mode !== 'receipt' ? { joinSeedVersion: 1 } : {}),
     progressStrategy: strategy,
     ...(strategy === 'own_record' ? { sourceId: commit.streamId } : {}),
     ...(mode === 'turn' ? { prepareSourceCommit: true } : {}),

@@ -3,6 +3,8 @@ import { resolveEventHandlers, type ResolvedHandlerEventType } from './resolvedE
 import type { ProjectionEvent as BaseProjectionEvent } from './types';
 import type { ProjectionDeduplicationStrategy } from './projectionDeduplication';
 import { JoinRightBuilder, type ProjectionCandidateSelector, type ProjectionCandidateSelectors } from './joinRightBuilder';
+import { registerJoinInitializer, validateJoinInitializers, type JoinSeed, type JoinSeedEventCoverage,
+  type JoinSeedBinding, type JoinSeedInitializer, type JoinSeedRegistration } from './joinSeed';
 
 export type { ProjectionCandidateSelector, ProjectionCandidateSelectors } from './joinRightBuilder';
 
@@ -94,7 +96,9 @@ export interface ProjectionContext {
    * Subscribe to events from another aggregate
    * Used for .join semantics to correlate related aggregates
    */
-  subscribeTo(aggregate: { aggregateType: string }, aggregateId: string): void;
+  subscribeTo(source: { aggregateType: string } | JoinSeedBinding, aggregateId: string): void;
+  /** Present for a retained initialized edge at the start of its joined event. Never skips the handler. */
+  readonly joinSeedCoverage?: JoinSeedEventCoverage;
 
   /**
    * Remove a prior subscription for a related aggregate stream.
@@ -176,6 +180,7 @@ export interface ProjectionDefinition<TState = unknown> {
   /** Additional streams to join (.join) */
   joinStreams?: JoinStreamDefinition<TState>[];
   joinMembership?: 'set-v1';
+  joinInitializers?: readonly JoinSeedRegistration<TState>[];
   /** Additional reverse-subscribe streams (.reverseSubscribe) */
   reverseSubscribeStreams?: ReverseSubscribeStreamDefinition<TState>[];
   /** Initial state factory function */
@@ -209,6 +214,9 @@ type FluentProjectionBuilder<TState, TCommit extends boolean> =
   TCommit extends true ? ProjectionCommitBuilder<TState> : ProjectionBuilder<TState>;
 
 export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
+  onJoinInitialize<TSource extends { aggregateType: string }, TSeed>(
+    binding: JoinSeed<TSource, TSeed>, initialize: JoinSeedInitializer<TState, NoInfer<TSeed>>
+  ): FluentProjectionBuilder<TState, TCommit>;
   /**
    * Override the initial state factory
    */
@@ -301,6 +309,7 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
   private _fromStream: ProjectionStreamDefinition<TState> | null = null;
   private _joinStreams: JoinStreamDefinition<TState>[] = [];
   private _joinRight = new JoinRightBuilder<TState>();
+  private readonly joinInitializers: JoinSeedRegistration<TState>[] = [];
   private _reverseSubscribeStreams: ReverseSubscribeStreamDefinition<TState>[] = [];
   private _hooks: ProjectionHooks<TState> = {};
   private _deduplication: ProjectionDeduplicationStrategy | undefined;
@@ -393,6 +402,13 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
     return this;
   }
 
+  onJoinInitialize<TSource extends { aggregateType: string }, TSeed>(
+    binding: JoinSeed<TSource, TSeed>, initialize: JoinSeedInitializer<TState, NoInfer<TSeed>>
+  ): ProjectionBuilder<TState> {
+    registerJoinInitializer(this.joinInitializers, binding, initialize);
+    return this;
+  }
+
   hooks(hooks: ProjectionHooks<TState>): ProjectionBuilder<TState> {
     this._hooks = { ...this._hooks, ...hooks };
     return this;
@@ -420,11 +436,15 @@ class ProjectionBuilderImpl<TState> implements ProjectionBuilder<TState> {
       throw new Error(`Projection '${this._name}' must have at least one .from() stream`);
     }
 
+    const initializers = this.joinInitializers;
+    if (initializers.length) validateJoinInitializers(initializers, this._fromStream.aggregate.aggregateType,
+      this._joinStreams, this._deduplication);
     return {
       name: this._name,
       fromStream: this._fromStream,
       joinStreams: this._joinRight.build(this._name, this._fromStream.aggregate.aggregateType, this._joinStreams),
-      ...(this._joinRight.enabled ? { joinMembership: 'set-v1' } : {}),
+      ...(this._joinRight.enabled || initializers.length ? { joinMembership: 'set-v1' } : {}),
+      ...(initializers.length ? { joinInitializers: Object.freeze([...initializers]) } : {}),
       reverseSubscribeStreams: this._reverseSubscribeStreams,
       initialState: this._initialState,
       identity: this._identity,

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { isJoinSeedProvenance, type JoinSeedEdge } from './joinSeedProvenance';
 
 export const JOIN_MEMBERSHIP_FORMAT = 'set-v1' as const;
 export const MAX_JOIN_TARGETS = 1024;
@@ -69,11 +70,13 @@ export interface ProjectionJoinSource {
 export interface ProjectionJoinMembership extends ProjectionJoinSource {
   readonly targetDocumentIds: readonly string[];
   readonly revision: number | null;
+  readonly seeds?: readonly JoinSeedEdge[];
 }
 
 export interface ProjectionJoinMembershipFence extends ProjectionJoinSource {
   readonly expectedRevision: number | null;
   readonly targetDocumentIds: readonly string[];
+  readonly seeds?: readonly JoinSeedEdge[];
 }
 
 /** Tuple encoding also separates the new format from the legacy scalar keys. */
@@ -132,6 +135,29 @@ export function assertJoinRevision(revision: number | null): void {
   }
 }
 
+export function validateJoinMembershipSeeds(row: ProjectionJoinSource & {
+  targetDocumentIds: readonly string[]; seeds?: readonly JoinSeedEdge[]
+}): void {
+  if (row.seeds === undefined) return;
+  if (!Array.isArray(row.seeds) || !row.seeds.length || row.seeds.length > row.targetDocumentIds.length) {
+    throw new ProjectionJoinMembershipValidationError('Invalid joined seed provenance list.');
+  }
+  let previous: string | undefined;
+  const targets = new Set(row.targetDocumentIds);
+  const budget = new JoinTurnBudget();
+  for (const edge of row.seeds) {
+    if (!edge || typeof edge !== 'object') throw new ProjectionJoinMembershipValidationError('Invalid joined seed provenance.');
+    const { targetDocumentId, provenance } = edge;
+    if (Object.keys(edge).length !== 2 || !targets.has(targetDocumentId) || (previous !== undefined && previous >= targetDocumentId)
+      || !isJoinSeedProvenance(provenance) || provenance.aggregateType !== row.aggregateType || provenance.aggregateId !== row.aggregateId) {
+      throw new ProjectionJoinMembershipValidationError('Invalid joined seed provenance.');
+    }
+    budget.add(targetDocumentId);
+    budget.add(JSON.stringify(provenance));
+    previous = targetDocumentId;
+  }
+}
+
 export function validateJoinMembershipFences(fences: readonly ProjectionJoinMembershipFence[],
   scope?: { projectionName: string; projectionGeneration: string }): string | null {
   const keys = new Map<string, Set<string>>();
@@ -151,6 +177,7 @@ export function validateJoinMembershipFences(fences: readonly ProjectionJoinMemb
       assertJoinRevision(expectedRevision);
       const bytes = measureJoinTargetSet(targetDocumentIds);
       targetBudget.addMeasured(targetDocumentIds.length, bytes);
+      validateJoinMembershipSeeds(fence);
     }
   } catch (error) {
     if (error instanceof ProjectionJoinTurnCapacityError) return JOIN_MEMBERSHIP_FENCE_CAPACITY;

@@ -157,6 +157,7 @@ export class ProjectionDaemon<TState = unknown> {
   private readonly orchestrator: SubscriptionOrchestrator<TState>;
 
   constructor(private options: ProjectionDaemonOptions<TState>) {
+    if (options.projection.joinInitializers?.length) throw new Error('.onJoinInitialize() requires the native source-commit coordinator.');
     const { joinMembership, fromStream, joinStreams, reverseSubscribeStreams } = options.projection;
     if (joinMembership || 'candidateSelectors' in fromStream || joinStreams?.some(stream => 'candidateSelectors' in stream)
       || reverseSubscribeStreams?.some(stream => 'candidateSelectors' in stream)) {
@@ -545,6 +546,7 @@ export class ProjectionDaemon<TState = unknown> {
 
     return {
       subscribeTo(aggregate, aggregateId) {
+        if (!('aggregateType' in aggregate)) throw new Error('Join initialization requires the native source-commit coordinator.');
         subscriptions.push({ aggregate, aggregateId });
       },
       unsubscribeFrom(aggregate, aggregateId) {

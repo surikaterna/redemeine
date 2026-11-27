@@ -1,3 +1,5 @@
+import type { JoinSeedProvenance } from '../joinSeed';
+import { isJoinSeedProvenance } from './joinSeedProvenance';
 import { equalProjectionChangeJson, isPortableProjectionChangeJson } from './projectionChangeJson';
 import { isSealedProjectionCaptureRequest, matchesCapturedProjectionState } from './projectionChangeCapture';
 import { validateProjectionChangeIdentityMetadata, validateProjectionChangeWriteMetadata } from './projectionChangeMetadata';
@@ -20,6 +22,8 @@ export interface ProjectionChangeTransition {
   readonly eventIndex: number;
   readonly changeType: 'create' | 'update' | 'noop';
   readonly patch: readonly ProjectionChangePatchOperation[];
+  /** Seed facts applied during this captured event, even if a later event detaches the edge. */
+  readonly joinSeeds?: readonly JoinSeedProvenance[];
 }
 
 export interface ProjectionChangeTarget {
@@ -169,7 +173,7 @@ export function validateProjectionChangesAppend(request: CommitProjectionSourceC
   }
   for (const target of append.targets) {
     if (!target || !documents.delete(target.targetDocumentId) || !Array.isArray(target.transitions)
-      || !target.transitions.length || !transitionsMatchEvents(target.transitions, request.commit.events)) {
+      || !target.transitions.length || !transitionsMatchEvents(target.transitions, request.commit.events, request.joinSeedVersion)) {
       return 'invalid projection change target or event order';
     }
   }
@@ -195,7 +199,8 @@ export function projectionChangesHistoryFailure(
 
 function transitionsMatchEvents(
   transitions: readonly ProjectionChangeTransition[],
-  events: CommitProjectionSourceCommitRequest['commit']['events']
+  events: CommitProjectionSourceCommitRequest['commit']['events'],
+  joinSeedVersion: 1 | undefined
 ): boolean {
   let previous = -1;
   for (const transition of transitions) {
@@ -203,7 +208,10 @@ function transitionsMatchEvents(
       || events[transition.eventIndex]?.eventId !== transition.eventId || typeof transition.eventId !== 'string'
       || events[transition.eventIndex]?.eventIndex !== transition.eventIndex
       || !Array.isArray(transition.patch)
-      || Object.keys(transition).some((key) => !['eventId', 'eventIndex', 'changeType', 'patch'].includes(key))) return false;
+      || Object.keys(transition).some((key) => !['eventId', 'eventIndex', 'changeType', 'patch', 'joinSeeds'].includes(key))) return false;
+    if (transition.joinSeeds !== undefined && (!joinSeedVersion || !Array.isArray(transition.joinSeeds)
+      || !transition.joinSeeds.length || transition.joinSeeds.length > 64
+      || !transition.joinSeeds.every(isJoinSeedProvenance))) return false;
     previous = transition.eventIndex;
   }
   return true;
@@ -253,7 +261,7 @@ function capturedStatePatches<T>(
   for (const document of request.finalDocuments) {
     const original = originals.get(document.targetDocumentId);
     const hint = document.statePatch;
-    if (!original || hint?.kind !== 'ordered' || !transitionsMatchEvents(hint.transitions, request.commit.events)) continue;
+    if (!original || hint?.kind !== 'ordered' || !transitionsMatchEvents(hint.transitions, request.commit.events, request.joinSeedVersion)) continue;
     const exists = original.revision !== null || original.legacyOriginal !== undefined || original.state !== null;
     if (matchesCapturedProjectionState(original.state, exists, document.finalDocument, hint.transitions,
       origin ? { snapshot: origin, targetId: document.targetDocumentId } : undefined)) {
@@ -303,7 +311,7 @@ export function verifyProjectionSourceCommitStatePatches<TState>(
     const hint = document.statePatch;
     const original = originals.get(document.targetDocumentId);
     if (original && hint?.kind === 'ordered' && Array.isArray(hint.transitions) && hint.transitions.length
-      && transitionsMatchEvents(hint.transitions, request.commit.events)
+      && transitionsMatchEvents(hint.transitions, request.commit.events, request.joinSeedVersion)
       && validateStateTransitions(original, document.finalDocument, hint.transitions, true) === null) {
       const unchanged = hint.transitions[0]!.changeType !== 'create' && (
         hint.transitions.every(({ changeType }) => changeType === 'noop') ||

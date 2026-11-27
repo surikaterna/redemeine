@@ -10,7 +10,7 @@ import { joinBindingConfiguration, seedJoinBinding } from './realJoinBinding';
 import { adaptChannel } from './realStackFixtures';
 import { waitForSettlement } from './settlementWait';
 
-async function deliverTail(channel: ConfirmChannel, queue: string, setup: Awaited<ReturnType<typeof seedJoinBinding>>,
+export async function deliverTail(channel: ConfirmChannel, queue: string, setup: Awaited<ReturnType<typeof seedJoinBinding>>,
   createWorker: (observe: (event: RabbitSettlementEvent) => void) => ProjectionRabbitWorker) {
   await channel.assertExchange(`${queue}.dlx`, 'direct', { durable: true, arguments: {} });
   await channel.assertQueue(queue, { durable: true, deadLetterExchange: `${queue}.dlx`, deadLetterRoutingKey: 'failed' });
