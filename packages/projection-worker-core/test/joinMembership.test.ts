@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from '@jest/globals';
 import { createProjection } from '@redemeine/projection';
 import { createProjection as coreProjection, MAX_JOIN_TURN_KEYS, selectJoinTargets, type ProjectionEvent } from '@redemeine/projection-runtime-core';
 import { InMemoryProjectionStore } from '../../projection-runtime-store-inmemory/src';
-import { coordinator, definition, fixtureOptions, orderId, snapshot, type State, turn } from '../../projection-transport/integration/joinMembershipFixture';
+import { coordinator, definition, fixtureCoverage, fixtureOptions, orderId, snapshot, type State, turn } from '../../projection-transport/integration/joinMembershipFixture';
 
 const source = '00000000-0000-4000-8000-000000000010';
 const root = { aggregateType: 'Board', initialState: {}, pure: { eventProjectors: {} } };
@@ -11,6 +11,15 @@ const order = { aggregateType: 'Order', types: { events: { add: 'wire.added' as 
 } } };
 const event: ProjectionEvent = { aggregateType: 'Order', aggregateId: orderId, type: 'wire.added',
   sequence: 0, timestamp: '2026-11-19T00:00:00.000Z', payload: { target: 'B' } };
+
+function rejectLater(onRejection: () => void) {
+  return {
+    // biome-ignore lint/suspicious/noThenProperty: Exercise a non-Promise thenable.
+    then(_resolve: unknown, reject: (error: Error) => void) {
+      queueMicrotask(() => { onRejection(); reject(new Error('late handler rejection')); });
+    }
+  };
+}
 
 describe.each(['public', 'core'] as const)('%s builder', (builder) => {
   test('normalizes aliases, copies selectors and works through registered native execution', async () => {
@@ -99,6 +108,44 @@ test('event candidates are computed once across OCC retry and not recomputed on 
   expect(await runtime.process(input)).toMatchObject({ status: 'completed', definitions: [{ outcome: { status: 'deduplicated' } }] });
   expect(select).toHaveBeenCalledTimes(2);
   expect((await snapshot(store, source, ['A', 'B'])).targets.map((doc) => doc.state?.visits)).toEqual([['applied'], ['applied']]);
+});
+
+test.each(['async handler', 'custom thenable'] as const)('rejects a joined %s before hooks or persistence', async kind => {
+  const store = new InMemoryProjectionStore<State>();
+  const options = fixtureOptions(store);
+  const write = jest.spyOn(store, 'commitProjectionSourceCommit');
+  const advance = jest.spyOn(options.sourceOrder, 'advanceCoverage');
+  const afterEach = jest.fn();
+  const late = jest.fn();
+  const projection = createProjection('boards', (id): State => ({ id, visits: [] })).from(root, {})
+    .join(order, { add: kind === 'async handler'
+      ? async (draft, event, ctx) => {
+        draft.visits.push('not persisted');
+        await Promise.resolve();
+        ctx.subscribeTo(order, event.aggregateId);
+        late();
+      }
+      : (draft, event, ctx) => {
+        draft.visits.push('not persisted');
+        ctx.subscribeTo(order, event.aggregateId);
+        return rejectLater(late);
+      }
+    }).joinRight(order, { add: (e) => e.payload.target }).hooks({ afterEach })
+    .deduplication({ strategy: 'own_record' }).build();
+  const runtime = coordinator({ ...options, definitions: [{ ...options.definitions[0]!, definition: projection }] });
+  const input = turn(source, 0, orderId, [['wire.added', { target: 'B' }]]);
+  expect(await runtime.process(input)).toMatchObject({ status: 'terminal', reason: 'Projection handler must be synchronous.' });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(late).toHaveBeenCalledTimes(1);
+  expect(afterEach).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+  expect(advance).not.toHaveBeenCalled();
+  const current = await snapshot(store, source, ['B']);
+  expect(current.targets[0]?.state).toBeNull();
+  expect(current.joinMemberships?.[0]).toMatchObject({ revision: null, targetDocumentIds: [] });
+  expect(current.ownRecordSequence).toBeNull();
+  expect(await fixtureCoverage(options, input)).toBeNull();
+  expect(store.getProjectionChanges()).toEqual([]);
 });
 
 test('over-budget routing fails before loading any view keys', async () => {

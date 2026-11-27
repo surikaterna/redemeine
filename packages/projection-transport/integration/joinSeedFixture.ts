@@ -13,7 +13,9 @@ import { manifest, orderId } from './joinMembershipFixture';
 import { createProjection as createPublicProjection, joinInitializer as publicInitializer } from '../../projection/src';
 
 const Board = { aggregateType: 'Board', initialState: {}, pure: { eventProjectors: {
-  attach: (_: unknown, _event: { payload: { seed?: boolean; cancel?: boolean; ids?: string[]; total?: number } }) => {}
+  attach: (_: unknown, _event: {
+    payload: { seed?: boolean; detachFirst?: boolean; cancel?: boolean; ids?: string[]; total?: number }
+  }) => {}
 } } };
 const Order = { aggregateType: 'Order', initialState: { warehouse: { remaining: [0] } }, pure: { eventProjectors: {
   assign: (_: unknown, _event: { payload: { to: string; amount: number; skip?: boolean } }) => {},
@@ -37,6 +39,7 @@ function builder(binding: typeof view | typeof snapshot) {
     .deduplication({ strategy: 'own_record' })
     .from(Board, { attach(draft, { payload }, ctx) {
       for (const id of payload.ids ?? [orderId]) {
+        if (payload.detachFirst) ctx.unsubscribeFrom(Order, id);
         if (payload.seed) ctx.subscribeTo(binding, id);
         else ctx.subscribeTo(Order, id);
         if (payload.cancel) ctx.unsubscribeFrom(Order, id);

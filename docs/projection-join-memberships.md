@@ -107,9 +107,11 @@ For the snapshot alternative, register `inventoryInit` and attach with
 `snapshot.warehouse.remaining` (aggregate state), not `view.booking.total`
 (projection state). In both cases the seed is deeply readonly portable JSON,
 and the callback receives the target's mutable draft. `ctx.subscribeTo(Order, orderId)`
-is still forward-only, with **no** reader call. Repeated attaches to an existing
-edge do not reseed or replace its coverage. Attach followed by detach in the
-same handler does not read. A later reattach may initialize a new edge.
+is still forward-only, with **no** reader call. Repeated attaches without a
+detach do not reseed or replace coverage. A detach ends the edge's coverage:
+even in the same handler, a plain reattach starts a forward-only edge and an
+explicitly initialized reattach can seed it again. An initialization canceled
+by a detach before the handler returns does not read.
 
 ### Bind and prove a reader
 

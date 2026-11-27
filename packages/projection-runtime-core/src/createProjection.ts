@@ -243,6 +243,31 @@ export interface ProjectionBuilder<TState, TCommit extends boolean = false> {
     handlers: ProjectionHandlersForAggregate<TState, TAggregate>
   ): FluentProjectionBuilder<TState, TCommit>;
 
+  /**
+   * Opt in to membership sets for this projection. Requires the native source-commit
+   * coordinator and a store that supports membership sets; an empty map still opts in.
+   *
+   * Use local event keys from the matching `.join()` handlers, even when naming
+   * rules map them to different wire names. Each selector runs synchronously on the
+   * event alone, without a draft or handler context. The coordinator routes to the
+   * deduplicated union of candidate IDs and saved members. Selecting a target does
+   * not save a subscription: the handler must explicitly attach or detach its
+   * current target with `ctx.subscribeTo` or `ctx.unsubscribeFrom`.
+   *
+   * @example
+   * ```ts
+   * warehouseBoard
+   *   .join(Order, {
+   *     warehouseChanged(draft, event, ctx) {
+   *       if (draft.id === event.payload.previousWarehouseId) ctx.unsubscribeFrom(Order, event.aggregateId);
+   *       if (draft.id === event.payload.warehouseId) ctx.subscribeTo(Order, event.aggregateId);
+   *     }
+   *   })
+   *   .joinRight(Order, { warehouseChanged: event => event.payload.warehouseId })
+   *   .deduplication({ strategy: 'own_record' })
+   *   .build();
+   * ```
+   */
   joinRight<TAggregate extends { aggregateType: string }>(
     aggregate: TAggregate,
     selectors: ProjectionCandidateSelectors<NoInfer<TAggregate>>

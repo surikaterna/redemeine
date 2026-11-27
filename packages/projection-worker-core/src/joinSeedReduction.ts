@@ -53,8 +53,8 @@ function assertDeployment(proof: JoinSeedProvenance, reader: JoinSeedReader | un
 interface EdgeChange<T> {
   readonly key: string;
   readonly initial: JoinSeedProvenance | undefined;
-  readonly initiallyPresent: boolean;
   present: boolean;
+  retainedProof: JoinSeedProvenance | undefined;
   requested?: { input: JoinSeedInput; initializer: JoinSeedRegistration<T> };
 }
 
@@ -100,11 +100,14 @@ export class JoinSeedEvent<T> {
     let change = this.changes.get(key);
     if (!change) {
       const present = hasSortedTarget(row.targetDocumentIds, target);
-      change = { key, initial: edgeProof(row, target), initiallyPresent: present, present };
+      const initial = edgeProof(row, target);
+      change = { key, initial, present, retainedProof: initial };
       this.changes.set(key, change);
     }
-    if (!subscribe) delete change.requested;
-    else if (!change.initiallyPresent && !change.present && requested) change.requested = requested;
+    if (!subscribe) {
+      change.retainedProof = undefined;
+      delete change.requested;
+    } else if (!change.present && requested) change.requested = requested;
     change.present = subscribe;
   }
 
@@ -122,7 +125,7 @@ export class JoinSeedEvent<T> {
         runInitializer(change.requested!.initializer, draft, seed, target, sourceEventToProjectionEvent(event), coverage);
         this.applied.push(seed.provenance);
       }
-      this.writeEdge(change, change.present ? seed?.provenance ?? change.initial : undefined);
+      this.writeEdge(change, seed?.provenance ?? change.retainedProof);
     }
   }
 

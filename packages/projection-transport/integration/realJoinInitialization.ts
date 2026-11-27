@@ -22,6 +22,7 @@ import { caughtBinding, rerouteFailedSeed, staleProvider, staleReceiptSize } fro
 import { runJoinSeedRabbit } from './realJoinSeedRabbit';
 import { plannedSeedReadLimit } from './joinSeedReadLimit';
 import { staleSeedExpansion } from './joinSeedExpansionLimit';
+import { reattachSeededEdge } from './joinSeedReattach';
 
 function memory(): Backend {
   const store = new InMemoryProjectionStore<State>();
@@ -53,6 +54,7 @@ async function allCases(backend: () => Backend, client?: MongoClient) {
   await recoverSeedReceipt(backend(), false);
   await recoverSeedReceipt(backend(), true);
   for (const compat of [false, true]) {
+    await reattachSeededEdge(backend(), compat);
     for (const recording of [false, true]) for (const limit of ['keys', 'results'] as const) {
       for (const genuine of [false, true]) await staleSeedExpansion(backend(), compat, recording, genuine, limit);
     }
